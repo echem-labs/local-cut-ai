@@ -87,30 +87,22 @@ class ProjectStore:
     # -- artifact index: generated/ files are named {output_hash}{suffix} --
 
     def resolve_artifact(self, project_id: str, output_hash: str) -> Path | None:
-        matches = [
-            p
-            for p in self.generated_dir(project_id).glob(f"{output_hash}*")
-            if not p.name.endswith(".concat.txt")
-        ]
-        return matches[0] if matches else None
+        # Literal prefix match, deliberately not glob: hashes come from the
+        # API surface and must never act as wildcards.
+        generated = self.generated_dir(project_id)
+        if not output_hash or not generated.is_dir():
+            return None
+        for p in generated.iterdir():
+            if p.name.startswith(f"{output_hash}.") and not p.name.endswith(".concat.txt"):
+                return p
+        return None
 
     def cached_hashes(self, project_id: str) -> set[str]:
-        hashes = set()
-        for p in self.generated_dir(project_id).iterdir():
-            if p.name.endswith(".concat.txt"):
-                continue
-            hashes.add(p.name.split(".")[0])
-        return hashes
-
-    def nodes_with_artifacts(self, project_id: str, graph: StoryGraph) -> set[str]:
-        """Node ids that have at least one artifact from any prior version —
-        used for pinned-node satisfaction (compiler)."""
-        # v1: without a per-node artifact log we approximate via current
-        # hashes; a node's history lands in project.db in a later phase.
-        cached = self.cached_hashes(project_id)
-        memo: dict[str, str] = {}
+        generated = self.generated_dir(project_id)
+        if not generated.is_dir():
+            return set()
         return {
-            node_id
-            for node_id in graph.nodes
-            if graph.output_hash(node_id, memo) in cached
+            p.name.split(".")[0]
+            for p in generated.iterdir()
+            if not p.name.endswith(".concat.txt")
         }

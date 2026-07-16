@@ -47,18 +47,23 @@ def compile_graph(
     graph: StoryGraph,
     cache_hashes: set[str] | None = None,
     quality: str = "draft",
-    pinned_satisfied: set[str] | None = None,
+    frozen: dict[str, str] | None = None,
 ) -> CompiledPlan:
     """Compile the graph into jobs for every node not satisfied by the cache.
 
-    ``pinned_satisfied`` holds ids of pinned nodes that already have *any*
-    prior artifact — those never re-execute, even if an upstream change
-    would otherwise dirty them (a pinned node with no artifact at all still
-    has to render once).
+    ``frozen`` maps pinned node ids to the output hash of their existing
+    artifact. Pinning freezes a node's output *identity*: the node never
+    re-executes, and downstream nodes hash (and resolve inputs) against the
+    frozen artifact rather than what the current graph would produce — so
+    an upstream edit re-renders everything around a pinned node but never
+    the pinned node itself. A pinned node with no artifact yet is simply
+    not frozen and renders once.
     """
     cache_hashes = cache_hashes or set()
-    pinned_satisfied = pinned_satisfied or set()
-    memo: dict[str, str] = {}
+    frozen = frozen or {}
+    # Seeding the memo makes output_hash() return the frozen hash for these
+    # nodes, which transparently propagates into all downstream hashes.
+    memo: dict[str, str] = dict(frozen)
     order = graph.topological_order()
     jobs: list[JobSpec] = []
     cached: list[str] = []
@@ -67,8 +72,11 @@ def compile_graph(
         node = graph.nodes[node_id]
         if node.kind not in EXECUTABLE_KINDS:
             continue
+        if node.pinned and node_id in frozen:
+            cached.append(node_id)
+            continue
         out_hash = graph.output_hash(node_id, memo)
-        if out_hash in cache_hashes or (node.pinned and node_id in pinned_satisfied):
+        if out_hash in cache_hashes:
             cached.append(node_id)
             continue
         jobs.append(

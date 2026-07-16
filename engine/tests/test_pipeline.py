@@ -114,3 +114,41 @@ async def test_queue_recovers_interrupted_jobs(tmp_path):
     recovered = JobQueue(tmp_path / "q.db")
     assert recovered.get(job.id).status is JobStatus.QUEUED
     recovered.close()
+
+
+async def test_pin_freezes_output_across_upstream_edits(rig):
+    """Pin semantics: an upstream edit re-renders everything except pinned
+    nodes, and downstream jobs consume the pinned node's frozen artifact."""
+    from localcut_engine.graph.patch import PatchOp
+
+    store, queue, service = rig
+    project = service.create_from_prompt("coral reefs after dark", target_duration_s=24)
+
+    def export_hash():
+        return service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash")
+
+    await wait_for(lambda: bool(export_hash()))
+    board = service.scene_board(project.id)
+    frozen_kf = board["scenes"][0]["keyframe"]["artifact_hash"]
+    kf_jobs_before = len(
+        [j for j in queue.list(project.id, 1000) if j.spec.node_id == "s1.keyframe"]
+    )
+
+    service.patch(project.id, [PatchOp(op="pin", node_id="s1.keyframe")])
+    first_export = export_hash()
+    service.patch(
+        project.id,
+        [PatchOp(op="set_params", node_id="script", params={"style_preset": "noir"})],
+    )
+    await wait_for(lambda: export_hash() not in (None, first_export))
+
+    board = service.scene_board(project.id)
+    kf_jobs_after = len(
+        [j for j in queue.list(project.id, 1000) if j.spec.node_id == "s1.keyframe"]
+    )
+    assert kf_jobs_after == kf_jobs_before, "pinned keyframe re-rendered"
+    assert board["scenes"][0]["keyframe"]["artifact_hash"] == frozen_kf
+    # The clip downstream of the pin re-rendered and still completed, i.e.
+    # it resolved its keyframe input to the frozen artifact.
+    assert board["scenes"][0]["clip"]["status"] in ("draft", "final")
+    assert not [j for j in queue.list(project.id, 1000) if j.status is JobStatus.FAILED]

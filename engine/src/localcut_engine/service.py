@@ -74,13 +74,32 @@ class ProjectService:
 
     # -- compile & enqueue ---------------------------------------------------
 
+    def _frozen_pins(self, project_id: str, graph: StoryGraph) -> dict[str, str]:
+        """Pinned node id → output hash of its newest completed artifact.
+        Derived from job history (persistent), so pins survive restarts and
+        upstream edits alike."""
+        frozen: dict[str, str] = {}
+        for job in self.queue.list(project_id, 1000):  # newest first
+            node = graph.nodes.get(job.spec.node_id)
+            if (
+                node is not None
+                and node.pinned
+                and job.spec.node_id not in frozen
+                and job.status is JobStatus.DONE
+                and job.artifact
+                and self.store.resolve_artifact(project_id, job.spec.output_hash) is not None
+            ):
+                frozen[job.spec.node_id] = job.spec.output_hash
+        return frozen
+
     def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
         cached = self.store.cached_hashes(project_id)
+        frozen = self._frozen_pins(project_id, graph)
         if quality == "final":
             # Finals re-render generation nodes even when a draft is cached;
             # quality is part of the job, not the node hash, so drop cached
-            # entries for clip-class nodes.
-            memo: dict[str, str] = {}
+            # entries for clip-class nodes (pinned/frozen ones stay).
+            memo: dict[str, str] = dict(frozen)
             clip_hashes = {
                 graph.output_hash(n, memo)
                 for n, node in graph.nodes.items()
@@ -88,11 +107,7 @@ class ProjectService:
                 and not node.pinned
             }
             cached -= clip_hashes
-        pinned_ok = {
-            n for n in self.store.nodes_with_artifacts(project_id, graph)
-            if graph.nodes[n].pinned
-        }
-        plan = compile_graph(graph, cached, quality=quality, pinned_satisfied=pinned_ok)
+        plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
 
         # Skip nodes that already have an identical job in flight.
         active_hashes = {
@@ -136,7 +151,8 @@ class ProjectService:
         graph = self.store.load_graph(project_id)
         jobs = {job.spec.node_id: job for job in reversed(self.queue.list(project_id, 1000))}
         cached = self.store.cached_hashes(project_id)
-        memo: dict[str, str] = {}
+        # Frozen pins hash against their existing artifact (see compiler).
+        memo: dict[str, str] = dict(self._frozen_pins(project_id, graph))
 
         def node_state(node_id: str) -> dict:
             node = graph.nodes[node_id]

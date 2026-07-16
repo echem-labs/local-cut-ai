@@ -52,10 +52,22 @@ def test_compile_skips_cached_nodes():
 
 def test_pinned_node_not_recompiled_even_when_dirty():
     g = small_graph()
+    frozen_hash = g.output_hash("kf")  # artifact rendered before the edit
     g.nodes["kf"].pinned = True
     g.nodes["script"].params["prompt"] = "new prompt"  # dirties kf's hash
-    plan = compile_graph(g, cache_hashes=set(), pinned_satisfied={"kf"})
+    plan = compile_graph(g, cache_hashes=set(), frozen={"kf": frozen_hash})
     assert "kf" not in [j.node_id for j in plan.jobs]
+    # Downstream hashes against the frozen artifact, not the would-be new
+    # keyframe — so its input actually resolves to a file that exists.
+    clip_job = next(j for j in plan.jobs if j.node_id == "clip")
+    assert clip_job.input_hashes["keyframe"] == frozen_hash
+
+
+def test_unfrozen_pinned_node_renders_once():
+    g = small_graph()
+    g.nodes["kf"].pinned = True  # pinned before it ever rendered
+    plan = compile_graph(g, cache_hashes=set(), frozen={})
+    assert "kf" in [j.node_id for j in plan.jobs]
 
 
 def test_patch_dirties_downstream_cone():
