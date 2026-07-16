@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "updated": "2026-07-16",
+  "models": [
+    {
+      "id": "wan2.2-i2v-14b-fp8",
+      "task": "video.i2v",
+      "family": "wan",
+      "version": "2.2",
+      "quant": "fp8",
+      "requirements": { "vram_gb": 16, "ram_gb": 32, "disk_gb": 17, "backends": ["cuda"] },
+      "perf_class": { "rtx4090": "~90s / 5s@720p", "rtx3060": "~6min / 5s@480p" },
+      "quality_score": 8.6,
+      "speed_score": 4.0,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "Wan-AI/Wan2.2-I2V-A14B" }],
+      "comfy_graph_template": "wan22_i2v.json"
+    },
+    {
+      "id": "ltx-video-0.9-i2v",
+      "task": "video.i2v",
+      "family": "ltx",
+      "version": "0.9",
+      "quant": "fp8",
+      "requirements": { "vram_gb": 12, "ram_gb": 16, "disk_gb": 10, "backends": ["cuda", "mps"] },
+      "perf_class": { "rtx4090": "near-realtime", "rtx3060": "~40s / 5s@480p" },
+      "quality_score": 7.2,
+      "speed_score": 9.0,
+      "license": {
+        "id": "ltx-community",
+        "commercial": true,
+        "verdict": "conditions",
+        "notes": "commercial with thresholds - verify current terms before shipping as default"
+      },
+      "sources": [{ "hf": "Lightricks/LTX-Video" }],
+      "comfy_graph_template": "ltx_i2v.json"
+    },
+    {
+      "id": "sdxl-base-1.0",
+      "task": "image.gen",
+      "family": "sdxl",
+      "version": "1.0",
+      "requirements": { "vram_gb": 8, "ram_gb": 16, "disk_gb": 7, "backends": ["cuda", "mps"] },
+      "quality_score": 7.5,
+      "speed_score": 7.0,
+      "license": { "id": "openrail++", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "stabilityai/stable-diffusion-xl-base-1.0" }],
+      "comfy_graph_template": "sdxl_keyframe.json"
+    },
+    {
+      "id": "flux.1-schnell",
+      "task": "image.gen",
+      "family": "flux",
+      "version": "1",
+      "quant": "gguf-q8",
+      "requirements": { "vram_gb": 12, "ram_gb": 24, "disk_gb": 12, "backends": ["cuda", "mps"] },
+      "quality_score": 8.4,
+      "speed_score": 8.0,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "black-forest-labs/FLUX.1-schnell" }],
+      "comfy_graph_template": "flux_schnell_keyframe.json"
+    },
+    {
+      "id": "qwen3-14b-q4",
+      "task": "text.llm",
+      "family": "qwen",
+      "version": "3",
+      "quant": "q4_k_m",
+      "requirements": { "vram_gb": 10, "ram_gb": 16, "disk_gb": 9, "backends": ["cuda", "mps", "cpu"] },
+      "quality_score": 8.0,
+      "speed_score": 7.0,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "Qwen/Qwen3-14B-GGUF" }]
+    },
+    {
+      "id": "qwen3-8b-q4",
+      "task": "text.llm",
+      "family": "qwen",
+      "version": "3",
+      "quant": "q4_k_m",
+      "requirements": { "vram_gb": 6, "ram_gb": 12, "disk_gb": 5, "backends": ["cuda", "mps", "cpu"] },
+      "quality_score": 7.2,
+      "speed_score": 8.0,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "Qwen/Qwen3-8B-GGUF" }]
+    },
+    {
+      "id": "kokoro-82m",
+      "task": "speech.tts",
+      "family": "kokoro",
+      "requirements": { "vram_gb": 2, "ram_gb": 8, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
+      "quality_score": 7.0,
+      "speed_score": 9.5,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "hexgrad/Kokoro-82M" }]
+    },
+    {
+      "id": "chatterbox-tts",
+      "task": "speech.tts",
+      "family": "chatterbox",
+      "requirements": { "vram_gb": 6, "ram_gb": 16, "disk_gb": 4, "backends": ["cuda", "mps"] },
+      "quality_score": 8.5,
+      "speed_score": 6.0,
+      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "ResembleAI/chatterbox" }]
+    },
+    {
+      "id": "ace-step-1.5",
+      "task": "music.gen",
+      "family": "ace-step",
+      "version": "1.5",
+      "requirements": { "vram_gb": 8, "ram_gb": 16, "disk_gb": 8, "backends": ["cuda", "mps"] },
+      "quality_score": 7.8,
+      "speed_score": 8.5,
+      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "ACE-Step/ACE-Step-v1.5" }]
+    },
+    {
+      "id": "faster-whisper-large-v3",
+      "task": "transcribe",
+      "family": "whisper",
+      "version": "large-v3",
+      "requirements": { "vram_gb": 4, "ram_gb": 8, "disk_gb": 3, "backends": ["cuda", "mps", "cpu"] },
+      "quality_score": 9.0,
+      "speed_score": 8.0,
+      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "Systran/faster-whisper-large-v3" }]
+    }
+  ]
+}
