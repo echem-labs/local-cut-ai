@@ -27,7 +27,12 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=None)
     serve.add_argument("--token", default=None, help="pairing token (generated if omitted)")
     serve.add_argument("--data-dir", default=None)
-    serve.add_argument("--backend", choices=["mock", "local"], default=None)
+    serve.add_argument(
+        "--backend",
+        default=None,
+        help="backend chain, comma-separated; first match per node kind wins "
+        "(e.g. 'mock', 'local', 'llm,comfy,mock')",
+    )
     serve.add_argument("--announce-fd3", action="store_true",
                        help="write the connection info JSON to fd 3 (used by the desktop shell)")
 
@@ -94,11 +99,11 @@ def main(argv: list[str] | None = None) -> int:
 def _models_command(args: argparse.Namespace) -> int:
     import asyncio
 
-    from .api.app import _load_manifest
     from .manifest.downloads import DownloadError, download_model, is_downloaded
+    from .manifest.loader import load_manifest
 
     config = EngineConfig.from_env()
-    manifest = _load_manifest(config)
+    manifest = load_manifest(config)
     models_dir = Path(args.models_dir) if args.models_dir else config.resolved_models_dir
 
     if args.command == "models":

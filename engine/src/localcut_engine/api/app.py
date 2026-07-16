@@ -7,7 +7,6 @@ Rules enforced here, not by convention:
 - Version handshake on /health for frontend↔engine mismatch handling.
 """
 
-import importlib.resources
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -37,7 +36,7 @@ from ..graph.patch import PatchOp
 from ..hardware.probe import probe_hardware
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
-from ..manifest.model import ModelManifest
+from ..manifest.loader import load_manifest
 from ..manifest.recommend import recommend_slate
 from ..project.store import ProjectStore
 from ..service import ProjectService
@@ -77,14 +76,6 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
             case _:
                 raise ValueError(f"unknown backend in chain: {name!r}")
     return registry
-
-
-def _load_manifest(config: EngineConfig) -> ModelManifest:
-    override = config.data_dir / "model-manifest.json"
-    if override.exists():
-        return ModelManifest.load(override)
-    bundled = importlib.resources.files("localcut_engine.manifest") / "default-manifest.json"
-    return ModelManifest.model_validate_json(bundled.read_text())
 
 
 def create_app(config: EngineConfig | None = None) -> FastAPI:
@@ -145,7 +136,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.get("/system", dependencies=[Authed])
     async def system() -> dict:
         profile = probe_hardware()
-        manifest = _load_manifest(config)
+        manifest = load_manifest(config)
         return {
             "hardware": profile.model_dump(),
             "recommendations": [r.model_dump() for r in recommend_slate(manifest, profile)],
@@ -154,7 +145,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
-        return _load_manifest(config).model_dump()
+        return load_manifest(config).model_dump()
 
     # -- projects --------------------------------------------------------------
 

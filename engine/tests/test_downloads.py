@@ -2,6 +2,7 @@
 a local HTTP server (python's RangeRequestHandler-capable SimpleHTTP)."""
 
 import hashlib
+import pathlib
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -133,3 +134,18 @@ def test_is_downloaded(tmp_path):
     (tmp_path / "checkpoints").mkdir(parents=True)
     (tmp_path / "checkpoints/y.bin").write_bytes(b"x")
     assert is_downloaded(entry, tmp_path)
+
+
+async def test_traversal_dest_rejected_even_with_relative_models_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "models").mkdir()
+    with pytest.raises(DownloadError, match="escapes"):
+        await download_file(
+            ModelFile(url="http://127.0.0.1:1/x", dest="../escaped.bin"),
+            pathlib.Path("models"),  # relative on purpose
+        )
+    with pytest.raises(DownloadError, match="escapes"):
+        await download_file(
+            ModelFile(url="http://127.0.0.1:1/x", dest="/etc/escaped.bin"),
+            tmp_path / "models",
+        )

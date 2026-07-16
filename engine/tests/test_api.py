@@ -73,3 +73,27 @@ async def test_path_params_reject_non_identifier_input(client):
         f"/projects/{pid}/nodes/no-such-node/regenerate", json={}
     )
     assert bad_node.status_code == 404
+
+
+def test_backend_chain_parsing_and_composition(tmp_path):
+    """The desktop shell passes --backend as a flag; chains must be accepted
+    end-to-end (argparse pattern removed, config expands shorthands, and the
+    app factory composes the registry in order with mock as catch-all)."""
+    from localcut_engine.api.app import _build_backends
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.graph.model import NodeKind
+
+    assert EngineConfig(backend="llm,comfy,mock").backend_chain == ["llm", "comfy", "mock"]
+    assert EngineConfig(backend="local,mock").backend_chain == ["llm", "comfy", "ffmpeg", "mock"]
+
+    config = EngineConfig(
+        data_dir=tmp_path, backend="llm,comfy,mock", comfy_kinds="keyframe,thumbnail"
+    )
+    registry = _build_backends(config)
+    assert registry.resolve(NodeKind.SCRIPT).name == "llm"
+    assert registry.resolve(NodeKind.KEYFRAME).name == "comfyui"
+    assert registry.resolve(NodeKind.CLIP).name == "mock"  # not in comfy_kinds
+    assert registry.resolve(NodeKind.EXPORT).name == "mock"
+
+    with pytest.raises(ValueError, match="unknown backend"):
+        _build_backends(EngineConfig(data_dir=tmp_path, backend="bogus"))

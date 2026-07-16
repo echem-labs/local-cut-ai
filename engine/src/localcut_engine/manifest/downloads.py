@@ -51,7 +51,9 @@ async def download_file(
     request; servers that ignore Range restart cleanly.
     """
     dest = models_dir / file.dest
-    if dest.is_absolute() and not dest.resolve().is_relative_to(models_dir.resolve()):
+    # Containment check must hold for relative and absolute models_dir alike:
+    # manifests can be user-supplied, so dest must never escape.
+    if not dest.resolve().is_relative_to(models_dir.resolve()):
         raise DownloadError(f"destination escapes models dir: {file.dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
 

@@ -134,6 +134,10 @@ class ComfyUIBackend(ExecutionBackend):
                 continue  # preview frames — forwarded in a later phase
             message = json.loads(raw)
             data = message.get("data", {})
+            # Events carrying a prompt_id for a different workflow (e.g. a
+            # power user's own queue on a shared ComfyUI) are not ours.
+            if data.get("prompt_id") not in (None, prompt_id):
+                continue
             if message.get("type") == "progress":
                 await ctx.progress(data.get("value", 0) / max(1, data.get("max", 1)))
             elif message.get("type") == "execution_error":
