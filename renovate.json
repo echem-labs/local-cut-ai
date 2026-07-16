@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "minor and patch dependencies"
+    },
+    {
+      "matchPackageNames": ["electron"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "electron major",
+      "prPriority": 10
+    },
+    {
+      "matchPackageNames": ["torch", "torchvision", "torchaudio"],
+      "enabled": false,
+      "description": "ML stack upgrades are gated on the ComfyUI compatibility matrix and handled deliberately via the engine component channel"
+    }
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on the first day of the month"]
+  }
+}
