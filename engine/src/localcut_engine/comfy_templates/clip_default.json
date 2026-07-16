@@ -1,0 +1,79 @@
+{
+  "checkpoint": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "ltx-video-2b-v0.9.5.safetensors" }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": { "clip_name": "t5xxl_fp8_e4m3fn_scaled.safetensors", "type": "ltxv", "device": "default" }
+  },
+  "load_keyframe": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "%%KEYFRAME%%" }
+  },
+  "positive": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "%%PROMPT%%", "clip": ["clip", 0] }
+  },
+  "negative": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "worst quality, inconsistent motion, blurry, jittery, distorted",
+      "clip": ["clip", 0]
+    }
+  },
+  "img_to_video": {
+    "class_type": "LTXVImgToVideo",
+    "inputs": {
+      "positive": ["positive", 0],
+      "negative": ["negative", 0],
+      "vae": ["checkpoint", 2],
+      "image": ["load_keyframe", 0],
+      "width": "%%WIDTH%%",
+      "height": "%%HEIGHT%%",
+      "length": "%%FRAMES%%",
+      "batch_size": 1,
+      "strength": 1.0
+    }
+  },
+  "conditioning": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive": ["img_to_video", 0],
+      "negative": ["img_to_video", 1],
+      "frame_rate": 24
+    }
+  },
+  "sampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "%%SEED%%",
+      "steps": 25,
+      "cfg": 3.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["checkpoint", 0],
+      "positive": ["conditioning", 0],
+      "negative": ["conditioning", 1],
+      "latent_image": ["img_to_video", 2]
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["sampler", 0], "vae": ["checkpoint", 2] }
+  },
+  "create_video": {
+    "class_type": "CreateVideo",
+    "inputs": { "images": ["decode", 0], "fps": 24 }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["create_video", 0],
+      "filename_prefix": "localcut_clip",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  }
+}

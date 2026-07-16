@@ -64,8 +64,10 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
                 id=clip_id,
                 kind=NodeKind.CLIP,
                 params={
+                    "prompt": scene.visual,
                     "motion": scene.motion,
                     "duration_s": scene.duration_s,
+                    "aspect": screenplay.aspect,
                     "mode": "i2v",  # I2V from the approved keyframe
                     "onscreen_text": scene.onscreen_text,
                 },

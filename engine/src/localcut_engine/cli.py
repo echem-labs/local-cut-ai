@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import sys
+from pathlib import Path
 
 import uvicorn
 
@@ -33,6 +34,13 @@ def main(argv: list[str] | None = None) -> int:
     probe = subcommands.add_parser("probe", help="print the hardware profile and exit")
     del probe
 
+    models = subcommands.add_parser("models", help="list manifest models and download status")
+    models.add_argument("--models-dir", default=None)
+
+    download = subcommands.add_parser("download", help="download a model's weights by manifest id")
+    download.add_argument("model_id")
+    download.add_argument("--models-dir", default=None)
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -41,6 +49,9 @@ def main(argv: list[str] | None = None) -> int:
 
         print(probe_hardware().model_dump_json(indent=2))
         return 0
+
+    if args.command in ("models", "download"):
+        return _models_command(args)
 
     overrides = {
         key: value
@@ -77,6 +88,43 @@ def main(argv: list[str] | None = None) -> int:
     from .api.app import create_app
 
     uvicorn.run(create_app(config), host=config.host, port=config.port, log_level="info")
+    return 0
+
+
+def _models_command(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .api.app import _load_manifest
+    from .manifest.downloads import DownloadError, download_model, is_downloaded
+
+    config = EngineConfig.from_env()
+    manifest = _load_manifest(config)
+    models_dir = Path(args.models_dir) if args.models_dir else config.resolved_models_dir
+
+    if args.command == "models":
+        for entry in manifest.models:
+            status = "downloaded" if is_downloaded(entry, models_dir) else (
+                "available" if entry.files else "no-files"
+            )
+            print(f"{entry.id:32} {entry.task:12} {entry.license.id:12} {status}")
+        return 0
+
+    entry = next((m for m in manifest.models if m.id == args.model_id), None)
+    if entry is None:
+        print(f"unknown model id: {args.model_id}", file=sys.stderr)
+        return 1
+
+    async def report(dest: str, done: int, total: int) -> None:
+        if total and done % (256 << 20) < (1 << 20):  # ~every 256 MB
+            print(f"  {dest}: {done / 2**30:.2f} / {total / 2**30:.2f} GiB", flush=True)
+
+    try:
+        paths = asyncio.run(download_model(entry, models_dir, progress=report))
+    except DownloadError as exc:
+        print(f"download failed: {exc}", file=sys.stderr)
+        return 1
+    for path in paths:
+        print(f"ok: {path}")
     return 0
 
 

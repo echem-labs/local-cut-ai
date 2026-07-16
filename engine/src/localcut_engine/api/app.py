@@ -53,18 +53,29 @@ JobId = Annotated[str, PathParam(pattern=r"^[a-f0-9]{12}$")]
 
 
 def _build_backends(config: EngineConfig) -> BackendRegistry:
+    """Build the backend chain from config; first registered wins per node
+    kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
     registry = BackendRegistry()
-    if config.backend == "mock":
-        registry.register(MockBackend())
-        return registry
-    registry.register(LLMScriptBackend(base_url=config.llm_url, model=config.llm_model))
-    registry.register(
-        ComfyUIBackend(
-            base_url=config.comfyui_url,
-            templates_dir=config.data_dir / "comfy-templates",
-        )
-    )
-    registry.register(FFmpegBackend())
+    for name in config.backend_chain:
+        match name:
+            case "mock":
+                registry.register(MockBackend())
+            case "llm":
+                registry.register(
+                    LLMScriptBackend(base_url=config.llm_url, model=config.llm_model)
+                )
+            case "comfy":
+                registry.register(
+                    ComfyUIBackend(
+                        base_url=config.comfyui_url,
+                        templates_dir=config.data_dir / "comfy-templates",
+                        kinds=config.comfy_kinds,
+                    )
+                )
+            case "ffmpeg":
+                registry.register(FFmpegBackend(ffmpeg_bin=config.ffmpeg_bin))
+            case _:
+                raise ValueError(f"unknown backend in chain: {name!r}")
     return registry
 
 

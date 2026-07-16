@@ -28,6 +28,16 @@ class Requirements(BaseModel):
     backends: list[str] = ["cuda"]
 
 
+class ModelFile(BaseModel):
+    """One downloadable weight file. `dest` is relative to the models dir
+    and follows ComfyUI's layout (checkpoints/, vae/, clip/, ...)."""
+
+    url: str
+    dest: str
+    sha256: str = ""
+    size: int = 0
+
+
 class ModelEntry(BaseModel):
     id: str
     task: str  # video.i2v | video.t2v | image.gen | text.llm | speech.tts | music.gen | transcribe
@@ -40,7 +50,7 @@ class ModelEntry(BaseModel):
     speed_score: float = 5.0
     license: LicenseInfo
     sources: list[dict[str, str]] = Field(default_factory=list)
-    sha256: str = ""
+    files: list[ModelFile] = Field(default_factory=list)
     comfy_graph_template: str = ""
 
 

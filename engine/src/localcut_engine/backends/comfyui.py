@@ -1,12 +1,14 @@
 """Headless ComfyUI adapter — process-isolated (GPL containment):
 we talk to it exclusively over its HTTP/WebSocket API, never import its
-code. Serves image (keyframe/thumbnail), video (clip), TTS and music node
-kinds via workflow-JSON templates referenced from the model manifest.
+code. Serves image (keyframe/thumbnail) and video (clip) node kinds via
+workflow-JSON templates; narration/music join once their custom node
+packs are part of the managed ComfyUI component.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib.resources
 import json
 import uuid
 from pathlib import Path
@@ -18,27 +20,32 @@ from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError
 
-_KINDS = {
-    NodeKind.KEYFRAME,
-    NodeKind.THUMBNAIL,
-    NodeKind.CLIP,
-    NodeKind.NARRATION,
-    NodeKind.MUSIC,
-}
-
 _OOM_MARKERS = ("out of memory", "cuda oom", "allocation failed")
+
+# Aspect ratio -> SDXL-friendly resolution.
+_RESOLUTIONS = {
+    "16:9": (1344, 768),
+    "9:16": (768, 1344),
+    "1:1": (1024, 1024),
+}
 
 
 class ComfyUIBackend(ExecutionBackend):
     name = "comfyui"
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8188", templates_dir: Path | None = None):
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8188",
+        templates_dir: Path | None = None,
+        kinds: str = "keyframe,thumbnail,clip",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.templates_dir = templates_dir
+        self.kinds = {NodeKind(k.strip()) for k in kinds.split(",") if k.strip()}
         self.client_id = uuid.uuid4().hex
 
     def supports(self, kind: NodeKind) -> bool:
-        return kind in _KINDS
+        return kind in self.kinds
 
     async def health(self) -> bool:
         try:
@@ -48,33 +55,69 @@ class ComfyUIBackend(ExecutionBackend):
         except httpx.HTTPError:
             return False
 
-    def _load_workflow(self, spec: JobSpec) -> dict:
-        """Resolve the workflow-JSON template for this job's model (the
-        manifest's `comfy_graph_template`) and fill in prompt/seed/inputs."""
-        if self.templates_dir is None:
-            raise GenerationError("comfyui backend has no templates directory configured")
+    def _template_path(self, spec: JobSpec) -> Path:
         template_name = str(spec.params.get("comfy_template") or f"{spec.kind.value}_default.json")
         # Template names are bare filenames from the model manifest; params
         # are user-editable, so a path-shaped value must never leave the dir.
         if Path(template_name).name != template_name:
             raise GenerationError(f"invalid workflow template name: {template_name!r}")
-        template_path = self.templates_dir / template_name
-        if not template_path.exists():
-            raise GenerationError(f"missing ComfyUI workflow template: {template_name}")
-        workflow = json.loads(template_path.read_text())
-        # Convention: templates expose %%PROMPT%% / %%SEED%% placeholders.
-        text = json.dumps(workflow)
-        text = text.replace("%%PROMPT%%", str(spec.params.get("prompt", "")))
-        text = text.replace('"%%SEED%%"', str(spec.seed))
+        if self.templates_dir is not None:
+            override = self.templates_dir / template_name
+            if override.exists():
+                return override
+        packaged = importlib.resources.files("localcut_engine.comfy_templates") / template_name
+        if packaged.is_file():
+            return Path(str(packaged))
+        raise GenerationError(f"missing ComfyUI workflow template: {template_name}")
+
+    def _fill_workflow(self, spec: JobSpec, keyframe_name: str | None) -> dict:
+        """Load the workflow template and substitute %%PLACEHOLDERS%%."""
+        text = self._template_path(spec).read_text()
+        aspect = str(spec.params.get("aspect", "16:9"))
+        width, height = _RESOLUTIONS.get(aspect, _RESOLUTIONS["16:9"])
+        scale = float(spec.params.get("resolution_scale", 1.0))  # OOM ladder
+        width, height = int(width * scale) // 8 * 8, int(height * scale) // 8 * 8
+        prompt = str(spec.params.get("prompt", ""))
+        if spec.kind is NodeKind.CLIP:
+            prompt = f"{prompt}, {spec.params.get('motion', '')}".strip(", ")
+        replacements = {
+            "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
+            '"%%SEED%%"': str(spec.seed),
+            '"%%WIDTH%%"': str(width),
+            '"%%HEIGHT%%"': str(height),
+            "%%KEYFRAME%%": keyframe_name or "",
+            '"%%FRAMES%%"': str(int(float(spec.params.get("duration_s", 5.0)) * 24) + 1),
+        }
+        for placeholder, value in replacements.items():
+            text = text.replace(placeholder, value)
         return json.loads(text)
 
+    async def _upload_input(self, client: httpx.AsyncClient, path: Path) -> str:
+        """Upload a conditioning image (I2V keyframe); returns the server-side
+        name to reference from a LoadImage node."""
+        response = await client.post(
+            f"{self.base_url}/upload/image",
+            files={"image": (path.name, path.read_bytes(), "image/png")},
+            data={"overwrite": "true"},
+        )
+        if response.status_code != 200:
+            raise GenerationError(f"ComfyUI rejected input upload: {response.text[:300]}")
+        payload = response.json()
+        subfolder = payload.get("subfolder", "")
+        return f"{subfolder}/{payload['name']}" if subfolder else payload["name"]
+
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        workflow = self._load_workflow(spec)
-        # Subscribe to events *before* submitting: a fast workflow could
-        # otherwise finish before we connect and we'd wait forever.
-        ws_url = self.base_url.replace("http", "ws", 1) + f"/ws?clientId={self.client_id}"
-        async with websockets.connect(ws_url, max_size=2**24) as ws:
-            async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=60) as client:
+            keyframe_name = None
+            keyframe = ctx.input_artifacts.get("keyframe")
+            if keyframe is not None and spec.kind is NodeKind.CLIP:
+                keyframe_name = await self._upload_input(client, keyframe)
+            workflow = self._fill_workflow(spec, keyframe_name)
+
+            # Subscribe to events *before* submitting: a fast workflow could
+            # otherwise finish before we connect and we'd wait forever.
+            ws_url = self.base_url.replace("http", "ws", 1) + f"/ws?clientId={self.client_id}"
+            async with websockets.connect(ws_url, max_size=2**24) as ws:
                 response = await client.post(
                     f"{self.base_url}/prompt",
                     json={"prompt": workflow, "client_id": self.client_id},
@@ -82,7 +125,7 @@ class ComfyUIBackend(ExecutionBackend):
                 if response.status_code != 200:
                     raise GenerationError(f"ComfyUI rejected workflow: {response.text[:500]}")
                 prompt_id = response.json()["prompt_id"]
-            await self._stream_progress(ws, prompt_id, ctx)
+                await self._stream_progress(ws, prompt_id, ctx)
         return await self._collect_output(prompt_id, spec, ctx)
 
     async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> None:

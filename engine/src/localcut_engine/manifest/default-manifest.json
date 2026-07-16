@@ -45,7 +45,15 @@
       "speed_score": 7.0,
       "license": { "id": "openrail++", "commercial": true, "verdict": "commercial" },
       "sources": [{ "hf": "stabilityai/stable-diffusion-xl-base-1.0" }],
-      "comfy_graph_template": "sdxl_keyframe.json"
+      "files": [
+        {
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
+          "dest": "checkpoints/sd_xl_base_1.0.safetensors",
+          "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+          "size": 6938078334
+        }
+      ],
+      "comfy_graph_template": "keyframe_default.json"
     },
     {
       "id": "flux.1-schnell",
