@@ -53,7 +53,11 @@ class ComfyUIBackend(ExecutionBackend):
         manifest's `comfy_graph_template`) and fill in prompt/seed/inputs."""
         if self.templates_dir is None:
             raise GenerationError("comfyui backend has no templates directory configured")
-        template_name = spec.params.get("comfy_template") or f"{spec.kind.value}_default.json"
+        template_name = str(spec.params.get("comfy_template") or f"{spec.kind.value}_default.json")
+        # Template names are bare filenames from the model manifest; params
+        # are user-editable, so a path-shaped value must never leave the dir.
+        if Path(template_name).name != template_name:
+            raise GenerationError(f"invalid workflow template name: {template_name!r}")
         template_path = self.templates_dir / template_name
         if not template_path.exists():
             raise GenerationError(f"missing ComfyUI workflow template: {template_name}")
@@ -66,39 +70,40 @@ class ComfyUIBackend(ExecutionBackend):
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         workflow = self._load_workflow(spec)
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                f"{self.base_url}/prompt",
-                json={"prompt": workflow, "client_id": self.client_id},
-            )
-            if response.status_code != 200:
-                raise GenerationError(f"ComfyUI rejected workflow: {response.text[:500]}")
-            prompt_id = response.json()["prompt_id"]
-
-        await self._stream_progress(prompt_id, ctx)
-        return await self._collect_output(prompt_id, spec, ctx)
-
-    async def _stream_progress(self, prompt_id: str, ctx: ExecutionContext) -> None:
+        # Subscribe to events *before* submitting: a fast workflow could
+        # otherwise finish before we connect and we'd wait forever.
         ws_url = self.base_url.replace("http", "ws", 1) + f"/ws?clientId={self.client_id}"
         async with websockets.connect(ws_url, max_size=2**24) as ws:
-            async for raw in ws:
-                if isinstance(raw, bytes):
-                    continue  # preview frames — forwarded in a later phase
-                message = json.loads(raw)
-                data = message.get("data", {})
-                if message.get("type") == "progress":
-                    await ctx.progress(data.get("value", 0) / max(1, data.get("max", 1)))
-                elif message.get("type") == "execution_error":
-                    error_text = json.dumps(data).lower()
-                    if any(marker in error_text for marker in _OOM_MARKERS):
-                        raise OOMError(data.get("exception_message", "CUDA out of memory"))
-                    raise GenerationError(data.get("exception_message", "ComfyUI execution error"))
-                elif (
-                    message.get("type") == "executing"
-                    and data.get("node") is None
-                    and data.get("prompt_id") == prompt_id
-                ):
-                    return  # workflow finished
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(
+                    f"{self.base_url}/prompt",
+                    json={"prompt": workflow, "client_id": self.client_id},
+                )
+                if response.status_code != 200:
+                    raise GenerationError(f"ComfyUI rejected workflow: {response.text[:500]}")
+                prompt_id = response.json()["prompt_id"]
+            await self._stream_progress(ws, prompt_id, ctx)
+        return await self._collect_output(prompt_id, spec, ctx)
+
+    async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> None:
+        async for raw in ws:
+            if isinstance(raw, bytes):
+                continue  # preview frames — forwarded in a later phase
+            message = json.loads(raw)
+            data = message.get("data", {})
+            if message.get("type") == "progress":
+                await ctx.progress(data.get("value", 0) / max(1, data.get("max", 1)))
+            elif message.get("type") == "execution_error":
+                error_text = json.dumps(data).lower()
+                if any(marker in error_text for marker in _OOM_MARKERS):
+                    raise OOMError(data.get("exception_message", "CUDA out of memory"))
+                raise GenerationError(data.get("exception_message", "ComfyUI execution error"))
+            elif (
+                message.get("type") == "executing"
+                and data.get("node") is None
+                and data.get("prompt_id") == prompt_id
+            ):
+                return  # workflow finished
 
     async def _collect_output(self, prompt_id: str, spec: JobSpec, ctx: ExecutionContext) -> Path:
         async with httpx.AsyncClient(timeout=30) as client:

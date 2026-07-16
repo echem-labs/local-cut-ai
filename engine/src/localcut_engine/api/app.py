@@ -12,7 +12,16 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -34,6 +43,13 @@ from ..project.store import ProjectStore
 from ..service import ProjectService
 
 logger = logging.getLogger(__name__)
+
+# Path params are identifiers, never paths: reject anything that could act
+# as a filesystem component or glob before it reaches the store layer.
+ProjectId = Annotated[str, PathParam(pattern=r"^[a-f0-9]{10}$")]
+NodeId = Annotated[str, PathParam(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
+OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
+JobId = Annotated[str, PathParam(pattern=r"^[a-f0-9]{12}$")]
 
 
 def _build_backends(config: EngineConfig) -> BackendRegistry:
@@ -158,7 +174,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         return project
 
     @app.get("/projects/{project_id}", dependencies=[Authed])
-    async def get_project(project_id: str) -> dict:
+    async def get_project(project_id: ProjectId) -> dict:
         project = _get_project(project_id)
         return {
             "project": project.model_dump(),
@@ -166,7 +182,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         }
 
     @app.get("/projects/{project_id}/graph", dependencies=[Authed])
-    async def get_graph(project_id: str) -> dict:
+    async def get_graph(project_id: ProjectId) -> dict:
         _get_project(project_id)
         return store.load_graph(project_id).model_dump()
 
@@ -174,27 +190,33 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         ops: list[PatchOp]
 
     @app.post("/projects/{project_id}/patch", dependencies=[Authed])
-    async def patch_project(project_id: str, body: PatchBody) -> dict:
+    async def patch_project(project_id: ProjectId, body: PatchBody) -> dict:
         _get_project(project_id)
-        dirty = service.patch(project_id, body.ops)
+        try:
+            dirty = service.patch(project_id, body.ops)
+        except KeyError as exc:
+            raise HTTPException(status_code=422, detail=f"unknown node: {exc}") from exc
         return {"dirty": sorted(dirty)}
 
     class RegenerateBody(BaseModel):
         seed: int | None = None
 
     @app.post("/projects/{project_id}/nodes/{node_id}/regenerate", dependencies=[Authed])
-    async def regenerate(project_id: str, node_id: str, body: RegenerateBody) -> dict:
+    async def regenerate(project_id: ProjectId, node_id: NodeId, body: RegenerateBody) -> dict:
         _get_project(project_id)
-        service.regenerate(project_id, node_id, body.seed)
+        try:
+            service.regenerate(project_id, node_id, body.seed)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown node: {exc}") from exc
         return {"ok": True}
 
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
-    async def finalize(project_id: str) -> dict:
+    async def finalize(project_id: ProjectId) -> dict:
         _get_project(project_id)
         return {"enqueued": service.finalize(project_id)}
 
     @app.delete("/projects/{project_id}", dependencies=[Authed])
-    async def delete_project(project_id: str) -> dict:
+    async def delete_project(project_id: ProjectId) -> dict:
         if not store.delete(project_id):
             raise HTTPException(status_code=404, detail="project not found")
         return {"ok": True}
@@ -206,7 +228,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         return [j.model_dump() for j in queue.list(project_id)]
 
     @app.post("/jobs/{job_id}/cancel", dependencies=[Authed])
-    async def cancel_job(job_id: str) -> dict:
+    async def cancel_job(job_id: JobId) -> dict:
         if not queue.cancel(job_id):
             raise HTTPException(status_code=409, detail="job is not cancellable")
         return {"ok": True}
@@ -214,7 +236,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     # -- artifacts (playback via HTTP range requests) -------------------
 
     @app.get("/projects/{project_id}/artifacts/{output_hash}", dependencies=[Authed])
-    async def artifact(project_id: str, output_hash: str) -> FileResponse:
+    async def artifact(project_id: ProjectId, output_hash: OutputHash) -> FileResponse:
         _get_project(project_id)
         path = store.resolve_artifact(project_id, output_hash)
         if path is None:

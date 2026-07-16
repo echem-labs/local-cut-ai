@@ -150,6 +150,7 @@ class Scheduler:
             return
         job.status = JobStatus.FAILED
         job.error = f"out of memory after {job.attempt} fallback attempts: {exc}"
+        job.finished_at = time.time()
         self.queue.update(job)
         # The UI renders this as choices, not an error code.
         self.events.publish(

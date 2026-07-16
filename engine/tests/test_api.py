@@ -60,3 +60,16 @@ async def test_manifest_defaults_are_commercial_safe(client):
 
     manifest = ModelManifest.model_validate(response.json())
     assert manifest.lint_defaults() == []  # CI gate: no personal-only defaults
+
+
+async def test_path_params_reject_non_identifier_input(client):
+    # Wildcards / traversal-shaped values must never reach the store layer.
+    assert (await client.get("/projects/%2e%2e%2fescape")).status_code in (404, 422)
+    created = await client.post("/projects", json={"prompt": "x"})
+    pid = created.json()["id"]
+    assert (await client.get(f"/projects/{pid}/artifacts/*")).status_code == 422
+    assert (await client.get(f"/projects/{pid}/artifacts/{'a' * 64}")).status_code in (404, 422)
+    bad_node = await client.post(
+        f"/projects/{pid}/nodes/no-such-node/regenerate", json={}
+    )
+    assert bad_node.status_code == 404
