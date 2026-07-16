@@ -34,10 +34,14 @@ class LLMScriptBackend(ExecutionBackend):
         base_url: str = "http://127.0.0.1:11434/v1",
         model: str = "qwen3:14b",
         cloud_provider: TextGen | None = None,
+        unload_after: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.cloud_provider = cloud_provider
+        # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
+        # before image/video jobs run (LLM → unload → image batch).
+        self.unload_after = unload_after
 
     def supports(self, kind: NodeKind) -> bool:
         return kind is NodeKind.SCRIPT
@@ -54,6 +58,8 @@ class LLMScriptBackend(ExecutionBackend):
             raw = await self.cloud_provider.complete(system=_SYSTEM_PROMPT, prompt=prompt)
         else:
             raw = await self._local_complete(prompt)
+            if self.unload_after:
+                await self._unload()
         await ctx.progress(0.9)
 
         screenplay = self._parse_screenplay(raw)
@@ -78,6 +84,18 @@ class LLMScriptBackend(ExecutionBackend):
             if response.status_code != 200:
                 raise GenerationError(f"local LLM error: {response.text[:500]}")
             return response.json()["choices"][0]["message"]["content"]
+
+    async def _unload(self) -> None:
+        """Best-effort VRAM release via Ollama's native API; llama.cpp and
+        other OpenAI-compatible servers simply 404 and are ignored."""
+        root = self.base_url.removesuffix("/v1")
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    f"{root}/api/generate", json={"model": self.model, "keep_alive": 0}
+                )
+        except httpx.HTTPError:
+            pass
 
     @staticmethod
     def _parse_screenplay(raw: str) -> Screenplay:

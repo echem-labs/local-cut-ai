@@ -33,7 +33,21 @@
         "notes": "commercial with thresholds - verify current terms before shipping as default"
       },
       "sources": [{ "hf": "Lightricks/LTX-Video" }],
-      "comfy_graph_template": "ltx_i2v.json"
+      "files": [
+        {
+          "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.5.safetensors",
+          "dest": "checkpoints/ltx-video-2b-v0.9.5.safetensors",
+          "sha256": "720d15c9f19f7d0f6b2a92bbbc34410e2cfb2f6856a100b38f734fbf973d4adf",
+          "size": 6340729500
+        },
+        {
+          "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn_scaled.safetensors",
+          "dest": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+          "sha256": "a498f0485dc9536735258018417c3fd7758dc3bccc0a645feaa472b34955557a",
+          "size": 5157348688
+        }
+      ],
+      "comfy_graph_template": "clip_default.json"
     },
     {
       "id": "sdxl-base-1.0",
