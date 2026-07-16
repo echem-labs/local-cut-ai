@@ -1,0 +1,61 @@
+/* Design tokens: near-monochrome dark UI, one violet accent,
+   reserved semantic status colors, 4px grid, Inter/system type. */
+:root {
+  /* surfaces: near-black base + two elevation steps */
+  --surface-0: #0e0f12;
+  --surface-1: #16181d;
+  --surface-2: #1e2128;
+  --border: #2a2e37;
+
+  /* text grays — AA on dark surfaces */
+  --text-primary: #e9eaee;
+  --text-secondary: #a9adb8;
+  --text-tertiary: #767b88;
+
+  /* the one accent (violet family) */
+  --accent: #8b7cf6;
+  --accent-hover: #9d90f8;
+  --accent-muted: rgba(139, 124, 246, 0.16);
+
+  /* reserved status colors — never decorative */
+  --status-generating: var(--accent);
+  --status-draft: #d9a13c;
+  --status-final: #4cae6e;
+  --status-failed: #e05c5c;
+  --status-pinned: #a9adb8;
+
+  /* spacing on a 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+
+  /* type: 4-step scale + one display size */
+  --font-ui: "Inter", system-ui, -apple-system, sans-serif;
+  --text-xs: 12px;
+  --text-s: 14px;
+  --text-m: 16px;
+  --text-l: 20px;
+  --text-display: 28px;
+
+  /* named z-layers */
+  --z-base: 0;
+  --z-drawer: 40;
+  --z-tray: 50;
+  --z-modal: 100;
+
+  --motion-fast: 150ms ease-out;
+  --motion-slow: 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-slow: 0ms;
+  }
+}
