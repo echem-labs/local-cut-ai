@@ -36,7 +36,11 @@ class LLMScriptBackend(ExecutionBackend):
         cloud_provider: TextGen | None = None,
         unload_after: bool = True,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        base = base_url.rstrip("/")
+        # Accept both http://host:port and http://host:port/v1 — the chat
+        # endpoint lives under /v1 on Ollama/llama.cpp, native APIs at root.
+        self.root_url = base.removesuffix("/v1")
+        self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
         self.cloud_provider = cloud_provider
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
@@ -70,7 +74,7 @@ class LLMScriptBackend(ExecutionBackend):
     async def _local_complete(self, prompt: str) -> str:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
-                f"{self.base_url}/chat/completions",
+                f"{self.chat_base}/chat/completions",
                 json={
                     "model": self.model,
                     "messages": [
@@ -88,11 +92,10 @@ class LLMScriptBackend(ExecutionBackend):
     async def _unload(self) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and
         other OpenAI-compatible servers simply 404 and are ignored."""
-        root = self.base_url.removesuffix("/v1")
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"{root}/api/generate", json={"model": self.model, "keep_alive": 0}
+                    f"{self.root_url}/api/generate", json={"model": self.model, "keep_alive": 0}
                 )
         except httpx.HTTPError:
             pass

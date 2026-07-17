@@ -93,7 +93,7 @@ class ProjectStore:
         if not output_hash or not generated.is_dir():
             return None
         for p in generated.iterdir():
-            if p.name.startswith(f"{output_hash}.") and not p.name.endswith(".concat.txt"):
+            if p.name.startswith(f"{output_hash}."):
                 return p
         return None
 
@@ -101,8 +101,4 @@ class ProjectStore:
         generated = self.generated_dir(project_id)
         if not generated.is_dir():
             return set()
-        return {
-            p.name.split(".")[0]
-            for p in generated.iterdir()
-            if not p.name.endswith(".concat.txt")
-        }
+        return {p.name.split(".")[0] for p in generated.iterdir()}

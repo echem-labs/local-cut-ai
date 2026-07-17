@@ -17,6 +17,27 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# Port-name conventions shared by the template builder and the backends.
+# One-sided renames would silently misroute artifacts, so both sides import
+# these instead of re-typing the strings.
+SCENE_AUDIO_SUFFIX = ".audio"
+MUSIC_PORT = "music"
+KEYFRAME_PORT = "keyframe"
+TIMING_PORT = "timing"
+DEFAULT_PORT = "default"
+CAPTIONS_PORT = "captions"
+
+# Input ports whose artifacts are optional for assembly: their absence
+# degrades the output (no music bed) instead of failing the job.
+OPTIONAL_PORTS = {MUSIC_PORT}
+
+
+def scene_sort_key(scene_id: str) -> tuple:
+    """Numeric-aware ordering for canonical scene ids ('s1', 's2', …)."""
+    tail = scene_id[1:]
+    return (not tail.isdigit(), int(tail) if tail.isdigit() else 0, scene_id)
+
+
 class NodeKind(StrEnum):
     SCRIPT = "script"
     SCENE = "scene"

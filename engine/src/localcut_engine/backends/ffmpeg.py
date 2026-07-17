@@ -1,7 +1,12 @@
-"""FFmpeg assembly backend — deterministic, non-AI: concat
-with transitions, audio mix, caption sidecar, export presets. Prefers
-hardware encoders where present; CPU fallback is openh264/libx264-free
-builds per the licensing matrix.
+"""FFmpeg assembly backend — deterministic, non-AI: per-scene timing, audio
+mix, concat, export.
+
+Timing authority: narration duration *drives* scene duration — each clip is
+trimmed (or looped) to its narration plus padding, never the other way
+around. Music is a constant-level bed under the narration, looped/trimmed to
+the final cut (ducking and fades land with the audio-v2 pass). Prefers
+hardware/openh264 encoders per the licensing policy; mpeg4 is the
+everything-else fallback — never GPL x264.
 """
 
 from __future__ import annotations
@@ -9,17 +14,24 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import tempfile
 from pathlib import Path
 
+from ..aspects import EXPORT_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
-from ..graph.model import NodeKind
+from ..graph.model import (
+    DEFAULT_PORT,
+    MUSIC_PORT,
+    SCENE_AUDIO_SUFFIX,
+    NodeKind,
+    scene_sort_key,
+)
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
 _KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT, NodeKind.CAPTIONS}
 
-
-def ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
+NARRATION_PAD_S = 0.35  # breathing room after each narration line
+MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
 
 
 class FFmpegBackend(ExecutionBackend):
@@ -27,6 +39,11 @@ class FFmpegBackend(ExecutionBackend):
 
     def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
         self.ffmpeg_bin = ffmpeg_bin
+        bin_path = Path(ffmpeg_bin)
+        self.ffprobe_bin = (
+            str(bin_path.with_name("ffprobe")) if bin_path.parent != Path(".") else "ffprobe"
+        )
+        self._encoder: str | None = None
 
     def supports(self, kind: NodeKind) -> bool:
         return kind in _KINDS
@@ -41,70 +58,211 @@ class FFmpegBackend(ExecutionBackend):
                 return await self._export(spec, ctx)
         raise GenerationError(f"ffmpeg backend cannot handle {spec.kind}")
 
+    # -- timeline: an explicit edit decision list (JSON) -----------------------
+
     def _build_timeline(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        """Timeline artifact = an explicit edit decision list (JSON): ordered
-        video segments + audio lanes. Downstream export consumes it."""
-        clips = sorted(
-            (port, str(path))
+        narration = {
+            port.removesuffix(SCENE_AUDIO_SUFFIX): str(path)
             for port, path in ctx.input_artifacts.items()
-            if not port.endswith(".audio") and port not in ("music",)
-        )
-        audio = sorted(
-            (port, str(path))
-            for port, path in ctx.input_artifacts.items()
-            if port.endswith(".audio")
+            if port.endswith(SCENE_AUDIO_SUFFIX)
+        }
+        scenes = sorted(
+            (
+                (port, str(path))
+                for port, path in ctx.input_artifacts.items()
+                if not port.endswith(SCENE_AUDIO_SUFFIX) and port != MUSIC_PORT
+            ),
+            key=lambda item: scene_sort_key(item[0]),
         )
         timeline = {
             "aspect": spec.params.get("aspect", "16:9"),
-            "video": [{"scene": port, "src": src, "transition": "cut"} for port, src in clips],
-            "narration": [{"scene": port, "src": src} for port, src in audio],
-            "music": str(ctx.input_artifacts.get("music", "")),
-            "ducking": {"enabled": True, "amount_db": -10},
+            "video": [
+                {
+                    "scene": port,
+                    "src": src,
+                    "narration": narration.get(port),
+                    "transition": "cut",
+                }
+                for port, src in scenes
+            ],
+            "music": str(ctx.input_artifacts.get(MUSIC_PORT, "")),
+            "music_volume": MUSIC_BED_VOLUME,
         }
         out = ctx.output_path(spec.output_hash, ".timeline.json")
         out.write_text(json.dumps(timeline, indent=2))
         return out
 
     def _build_captions(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        # v1 stub: forced alignment (faster-whisper) lands with the audio
-        # pipeline; until then emit an empty-but-valid sidecar.
+        # v1 stub: forced alignment (faster-whisper) lands with the caption
+        # styling pass; until then emit an empty-but-valid sidecar.
         out = ctx.output_path(spec.output_hash, ".srt")
         out.write_text("")
         return out
 
+    # -- export: scenes → timed segments → concat → music bed ------------------
+
     async def _export(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        timeline_path = ctx.input_artifacts.get("default")
+        timeline_path = ctx.input_artifacts.get(DEFAULT_PORT)
         if timeline_path is None or not Path(timeline_path).exists():
             raise GenerationError("export job is missing its timeline input")
         timeline = json.loads(Path(timeline_path).read_text())
-        sources = [segment["src"] for segment in timeline["video"] if Path(segment["src"]).exists()]
-        if not sources:
-            raise GenerationError("timeline has no renderable video segments")
+        segments = timeline["video"]
+        if not segments:
+            raise GenerationError("timeline has no video segments")
+        lost = [s["scene"] for s in segments if not Path(s["src"]).exists()]
+        if lost:
+            # Never silently ship a shorter video: a referenced clip that
+            # vanished is corruption, and regenerating it is the fix.
+            raise GenerationError(f"clip artifacts missing for scenes: {lost}")
 
-        out = ctx.output_path(spec.output_hash, ".mp4")
-        concat_list = ctx.output_path(spec.output_hash, ".concat.txt")
-        concat_list.write_text("".join(f"file '{src}'\n" for src in sources))
-        cmd = [
-            self.ffmpeg_bin,
-            "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-c:v", "libopenh264" if await self._has_encoder("libopenh264") else "mpeg4",
-            "-pix_fmt", "yuv420p",
-            str(out),
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _, stderr = await process.communicate()
+        width, height = resolution_for(EXPORT_RESOLUTIONS, timeline.get("aspect", "16:9"))
+        encoder = await self._pick_encoder()
+        # Never under generated/ — everything there is treated as an artifact.
+        work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
+        try:
+            scene_files: list[Path] = []
+            total = len(segments)
+            for index, segment in enumerate(segments):
+                scene_files.append(
+                    await self._render_segment(segment, work / f"seg{index:03}.mp4",
+                                               width, height, encoder)
+                )
+                await ctx.progress(0.8 * (index + 1) / total)
+
+            # Concat *filter*, not the demuxer: stream-copy concat of AAC
+            # segments accumulates timestamp gaps (apad's trailing frames),
+            # drifting total duration ~0.4s per scene. The filter re-encode
+            # is sample-exact; TS-intermediate copy concat is the future
+            # optimization if export time ever matters.
+            cut = work / "cut.mp4"
+            inputs: list[str] = []
+            for path in scene_files:
+                inputs += ["-i", str(path)]
+            chains = "".join(f"[{i}:v][{i}:a]" for i in range(len(scene_files)))
+            await self._run(
+                *inputs,
+                "-filter_complex", f"{chains}concat=n={len(scene_files)}:v=1:a=1[v][a]",
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", encoder, "-c:a", "aac", "-b:a", "160k",
+                str(cut),
+            )
+
+            out = ctx.output_path(spec.output_hash, ".mp4")
+            music = timeline.get("music", "")
+            if music and await self._probe_duration(Path(music)) is not None:
+                volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
+                await self._run(
+                    "-i", str(cut), "-stream_loop", "-1", "-i", music,
+                    "-filter_complex",
+                    f"[1:a]volume={volume}[m];"
+                    "[0:a][m]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[a]",
+                    "-map", "0:v", "-map", "[a]",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    str(out),
+                )
+            else:
+                await self._run("-i", str(cut), "-c", "copy", str(out))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         await ctx.progress(1.0)
-        if process.returncode != 0:
-            raise GenerationError(f"ffmpeg export failed: {stderr.decode()[-500:]}")
         return out
 
-    async def _has_encoder(self, name: str) -> bool:
-        process = await asyncio.create_subprocess_exec(
-            self.ffmpeg_bin, "-hide_banner", "-encoders",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+    async def _render_segment(
+        self, segment: dict, out: Path, width: int, height: int, encoder: str
+    ) -> Path:
+        """One scene: video trimmed/looped to narration length + padding."""
+        clip = segment["src"]
+        clip_duration = await self._probe_duration(Path(clip))
+        if clip_duration is None:
+            raise GenerationError(f"scene {segment.get('scene')}: clip is not decodable media")
+
+        narration = segment.get("narration")
+        narration_duration = (
+            await self._probe_duration(Path(narration)) if narration else None
         )
+        if narration and narration_duration is None:
+            # A narration the timeline references but ffprobe can't read is
+            # corruption — fail loudly rather than shipping a silent scene.
+            raise GenerationError(
+                f"scene {segment.get('scene')}: narration is not decodable media"
+            )
+        target = (
+            narration_duration + NARRATION_PAD_S
+            if narration_duration is not None
+            else clip_duration
+        )
+
+        args: list[str] = []
+        if clip_duration < target:
+            args += ["-stream_loop", "-1"]  # loop short clips up to target
+        args += ["-i", clip]
+        if narration_duration is not None:
+            args += ["-i", str(narration)]
+            audio = ["-map", "1:a", "-af", "apad", "-c:a", "aac", "-b:a", "160k"]
+        else:
+            args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+            audio = ["-map", "1:a", "-c:a", "aac", "-b:a", "160k"]
+        vf = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},fps=24,format=yuv420p"
+        )
+        await self._run(
+            *args, "-t", f"{target:.3f}", "-map", "0:v", *audio,
+            "-vf", vf, "-c:v", encoder, str(out),
+        )
+        return out
+
+    # -- helpers ------------------------------------------------------------------
+
+    async def _run(self, *args: str) -> None:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.ffmpeg_bin, "-y", "-hide_banner", *args,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise GenerationError(f"ffmpeg failed: {stderr.decode()[-600:]}")
+
+    async def _probe_duration(self, path: Path) -> float | None:
+        if not path.exists():
+            return None
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+                "-of", "csv=p=0", str(path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError as exc:
+            raise GenerationError(
+                f"ffprobe binary not found next to ffmpeg: {self.ffprobe_bin} — "
+                "assembly requires both"
+            ) from exc
         stdout, _ = await process.communicate()
-        return name in stdout.decode()
+        try:
+            return float(stdout.decode().strip())
+        except ValueError:
+            return None  # not decodable media (e.g. a mock placeholder)
+
+    async def _pick_encoder(self) -> str:
+        """First candidate that actually encodes a frame wins — being listed
+        in -encoders doesn't mean it can open (NVENC needs driver/GPU access,
+        which headless or containerized environments may lack)."""
+        if self._encoder is None:
+            # No libx264: GPL encoders are excluded by the licensing policy.
+            for candidate in ("h264_nvenc", "libopenh264", "mpeg4"):
+                process = await asyncio.create_subprocess_exec(
+                    self.ffmpeg_bin, "-y", "-hide_banner",
+                    "-f", "lavfi", "-i", "color=black:size=256x256:duration=0.1",
+                    "-frames:v", "1", "-c:v", candidate, "-f", "null", "-",
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
+                await process.communicate()
+                if process.returncode == 0:
+                    self._encoder = candidate
+                    break
+            else:
+                raise GenerationError("no working H.264/MPEG-4 encoder in this ffmpeg build")
+        return self._encoder

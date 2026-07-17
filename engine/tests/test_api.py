@@ -84,7 +84,9 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     from localcut_engine.graph.model import NodeKind
 
     assert EngineConfig(backend="llm,comfy,mock").backend_chain == ["llm", "comfy", "mock"]
-    assert EngineConfig(backend="local,mock").backend_chain == ["llm", "comfy", "ffmpeg", "mock"]
+    assert EngineConfig(backend="local,mock").backend_chain == [
+        "llm", "comfy", "kokoro", "ffmpeg", "mock",
+    ]
 
     config = EngineConfig(
         data_dir=tmp_path, backend="llm,comfy,mock", comfy_kinds="keyframe,thumbnail"
@@ -95,5 +97,23 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     assert registry.resolve(NodeKind.CLIP).name == "mock"  # not in comfy_kinds
     assert registry.resolve(NodeKind.EXPORT).name == "mock"
 
+    # The full-local chain must resolve every generative kind (no dead lanes).
+    local = _build_backends(EngineConfig(data_dir=tmp_path, backend="local"))
+    for kind in (NodeKind.SCRIPT, NodeKind.KEYFRAME, NodeKind.CLIP, NodeKind.MUSIC,
+                 NodeKind.NARRATION, NodeKind.TIMELINE, NodeKind.EXPORT):
+        local.resolve(kind)  # raises if unrouted
+
     with pytest.raises(ValueError, match="unknown backend"):
         _build_backends(EngineConfig(data_dir=tmp_path, backend="bogus"))
+
+
+async def test_manifest_default_slate_is_downloadable(client):
+    """Every default model a backend error message points at must actually
+    be fetchable: entries for tasks we ship backends for need files[]."""
+    from localcut_engine.manifest.model import ModelManifest
+
+    response = await client.get("/models/manifest")
+    manifest = ModelManifest.model_validate(response.json())
+    kokoro = next(m for m in manifest.models if m.id == "kokoro-82m")
+    assert kokoro.files, "kokoro-82m must be downloadable (backend suggests it)"
+    assert all(f.sha256 for f in kokoro.files)

@@ -1,0 +1,83 @@
+"""Kokoro TTS backend — the fast narration tier. Runs on CPU via ONNX
+(kokoro-onnx), so it never competes with the GPU pipeline; the quality
+tier (Chatterbox, with cloning + consent gate) arrives as a second
+SpeechGen backend later.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from pathlib import Path
+
+from ..graph.compiler import JobSpec
+from ..graph.model import NodeKind
+from .base import ExecutionBackend, ExecutionContext, GenerationError
+
+# Style-brief keywords → Kokoro voice ids (proper voice picker UI is Phase 1).
+# Explicit gender words outrank tone words so "deep female voice" never
+# resolves to a male voice.
+_VOICE_MAP = [
+    ("female", "af_sarah"),
+    ("woman", "af_sarah"),
+    ("male", "am_michael"),
+    ("man", "am_michael"),
+    ("british", "bf_emma"),
+    ("deep", "am_onyx"),
+    ("energetic", "af_bella"),
+]
+_DEFAULT_VOICE = "af_sarah"
+
+
+def pick_voice(brief: str) -> str:
+    words = set(re.findall(r"[a-z]+", brief.lower()))
+    for keyword, voice in _VOICE_MAP:
+        if keyword in words:  # whole words only: "female" must not match "male"
+            return voice
+    return _DEFAULT_VOICE
+
+
+class KokoroBackend(ExecutionBackend):
+    name = "kokoro"
+
+    def __init__(self, models_dir: Path) -> None:
+        self.model_path = models_dir / "tts" / "kokoro-v1.0.onnx"
+        self.voices_path = models_dir / "tts" / "voices-v1.0.bin"
+        self._engine = None
+        self._lock = asyncio.Lock()
+
+    def supports(self, kind: NodeKind) -> bool:
+        return kind is NodeKind.NARRATION
+
+    def _load(self):
+        if self._engine is None:
+            if not self.model_path.exists() or not self.voices_path.exists():
+                raise GenerationError(
+                    "Kokoro model files missing — run: localcut-engine download kokoro-82m"
+                )
+            from kokoro_onnx import Kokoro
+
+            self._engine = Kokoro(str(self.model_path), str(self.voices_path))
+        return self._engine
+
+    async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        text = str(spec.params.get("text", "")).strip()
+        if not text:
+            raise GenerationError("narration node has no text")
+        voice = str(spec.params.get("voice_id") or pick_voice(str(spec.params.get("voice", ""))))
+        speed = float(spec.params.get("speed", 1.0))
+
+        def synth() -> Path:
+            import soundfile as sf
+
+            engine = self._load()
+            samples, sample_rate = engine.create(text, voice=voice, speed=speed, lang="en-us")
+            out = ctx.output_path(spec.output_hash, ".wav")
+            sf.write(str(out), samples, sample_rate)
+            return out
+
+        # ONNX inference is blocking; one at a time keeps memory bounded.
+        async with self._lock:
+            out = await asyncio.to_thread(synth)
+        await ctx.progress(1.0)
+        return out

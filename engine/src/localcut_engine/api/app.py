@@ -7,6 +7,7 @@ Rules enforced here, not by convention:
 - Version handshake on /health for frontend↔engine mismatch handling.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
@@ -28,6 +29,7 @@ from .. import ENGINE_API_VERSION, __version__
 from ..backends.base import BackendRegistry
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
+from ..backends.kokoro import KokoroBackend
 from ..backends.llm import LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..config import EngineConfig
@@ -71,6 +73,8 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         kinds=config.comfy_kinds,
                     )
                 )
+            case "kokoro":
+                registry.register(KokoroBackend(models_dir=config.resolved_models_dir))
             case "ffmpeg":
                 registry.register(FFmpegBackend(ffmpeg_bin=config.ffmpeg_bin))
             case _:
@@ -135,7 +139,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/system", dependencies=[Authed])
     async def system() -> dict:
-        profile = probe_hardware()
+        # Hardware doesn't change at runtime; probe once, off the event loop
+        # (nvidia-smi can block for seconds under GPU load).
+        if not hasattr(app.state, "hardware_profile"):
+            app.state.hardware_profile = await asyncio.to_thread(
+                probe_hardware, str(config.data_dir)
+            )
+        profile = app.state.hardware_profile
         manifest = load_manifest(config)
         return {
             "hardware": profile.model_dump(),

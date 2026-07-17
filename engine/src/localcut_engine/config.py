@@ -9,7 +9,7 @@ import os
 import secrets
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class EngineConfig(BaseModel):
@@ -17,18 +17,23 @@ class EngineConfig(BaseModel):
     port: int = 7830
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".localcut")
-    models_dir: Path | None = None  # default: <data_dir>/models (ComfyUI layout)
+    models_dir: Path | None = None  # defaulted to <data_dir>/models by the validator
     # Comma-separated backend chain, first match wins per node kind.
-    # Shorthands: "mock", "local" (= llm,comfy,ffmpeg). A trailing "mock"
-    # makes a hybrid: real backends where available, mock for the rest.
+    # Shorthands: "mock", "local" (= llm,comfy,kokoro,ffmpeg). A trailing
+    # "mock" makes a hybrid: real backends where available, mock for the rest.
     backend: str = "mock"
     comfyui_url: str = "http://127.0.0.1:8188"
-    # Node kinds ComfyUI serves; narration/music join once their custom
-    # node packs are part of the managed ComfyUI component.
-    comfy_kinds: str = "keyframe,thumbnail,clip"
+    # Node kinds ComfyUI serves (music = ACE-Step via native ComfyUI nodes).
+    comfy_kinds: str = "keyframe,thumbnail,clip,music"
     llm_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3:14b"
     ffmpeg_bin: str = "ffmpeg"
+
+    @model_validator(mode="after")
+    def _default_models_dir(self) -> EngineConfig:
+        if self.models_dir is None:
+            self.models_dir = self.data_dir / "models"
+        return self
 
     @classmethod
     def from_env(cls) -> EngineConfig:
@@ -49,7 +54,8 @@ class EngineConfig(BaseModel):
 
     @property
     def resolved_models_dir(self) -> Path:
-        return self.models_dir if self.models_dir is not None else self.data_dir / "models"
+        assert self.models_dir is not None  # set by the validator
+        return self.models_dir
 
     @property
     def backend_chain(self) -> list[str]:
@@ -57,7 +63,7 @@ class EngineConfig(BaseModel):
         for name in self.backend.split(","):
             name = name.strip()
             if name == "local":
-                chain += ["llm", "comfy", "ffmpeg"]
+                chain += ["llm", "comfy", "kokoro", "ffmpeg"]
             elif name:
                 chain.append(name)
         return chain

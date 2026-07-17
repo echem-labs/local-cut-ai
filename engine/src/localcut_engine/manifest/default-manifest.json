@@ -110,11 +110,25 @@
       "id": "kokoro-82m",
       "task": "speech.tts",
       "family": "kokoro",
-      "requirements": { "vram_gb": 2, "ram_gb": 8, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": { "vram_gb": 0, "ram_gb": 8, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
       "quality_score": 7.0,
       "speed_score": 9.5,
       "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "hexgrad/Kokoro-82M" }]
+      "sources": [{ "hf": "hexgrad/Kokoro-82M" }],
+      "files": [
+        {
+          "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+          "dest": "tts/kokoro-v1.0.onnx",
+          "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+          "size": 325185536
+        },
+        {
+          "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+          "dest": "tts/voices-v1.0.bin",
+          "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+          "size": 28214398
+        }
+      ]
     },
     {
       "id": "chatterbox-tts",
@@ -127,15 +141,24 @@
       "sources": [{ "hf": "ResembleAI/chatterbox" }]
     },
     {
-      "id": "ace-step-1.5",
+      "id": "ace-step-v1-3.5b",
       "task": "music.gen",
       "family": "ace-step",
-      "version": "1.5",
+      "version": "1.0",
       "requirements": { "vram_gb": 8, "ram_gb": 16, "disk_gb": 8, "backends": ["cuda", "mps"] },
       "quality_score": 7.8,
       "speed_score": 8.5,
       "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "ACE-Step/ACE-Step-v1.5" }]
+      "sources": [{ "hf": "Comfy-Org/ACE-Step_ComfyUI_repackaged" }],
+      "files": [
+        {
+          "url": "https://huggingface.co/Comfy-Org/ACE-Step_ComfyUI_repackaged/resolve/main/all_in_one/ace_step_v1_3.5b.safetensors",
+          "dest": "checkpoints/ace_step_v1_3.5b.safetensors",
+          "sha256": "f07cad74c4adce52ca14ca1bdf74cf3c14cbafb0823b95eca4459467fa369f40",
+          "size": 7699743341
+        }
+      ],
+      "comfy_graph_template": "music_default.json"
     },
     {
       "id": "faster-whisper-large-v3",

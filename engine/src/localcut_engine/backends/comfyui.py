@@ -1,8 +1,8 @@
 """Headless ComfyUI adapter — process-isolated (GPL containment):
 we talk to it exclusively over its HTTP/WebSocket API, never import its
-code. Serves image (keyframe/thumbnail) and video (clip) node kinds via
-workflow-JSON templates; narration/music join once their custom node
-packs are part of the managed ComfyUI component.
+code. Serves image (keyframe/thumbnail), video (clip) and music (ACE-Step)
+node kinds via workflow-JSON templates; narration runs on the dedicated
+TTS backend.
 """
 
 from __future__ import annotations
@@ -16,18 +16,22 @@ from pathlib import Path
 import httpx
 import websockets
 
+from ..aspects import IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError
 
 _OOM_MARKERS = ("out of memory", "cuda oom", "allocation failed")
 
-# Aspect ratio -> SDXL-friendly resolution.
-_RESOLUTIONS = {
-    "16:9": (1344, 768),
-    "9:16": (768, 1344),
-    "1:1": (1024, 1024),
-}
+# Placeholders _fill_workflow substitutes into workflow templates. Exported
+# so template-validity tests iterate the same table the code uses.
+PLACEHOLDERS = ("%%PROMPT%%", "%%SEED%%", "%%WIDTH%%", "%%HEIGHT%%",
+                "%%KEYFRAME%%", "%%FRAMES%%", "%%SECONDS%%")
+
+# A workflow that produces no websocket message for this long is considered
+# wedged; the job fails instead of starving the GPU-serial scheduler forever.
+# Generous because cold model loads emit no progress events.
+INACTIVITY_TIMEOUT_S = 600
 
 
 class ComfyUIBackend(ExecutionBackend):
@@ -46,14 +50,6 @@ class ComfyUIBackend(ExecutionBackend):
 
     def supports(self, kind: NodeKind) -> bool:
         return kind in self.kinds
-
-    async def health(self) -> bool:
-        try:
-            async with httpx.AsyncClient(timeout=3) as client:
-                response = await client.get(f"{self.base_url}/system_stats")
-                return response.status_code == 200
-        except httpx.HTTPError:
-            return False
 
     def _template_path(self, spec: JobSpec) -> Path:
         template_name = str(spec.params.get("comfy_template") or f"{spec.kind.value}_default.json")
@@ -74,19 +70,39 @@ class ComfyUIBackend(ExecutionBackend):
         """Load the workflow template and substitute %%PLACEHOLDERS%%."""
         text = self._template_path(spec).read_text()
         aspect = str(spec.params.get("aspect", "16:9"))
-        width, height = _RESOLUTIONS.get(aspect, _RESOLUTIONS["16:9"])
+        is_video = spec.kind is NodeKind.CLIP
+        table = VIDEO_RESOLUTIONS if is_video else IMAGE_RESOLUTIONS
+        divisor = 32 if is_video else 8  # LTX latents need /32 dims
+        width, height = resolution_for(table, aspect)
         scale = float(spec.params.get("resolution_scale", 1.0))  # OOM ladder
-        width, height = int(width * scale) // 8 * 8, int(height * scale) // 8 * 8
+        width = max(divisor, int(width * scale) // divisor * divisor)
+        height = max(divisor, int(height * scale) // divisor * divisor)
+
         prompt = str(spec.params.get("prompt", ""))
-        if spec.kind is NodeKind.CLIP:
+        if is_video:
             prompt = f"{prompt}, {spec.params.get('motion', '')}".strip(", ")
+        elif spec.kind is NodeKind.MUSIC:
+            prompt = f"{spec.params.get('brief', '')}, instrumental".strip(", ")
+
+        duration_raw = spec.params.get("duration_s")
+        if duration_raw is None:
+            duration_raw = spec.params.get("target_duration_s", 5)
+        duration_s = float(duration_raw)
+        if duration_s <= 0:
+            raise GenerationError(f"invalid duration for {spec.node_id}: {duration_raw!r}")
+        # LTX frame counts must be 8n+1.
+        frames = max(9, round(duration_s * 24 / 8) * 8 + 1)
+        # %%PROMPT%% substitutes LAST: user text may contain placeholder
+        # tokens, and substituting it first would let later replacements
+        # rewrite the user's prompt (or corrupt the workflow JSON).
         replacements = {
-            "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
             '"%%SEED%%"': str(spec.seed),
             '"%%WIDTH%%"': str(width),
             '"%%HEIGHT%%"': str(height),
             "%%KEYFRAME%%": keyframe_name or "",
-            '"%%FRAMES%%"': str(int(float(spec.params.get("duration_s", 5.0)) * 24) + 1),
+            '"%%FRAMES%%"': str(frames),
+            '"%%SECONDS%%"': str(duration_s),
+            "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
         }
         for placeholder, value in replacements.items():
             text = text.replace(placeholder, value)
@@ -129,7 +145,16 @@ class ComfyUIBackend(ExecutionBackend):
         return await self._collect_output(prompt_id, spec, ctx)
 
     async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> None:
-        async for raw in ws:
+        while True:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=INACTIVITY_TIMEOUT_S)
+            except TimeoutError as exc:
+                raise GenerationError(
+                    f"ComfyUI produced no events for {INACTIVITY_TIMEOUT_S}s — "
+                    "the workflow appears wedged"
+                ) from exc
+            except websockets.ConnectionClosed:
+                return  # socket gone — fall through to history collection
             if isinstance(raw, bytes):
                 continue  # preview frames — forwarded in a later phase
             message = json.loads(raw)
@@ -172,6 +197,11 @@ class ComfyUIBackend(ExecutionBackend):
                             "type": item.get("type", "output"),
                         }
                         file_response = await client.get(f"{self.base_url}/view", params=params)
+                        if file_response.status_code != 200:
+                            raise GenerationError(
+                                f"ComfyUI /view returned {file_response.status_code} "
+                                f"for {item['filename']}"
+                            )
                         suffix = Path(item["filename"]).suffix or ".bin"
                         out = ctx.output_path(spec.output_hash, suffix)
                         out.write_bytes(file_response.content)

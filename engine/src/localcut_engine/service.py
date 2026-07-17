@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .events import EventBus
 from .graph.compiler import compile_graph
-from .graph.model import NodeKind, StoryGraph
+from .graph.model import NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
 from .graph.templates import expand_screenplay, prompt_template_graph
 from .jobs.models import Job, JobStatus
@@ -74,12 +74,15 @@ class ProjectService:
 
     # -- compile & enqueue ---------------------------------------------------
 
-    def _frozen_pins(self, project_id: str, graph: StoryGraph) -> dict[str, str]:
+    def _frozen_pins(
+        self, project_id: str, graph: StoryGraph, jobs: list[Job]
+    ) -> dict[str, str]:
         """Pinned node id → output hash of its newest completed artifact.
         Derived from job history (persistent), so pins survive restarts and
-        upstream edits alike."""
+        upstream edits alike. `jobs` is the caller's newest-first job list —
+        listed once and shared to avoid re-reading the queue."""
         frozen: dict[str, str] = {}
-        for job in self.queue.list(project_id, 1000):  # newest first
+        for job in jobs:  # newest first
             node = graph.nodes.get(job.spec.node_id)
             if (
                 node is not None
@@ -94,7 +97,8 @@ class ProjectService:
 
     def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
         cached = self.store.cached_hashes(project_id)
-        frozen = self._frozen_pins(project_id, graph)
+        history = self.queue.list(project_id, 1000)
+        frozen = self._frozen_pins(project_id, graph, history)
         if quality == "final":
             # Finals re-render generation nodes even when a draft is cached;
             # quality is part of the job, not the node hash, so drop cached
@@ -112,7 +116,7 @@ class ProjectService:
         # Skip nodes that already have an identical job in flight.
         active_hashes = {
             job.spec.output_hash
-            for job in self.queue.list(project_id)
+            for job in history
             if job.status in (JobStatus.QUEUED, JobStatus.RENDERING)
         }
         enqueued = 0
@@ -149,13 +153,16 @@ class ProjectService:
     def scene_board(self, project_id: str) -> dict:
         """Scene cards + statuses, derived from graph × jobs × artifacts."""
         graph = self.store.load_graph(project_id)
-        jobs = {job.spec.node_id: job for job in reversed(self.queue.list(project_id, 1000))}
+        history = self.queue.list(project_id, 1000)
+        jobs = {job.spec.node_id: job for job in reversed(history)}
         cached = self.store.cached_hashes(project_id)
         # Frozen pins hash against their existing artifact (see compiler).
-        memo: dict[str, str] = dict(self._frozen_pins(project_id, graph))
+        memo: dict[str, str] = dict(self._frozen_pins(project_id, graph, history))
 
-        def node_state(node_id: str) -> dict:
-            node = graph.nodes[node_id]
+        def node_state(node_id: str) -> dict | None:
+            node = graph.nodes.get(node_id)
+            if node is None:
+                return None  # removed via patch — the card shows what's left
             job = jobs.get(node_id)
             out_hash = graph.output_hash(node_id, memo)
             if node.pinned:
@@ -180,10 +187,7 @@ class ProjectService:
 
         scenes = []
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}
-        scene_ids = sorted(
-            raw_ids,
-            key=lambda s: (not s[1:].isdigit(), int(s[1:]) if s[1:].isdigit() else 0, s),
-        )
+        scene_ids = sorted(raw_ids, key=scene_sort_key)
         for sid in scene_ids:
             scenes.append(
                 {
@@ -194,8 +198,8 @@ class ProjectService:
                 }
             )
         aux = {
-            n: node_state(n)
+            n: state
             for n in ("script", "music", "captions", "timeline", "export")
-            if n in graph.nodes
+            if (state := node_state(n)) is not None
         }
         return {"scenes": scenes, "aux": aux}

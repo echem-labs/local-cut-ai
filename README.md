@@ -46,17 +46,19 @@ that serves a node kind wins, so a trailing `mock` gives a hybrid pipeline:
 ```bash
 uv run localcut-engine models                    # manifest + download status
 uv run localcut-engine download sdxl-base-1.0    # resumable, checksummed → ~/.localcut/models
-uv run localcut-engine serve --backend llm,comfy,ffmpeg,mock
+uv run localcut-engine serve --backend local,mock
 ```
 
-`llm` speaks any OpenAI-compatible server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`,
-`LOCALCUT_LLM_MODEL`); `comfy` drives a headless ComfyUI on `:8188` via
-workflow-JSON templates (packaged defaults for SDXL keyframes/thumbnails and
-LTX-Video clips; override per-file in `~/.localcut/comfy-templates/`);
-`ffmpeg` handles assembly/export (`LOCALCUT_FFMPEG_BIN`). Kinds ComfyUI serves
-are gated by `LOCALCUT_COMFY_KINDS` (default `keyframe,thumbnail,clip`).
-Point ComfyUI at the shared weights dir with an `extra_model_paths.yaml`
-whose `base_path` is `~/.localcut/models`.
+`local` expands to `llm,comfy,kokoro,ffmpeg`: `llm` speaks any OpenAI-compatible
+server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`, `LOCALCUT_LLM_MODEL`); `comfy`
+drives a headless ComfyUI on `:8188` via workflow-JSON templates (packaged
+defaults for SDXL keyframes/thumbnails, LTX-Video clips, and ACE-Step music;
+override per-file in `~/.localcut/comfy-templates/`); `kokoro` synthesizes
+narration on CPU (`localcut-engine download kokoro-82m`); `ffmpeg` handles
+assembly/export (`LOCALCUT_FFMPEG_BIN`). Kinds ComfyUI serves are gated by
+`LOCALCUT_COMFY_KINDS` (default `keyframe,thumbnail,clip,music`). Point ComfyUI
+at the shared weights dir with an `extra_model_paths.yaml` whose `base_path`
+is `~/.localcut/models`.
 
 **Desktop app** (Node ≥22):
 

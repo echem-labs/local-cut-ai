@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..backends.base import BackendRegistry, ExecutionContext, OOMError
+from ..graph.model import OPTIONAL_PORTS, NodeKind
 from ..events import EventBus
 from .models import Job, JobStatus
 from .queue import JobQueue
@@ -92,7 +93,8 @@ class Scheduler:
         for port, input_hash in job.spec.input_hashes.items():
             path = self.resolve_artifact(job.project_id, input_hash)
             if path is None:
-                missing.append(port)
+                if port not in OPTIONAL_PORTS:
+                    missing.append(port)
             else:
                 inputs[port] = path
 
@@ -102,7 +104,7 @@ class Scheduler:
             report_progress=report,
         )
         try:
-            if missing and job.spec.kind.value in ("clip", "timeline", "export"):
+            if missing and job.spec.kind in (NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT):
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind)
             artifact = await backend.execute(job.spec, ctx)

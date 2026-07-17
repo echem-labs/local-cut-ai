@@ -36,6 +36,7 @@ interface AppState {
 }
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+let unsubscribe: (() => void) | null = null;
 
 export const useApp = create<AppState>((set, get) => ({
   client: null,
@@ -48,6 +49,7 @@ export const useApp = create<AppState>((set, get) => ({
   selectedNode: null,
 
   connect: async () => {
+    if (get().client) return; // idempotent under StrictMode double-mount
     const { connection, error } = await window.localcut.getEngineConnection();
     if (!connection) {
       set({ engineError: error ?? "engine unavailable" });
@@ -56,13 +58,16 @@ export const useApp = create<AppState>((set, get) => ({
     const client = new EngineClient(connection);
     set({ client, engineError: null });
 
-    client.subscribe(
+    unsubscribe?.(); // never leak a previous subscription
+    unsubscribe = client.subscribe(
       (event: EngineEvent) => {
         // Debounced board refresh keeps cards live without hammering the API.
         if (event.type.startsWith("job.") || event.type === "project.expanded") {
           if (refreshTimer) clearTimeout(refreshTimer);
           refreshTimer = setTimeout(() => {
-            void get().refreshBoard();
+            get()
+              .refreshBoard()
+              .catch((err) => console.warn("board refresh failed:", err));
           }, 150);
         }
       },
@@ -107,10 +112,14 @@ export const useApp = create<AppState>((set, get) => ({
   refreshBoard: async () => {
     const { client, currentProject } = get();
     if (!client || !currentProject) return;
+    const projectId = currentProject.id;
     const [{ board }, jobs] = await Promise.all([
-      client.getProject(currentProject.id),
-      client.listJobs(currentProject.id),
+      client.getProject(projectId),
+      client.listJobs(projectId),
     ]);
+    // A late response for a previously open project must not clobber the
+    // one the user has since opened.
+    if (get().currentProject?.id !== projectId) return;
     set({ board, jobs });
   },
 
@@ -124,8 +133,14 @@ export const useApp = create<AppState>((set, get) => ({
   editPrompt: async (nodeId, prompt) => {
     const { client, currentProject } = get();
     if (!client || !currentProject) return;
+    // Different node kinds read different content params.
+    const key = nodeId.endsWith(".narration")
+      ? "text"
+      : nodeId === "music"
+        ? "brief"
+        : "prompt";
     await client.patch(currentProject.id, [
-      { op: "set_params", node_id: nodeId, params: { prompt } },
+      { op: "set_params", node_id: nodeId, params: { [key]: prompt } },
     ]);
     await get().refreshBoard();
   },

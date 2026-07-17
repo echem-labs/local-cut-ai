@@ -9,7 +9,16 @@ captions, timeline and export nodes.
 from __future__ import annotations
 
 from ..schema import Screenplay
-from .model import Node, NodeKind, StoryGraph
+from .model import (
+    KEYFRAME_PORT,
+    MUSIC_PORT,
+    SCENE_AUDIO_SUFFIX,
+    CAPTIONS_PORT,
+    TIMING_PORT,
+    Node,
+    NodeKind,
+    StoryGraph,
+)
 
 
 def prompt_template_graph(
@@ -40,8 +49,20 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     if "script" not in graph.nodes:
         raise KeyError("template graph has no script node")
 
+    # LLM-emitted scene ids are untrusted (arbitrary shapes, duplicates).
+    # Canonicalize to s1..sN in screenplay order — node ids, sort order and
+    # port names all rely on this shape.
+    for index, scene in enumerate(screenplay.scenes):
+        scene.id = f"s{index + 1}"
+
     timeline = graph.add_node(
-        Node(id="timeline", kind=NodeKind.TIMELINE, params={"aspect": screenplay.aspect})
+        Node(
+            id="timeline",
+            kind=NodeKind.TIMELINE,
+            # edl_version is part of the node hash: bumping it invalidates
+            # cached timeline artifacts when the EDL schema changes.
+            params={"aspect": screenplay.aspect, "edl_version": 2},
+        )
     )
 
     for scene in screenplay.scenes:
@@ -81,12 +102,12 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             )
         )
         graph.connect("script", kf_id)
-        graph.connect(kf_id, clip_id, port="keyframe")
+        graph.connect(kf_id, clip_id, port=KEYFRAME_PORT)
         graph.connect("script", narr_id)
         # Narration duration drives scene duration (not vice versa).
-        graph.connect(narr_id, clip_id, port="timing")
+        graph.connect(narr_id, clip_id, port=TIMING_PORT)
         graph.connect(clip_id, timeline.id, port=scene.id)
-        graph.connect(narr_id, timeline.id, port=f"{scene.id}.audio")
+        graph.connect(narr_id, timeline.id, port=f"{scene.id}{SCENE_AUDIO_SUFFIX}")
 
     graph.add_node(
         Node(
@@ -99,7 +120,7 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         )
     )
     graph.connect("script", "music")
-    graph.connect("music", "timeline", port="music")
+    graph.connect("music", "timeline", port=MUSIC_PORT)
 
     graph.add_node(Node(id="captions", kind=NodeKind.CAPTIONS, params={"style": "word-timed"}))
     graph.connect("timeline", "captions")
@@ -112,5 +133,5 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         )
     )
     graph.connect("timeline", "export")
-    graph.connect("captions", "export", port="captions")
+    graph.connect("captions", "export", port=CAPTIONS_PORT)
     return graph

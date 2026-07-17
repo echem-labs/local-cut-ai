@@ -9,6 +9,7 @@ verified against the manifest's sha256 before being moved into place.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -58,7 +59,7 @@ async def download_file(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if dest.exists():
-        if not file.sha256 or _sha256_of(dest) == file.sha256:
+        if not file.sha256 or await asyncio.to_thread(_sha256_of, dest) == file.sha256:
             return dest
         dest.unlink()  # corrupt/stale — refetch
 
@@ -94,7 +95,8 @@ async def download_file(
             await client.aclose()
 
     if file.sha256:
-        actual = _sha256_of(part)
+        # Hashing a multi-GB file must not stall the event loop.
+        actual = await asyncio.to_thread(_sha256_of, part)
         if actual != file.sha256:
             part.unlink(missing_ok=True)  # do not resume from poisoned bytes
             raise ChecksumMismatch(

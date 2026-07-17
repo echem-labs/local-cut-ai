@@ -1,0 +1,46 @@
+{
+  "checkpoint": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "ace_step_v1_3.5b.safetensors" }
+  },
+  "latent": {
+    "class_type": "EmptyAceStepLatentAudio",
+    "inputs": { "seconds": "%%SECONDS%%", "batch_size": 1 }
+  },
+  "positive": {
+    "class_type": "TextEncodeAceStepAudio",
+    "inputs": {
+      "clip": ["checkpoint", 1],
+      "tags": "%%PROMPT%%",
+      "lyrics": "[inst]",
+      "lyrics_strength": 0.99
+    }
+  },
+  "negative": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": { "conditioning": ["positive", 0] }
+  },
+  "sampler": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "%%SEED%%",
+      "steps": 27,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1.0,
+      "model": ["checkpoint", 0],
+      "positive": ["positive", 0],
+      "negative": ["negative", 0],
+      "latent_image": ["latent", 0]
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": { "samples": ["sampler", 0], "vae": ["checkpoint", 2] }
+  },
+  "save": {
+    "class_type": "SaveAudio",
+    "inputs": { "audio": ["decode", 0], "filename_prefix": "localcut_music" }
+  }
+}

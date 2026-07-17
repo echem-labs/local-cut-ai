@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -52,7 +53,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "probe":
         from .hardware.probe import probe_hardware
 
-        print(probe_hardware().model_dump_json(indent=2))
+        config = EngineConfig.from_env()
+        config.data_dir.mkdir(parents=True, exist_ok=True)
+        print(probe_hardware(str(config.data_dir)).model_dump_json(indent=2))
         return 0
 
     if args.command in ("models", "download"):
@@ -71,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     config = EngineConfig(**{**EngineConfig.from_env().model_dump(), **overrides})
 
-    if config.host not in ("127.0.0.1", "localhost", "::1") and args.token is None:
+    token_configured = args.token is not None or os.environ.get("LOCALCUT_TOKEN")
+    if config.host not in ("127.0.0.1", "localhost", "::1") and not token_configured:
         parser.error(
             "network bind requires an explicit --token (pairing); "
             "see the docs for remote-engine setup"
@@ -82,8 +86,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.announce_fd3:
         try:
-            import os
-
             os.write(3, (connection_info + "\n").encode())
         except OSError:
             print(connection_info, flush=True)
@@ -92,7 +94,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from .api.app import create_app
 
-    uvicorn.run(create_app(config), host=config.host, port=config.port, log_level="info")
+    # access_log=False: request lines would log ?token=… query strings.
+    uvicorn.run(
+        create_app(config), host=config.host, port=config.port,
+        log_level="info", access_log=False,
+    )
     return 0
 
 

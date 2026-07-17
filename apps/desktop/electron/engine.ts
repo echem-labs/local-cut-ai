@@ -63,8 +63,23 @@ export class EngineManager {
       if (!this.child) throw new Error("engine process exited during startup");
       try {
         const response = await fetch(`${this.connection!.url}/health`);
-        if (response.ok) return;
-      } catch {
+        if (response.ok) {
+          // /health is unauthenticated — make sure this is OUR engine, not
+          // a stale instance from a crashed session still holding the port.
+          const authed = await fetch(`${this.connection!.url}/projects`, {
+            headers: { Authorization: `Bearer ${this.connection!.token}` },
+          });
+          if (authed.status === 401) {
+            throw new Error(
+              `another engine is already running on ${this.connection!.url} — quit it or set LOCALCUT_ENGINE_PORT`,
+            );
+          }
+          return;
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("another engine")) {
+          throw error;
+        }
         /* not up yet */
       }
       await new Promise((resolve) => setTimeout(resolve, HEALTH_INTERVAL_MS));
