@@ -431,9 +431,15 @@ export const useApp = create<AppState>((set, get) => {
   // Concurrent callers share the same attempt; a second establish while one
   // is mid-flight would subscribe twice and leak the first socket.
   const establishOnce = () => {
-    establishing ??= establish().finally(() => {
-      establishing = null;
-    });
+    if (!establishing) {
+      const p = establish().finally(() => {
+        // Only clear the slot if THIS attempt still owns it — switchEngine may
+        // have replaced it with a fresh establish for the new engine, and
+        // nulling that one would let a redundant concurrent establish spawn.
+        if (establishing === p) establishing = null;
+      });
+      establishing = p;
+    }
     return establishing;
   };
 
@@ -509,7 +515,10 @@ export const useApp = create<AppState>((set, get) => {
       // to trigger a refresh (never, for an idle project).
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(id),
-        client.listJobs(id),
+        // Jobs are secondary: a transient /jobs failure must not abort opening
+        // the project (it would surface as an unhandled rejection or a
+        // misleading "create failed"). Empty is fine — a refresh repopulates.
+        client.listJobs(id).catch(() => [] as Job[]),
       ]);
       set({ currentProject: project, board, jobs, selectedNode: null });
     },

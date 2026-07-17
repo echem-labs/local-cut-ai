@@ -47,8 +47,11 @@ export function parsePairingCode(code: string): RemotePairing {
   // that terminates on localhost. A cleartext link to any other host would put
   // the bearer token and every provider key on the wire with no TLS pinning to
   // stop a MITM — the entire pinning protection would be bypassed. Refuse it.
+  // parsed.hostname keeps the IPv6 brackets ("[::1]"); strip them so an
+  // IPv6-loopback (e.g. an SSH-forwarded remote) is recognised as loopback.
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
   const loopback = ["localhost", "127.0.0.1", "::1"];
-  if (parsed.protocol === "http:" && !loopback.includes(parsed.hostname)) {
+  if (parsed.protocol === "http:" && !loopback.includes(host)) {
     throw new Error("a remote engine must use https — pair over TLS, not cleartext http");
   }
   if (!token) throw new Error("pairing code carries no token");

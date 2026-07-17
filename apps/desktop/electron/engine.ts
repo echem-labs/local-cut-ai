@@ -60,23 +60,26 @@ export class EngineManager {
 
   private async spawnAndWait(): Promise<EngineConnection> {
     const { cmd, args, cwd, connection } = this.command();
-    this.child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    this.child.stdout?.on("data", (chunk: Buffer) =>
+    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    this.child = child;
+    child.stdout?.on("data", (chunk: Buffer) =>
       console.log(`[engine] ${chunk.toString().trimEnd()}`),
     );
-    this.child.stderr?.on("data", (chunk: Buffer) =>
+    child.stderr?.on("data", (chunk: Buffer) =>
       console.error(`[engine] ${chunk.toString().trimEnd()}`),
     );
-    // Without an 'error' listener a spawn failure (e.g. `uv` not on PATH) is
-    // rethrown as an uncaught exception that crashes the whole app; capture it
-    // so waitHealthy fails gracefully instead.
-    this.child.on("error", (err) => {
+    // Only clear this.child if THIS child is still the current one: a
+    // previously-killed child's late 'error'/'exit' must not detach a newer
+    // child that has since replaced it (which would orphan the healthy engine
+    // and wedge startup). Without the 'error' listener a spawn failure (e.g.
+    // `uv` not on PATH) would also crash the app as an uncaught exception.
+    child.on("error", (err) => {
       console.error(`[engine] failed to spawn: ${err.message}`);
-      this.child = null;
+      if (this.child === child) this.child = null;
     });
-    this.child.on("exit", (code) => {
+    child.on("exit", (code) => {
       console.error(`[engine] exited with code ${code}`);
-      this.child = null;
+      if (this.child === child) this.child = null;
     });
     try {
       await this.waitHealthy(connection);

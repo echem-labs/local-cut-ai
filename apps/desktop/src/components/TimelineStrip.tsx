@@ -108,11 +108,16 @@ export function TimelineStrip() {
                 event.preventDefault();
                 if (dragged && dragged !== sceneId) {
                   const from = order.indexOf(dragged);
-                  // Land the dragged scene just before the drop target,
-                  // consistently for both directions — a forward drag must
-                  // account for its own removal shifting later indices left,
-                  // or it lands one slot past where it was dropped.
-                  move(from, from < index ? index - 1 : index);
+                  // Insert before this chip when dropped on its left half,
+                  // after it on the right half — so a scene can reach every
+                  // slot including the ends, consistently in both directions.
+                  // Adjust for the dragged item's own removal shifting later
+                  // indices left when it sits before the target.
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const after = event.clientX > rect.left + rect.width / 2;
+                  let to = after ? index + 1 : index;
+                  if (from < to) to -= 1;
+                  move(from, to);
                 }
                 setDragged(null);
               }}
