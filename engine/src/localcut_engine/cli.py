@@ -42,6 +42,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write the connection info JSON to fd 3 (used by the desktop shell)",
     )
+    serve.add_argument(
+        "--no-tls",
+        action="store_true",
+        help="serve plain HTTP on a network bind (only sensible inside a "
+        "VPN/tailnet that already encrypts the link)",
+    )
 
     probe = subcommands.add_parser("probe", help="print the hardware profile and exit")
     del probe
@@ -80,13 +86,28 @@ def main(argv: list[str] | None = None) -> int:
     }
     config = EngineConfig(**{**EngineConfig.from_env().model_dump(), **overrides})
 
+    network_bind = config.host not in ("127.0.0.1", "localhost", "::1")
     token_configured = args.token is not None or os.environ.get("LOCALCUT_TOKEN")
-    if config.host not in ("127.0.0.1", "localhost", "::1") and not token_configured:
+    if network_bind and not token_configured:
         parser.error(
             "network bind requires an explicit --token (pairing); "
             "see the docs for remote-engine setup"
         )
 
+    # Remote engine mode: non-localhost serves HTTPS with a self-signed,
+    # fingerprint-pinned certificate (generated once under the data dir).
+    ssl_args: dict = {}
+    fingerprint: str | None = None
+    if network_bind and not args.no_tls:
+        from .tls import ensure_certificate
+
+        config.data_dir.mkdir(parents=True, exist_ok=True)
+        cert_path, key_path, fingerprint = ensure_certificate(
+            config.data_dir / "tls", [config.host]
+        )
+        ssl_args = {"ssl_certfile": str(cert_path), "ssl_keyfile": str(key_path)}
+
+    scheme = "https" if ssl_args else "http"
     connection_info = json.dumps({"host": config.host, "port": config.port, "token": config.token})
     if args.announce_fd3:
         try:
@@ -95,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
             print(connection_info, flush=True)
     else:
         print(f"LOCALCUT_ENGINE {connection_info}", flush=True)
+    if network_bind:
+        _print_pairing(scheme, config.host, config.port, config.token, fingerprint)
 
     from .api.app import create_app
 
@@ -105,8 +128,46 @@ def main(argv: list[str] | None = None) -> int:
         port=config.port,
         log_level="info",
         access_log=False,
+        **ssl_args,
     )
     return 0
+
+
+def _lan_address(bind_host: str) -> str:
+    """The address a laptop should dial: a bind-all host advertises the
+    machine's primary outbound interface, best-effort."""
+    if bind_host not in ("0.0.0.0", "::"):
+        return bind_host
+    import socket
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 1))  # TEST-NET: no packets actually sent
+            return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: str | None) -> None:
+    """The block a user copies to the frontend: human-readable connection
+    facts plus a single base64url pairing code carrying all of them."""
+    import base64
+
+    url = f"{scheme}://{_lan_address(host)}:{port}"
+    payload: dict = {"url": url, "token": token}
+    if fingerprint:
+        payload["fingerprint"] = fingerprint
+    code = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    lines = [
+        "",
+        "Remote engine ready — pair from Settings → Remote engine:",
+        f"  url:          {url}",
+    ]
+    if fingerprint:
+        pretty = ":".join(fingerprint[i : i + 2] for i in range(0, len(fingerprint), 2))
+        lines.append(f"  fingerprint:  {pretty}")
+    lines += [f"  pairing code: {code}", ""]
+    print("\n".join(lines), flush=True)
 
 
 def _models_command(args: argparse.Namespace) -> int:

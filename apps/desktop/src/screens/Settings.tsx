@@ -15,12 +15,24 @@ const KEY_IDS: Record<string, ProviderKeyId> = {
  * info. Key material flows through the shell (OS keychain → engine), so
  * this screen only ever renders presence and status. */
 export function Settings() {
-  const { client, system, closeSettings, resetFirstRun, refreshModels } = useApp();
+  const {
+    client,
+    system,
+    closeSettings,
+    resetFirstRun,
+    refreshModels,
+    remoteEngine,
+    pairRemote,
+    unpairRemote,
+  } = useApp();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [presence, setPresence] = useState<ProviderKeyPresence | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairError, setPairError] = useState<string | null>(null);
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -75,6 +87,18 @@ export function Settings() {
   };
 
   const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
+
+  const submitPairing = () => {
+    if (pairBusy || !pairingCode.trim()) return;
+    setPairBusy(true);
+    setPairError(null);
+    void pairRemote(pairingCode.trim())
+      .then((error) => {
+        setPairError(error);
+        if (!error) setPairingCode("");
+      })
+      .finally(() => setPairBusy(false));
+  };
 
   return (
     <div className="settings">
@@ -143,6 +167,56 @@ export function Settings() {
         <h2>Model library</h2>
         <p className="hint">Download more local models any time — jobs pick them up immediately.</p>
         <ModelLibrary showActions />
+      </section>
+
+      <section>
+        <h2>Remote engine</h2>
+        <p className="hint">
+          Run <code>localcut-engine serve --host 0.0.0.0 --token …</code> on a GPU box, then
+          paste its pairing code here — this laptop becomes the remote control. Projects and
+          renders live with the engine.
+        </p>
+        {remoteEngine ? (
+          <div className="provider-row">
+            <div className="grow">
+              <div className="name">Paired with {client?.baseUrl ?? "remote engine"}</div>
+              <div className="meta">All generation runs on the remote engine.</div>
+            </div>
+            <button
+              className="btn-ghost"
+              disabled={pairBusy}
+              onClick={() => {
+                setPairBusy(true);
+                setPairError(null);
+                void unpairRemote()
+                  .then(setPairError)
+                  .finally(() => setPairBusy(false));
+              }}
+            >
+              {pairBusy ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </div>
+        ) : (
+          <div className="provider-row">
+            <input
+              placeholder="Paste pairing code…"
+              value={pairingCode}
+              onChange={(event) => setPairingCode(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") submitPairing();
+              }}
+              aria-label="Pairing code"
+            />
+            <button
+              className="btn-primary"
+              disabled={pairBusy || !pairingCode.trim()}
+              onClick={submitPairing}
+            >
+              {pairBusy ? "Pairing…" : "Pair"}
+            </button>
+          </div>
+        )}
+        {pairError && <div className="banner error">{pairError}</div>}
       </section>
 
       <section>

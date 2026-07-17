@@ -9,6 +9,8 @@ import { contextBridge, ipcRenderer } from "electron";
  */
 contextBridge.exposeInMainWorld("localcut", {
   getEngineConnection: () => ipcRenderer.invoke("engine:connection"),
+  pairEngine: (code: string) => ipcRenderer.invoke("engine:pair", code),
+  unpairEngine: () => ipcRenderer.invoke("engine:unpair"),
   setProviderKeys: (keys: Record<string, string>) =>
     ipcRenderer.invoke("providers:set-keys", keys),
   getProviderKeyPresence: () => ipcRenderer.invoke("providers:key-presence"),

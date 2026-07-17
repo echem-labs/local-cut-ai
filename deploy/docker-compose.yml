@@ -1,0 +1,48 @@
+# Remote engine on a GPU box: the headless LocalCut engine plus the Ollama
+# it uses for scripts and natural-language edits. Start it, read the pairing
+# code from `docker compose logs engine`, and paste it into the desktop
+# app's Settings → Remote engine.
+#
+#   LOCALCUT_TOKEN="$(openssl rand -base64 32)" docker compose up -d
+#
+# ComfyUI (keyframes/clips/music) is intentionally not declared here: GPU
+# ComfyUI setups are personal (custom nodes, model paths, quant choices).
+# Run yours on the host or as your own container and point the engine at it
+# with LOCALCUT_COMFYUI_URL; without one, those node kinds fall back to the
+# mock backend so the pipeline still runs end to end.
+
+services:
+  engine:
+    build: ../engine
+    restart: unless-stopped
+    environment:
+      LOCALCUT_TOKEN: ${LOCALCUT_TOKEN:?set LOCALCUT_TOKEN to a long random pairing token}
+      LOCALCUT_BACKEND: ${LOCALCUT_BACKEND:-llm,comfy,kokoro,align,ffmpeg,mock}
+      LOCALCUT_LLM_URL: http://ollama:11434/v1
+      LOCALCUT_LLM_MODEL: ${LOCALCUT_LLM_MODEL:-qwen3:14b}
+      LOCALCUT_COMFYUI_URL: ${LOCALCUT_COMFYUI_URL:-http://host.docker.internal:8188}
+    volumes:
+      - localcut-data:/data
+    ports:
+      - "7830:7830"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  localcut-data:
+  ollama:

@@ -101,6 +101,25 @@ validated patch ops the inspector uses — only the dirty subgraph re-renders.
 Edits run on the local script LLM by default; pass `model: "cloud:…"` to
 opt a single edit into a BYOK provider.
 
+**Remote engine.** The engine is a server the app happens to launch — so it
+can just as well run headless on a GPU box while a laptop drives it:
+
+```bash
+localcut-engine serve --host 0.0.0.0 --token "$(openssl rand -base64 32)"
+# or, with Docker (engine + Ollama; see deploy/docker-compose.yml):
+LOCALCUT_TOKEN="$(openssl rand -base64 32)" docker compose -f deploy/docker-compose.yml up -d
+```
+
+A network bind serves HTTPS with a self-signed certificate and prints a
+pairing block — URL, certificate fingerprint, and a one-line pairing code.
+Paste the code into Settings → Remote engine on the laptop: the frontend
+pins that exact certificate (fingerprint match, both in Chromium and the
+shell's own requests) and sends the token as bearer auth. Projects, models,
+and renders live with the engine; the laptop is a remote control — close it
+mid-batch and the box keeps rendering. `--no-tls` exists for VPN/tailnet
+links that already encrypt the path; for internet use prefer a tailnet over
+port forwarding.
+
 **Cloud (BYOK).** Nodes whose `model` is `cloud:*` route to provider adapters
 instead of the local chain — `cloud:claude-*` (Anthropic), `cloud:gpt-*`
 (OpenAI), `cloud:gemini-*` (Google) for scripts; `cloud:kling-2.5`,

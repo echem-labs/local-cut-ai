@@ -33,7 +33,10 @@ declare global {
       getEngineConnection: () => Promise<{
         connection: { url: string; token: string } | null;
         error: string | null;
+        remote?: boolean;
       }>;
+      pairEngine: (code: string) => Promise<{ ok: boolean; error: string | null }>;
+      unpairEngine: () => Promise<{ ok: boolean; error: string | null }>;
       setProviderKeys: (
         keys: Partial<Record<ProviderKeyId, string>>,
       ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
@@ -70,6 +73,8 @@ interface AppState {
   // One natural-language edit at a time — the LLM call is slow and a second
   // plan compiled against the pre-edit view would fight the first.
   editBusy: boolean;
+  // True when the connection points at a paired remote engine (GPU box).
+  remoteEngine: boolean;
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
@@ -103,6 +108,8 @@ interface AppState {
   refreshModels: () => Promise<void>;
   startDownload: (modelId: string) => Promise<void>;
   cancelDownload: (modelId: string) => Promise<void>;
+  pairRemote: (code: string) => Promise<string | null>;
+  unpairRemote: () => Promise<string | null>;
   finishFirstRun: () => void;
   resetFirstRun: () => void;
   openSettings: () => void;
@@ -308,13 +315,13 @@ export const useApp = create<AppState>((set, get) => {
   const establish = async () => {
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
-    const { connection, error } = await window.localcut.getEngineConnection();
+    const { connection, error, remote } = await window.localcut.getEngineConnection();
     if (!connection) {
-      set({ client: null, engineError: error ?? "engine unavailable" });
+      set({ client: null, engineError: error ?? "engine unavailable", remoteEngine: false });
       return;
     }
     const client = new EngineClient(connection);
-    set({ client, engineError: null });
+    set({ client, engineError: null, remoteEngine: remote === true });
 
     unsubscribe = client.subscribe(
       (event: EngineEvent) => {
@@ -390,6 +397,7 @@ export const useApp = create<AppState>((set, get) => {
     firstRunDone: localStorage.getItem(FIRST_RUN_KEY) === "1",
     settingsOpen: false,
     editBusy: false,
+    remoteEngine: false,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -624,6 +632,22 @@ export const useApp = create<AppState>((set, get) => {
         console.warn(`cancel ${modelId} failed:`, err);
       }
       await get().refreshModels();
+    },
+
+    pairRemote: async (code) => {
+      const { ok, error } = await window.localcut.pairEngine(code);
+      if (!ok) return error ?? "pairing failed";
+      // The engine changed under us: drop per-engine state and reconnect.
+      set({ currentProject: null, board: null, jobs: [], projects: [], models: [] });
+      await establishOnce();
+      return null;
+    },
+
+    unpairRemote: async () => {
+      const { ok, error } = await window.localcut.unpairEngine();
+      set({ currentProject: null, board: null, jobs: [], projects: [], models: [] });
+      await establishOnce();
+      return ok ? null : (error ?? "disconnect failed");
     },
 
     finishFirstRun: () => {
