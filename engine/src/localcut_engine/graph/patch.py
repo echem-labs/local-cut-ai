@@ -74,10 +74,20 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 node = graph.nodes[op.node_id]
                 node.pinned = False
                 node.frozen_hash = None
-                continue
+                # Unlike pinning (which freezes at the current output),
+                # unpinning CAN change a node's effective output: it stops
+                # resolving to the frozen artifact. Fall through to dirty the
+                # node and its downstream cone — otherwise a graph edited
+                # upstream while this node was pinned never re-renders on unpin.
             case "add_node":
                 if op.node is None:
                     raise ValueError("add_node requires a node")
+                # Same reserved-param discipline as set_params: a client must
+                # not be able to smuggle a server-owned flag (e.g.
+                # voice_consent) in on a freshly added node either.
+                op.node.params = {
+                    k: v for k, v in op.node.params.items() if k not in _RESERVED_PARAMS
+                }
                 graph.add_node(op.node)
             case "remove_node":
                 dirty |= graph.downstream_of(op.node_id)

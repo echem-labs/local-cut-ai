@@ -292,3 +292,39 @@ def test_revision_ignores_unrelated_nodes():
     # But a change to s1 itself does move it.
     graph.nodes["s1.keyframe"].params["prompt"] = "changed"
     assert graph_revision(graph, "s1") != r_s1
+
+
+def test_captions_unhashable_value_is_dropped_not_raised():
+    """A list/dict captions value must be dropped with a warning, never raise
+    TypeError from `value in {set}` (which nothing catches, 500ing /edit)."""
+    graph = make_graph(1)
+    plan = EditPlan.model_validate(
+        {
+            "summary": "",
+            "edits": [{"action": "update", "node_id": "export", "params": {"captions": ["burn"]}}],
+        }
+    )
+    ops, warnings = compile_edits(graph, plan)
+    assert ops == []  # nothing applied
+    assert any("captions" in w for w in warnings)
+
+
+def test_overlay_non_text_value_is_dropped():
+    """A dict/list overlay would str()-coerce to a Python repr burned on
+    screen — it must be dropped with a warning like the other branches."""
+    graph = make_graph(1)
+    plan = EditPlan.model_validate(
+        {
+            "summary": "",
+            "edits": [
+                {
+                    "action": "update",
+                    "node_id": "timeline",
+                    "params": {"overlays": {"s1": {"text": "x"}}},
+                }
+            ],
+        }
+    )
+    ops, warnings = compile_edits(graph, plan)
+    assert ops == []
+    assert any("on-screen text" in w for w in warnings)

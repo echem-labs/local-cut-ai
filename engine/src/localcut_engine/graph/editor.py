@@ -186,7 +186,10 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
         warnings.append(f"{label}: must be true or false")
         return _DROP
     if kind is NodeKind.EXPORT and key == "captions":
-        if value in _CAPTION_MODES:
+        # `value in _CAPTION_MODES` hashes value — a list/dict from the model
+        # would raise TypeError (which nothing catches, 500ing /edit), so gate
+        # on str first, exactly like the transitions branch below.
+        if isinstance(value, str) and value in _CAPTION_MODES:
             return value
         warnings.append(f"{label}: must be one of {sorted(_CAPTION_MODES)}")
         return _DROP
@@ -223,8 +226,15 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
                     continue
                 if trim:
                     clean[sid] = trim
-            else:  # overlays — None clears a title
-                clean[sid] = None if entry is None else str(entry)[:_MAX_OVERLAY]
+            else:  # overlays — None clears a title, a scalar sets it
+                if entry is None:
+                    clean[sid] = None
+                elif isinstance(entry, (str, int, float)) and not isinstance(entry, bool):
+                    clean[sid] = str(entry)[:_MAX_OVERLAY]
+                else:
+                    # A list/dict would str()-coerce to a Python repr burned
+                    # verbatim on screen — drop it like the other branches do.
+                    warnings.append(f"{label}[{sid}]: on-screen text must be text")
         return clean or _DROP
     # Everything else on the whitelist is prose (prompts, narration, briefs).
     return _clean_text(value, _MAX_TEXT, warnings, label)

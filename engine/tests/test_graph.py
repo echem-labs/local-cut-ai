@@ -263,3 +263,64 @@ def test_set_params_cannot_forge_voice_consent():
         apply_patch(
             graph, [PatchOp(op="connect", node_id="s1.narration", src="sneak", port="voice_ref")]
         )
+
+
+def test_add_node_cannot_forge_voice_consent():
+    """The reserved-param strip must also cover add_node — otherwise a client
+    can create an asset node carrying a forged voice_consent and defeat the
+    voice_ref guard without ever calling set_params."""
+    from localcut_engine.graph.model import Node, NodeKind
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    import pytest
+
+    graph = expand_screenplay(
+        prompt_template_graph("p"),
+        Screenplay(
+            title="t",
+            scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+        ),
+    )
+    apply_patch(
+        graph,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="forged",
+                node=Node(
+                    id="forged",
+                    kind=NodeKind.ASSET,
+                    params={"sha256": "z", "voice_consent": True},
+                ),
+            )
+        ],
+    )
+    assert "voice_consent" not in graph.nodes["forged"].params  # forge stripped
+    with pytest.raises(ValueError, match="consented voice-sample"):
+        apply_patch(
+            graph, [PatchOp(op="connect", node_id="s1.narration", src="forged", port="voice_ref")]
+        )
+
+
+def test_unpin_dirties_node_and_its_cone():
+    """Unpinning can change a node's effective output (it stops resolving to
+    the frozen artifact), so it must dirty the node and its downstream cone —
+    a bare 'continue' would report nothing dirty and leave stale artifacts."""
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = expand_screenplay(
+        prompt_template_graph("p"),
+        Screenplay(
+            title="t",
+            scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+        ),
+    )
+    assert apply_patch(graph, [PatchOp(op="pin", node_id="s1.clip")]) == set()  # pin dirties nothing
+    dirty = apply_patch(graph, [PatchOp(op="unpin", node_id="s1.clip")])
+    assert "s1.clip" in dirty
+    assert graph.downstream_of("s1.clip") <= dirty  # the whole cone re-renders
+    assert not graph.nodes["s1.clip"].pinned
