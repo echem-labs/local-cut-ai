@@ -74,16 +74,68 @@ export interface HardwareGPU {
 export interface SystemInfo {
   hardware: {
     os: string;
+    arch: string;
     ram_gb: number;
+    disk_free_gb: number;
     gpus: HardwareGPU[];
+    primary_gpu: HardwareGPU | null;
     tier: "S" | "A" | "B" | "C";
   };
   recommendations: {
     task: string;
-    model: { id: string; license: { id: string; verdict: string } } | null;
+    model: ModelEntry | null;
     reason: string;
   }[];
   backend_mode: string;
+}
+
+export type LicenseVerdict = "commercial" | "conditions" | "personal-only";
+
+export interface ModelLicense {
+  id: string;
+  commercial: boolean;
+  verdict: LicenseVerdict;
+  notes: string;
+}
+
+export interface ModelFile {
+  url: string;
+  dest: string;
+  sha256: string;
+  size: number;
+}
+
+/** One manifest entry, as embedded in /system recommendations. */
+export interface ModelEntry {
+  id: string;
+  task: string;
+  family: string;
+  version: string;
+  quant: string;
+  requirements: { vram_gb: number; ram_gb: number; disk_gb: number; backends: string[] };
+  quality_score: number;
+  speed_score: number;
+  license: ModelLicense;
+  // Empty = nothing to download; the model is served externally (e.g. Ollama).
+  files: ModelFile[];
+  comfy_graph_template: string;
+}
+
+/** A /models row: manifest entry plus live install state. */
+export interface ModelRow extends ModelEntry {
+  size_bytes: number;
+  downloaded: boolean;
+  downloading: boolean;
+  progress: { done: number; total: number } | null;
+}
+
+export type ProviderId = "anthropic" | "openai" | "google" | "fal";
+
+export interface Provider {
+  id: ProviderId;
+  label: string;
+  capabilities: string[];
+  configured: boolean;
 }
 
 export interface Job {
@@ -102,4 +154,9 @@ export type EngineEvent =
   | { type: "job.failed"; job_id: string; node_id: string; error: string; suggestions?: string[] }
   | { type: "job.retrying"; job_id: string; node_id: string; attempt: number }
   | { type: "project.compiled"; project_id: string; enqueued: number }
-  | { type: "project.expanded"; project_id: string; scenes: string[] };
+  | { type: "project.expanded"; project_id: string; scenes: string[] }
+  // done/total are bytes across the whole model, throttled to ~0.5s.
+  | { type: "model.download.progress"; model: string; file: string; done: number; total: number }
+  | { type: "model.download.done"; model: string }
+  | { type: "model.download.failed"; model: string; error: string }
+  | { type: "model.download.cancelled"; model: string };

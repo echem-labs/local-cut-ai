@@ -26,7 +26,7 @@ const TOOLS: { kind: ToolKind; label: string; glyph: string; placeholder: string
 /** Home: one prompt box — the entire prompt-only mode — plus a
  * Quick Tools row and recent projects. Control budget: ≤6 elements. */
 export function Home() {
-  const { projects, createFromPrompt, createTool, openProject, system } = useApp();
+  const { projects, createFromPrompt, createTool, openProject, openSettings, system } = useApp();
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(60);
   const [aspect, setAspect] = useState("9:16");
@@ -68,7 +68,12 @@ export function Home() {
 
   return (
     <div className="home">
-      <h1>Describe your video…</h1>
+      <div className="home-header">
+        <h1>Describe your video…</h1>
+        <button className="icon-btn" onClick={openSettings} title="Settings" aria-label="Settings">
+          ⚙
+        </button>
+      </div>
       <div className="prompt-box">
         <textarea
           placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"

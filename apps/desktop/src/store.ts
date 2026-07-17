@@ -5,11 +5,26 @@ import type {
   Checkpoint,
   EngineEvent,
   Job,
+  ModelRow,
   NodeState,
   Project,
   SystemInfo,
   ToolKind,
 } from "./api/types";
+
+/** Key ids as the shell stores them — note google's key is `gemini`. */
+export type ProviderKeyId = "anthropic" | "openai" | "gemini" | "fal";
+
+/** What the shell tells the renderer about stored keys — presence only,
+ * never the key material itself. */
+export interface ProviderKeyPresence {
+  anthropic: boolean;
+  openai: boolean;
+  gemini: boolean;
+  fal: boolean;
+  // false = safeStorage found no OS keychain; keys are merely obfuscated.
+  encrypted: boolean;
+}
 
 declare global {
   interface Window {
@@ -18,6 +33,13 @@ declare global {
         connection: { url: string; token: string } | null;
         error: string | null;
       }>;
+      setProviderKeys: (
+        keys: Partial<Record<ProviderKeyId, string>>,
+      ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
+      getProviderKeyPresence: () => Promise<ProviderKeyPresence>;
+      clearProviderKey: (
+        id: ProviderKeyId,
+      ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
     };
   }
 }
@@ -31,6 +53,11 @@ interface AppState {
   board: Board | null;
   jobs: Job[];
   selectedNode: string | null;
+  models: ModelRow[];
+  // model id → last download failure, cleared on retry/success.
+  downloadErrors: Record<string, string>;
+  firstRunDone: boolean;
+  settingsOpen: boolean;
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
@@ -56,8 +83,16 @@ interface AppState {
   applyExport: (params: Record<string, unknown>) => void;
   finalize: () => Promise<void>;
   select: (nodeId: string | null) => void;
+  refreshModels: () => Promise<void>;
+  startDownload: (modelId: string) => Promise<void>;
+  cancelDownload: (modelId: string) => Promise<void>;
+  finishFirstRun: () => void;
+  resetFirstRun: () => void;
+  openSettings: () => void;
+  closeSettings: () => void;
 }
 
+const FIRST_RUN_KEY = "localcut.firstRunDone";
 const REFRESH_DEBOUNCE_MS = 150;
 const RECONNECT_DELAY_MS = 3000;
 const PATCH_DEBOUNCE_MS = 300;
@@ -135,6 +170,17 @@ export const useApp = create<AppState>((set, get) => {
     });
   };
 
+  // Download bars update in place from WS bytes — no HTTP refetch per tick.
+  const applyDownloadProgress = (event: { model: string; done: number; total: number }) => {
+    set({
+      models: get().models.map((row) =>
+        row.id === event.model
+          ? { ...row, downloading: true, progress: { done: event.done, total: event.total } }
+          : row,
+      ),
+    });
+  };
+
   // Param edits are optimistic: the board updates immediately, the PATCH is
   // debounced per node with changed keys merged, and the WS-driven refresh
   // brings back the server truth once the dirty subgraph re-renders.
@@ -203,6 +249,22 @@ export const useApp = create<AppState>((set, get) => {
       (event: EngineEvent) => {
         if (event.type === "job.progress") {
           applyProgress(event);
+        } else if (event.type === "model.download.progress") {
+          applyDownloadProgress(event);
+        } else if (
+          event.type === "model.download.done" ||
+          event.type === "model.download.failed" ||
+          event.type === "model.download.cancelled"
+        ) {
+          // Terminal states: record the failure, then refetch the
+          // authoritative install flags.
+          const errors = { ...get().downloadErrors };
+          if (event.type === "model.download.failed") errors[event.model] = event.error;
+          else delete errors[event.model];
+          set({ downloadErrors: errors });
+          get()
+            .refreshModels()
+            .catch((err) => console.warn("models refresh failed:", err));
         } else if (event.type.startsWith("job.") || event.type === "project.expanded") {
           scheduleRefresh();
         }
@@ -231,6 +293,10 @@ export const useApp = create<AppState>((set, get) => {
     board: null,
     jobs: [],
     selectedNode: null,
+    models: [],
+    downloadErrors: {},
+    firstRunDone: localStorage.getItem(FIRST_RUN_KEY) === "1",
+    settingsOpen: false,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -366,5 +432,57 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     select: (nodeId) => set({ selectedNode: nodeId }),
+
+    refreshModels: async () => {
+      const { client } = get();
+      if (!client) return;
+      set({ models: await client.listModels() });
+    },
+
+    startDownload: async (modelId) => {
+      const { client, downloadErrors } = get();
+      if (!client) return;
+      if (modelId in downloadErrors) {
+        const { [modelId]: _dropped, ...rest } = downloadErrors;
+        set({ downloadErrors: rest });
+      }
+      try {
+        await client.startDownload(modelId);
+      } catch (err) {
+        set({
+          downloadErrors: {
+            ...get().downloadErrors,
+            [modelId]: err instanceof Error ? err.message : String(err),
+          },
+        });
+      }
+      await get().refreshModels();
+    },
+
+    cancelDownload: async (modelId) => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        await client.cancelDownload(modelId);
+      } catch (err) {
+        // 409 = already finished; the refresh below shows the truth.
+        console.warn(`cancel ${modelId} failed:`, err);
+      }
+      await get().refreshModels();
+    },
+
+    finishFirstRun: () => {
+      localStorage.setItem(FIRST_RUN_KEY, "1");
+      set({ firstRunDone: true });
+    },
+
+    resetFirstRun: () => {
+      localStorage.removeItem(FIRST_RUN_KEY);
+      set({ firstRunDone: false, settingsOpen: false });
+    },
+
+    openSettings: () => set({ settingsOpen: true }),
+
+    closeSettings: () => set({ settingsOpen: false }),
   };
 });

@@ -9,13 +9,19 @@ import type {
   EngineConnection,
   EngineEvent,
   Job,
+  ModelRow,
   Project,
+  Provider,
   SystemInfo,
   ToolKind,
 } from "./types";
 
 export class EngineClient {
   constructor(private readonly connection: EngineConnection) {}
+
+  get baseUrl(): string {
+    return this.connection.url;
+  }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${this.connection.url}${path}`, {
@@ -100,6 +106,24 @@ export class EngineClient {
 
   system(): Promise<SystemInfo> {
     return this.request("/system");
+  }
+
+  listModels(): Promise<ModelRow[]> {
+    return this.request("/models");
+  }
+
+  startDownload(modelId: string): Promise<{ status: "started" | "downloading" | "downloaded" }> {
+    return this.request(`/models/${encodeURIComponent(modelId)}/download`, { method: "POST" });
+  }
+
+  cancelDownload(modelId: string): Promise<{ ok: boolean }> {
+    return this.request(`/models/${encodeURIComponent(modelId)}/download`, { method: "DELETE" });
+  }
+
+  // Key writes go through the shell (keychain persistence + PUT from the
+  // main process); the renderer only ever reads provider status.
+  listProviders(): Promise<Provider[]> {
+    return this.request("/providers");
   }
 
   artifactUrl(projectId: string, hash: string): string {

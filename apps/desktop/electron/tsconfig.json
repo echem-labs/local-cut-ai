@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["main.ts", "engine.ts", "preload.ts"]
+  "include": ["main.ts", "engine.ts", "keys.ts", "preload.ts"]
 }
