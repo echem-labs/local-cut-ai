@@ -158,6 +158,36 @@ class ProjectService:
                 self._enqueue_dirty(project_id, graph)
         return dirty
 
+    def add_asset(self, project_id: str, filename: str, data: bytes) -> dict:
+        """Import a user asset as a graph node. The file lands in generated/
+        under the node's output hash, so the node is born cached: assets are
+        never executed, only consumed (e.g. wired into a clip's keyframe
+        port as the I2V source)."""
+        import hashlib
+
+        suffix = Path(filename).suffix.lower()
+        sha = hashlib.sha256(data).hexdigest()
+        node_id = f"asset-{sha[:12]}"
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            if node_id not in graph.nodes:
+                graph.add_node(
+                    Node(
+                        id=node_id,
+                        kind=NodeKind.ASSET,
+                        params={"name": filename, "sha256": sha},
+                    )
+                )
+                self.store.save_graph(project_id, graph)
+            out_hash = graph.output_hash(node_id)
+            dest = self.store.generated_dir(project_id)
+            dest.mkdir(parents=True, exist_ok=True)
+            path = dest / f"{out_hash}{suffix}"
+            if not path.exists():
+                path.write_bytes(data)
+        self.events.publish("project.asset", project_id=project_id, node_id=node_id)
+        return {"node_id": node_id, "hash": out_hash, "name": filename}
+
     def edit_view(self, project_id: str, scope: str) -> dict:
         """The whitelisted graph view a natural-language edit works from."""
         with self._lock:

@@ -101,6 +101,7 @@ interface AppState {
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
   edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
+  conditionScene: (sceneId: string, file: File) => Promise<void>;
   applyTimeline: (params: Record<string, unknown>) => void;
   applyExport: (params: Record<string, unknown>) => void;
   finalize: () => Promise<void>;
@@ -579,6 +580,31 @@ export const useApp = create<AppState>((set, get) => {
       } finally {
         set({ editBusy: false });
       }
+    },
+
+    conditionScene: async (sceneId, file) => {
+      const { client, currentProject, board } = get();
+      if (!client || !currentProject) return;
+      const asset = await client.uploadAsset(currentProject.id, file);
+      // Every take of the scene draws from the same source image, exactly
+      // like the generated keyframe it displaces.
+      const scene = board?.scenes.find((entry) => entry.scene_id === sceneId);
+      const takes = [
+        `${sceneId}.clip`,
+        ...(scene?.clip_takes ?? [])
+          .filter((take): take is NodeState => take !== null)
+          .map((take) => take.node_id),
+      ];
+      await client.patch(
+        currentProject.id,
+        takes.map((nodeId) => ({
+          op: "connect",
+          node_id: nodeId,
+          src: asset.node_id,
+          port: "keyframe",
+        })),
+      );
+      await get().refreshBoard();
     },
 
     applyTimeline: (params) => applyAuxParams("timeline", params),

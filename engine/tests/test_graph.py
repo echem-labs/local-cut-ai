@@ -114,3 +114,37 @@ def test_template_expansion_builds_full_pipeline():
     assert len(scene_clips) == len(screenplay.scenes) >= 2
     order = g.topological_order()
     assert order.index("timeline") < order.index("export")
+
+
+def test_conditioning_edge_survives_reexpansion_and_disconnect_restores():
+    """A clip whose keyframe port was rewired to an uploaded asset must keep
+    that source when the screenplay re-expands; disconnecting frees the port
+    for the next expansion to re-wire the generated keyframe."""
+    from localcut_engine.graph.model import Node, NodeKind
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    screenplay = Screenplay(
+        title="t",
+        scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+    )
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+    graph.add_node(Node(id="asset-abc", kind=NodeKind.ASSET, params={"sha256": "x"}))
+
+    dirty = apply_patch(
+        graph, [PatchOp(op="connect", node_id="s1.clip", src="asset-abc", port="keyframe")]
+    )
+    assert "s1.clip" in dirty and "timeline" in dirty
+
+    def keyframe_sources():
+        return [e.src for e in graph.edges if e.dst == "s1.clip" and e.port == "keyframe"]
+
+    assert keyframe_sources() == ["asset-abc"]
+    expand_screenplay(graph, screenplay)  # re-script must not displace the asset
+    assert keyframe_sources() == ["asset-abc"]
+
+    apply_patch(graph, [PatchOp(op="disconnect", node_id="s1.clip", port="keyframe")])
+    assert keyframe_sources() == []
+    expand_screenplay(graph, screenplay)  # …and the free port re-wires normally
+    assert keyframe_sources() == ["s1.keyframe"]

@@ -93,6 +93,13 @@ first-run screen and Settings → model library use exactly that. Per project,
 title/description/hashtags kit, and `GET /projects/{id}/export/otio` hands
 the current timeline to pro NLEs as OpenTimelineIO.
 
+**Asset conditioning.** `POST /projects/{id}/assets` imports a user image as
+a graph node (no filesystem shortcuts — raw bytes over the API); wiring it
+into a clip's keyframe port via a `connect` patch op makes the clip animate
+from your image instead of the generated keyframe. The conditioning
+survives script re-runs and works from the inspector's "Use my image"
+picker.
+
 **Prompt-based editing.** `POST /projects/{id}/edit` takes a natural-language
 instruction ("make scene 2 darker", "crossfade everything", "remove scene 3")
 at project or scene scope: the LLM sees a whitelisted view of the graph,

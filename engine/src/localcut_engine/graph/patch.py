@@ -13,12 +13,26 @@ from .model import Node, StoryGraph
 
 
 class PatchOp(BaseModel):
-    op: Literal["set_params", "set_seed", "set_model", "pin", "unpin", "add_node", "remove_node"]
+    op: Literal[
+        "set_params",
+        "set_seed",
+        "set_model",
+        "pin",
+        "unpin",
+        "add_node",
+        "remove_node",
+        "connect",
+        "disconnect",
+    ]
     node_id: str
     params: dict[str, Any] | None = None
     seed: int | None = None
     model: str | None = None
     node: Node | None = None
+    # connect/disconnect: node_id is the destination; `src` the upstream node
+    # (connect only), `port` the input being rewired.
+    src: str | None = None
+    port: str | None = None
 
 
 def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
@@ -61,6 +75,22 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 graph.edges = [e for e in graph.edges if op.node_id not in (e.src, e.dst)]
                 graph.nodes.pop(op.node_id, None)
                 continue
+            case "connect":
+                # Replace semantics: an input port holds one edge, so wiring
+                # an asset into a clip's keyframe port displaces the
+                # generated keyframe in the same op.
+                if op.src is None or op.port is None:
+                    raise ValueError("connect requires src and port")
+                graph.edges = [
+                    e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
+                ]
+                graph.connect(op.src, op.node_id, port=op.port)
+            case "disconnect":
+                if op.port is None:
+                    raise ValueError("disconnect requires a port")
+                graph.edges = [
+                    e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
+                ]
         dirty.add(op.node_id)
         dirty |= graph.downstream_of(op.node_id)
     return dirty

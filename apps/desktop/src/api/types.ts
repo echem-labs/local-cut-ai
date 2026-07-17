@@ -59,6 +59,8 @@ export interface SceneCardModel {
   keyframe: NodeState | null;
   clip: NodeState;
   narration: NodeState | null;
+  // Sequential takes of a split scene, beyond the first clip.
+  clip_takes?: (NodeState | null)[];
 }
 
 export interface Board {

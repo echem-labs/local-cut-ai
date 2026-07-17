@@ -8,8 +8,16 @@ import { useApp } from "../store";
  * model override, pinning — all through the same patch ops the NL editor
  * compiles to. */
 export function Inspector() {
-  const { board, selectedNode, select, applyNode, togglePin, regenerate, applyTimeline } =
-    useApp();
+  const {
+    board,
+    selectedNode,
+    select,
+    applyNode,
+    togglePin,
+    regenerate,
+    applyTimeline,
+    conditionScene,
+  } = useApp();
   const [prompt, setPrompt] = useState("");
   const [seed, setSeed] = useState("");
   const [model, setModel] = useState("");
@@ -291,6 +299,28 @@ export function Inspector() {
       >
         New seed 🔄
       </button>
+      {editSceneId && (
+        <div>
+          <label htmlFor="inspector-asset">Use my image as the shot source</label>
+          <input
+            id="inspector-asset"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = ""; // same file re-selectable later
+              if (file) {
+                void conditionScene(editSceneId, file).catch((err) =>
+                  console.warn("asset conditioning failed:", err),
+                );
+              }
+            }}
+          />
+          <div className="hint">
+            The clip animates from your image instead of the generated keyframe.
+          </div>
+        </div>
+      )}
       {editSceneId && (
         <div>
           <label>Edit scene with a prompt</label>

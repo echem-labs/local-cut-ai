@@ -371,3 +371,67 @@ async def test_new_quick_tools_create_sessions(client):
     assert boards["music"]["aux"]["music"]["params"]["brief"] == "a music"
     # Tools still refuse an empty subject.
     assert (await client.post("/tools", json={"tool": "image"})).status_code == 422
+
+
+async def test_asset_upload_and_i2v_conditioning(client):
+    """Upload an image → asset node born cached (no job) → wire it into a
+    scene clip's keyframe port; the generated keyframe is displaced and the
+    edge survives graph reads."""
+    created = await client.post("/projects", json={"prompt": "asset test"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+
+    png = b"\x89PNG\r\n\x1a\n" + b"fake-image-bytes"
+    response = await client.post(
+        f"/projects/{pid}/assets?filename=hero.png",
+        content=png,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert response.status_code == 200
+    asset = response.json()
+    assert asset["node_id"].startswith("asset-")
+
+    # Born cached: an asset never becomes a job.
+    jobs = (await client.get(f"/jobs?project_id={pid}")).json()
+    assert not [j for j in jobs if j["spec"]["node_id"] == asset["node_id"]]
+    board = (await client.get(f"/projects/{pid}")).json()["board"]
+    assert board["aux"][asset["node_id"]]["artifact_hash"] == asset["hash"]
+
+    patched = await client.post(
+        f"/projects/{pid}/patch",
+        json={
+            "ops": [
+                {"op": "connect", "node_id": "s1.clip", "src": asset["node_id"], "port": "keyframe"}
+            ]
+        },
+    )
+    assert patched.status_code == 200
+    assert "s1.clip" in patched.json()["dirty"]
+
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    keyframe_edges = [
+        e for e in graph["edges"] if e["dst"] == "s1.clip" and e["port"] == "keyframe"
+    ]
+    assert keyframe_edges == [{"src": asset["node_id"], "dst": "s1.clip", "port": "keyframe"}]
+
+    # Same bytes again → same node, idempotent.
+    again = await client.post(
+        f"/projects/{pid}/assets?filename=other-name.png",
+        content=png,
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert again.json()["node_id"] == asset["node_id"]
+
+    # Wrong type and empty bodies are rejected before touching the store.
+    assert (
+        await client.post(f"/projects/{pid}/assets?filename=evil.exe", content=b"x")
+    ).status_code == 422
+    assert (
+        await client.post(f"/projects/{pid}/assets?filename=empty.png", content=b"")
+    ).status_code == 422

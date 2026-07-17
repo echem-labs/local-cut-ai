@@ -12,6 +12,7 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 import httpx
@@ -21,6 +22,7 @@ from fastapi import (
     Header,
     HTTPException,
     Query,
+    Request,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -354,6 +356,33 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def get_graph(project_id: ProjectId) -> dict:
         _get_project(project_id)
         return store.load_graph(project_id).model_dump()
+
+    _ASSET_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    _ASSET_MAX_BYTES = 50 << 20
+
+    @app.post("/projects/{project_id}/assets", dependencies=[Authed])
+    async def upload_asset(
+        project_id: ProjectId,
+        request: Request,
+        filename: Annotated[str, Query(min_length=1, max_length=128)],
+    ) -> dict:
+        """Import a user image (raw bytes body) as an asset node — the
+        API-pure route for 'use my image as the shot source'."""
+        _get_project(project_id)
+        name = PurePosixPath(filename.replace("\\", "/")).name  # basename only, no paths
+        suffix = PurePosixPath(name).suffix.lower()
+        if suffix not in _ASSET_EXTENSIONS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unsupported asset type {suffix!r} — "
+                f"one of: {', '.join(sorted(_ASSET_EXTENSIONS))}",
+            )
+        data = await request.body()
+        if not data:
+            raise HTTPException(status_code=422, detail="asset body is empty")
+        if len(data) > _ASSET_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="asset exceeds the 50 MB limit")
+        return await asyncio.to_thread(service.add_asset, project_id, name, data)
 
     class PatchBody(BaseModel):
         ops: list[PatchOp]

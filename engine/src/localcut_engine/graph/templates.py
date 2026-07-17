@@ -256,7 +256,10 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             if takes > 1:
                 params["take"] = take  # single-take params stay hash-stable
             _ensure_node(graph, take_id, NodeKind.CLIP, params=params)
-            _ensure_edge(graph, kf_id, take_id, port=KEYFRAME_PORT)
+            # User conditioning is user state: a clip whose keyframe port was
+            # rewired to an uploaded asset keeps that source across re-runs.
+            if not any(e.dst == take_id and e.port == KEYFRAME_PORT for e in graph.edges):
+                _ensure_edge(graph, kf_id, take_id, port=KEYFRAME_PORT)
             _ensure_edge(
                 graph,
                 take_id,

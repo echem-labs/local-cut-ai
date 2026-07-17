@@ -114,6 +114,21 @@ export class EngineClient {
     });
   }
 
+  /** Upload a user image as an asset node (raw bytes — API-pure). */
+  async uploadAsset(
+    projectId: string,
+    file: File,
+  ): Promise<{ node_id: string; hash: string; name: string }> {
+    return this.request(
+      `/projects/${projectId}/assets?filename=${encodeURIComponent(file.name)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: await file.arrayBuffer(),
+      },
+    );
+  }
+
   /** Natural-language edit; scope is "project" or a scene id. */
   edit(
     projectId: string,
