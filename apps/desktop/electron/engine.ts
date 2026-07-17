@@ -45,8 +45,20 @@ export class EngineManager {
     return { cmd: "uv", args: ["run", "localcut-engine", ...args], cwd: engineDir, connection };
   }
 
+  private starting: Promise<EngineConnection> | null = null;
+
   async start(): Promise<EngineConnection> {
     if (this.connection && this.child) return this.connection;
+    // Dedup concurrent starts: during startup `connection` is still null, so a
+    // second caller (e.g. whenReady racing engine:unpair) would otherwise
+    // spawn a second engine and orphan the first.
+    this.starting ??= this.spawnAndWait().finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  private async spawnAndWait(): Promise<EngineConnection> {
     const { cmd, args, cwd, connection } = this.command();
     this.child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     this.child.stdout?.on("data", (chunk: Buffer) =>
@@ -55,11 +67,26 @@ export class EngineManager {
     this.child.stderr?.on("data", (chunk: Buffer) =>
       console.error(`[engine] ${chunk.toString().trimEnd()}`),
     );
+    // Without an 'error' listener a spawn failure (e.g. `uv` not on PATH) is
+    // rethrown as an uncaught exception that crashes the whole app; capture it
+    // so waitHealthy fails gracefully instead.
+    this.child.on("error", (err) => {
+      console.error(`[engine] failed to spawn: ${err.message}`);
+      this.child = null;
+    });
     this.child.on("exit", (code) => {
       console.error(`[engine] exited with code ${code}`);
       this.child = null;
     });
-    await this.waitHealthy(connection);
+    try {
+      await this.waitHealthy(connection);
+    } catch (err) {
+      // A failed startup must not leak a running engine: kill the child (and
+      // clear the connection) so a later retry starts clean instead of
+      // stacking orphaned processes that still hold VRAM.
+      this.stop();
+      throw err;
+    }
     this.connection = connection;
     return connection;
   }

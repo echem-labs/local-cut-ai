@@ -43,6 +43,14 @@ export function parsePairingCode(code: string): RemotePairing {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("pairing code carries no usable engine URL");
   }
+  // http is only safe to loopback: a local engine, or an SSH-forwarded remote
+  // that terminates on localhost. A cleartext link to any other host would put
+  // the bearer token and every provider key on the wire with no TLS pinning to
+  // stop a MITM — the entire pinning protection would be bypassed. Refuse it.
+  const loopback = ["localhost", "127.0.0.1", "::1"];
+  if (parsed.protocol === "http:" && !loopback.includes(parsed.hostname)) {
+    throw new Error("a remote engine must use https — pair over TLS, not cleartext http");
+  }
   if (!token) throw new Error("pairing code carries no token");
   if (parsed.protocol === "https:" && !/^[0-9a-f]{64}$/.test(fingerprint ?? "")) {
     throw new Error("pairing code is missing the certificate fingerprint");

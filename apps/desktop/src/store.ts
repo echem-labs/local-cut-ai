@@ -146,6 +146,10 @@ let unsubscribe: (() => void) | null = null;
 // One in-flight establish, shared by connect and reconnect: StrictMode
 // double-mount must not open two sockets.
 let establishing: Promise<void> | null = null;
+// Bumped on every establish; a stale establish (superseded by an engine
+// switch mid-flight) sees the mismatch and bails instead of pointing the
+// store back at the old engine.
+let establishGen = 0;
 const pendingPatches = new Map<string, PendingPatch>();
 // Download bookkeeping — the WS is fresher than any /models snapshot.
 // wsProgress holds the latest bytes per model; terminalDownloads marks
@@ -330,10 +334,14 @@ export const useApp = create<AppState>((set, get) => {
   };
 
   const establish = async () => {
+    const gen = ++establishGen;
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
     const { connection, error, remote, remotePaired } =
       await window.localcut.getEngineConnection();
+    // A newer establish (an engine switch) superseded us while we awaited —
+    // bail so we never point the store back at the old engine.
+    if (gen !== establishGen) return;
     if (!connection) {
       set({
         client: null,
@@ -351,8 +359,15 @@ export const useApp = create<AppState>((set, get) => {
       remotePaired: remotePaired === true,
     });
 
-    unsubscribe = client.subscribe(
+    const sub = client.subscribe(
       (event: EngineEvent) => {
+        // Drop project-scoped events for a project we're not viewing: the WS
+        // is a global stream and job events name node ids ("timeline",
+        // "script") that exist in every project, so an unscoped apply would
+        // patch this board with another project's progress. Download events
+        // carry no project_id and always pass through.
+        const scoped = (event as { project_id?: string }).project_id;
+        if (scoped !== undefined && scoped !== get().currentProject?.id) return;
         if (event.type === "job.progress") {
           applyProgress(event);
         } else if (event.type === "model.download.progress") {
@@ -391,11 +406,23 @@ export const useApp = create<AppState>((set, get) => {
         scheduleReconnect();
       },
     );
+    // Superseded after we subscribed (a switch raced us): close this socket and
+    // don't record it as the live subscription.
+    if (gen !== establishGen) {
+      sub();
+      return;
+    }
+    unsubscribe = sub;
 
     await get().refreshHome();
     if (get().currentProject) await get().refreshBoard();
     try {
-      set({ system: await client.system() });
+      // Guard the set: `client` here is this establish's own closure, so a
+      // superseded establish must not write the old engine's hardware over
+      // the new one's. (refreshHome/refreshBoard read get().client, so they
+      // already resolve against the live engine.)
+      const info = await client.system();
+      if (gen === establishGen) set({ system: info });
     } catch {
       /* system info is cosmetic at this stage */
     }
@@ -422,7 +449,15 @@ export const useApp = create<AppState>((set, get) => {
       projects: [],
       models: [],
       downloadErrors: {},
+      // The old engine's hardware/recommendations must not survive the switch
+      // (establish repopulates it, or leaves it null if the new engine's
+      // /system errors — better blank than another box's specs).
+      system: null,
     });
+    // Force a fresh establish for the NEW engine: reusing an in-flight one
+    // (e.g. a reconnect already bound to the old connection) would leave the
+    // client and WS pointed at the old/dead engine.
+    establishing = null;
     await establishOnce();
   };
 
@@ -469,8 +504,14 @@ export const useApp = create<AppState>((set, get) => {
       if (!client) return;
       // The GET must observe the flushed edits, not race them.
       await flushPatches();
-      const { project, board } = await client.getProject(id);
-      set({ currentProject: project, board, selectedNode: null });
+      // Fetch jobs alongside the board: without this the jobs slice keeps
+      // showing the previously open project's jobs until some WS event happens
+      // to trigger a refresh (never, for an idle project).
+      const [{ project, board }, jobs] = await Promise.all([
+        client.getProject(id),
+        client.listJobs(id),
+      ]);
+      set({ currentProject: project, board, jobs, selectedNode: null });
     },
 
     closeProject: () => {
@@ -530,7 +571,11 @@ export const useApp = create<AppState>((set, get) => {
       if (!client || !currentProject) return;
       const projectId = currentProject.id;
       set({ actionError: null });
-      if (!currentProject.approvals.includes(checkpoint)) {
+      // Was it already approved before this call? If so, the rollback below
+      // must NOT strip it — we only ever undo the approval WE optimistically
+      // added, never one that pre-existed.
+      const alreadyApproved = currentProject.approvals.includes(checkpoint);
+      if (!alreadyApproved) {
         set({
           currentProject: {
             ...currentProject,
@@ -551,7 +596,7 @@ export const useApp = create<AppState>((set, get) => {
           // approval so the checkpoint banner comes back.
           console.warn("approve rollback fetch failed:", rollbackErr);
           const current = get().currentProject;
-          if (current?.id === projectId) {
+          if (!alreadyApproved && current?.id === projectId) {
             set({
               currentProject: {
                 ...current,

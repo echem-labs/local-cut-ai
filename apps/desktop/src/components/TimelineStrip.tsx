@@ -36,7 +36,10 @@ export function TimelineStrip() {
   // fall back to board order.
   const orderParam = timeline?.params.order;
   const known = Array.isArray(orderParam)
-    ? (orderParam as string[]).filter((id) => scenes.has(id))
+    ? // Dedup: a malformed server order with a repeated id would otherwise
+      // render two chips for one scene (colliding React keys) and indexOf
+      // would always resolve to the first, moving the wrong one.
+      [...new Set((orderParam as string[]).filter((id) => scenes.has(id)))]
     : [];
   const order = [
     ...known,
@@ -103,7 +106,14 @@ export function TimelineStrip() {
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault();
-                if (dragged && dragged !== sceneId) move(order.indexOf(dragged), index);
+                if (dragged && dragged !== sceneId) {
+                  const from = order.indexOf(dragged);
+                  // Land the dragged scene just before the drop target,
+                  // consistently for both directions — a forward drag must
+                  // account for its own removal shifting later indices left,
+                  // or it lands one slot past where it was dropped.
+                  move(from, from < index ? index - 1 : index);
+                }
                 setDragged(null);
               }}
             >

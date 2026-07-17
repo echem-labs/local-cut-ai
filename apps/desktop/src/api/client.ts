@@ -186,7 +186,18 @@ export class EngineClient {
   subscribe(onEvent: (event: EngineEvent) => void, onDrop?: () => void): () => void {
     const wsUrl = this.connection.url.replace(/^http/, "ws");
     const socket = new WebSocket(`${wsUrl}/ws?token=${this.connection.token}`);
-    socket.onmessage = (message) => onEvent(JSON.parse(message.data) as EngineEvent);
+    socket.onmessage = (message) => {
+      // A non-JSON frame (a proxy keepalive, a truncated message) must not
+      // throw an uncaught SyntaxError out of the event handler.
+      let event: EngineEvent;
+      try {
+        event = JSON.parse(message.data) as EngineEvent;
+      } catch {
+        console.warn("engine sent a non-JSON WS frame; ignoring");
+        return;
+      }
+      onEvent(event);
+    };
     if (onDrop) socket.onclose = onDrop;
     return () => {
       socket.onclose = null;

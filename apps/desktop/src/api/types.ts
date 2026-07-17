@@ -160,11 +160,21 @@ export interface Job {
 }
 
 export type EngineEvent =
-  | { type: "job.started"; job_id: string; node_id: string }
-  | { type: "job.progress"; job_id: string; node_id: string; progress: number }
-  | { type: "job.done"; job_id: string; node_id: string; artifact: string }
-  | { type: "job.failed"; job_id: string; node_id: string; error: string; suggestions?: string[] }
-  | { type: "job.retrying"; job_id: string; node_id: string; attempt: number }
+  // job.* events carry project_id so a subscriber (the WS is a global stream)
+  // can drop events for a project it isn't viewing — node ids like "timeline"
+  // exist in every project and would otherwise cross-contaminate the board.
+  | { type: "job.started"; job_id: string; node_id: string; project_id: string }
+  | { type: "job.progress"; job_id: string; node_id: string; progress: number; project_id: string }
+  | { type: "job.done"; job_id: string; node_id: string; artifact: string; project_id: string }
+  | {
+      type: "job.failed";
+      job_id: string;
+      node_id: string;
+      error: string;
+      suggestions?: string[];
+      project_id: string;
+    }
+  | { type: "job.retrying"; job_id: string; node_id: string; attempt: number; project_id: string }
   | { type: "project.compiled"; project_id: string; enqueued: number }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
