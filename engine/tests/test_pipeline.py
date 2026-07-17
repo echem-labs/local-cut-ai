@@ -347,3 +347,30 @@ async def test_finalize_upgrades_unpinned_clip_models(rig):
         ]
 
     await wait_for(all_final)
+
+
+def test_update_unless_cancelled_never_resurrects_a_cancel(tmp_path):
+    """Once a job row is CANCELLED, a scheduler status persist must be refused,
+    not write it back to a running/done state — the guard has to be atomic
+    because project deletion cancels jobs from a worker thread."""
+    from conftest import make_spec
+
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    queue = JobQueue(tmp_path / "q.db")
+    job = Job(project_id="p", spec=make_spec(NodeKind.CLIP))
+    queue.put(job)
+
+    # Still queued: a running persist is allowed.
+    job.status = JobStatus.RENDERING
+    assert queue.update_unless_cancelled(job) is True
+    assert queue.get(job.id).status is JobStatus.RENDERING
+
+    # The user (or a project delete on another thread) cancels it.
+    assert queue.cancel(job.id) is True
+
+    # A late progress/DONE persist is refused and leaves CANCELLED intact.
+    job.status = JobStatus.DONE
+    assert queue.update_unless_cancelled(job) is False
+    assert queue.get(job.id).status is JobStatus.CANCELLED

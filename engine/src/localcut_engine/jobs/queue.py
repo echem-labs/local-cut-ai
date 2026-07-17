@@ -72,6 +72,21 @@ class JobQueue:
     def update(self, job: Job) -> None:
         self.put(job)
 
+    def update_unless_cancelled(self, job: Job) -> bool:
+        """Persist `job` unless a cancel has already won its row. The status
+        read and the write happen under a single lock hold, so this is atomic
+        against a cancel written from another thread — project deletion cancels
+        jobs via a worker thread (asyncio.to_thread), so the scheduler cannot
+        assume cancels only arrive on its own loop. Returns False when the row
+        is already CANCELLED; the caller must then treat the job as cancelled
+        and never resurrect it to rendering/done/failed."""
+        with self._lock, self._db:
+            row = self._db.execute("SELECT status FROM jobs WHERE id = ?", (job.id,)).fetchone()
+            if row is not None and row[0] == JobStatus.CANCELLED:
+                return False
+            self._write(job)
+            return True
+
     def next_queued(self) -> Job | None:
         while True:
             with self._lock:

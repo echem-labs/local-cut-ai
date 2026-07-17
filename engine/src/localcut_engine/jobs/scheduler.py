@@ -111,28 +111,32 @@ class Scheduler:
             job.backend = self.backends.resolve(job.spec.kind, job.spec.model).name
         except GenerationError:
             job.backend = None  # the resolve below fails the job properly
-        self.queue.update(job)
+        if not self.queue.update_unless_cancelled(job):
+            return  # cancelled before it started — do not render it
         self.events.publish(
             "job.started", job_id=job.id, node_id=job.spec.node_id, project_id=job.project_id
         )
 
         persisted = 0.0
+        cancelled = False
 
         async def report(fraction: float) -> None:
-            nonlocal persisted
+            nonlocal persisted, cancelled
+            if cancelled:
+                return  # a cancel already won — stop persisting and emitting
             job.progress = fraction
-            # Persist coarsely so board polls see live progress without a
-            # disk write per sampler step.
+            # Persist coarsely so board polls see live progress without a disk
+            # write per sampler step.
             if fraction - persisted >= 0.05:
                 persisted = fraction
-                # update() rewrites the whole row from the in-memory job, whose
-                # status is still RENDERING. If a cancel already landed, that
-                # write would clobber CANCELLED back to RENDERING and the job
-                # would run to completion — so never persist over a cancel.
-                # (report runs on the scheduler loop; cancel() writes from the
-                # same loop, so this check and the write can't be interleaved.)
-                if not self._was_cancelled(job):
-                    self.queue.update(job)
+                # A progress write rewrites the whole row from the in-memory
+                # job (still RENDERING), so it would resurrect a job cancelled
+                # in the meantime. update_unless_cancelled makes the check and
+                # write atomic against a threaded cancel (project deletion runs
+                # queue.cancel_project on a worker thread, not this loop).
+                if not self.queue.update_unless_cancelled(job):
+                    cancelled = True
+                    return
             self.events.publish(
                 "job.progress",
                 job_id=job.id,
@@ -166,13 +170,12 @@ class Scheduler:
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind, job.spec.model)
             artifact = await backend.execute(job.spec, ctx)
-            if self._was_cancelled(job):
-                return
             job.status = JobStatus.DONE
             job.progress = 1.0
             job.artifact = str(artifact)
             job.finished_at = time.time()
-            self.queue.update(job)
+            if not self.queue.update_unless_cancelled(job):
+                return  # user cancelled during the render — honor it, skip DONE
             self.events.publish(
                 "job.done",
                 job_id=job.id,
@@ -184,13 +187,12 @@ class Scheduler:
             await self._handle_oom(job, exc)
             return
         except Exception as exc:  # noqa: BLE001 — job isolation boundary
-            if self._was_cancelled(job):
-                return  # the user's cancel outranks whatever the render died of
             logger.exception("job %s failed", job.id)
             job.status = JobStatus.FAILED
             job.error = str(exc)
             job.finished_at = time.time()
-            self.queue.update(job)
+            if not self.queue.update_unless_cancelled(job):
+                return  # the user's cancel outranks whatever the render died of
             self.events.publish(
                 "job.failed",
                 job_id=job.id,
@@ -213,10 +215,6 @@ class Scheduler:
                     error=str(exc),
                 )
 
-    def _was_cancelled(self, job: Job) -> bool:
-        current = self.queue.get(job.id)
-        return current is not None and current.status is JobStatus.CANCELLED
-
     def _fail_quietly(self, job: Job) -> bool:
         """Best-effort mark a job FAILED after an unexpected scheduler error.
         Returns False if even the persist failed, so the loop can back off
@@ -225,29 +223,28 @@ class Scheduler:
             job.status = JobStatus.FAILED
             job.error = "scheduler error while running the job"
             job.finished_at = time.time()
-            self.queue.update(job)
-            self.events.publish(
-                "job.failed",
-                job_id=job.id,
-                node_id=job.spec.node_id,
-                error=job.error,
-                project_id=job.project_id,
-            )
+            if self.queue.update_unless_cancelled(job):
+                self.events.publish(
+                    "job.failed",
+                    job_id=job.id,
+                    node_id=job.spec.node_id,
+                    error=job.error,
+                    project_id=job.project_id,
+                )
             return True
         except Exception:  # noqa: BLE001
             logger.exception("could not persist failure for job %s", job.id)
             return False
 
     async def _handle_oom(self, job: Job, exc: OOMError) -> None:
-        if self._was_cancelled(job):
-            return  # never resurrect a job the user cancelled mid-render
         if job.attempt < len(FALLBACK_LADDER):
             rung = FALLBACK_LADDER[job.attempt]
             job.attempt += 1
             job.spec.params = {**job.spec.params, **rung}
             job.status = JobStatus.QUEUED
             job.progress = 0.0
-            self.queue.update(job)
+            if not self.queue.update_unless_cancelled(job):
+                return  # never resurrect a job the user cancelled mid-render
             self.events.publish(
                 "job.retrying",
                 job_id=job.id,
@@ -261,7 +258,8 @@ class Scheduler:
         job.status = JobStatus.FAILED
         job.error = f"out of memory after {job.attempt} fallback attempts: {exc}"
         job.finished_at = time.time()
-        self.queue.update(job)
+        if not self.queue.update_unless_cancelled(job):
+            return  # cancelled mid-render — leave the CANCELLED status intact
         # The UI renders this as choices, not an error code.
         self.events.publish(
             "job.failed",
