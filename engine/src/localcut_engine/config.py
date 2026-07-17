@@ -22,8 +22,9 @@ class EngineConfig(BaseModel):
     # config with a different data_dir (the CLI override path).
     models_dir: Path | None = None
     # Comma-separated backend chain, first match wins per node kind.
-    # Shorthands: "mock", "local" (= llm,comfy,kokoro,align,ffmpeg). A trailing
-    # "mock" makes a hybrid: real backends where available, mock for the rest.
+    # Shorthands: "mock", "local" (= llm,comfy,chatterbox,kokoro,align,ffmpeg).
+    # A trailing "mock" makes a hybrid: real backends where available, mock
+    # for the rest.
     backend: str = "mock"
     comfyui_url: str = "http://127.0.0.1:8188"
     # Node kinds ComfyUI serves (music = ACE-Step via native ComfyUI nodes).
@@ -69,7 +70,9 @@ class EngineConfig(BaseModel):
         for name in self.backend.split(","):
             name = name.strip()
             if name == "local":
-                chain += ["llm", "comfy", "kokoro", "align", "ffmpeg"]
+                # chatterbox before kokoro: it only claims `local:chatterbox`
+                # narration; everything else falls through to stock voices.
+                chain += ["llm", "comfy", "chatterbox", "kokoro", "align", "ffmpeg"]
             elif name:
                 chain.append(name)
         return chain

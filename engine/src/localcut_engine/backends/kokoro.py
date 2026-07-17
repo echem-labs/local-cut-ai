@@ -59,6 +59,13 @@ class KokoroBackend(ExecutionBackend):
     def supports(self, kind: NodeKind) -> bool:
         return kind is NodeKind.NARRATION
 
+    def serves_model(self, model: str | None) -> bool:
+        # A voice-clone request must never silently land on stock voices —
+        # if the chain has no cloning backend, the job fails with the reason.
+        from .chatterbox import CLONE_MODEL
+
+        return model != CLONE_MODEL
+
     def _load(self):
         if self._engine is None:
             if not self.model_path.exists() or not self.voices_path.exists():

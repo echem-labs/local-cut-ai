@@ -100,6 +100,15 @@ from your image instead of the generated keyframe. The conditioning
 survives script re-runs and works from the inspector's "Use my image"
 picker.
 
+**Voice cloning (consent-gated).** Audio assets are voice samples and the
+upload route refuses them without `consent=true` — an explicit affirmation
+that you have the speaker's permission; that single door is the enforcement
+point. A narration node whose model is `local:chatterbox` with a sample on
+its `voice_ref` port synthesizes with Chatterbox TTS (MIT, runs locally);
+routing is strict — a clone request never silently falls back to a stock
+voice. The `chatterbox-tts` package is an optional runtime (like ComfyUI):
+install it into the engine environment when its wheels support your Python.
+
 **Prompt-based editing.** `POST /projects/{id}/edit` takes a natural-language
 instruction ("make scene 2 darker", "crossfade everything", "remove scene 3")
 at project or scene scope: the LLM sees a whitelisted view of the graph,

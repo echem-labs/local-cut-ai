@@ -34,6 +34,7 @@ from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
 from ..backends.base import BackendRegistry, GenerationError
+from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -106,6 +107,8 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         model_templates=model_templates,
                     )
                 )
+            case "chatterbox":
+                registry.register(ChatterboxBackend(models_dir=config.resolved_models_dir))
             case "kokoro":
                 registry.register(
                     KokoroBackend(
@@ -357,7 +360,8 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         _get_project(project_id)
         return store.load_graph(project_id).model_dump()
 
-    _ASSET_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+    _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a"}
     _ASSET_MAX_BYTES = 50 << 20
 
     @app.post("/projects/{project_id}/assets", dependencies=[Authed])
@@ -365,24 +369,36 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         project_id: ProjectId,
         request: Request,
         filename: Annotated[str, Query(min_length=1, max_length=128)],
+        consent: bool = False,
     ) -> dict:
-        """Import a user image (raw bytes body) as an asset node — the
-        API-pure route for 'use my image as the shot source'."""
+        """Import a user asset (raw bytes body) as a graph node — images
+        condition clips ('use my image as the shot source'); audio is a
+        voice sample for cloning and REQUIRES the consent affirmation.
+        Consent is enforced here, at the only door a sample can enter
+        through, so no unconsented voice can ever reach the TTS backend."""
         _get_project(project_id)
         name = PurePosixPath(filename.replace("\\", "/")).name  # basename only, no paths
         suffix = PurePosixPath(name).suffix.lower()
-        if suffix not in _ASSET_EXTENSIONS:
+        if suffix not in _IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS:
             raise HTTPException(
                 status_code=422,
-                detail=f"unsupported asset type {suffix!r} — "
-                f"one of: {', '.join(sorted(_ASSET_EXTENSIONS))}",
+                detail=f"unsupported asset type {suffix!r} — one of: "
+                f"{', '.join(sorted(_IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS))}",
+            )
+        if suffix in _AUDIO_EXTENSIONS and not consent:
+            raise HTTPException(
+                status_code=403,
+                detail="voice samples require consent=true — an affirmation that you "
+                "have this speaker's permission to clone their voice",
             )
         data = await request.body()
         if not data:
             raise HTTPException(status_code=422, detail="asset body is empty")
         if len(data) > _ASSET_MAX_BYTES:
             raise HTTPException(status_code=413, detail="asset exceeds the 50 MB limit")
-        return await asyncio.to_thread(service.add_asset, project_id, name, data)
+        return await asyncio.to_thread(
+            service.add_asset, project_id, name, data, suffix in _AUDIO_EXTENSIONS
+        )
 
     class PatchBody(BaseModel):
         ops: list[PatchOp]

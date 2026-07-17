@@ -54,3 +54,48 @@ async def test_real_synthesis_produces_playable_wav(tmp_path):
         duration = await FFmpegBackend(ffmpeg_bin=ffmpeg)._probe_duration(out)
         assert duration is not None
         assert 1.0 < duration < 15.0  # sane spoken length for one sentence
+
+
+def test_clone_routing_never_lands_on_stock_voices(tmp_path):
+    """`local:chatterbox` narration resolves to the cloning backend when the
+    chain has one, and fails loudly — never Kokoro — when it doesn't."""
+    import pytest
+
+    from localcut_engine.backends.base import BackendRegistry, GenerationError
+    from localcut_engine.backends.chatterbox import CLONE_MODEL, ChatterboxBackend
+    from localcut_engine.backends.kokoro import KokoroBackend
+    from localcut_engine.graph.model import NodeKind
+
+    registry = BackendRegistry()
+    registry.register(ChatterboxBackend(models_dir=tmp_path))
+    registry.register(KokoroBackend(models_dir=tmp_path))
+    assert registry.resolve(NodeKind.NARRATION, CLONE_MODEL).name == "chatterbox"
+    assert registry.resolve(NodeKind.NARRATION).name == "kokoro"
+    assert registry.resolve(NodeKind.NARRATION, "local:kokoro-82m").name == "kokoro"
+
+    bare = BackendRegistry()
+    bare.register(KokoroBackend(models_dir=tmp_path))
+    with pytest.raises(GenerationError, match="chatterbox"):
+        bare.resolve(NodeKind.NARRATION, CLONE_MODEL)
+
+
+async def test_chatterbox_requires_sample_and_reports_missing_package(tmp_path):
+    import pytest
+    from conftest import make_spec
+
+    from localcut_engine.backends.base import ExecutionContext, GenerationError
+    from localcut_engine.backends.chatterbox import ChatterboxBackend
+    from localcut_engine.graph.model import NodeKind
+
+    backend = ChatterboxBackend(models_dir=tmp_path)
+    ctx = ExecutionContext(output_dir=tmp_path)
+    with pytest.raises(GenerationError, match="voice sample"):
+        await backend.execute(make_spec(NodeKind.NARRATION, {"text": "hi"}), ctx)
+
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    ctx = ExecutionContext(output_dir=tmp_path, input_artifacts={"voice_ref": sample})
+    # chatterbox-tts is not installable on this Python yet — the failure must
+    # name the fix, not explode as an ImportError.
+    with pytest.raises(GenerationError, match="chatterbox-tts"):
+        await backend.execute(make_spec(NodeKind.NARRATION, {"text": "hi"}), ctx)

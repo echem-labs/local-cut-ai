@@ -51,6 +51,15 @@ class ExecutionBackend(ABC):
     @abstractmethod
     def supports(self, kind: NodeKind) -> bool: ...
 
+    def serves_model(self, model: str | None) -> bool:
+        """Whether this backend can honor a node's `local:*` model choice.
+        Default: yes — most backends interpret the model internally (ComfyUI
+        maps it to a workflow template). Specialist backends override this so
+        e.g. a voice-cloning node never lands on a plain TTS backend and
+        silently loses the clone."""
+        del model
+        return True
+
     @abstractmethod
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         """Run the job, return the produced artifact path. Raise OOMError
@@ -79,6 +88,7 @@ class BackendRegistry:
         ):
             return self._cloud
         for backend in self._backends:
-            if backend.supports(kind):
+            if backend.supports(kind) and backend.serves_model(model):
                 return backend
-        raise GenerationError(f"no backend registered for node kind: {kind}")
+        detail = f" with model {model!r}" if model else ""
+        raise GenerationError(f"no backend registered for node kind: {kind}{detail}")

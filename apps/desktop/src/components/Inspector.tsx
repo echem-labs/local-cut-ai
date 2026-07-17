@@ -17,7 +17,9 @@ export function Inspector() {
     regenerate,
     applyTimeline,
     conditionScene,
+    applyClonedVoice,
   } = useApp();
+  const [cloneConsent, setCloneConsent] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [seed, setSeed] = useState("");
   const [model, setModel] = useState("");
@@ -203,6 +205,37 @@ export function Inspector() {
             disabled={node.pinned}
             onChange={(event) => setVoice(event.target.value)}
           />
+        </div>
+      )}
+      {isNarration && (
+        <div>
+          <label>Voice cloning</label>
+          <label className="hint" style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={cloneConsent}
+              onChange={(event) => setCloneConsent(event.target.checked)}
+            />
+            I have this speaker's permission to clone their voice
+          </label>
+          <input
+            type="file"
+            accept=".wav,.mp3,.flac,.m4a"
+            disabled={!cloneConsent}
+            aria-label="Voice sample"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) {
+                void applyClonedVoice(file).catch((err) =>
+                  console.warn("voice cloning failed:", err),
+                );
+              }
+            }}
+          />
+          <div className="hint">
+            Clones this speaker for every scene's narration (Chatterbox, runs locally).
+          </div>
         </div>
       )}
       {isNarration && (

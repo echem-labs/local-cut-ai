@@ -95,6 +95,7 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     assert EngineConfig(backend="local,mock").backend_chain == [
         "llm",
         "comfy",
+        "chatterbox",
         "kokoro",
         "align",
         "ffmpeg",
@@ -435,3 +436,26 @@ async def test_asset_upload_and_i2v_conditioning(client):
     assert (
         await client.post(f"/projects/{pid}/assets?filename=empty.png", content=b"")
     ).status_code == 422
+
+
+async def test_voice_samples_are_consent_gated(client):
+    """Audio assets exist only behind an explicit consent affirmation — the
+    upload route is the single door a sample can enter through."""
+    created = await client.post("/projects", json={"prompt": "voice test"})
+    pid = created.json()["id"]
+
+    refused = await client.post(f"/projects/{pid}/assets?filename=me.wav", content=b"RIFFdata")
+    assert refused.status_code == 403
+    assert "consent" in refused.json()["detail"]
+
+    allowed = await client.post(
+        f"/projects/{pid}/assets?filename=me.wav&consent=true", content=b"RIFFdata"
+    )
+    assert allowed.status_code == 200
+    node_id = allowed.json()["node_id"]
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"][node_id]["params"]["voice_consent"] is True
+    # Images never carry the flag (and never need consent).
+    image = await client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]

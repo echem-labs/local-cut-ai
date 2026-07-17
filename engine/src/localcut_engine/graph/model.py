@@ -26,6 +26,9 @@ KEYFRAME_PORT = "keyframe"
 TIMING_PORT = "timing"
 DEFAULT_PORT = "default"
 CAPTIONS_PORT = "captions"
+# A consented voice-sample asset wired into a narration node — the TTS
+# backend clones this speaker instead of using a stock voice.
+VOICE_REF_PORT = "voice_ref"
 
 # Input ports whose artifacts are optional for assembly: their absence
 # degrades the output (no music bed, no burned captions) instead of failing

@@ -114,13 +114,16 @@ export class EngineClient {
     });
   }
 
-  /** Upload a user image as an asset node (raw bytes — API-pure). */
+  /** Upload a user asset (raw bytes — API-pure). Voice samples must carry
+   * the consent affirmation or the engine refuses them. */
   async uploadAsset(
     projectId: string,
     file: File,
+    options?: { consent?: boolean },
   ): Promise<{ node_id: string; hash: string; name: string }> {
+    const consent = options?.consent ? "&consent=true" : "";
     return this.request(
-      `/projects/${projectId}/assets?filename=${encodeURIComponent(file.name)}`,
+      `/projects/${projectId}/assets?filename=${encodeURIComponent(file.name)}${consent}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },

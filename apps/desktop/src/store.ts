@@ -102,6 +102,7 @@ interface AppState {
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
   edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
   conditionScene: (sceneId: string, file: File) => Promise<void>;
+  applyClonedVoice: (file: File) => Promise<void>;
   applyTimeline: (params: Record<string, unknown>) => void;
   applyExport: (params: Record<string, unknown>) => void;
   finalize: () => Promise<void>;
@@ -603,6 +604,27 @@ export const useApp = create<AppState>((set, get) => {
           src: asset.node_id,
           port: "keyframe",
         })),
+      );
+      await get().refreshBoard();
+    },
+
+    applyClonedVoice: async (file) => {
+      const { client, currentProject, board } = get();
+      if (!client || !currentProject || !board) return;
+      // The consent affirmation was collected in the UI; the engine refuses
+      // the sample without it either way.
+      const asset = await client.uploadAsset(currentProject.id, file, { consent: true });
+      // One speaker across the whole video: every scene's narration clones
+      // from the same sample.
+      const narrations = board.scenes
+        .map((scene) => scene.narration)
+        .filter((node): node is NodeState => node !== null);
+      await client.patch(
+        currentProject.id,
+        narrations.flatMap((node) => [
+          { op: "set_model", node_id: node.node_id, model: "local:chatterbox" },
+          { op: "connect", node_id: node.node_id, src: asset.node_id, port: "voice_ref" },
+        ]),
       );
       await get().refreshBoard();
     },
