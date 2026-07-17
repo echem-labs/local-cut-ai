@@ -27,7 +27,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi import Path as PathParam
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .. import ENGINE_API_VERSION, __version__
@@ -495,6 +495,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         return JSONResponse(
             document,
             headers={"Content-Disposition": f'attachment; filename="{project_id}.otio"'},
+        )
+
+    @app.get("/projects/{project_id}/export/fcpxml", dependencies=[Authed])
+    async def export_fcpxml(project_id: ProjectId) -> Response:
+        _get_project(project_id)
+        try:
+            document = await asyncio.to_thread(service.export_fcpxml, project_id)
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return Response(
+            document,
+            media_type="application/xml",
+            headers={"Content-Disposition": f'attachment; filename="{project_id}.fcpxml"'},
         )
 
     @app.delete("/projects/{project_id}", dependencies=[Authed])

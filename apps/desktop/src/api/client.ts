@@ -177,6 +177,11 @@ export class EngineClient {
     return `${this.connection.url}/projects/${projectId}/artifacts/${hash}?token=${this.connection.token}`;
   }
 
+  /** Pro-NLE handoff downloads (409 while the timeline hasn't rendered). */
+  exportUrl(projectId: string, kind: "otio" | "fcpxml"): string {
+    return `${this.connection.url}/projects/${projectId}/export/${kind}?token=${this.connection.token}`;
+  }
+
   /** Subscribe to engine events; returns an unsubscribe function. */
   subscribe(onEvent: (event: EngineEvent) => void, onDrop?: () => void): () => void {
     const wsUrl = this.connection.url.replace(/^http/, "ws");

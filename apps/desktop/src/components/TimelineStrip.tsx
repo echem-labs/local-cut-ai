@@ -176,16 +176,36 @@ export function TimelineStrip() {
             </div>
             <StatusChip status={exportNode.status} />
             {exportNode.artifact_hash && client && (
-              <a
-                className="btn-ghost"
-                style={{ textDecoration: "none" }}
-                title="Download export"
-                aria-label="Download export"
-                href={client.artifactUrl(currentProject.id, exportNode.artifact_hash)}
-                download
-              >
-                ⬇
-              </a>
+              <>
+                <a
+                  className="btn-ghost"
+                  style={{ textDecoration: "none" }}
+                  title="Download export"
+                  aria-label="Download export"
+                  href={client.artifactUrl(currentProject.id, exportNode.artifact_hash)}
+                  download
+                >
+                  ⬇
+                </a>
+                <a
+                  className="btn-ghost"
+                  style={{ textDecoration: "none" }}
+                  title="Hand off to DaVinci/Premiere (OpenTimelineIO)"
+                  href={client.exportUrl(currentProject.id, "otio")}
+                  download
+                >
+                  OTIO
+                </a>
+                <a
+                  className="btn-ghost"
+                  style={{ textDecoration: "none" }}
+                  title="Hand off to Final Cut Pro (FCPXML)"
+                  href={client.exportUrl(currentProject.id, "fcpxml")}
+                  download
+                >
+                  FCPXML
+                </a>
+              </>
             )}
           </>
         )}

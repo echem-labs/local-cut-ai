@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
+from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
 from .graph.editor import EditPlan, compile_edits, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
@@ -286,10 +287,10 @@ class ProjectService:
             self._enqueue_dirty(project_id, graph)
             return ["thumbnail", "metadata"]
 
-    def export_otio(self, project_id: str) -> dict:
-        """The current timeline as an OTIO document for pro-NLE handoff.
+    def _exportable_edl(self, project_id: str) -> tuple[dict, Path, str]:
+        """The rendered EDL for the current edit, its base dir, and a title.
         Raises LookupError while the timeline hasn't rendered (or is stale
-        for the current graph) and ValueError for non-exportable EDLs."""
+        for the current graph)."""
         with self._lock:
             graph = self.store.load_graph(project_id)
             if "timeline" not in graph.nodes:
@@ -302,10 +303,26 @@ class ProjectService:
                 raise LookupError("timeline is not rendered for the current edit")
             project = self.store.get(project_id)
             edl = json.loads(edl_path.read_text())
+        return edl, edl_path.parent, project.title if project else project_id
+
+    def export_otio(self, project_id: str) -> dict:
+        """The current timeline as an OTIO document for pro-NLE handoff.
+        ValueError for non-exportable EDLs."""
+        edl, base, title = self._exportable_edl(project_id)
         return edl_to_otio(
             edl,
-            resolve=lambda src: p if (p := Path(src)).is_absolute() else edl_path.parent / p,
-            name=project.title if project else project_id,
+            resolve=lambda src: p if (p := Path(src)).is_absolute() else base / p,
+            name=title,
+        )
+
+    def export_fcpxml(self, project_id: str) -> str:
+        """The current timeline as FCPXML text for Final Cut handoff — same
+        rendered-EDL contract as export_otio."""
+        edl, base, title = self._exportable_edl(project_id)
+        return edl_to_fcpxml(
+            edl,
+            resolve=lambda src: p if (p := Path(src)).is_absolute() else base / p,
+            name=title,
         )
 
     # -- compile & enqueue ---------------------------------------------------

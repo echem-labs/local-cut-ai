@@ -90,8 +90,11 @@ Downloads are also available through the API (`GET /models`,
 `POST /models/{id}/download` with progress over `/ws`) — the desktop app's
 first-run screen and Settings → model library use exactly that. Per project,
 `POST /projects/{id}/package` generates a thumbnail plus an LLM
-title/description/hashtags kit, and `GET /projects/{id}/export/otio` hands
-the current timeline to pro NLEs as OpenTimelineIO.
+title/description/hashtags kit, and the current timeline hands off to pro
+NLEs as OpenTimelineIO (`GET /projects/{id}/export/otio` — DaVinci,
+Premiere via adapters) or FCPXML (`GET /projects/{id}/export/fcpxml` —
+Final Cut Pro); both are serialized from the same timing authority, so
+their length always matches the rendered MP4.
 
 **Asset conditioning.** `POST /projects/{id}/assets` imports a user image as
 a graph node (no filesystem shortcuts — raw bytes over the API); wiring it
