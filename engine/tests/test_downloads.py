@@ -1,6 +1,7 @@
 """Download manager: fresh, resumed, and checksum-failing downloads against
 a local HTTP server (python's RangeRequestHandler-capable SimpleHTTP)."""
 
+import asyncio
 import hashlib
 import pathlib
 import threading
@@ -114,6 +115,16 @@ async def test_existing_valid_file_is_skipped(server, tmp_path):
     assert path == dest
 
 
+async def test_stream_larger_than_manifest_size_is_aborted(server, tmp_path):
+    """A lying/compromised server must not be able to fill the disk: the
+    stream is cut off once it exceeds the manifest's declared size."""
+    oversized = ModelFile(url=f"{server}/weights.bin", dest="checkpoints/weights.bin", size=1024)
+    with pytest.raises(DownloadError, match="exceeded"):
+        await download_file(oversized, tmp_path / "models")
+    part = tmp_path / "models/checkpoints/weights.bin.part"
+    assert not part.exists()  # poisoned bytes are not kept for resume
+
+
 async def test_http_error_raises(server, tmp_path):
     with pytest.raises(DownloadError, match="404"):
         await download_file(model_file(f"{server}/missing.bin"), tmp_path / "models")
@@ -177,12 +188,11 @@ async def test_manager_publishes_terminal_events(server, tmp_path):
     queue = events.subscribe()
     manager = DownloadManager(config, events)
 
-    assert manager.start("tiny") == "started"
-    assert manager.start("broken") == "started"
+    assert await manager.start("tiny") == "started"
+    assert await manager.start("broken") == "started"
     with pytest.raises(KeyError):
-        manager.start("no-such-model")
-    await manager._tasks["tiny"]
-    await manager._tasks["broken"]
+        await manager.start("no-such-model")
+    await asyncio.gather(*manager._tasks.values(), return_exceptions=True)
 
     seen = []
     while not queue.empty():
@@ -190,8 +200,11 @@ async def test_manager_publishes_terminal_events(server, tmp_path):
     outcomes = {e.get("model"): e["type"] for e in seen if e["type"].endswith(("done", "failed"))}
     assert outcomes["tiny"] == "model.download.done"
     assert outcomes["broken"] == "model.download.failed"
-    assert manager.start("tiny") == "downloaded"
+    assert await manager.start("tiny") == "downloaded"
     assert not manager.cancel("tiny")  # nothing in flight
+    # Terminal bookkeeping cleared before the events went out: nothing is
+    # still reported as downloading.
+    assert not any(row["downloading"] for row in manager.status())
 
 
 async def test_traversal_dest_rejected_even_with_relative_models_dir(tmp_path, monkeypatch):

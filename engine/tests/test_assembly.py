@@ -181,6 +181,10 @@ async def test_reorder_trim_and_transitions(tmp_path, media):
     assert edl["video"][0]["duration"] == pytest.approx(1.0, abs=0.05)  # out-in
     assert edl["video"][0]["transition"] == "crossfade"
     assert edl["video"][1]["onscreen_text"] == "THREE HEARTS?!"
+    # The EDL is the timing authority: starts reflect the crossfade overlap
+    # exactly as the export renders it, so caption offsets can't drift.
+    assert edl["video"][1]["start"] == pytest.approx(0.6, abs=0.05)
+    assert edl["duration"] == pytest.approx(1.0 + 3.35 - 0.4, abs=0.1)
 
     out = await backend.execute(
         make_spec(NodeKind.EXPORT, {}, output_hash="b" * 64),

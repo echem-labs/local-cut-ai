@@ -254,6 +254,15 @@ async def test_provider_keys_are_runtime_only(client):
     assert status["fal"] is True
 
 
+async def test_broken_override_manifest_is_503_not_500(client, tmp_path):
+    (tmp_path / "model-manifest.json").write_text("{ not json")
+    response = await client.get("/models")
+    assert response.status_code == 503
+    assert "manifest" in response.json()["detail"]
+    response = await client.post("/models/kokoro-82m/download")
+    assert response.status_code == 503
+
+
 async def test_otio_export_conflicts_before_a_real_timeline(client):
     """Mock EDLs (and unrendered timelines) must 409 with a reason — never
     500, never an empty document."""

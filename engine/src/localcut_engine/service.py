@@ -90,11 +90,16 @@ class ProjectService:
             script = graph.nodes.get("script")
             if script is None or script.kind is not NodeKind.SCRIPT:
                 raise ValueError("only script tool sessions can be promoted")
+            # Only the artifact matching the node's CURRENT identity counts:
+            # after a regenerate (seed bump) the older screenplay must not be
+            # promoted as if it were the new seed's output.
+            current_hash = graph.output_hash("script")
             job = next(
                 (
                     j
                     for j in self.queue.list(project_id, 1000)
                     if j.spec.node_id == "script"
+                    and j.spec.output_hash == current_hash
                     and j.status is JobStatus.DONE
                     and j.artifact
                     and Path(j.artifact).exists()
@@ -291,7 +296,10 @@ class ProjectService:
             if job.backend is None or out_hash not in cached:
                 continue  # pre-tracking history stays trusted
             try:
-                expected = self.backends.resolve(job.spec.kind).name
+                # Model-aware: a cloud:* node resolves to the cloud backend,
+                # so its artifacts stay trusted — distrusting them here would
+                # re-enqueue (and re-bill) the same render forever.
+                expected = self.backends.resolve(job.spec.kind, job.spec.model).name
             except GenerationError:
                 continue
             if job.backend != expected:
@@ -342,7 +350,10 @@ class ProjectService:
             return True
         if kind is NodeKind.SCRIPT:
             return True
-        if kind in (NodeKind.KEYFRAME, NodeKind.NARRATION, NodeKind.MUSIC):
+        # Thumbnails derive from the approved script (packaging), not from
+        # the storyboard — gating them there would silently drop an explicit
+        # POST /package in beginner mode.
+        if kind in (NodeKind.KEYFRAME, NodeKind.NARRATION, NodeKind.MUSIC, NodeKind.THUMBNAIL):
             return "script" in project.approvals
         return "storyboard" in project.approvals
 

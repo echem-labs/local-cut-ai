@@ -144,23 +144,31 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     # is only a fallback (models drop or mangle the field).
     aspect = graph.nodes["script"].params.get("aspect") or screenplay.aspect
 
-    _ensure_node(
-        graph,
-        "timeline",
-        NodeKind.TIMELINE,
+    # Timeline edit state (reorder/trims/transitions) is user work, like
+    # seeds and pins: a script re-run must not wipe it. Carry it over,
+    # dropping references to scenes the new screenplay no longer has.
+    scene_ids = {scene.id for scene in screenplay.scenes}
+    old_timeline = node.params if (node := graph.nodes.get("timeline")) else {}
+    timeline_params = {
+        "aspect": aspect,
         # edl_version is part of the node hash: bumping it invalidates
         # cached timeline artifacts when the EDL schema changes. Overlays
         # live here (not on clip nodes) because they are presentation-time
         # data the assembly consumes — editing a title must not re-render
-        # the clip.
-        params={
-            "aspect": aspect,
-            "edl_version": EDL_VERSION,
-            "overlays": {
-                scene.id: scene.onscreen_text for scene in screenplay.scenes if scene.onscreen_text
-            },
+        # the clip. They are content-derived, so the new screenplay wins.
+        "edl_version": EDL_VERSION,
+        "overlays": {
+            scene.id: scene.onscreen_text for scene in screenplay.scenes if scene.onscreen_text
         },
-    )
+    }
+    if order := [s for s in (old_timeline.get("order") or []) if s in scene_ids]:
+        timeline_params["order"] = order
+    for edits_key in ("trims", "transitions"):
+        if edits := {
+            s: v for s, v in (old_timeline.get(edits_key) or {}).items() if s in scene_ids
+        }:
+            timeline_params[edits_key] = edits
+    _ensure_node(graph, "timeline", NodeKind.TIMELINE, params=timeline_params)
 
     for scene in screenplay.scenes:
         kf_id = f"{scene.id}.keyframe"
@@ -251,6 +259,7 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     _ensure_node(graph, "captions", NodeKind.CAPTIONS, params={"style": "word-timed"})
     _ensure_edge(graph, "timeline", "captions")
 
+    old_export = node.params if (node := graph.nodes.get("export")) else {}
     _ensure_node(
         graph,
         "export",
@@ -259,7 +268,9 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             "format": "mp4",
             "preset": "youtube",
             "aspect": aspect,
-            "captions": "burn",  # or "sidecar": keep the .srt external
+            # The burn/sidecar choice is the user's, not the screenplay's —
+            # it survives re-expansion.
+            "captions": old_export.get("captions", "burn"),
         },
     )
     _ensure_edge(graph, "timeline", "export")

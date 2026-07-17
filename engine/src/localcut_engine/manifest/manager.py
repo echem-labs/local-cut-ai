@@ -9,6 +9,7 @@ cancel keeps the `.part` file so a later start resumes instead of restarting.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 
 from ..config import EngineConfig
@@ -20,6 +21,10 @@ from .model import ModelEntry
 _PROGRESS_INTERVAL_S = 0.5  # event-bus throttle; chunks arrive far faster
 
 
+class ManifestError(RuntimeError):
+    """The manifest itself (usually a user override file) cannot be read."""
+
+
 class DownloadManager:
     def __init__(self, config: EngineConfig, events: EventBus) -> None:
         self.config = config
@@ -27,15 +32,23 @@ class DownloadManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._progress: dict[str, dict] = {}  # model id -> {done, total} bytes
 
+    def _manifest(self):
+        # A malformed override manifest must surface as an actionable API
+        # error, not a 500 (or a bogus 409 on download start).
+        try:
+            return load_manifest(self.config)
+        except (OSError, ValueError) as exc:
+            raise ManifestError(f"model manifest is unreadable: {exc}") from exc
+
     def _entry(self, model_id: str) -> ModelEntry | None:
-        return next((m for m in load_manifest(self.config).models if m.id == model_id), None)
+        return next((m for m in self._manifest().models if m.id == model_id), None)
 
     def status(self) -> list[dict]:
         """Manifest entries with live install state — one list the model
         library and first-run screens can render directly."""
         models_dir = self.config.resolved_models_dir
         rows = []
-        for entry in load_manifest(self.config).models:
+        for entry in self._manifest().models:
             task = self._tasks.get(entry.id)
             downloading = task is not None and not task.done()
             row = entry.model_dump()
@@ -46,7 +59,7 @@ class DownloadManager:
             rows.append(row)
         return rows
 
-    def start(self, model_id: str) -> str:
+    async def start(self, model_id: str) -> str:
         """Begin (or resume) a model download. Returns the resulting state:
         'started' | 'downloading' (already running) | 'downloaded'."""
         entry = self._entry(model_id)
@@ -59,7 +72,12 @@ class DownloadManager:
             return "downloaded"
         task = self._tasks.get(model_id)
         if task is not None and not task.done():
-            return "downloading"
+            if not task.cancelling():
+                return "downloading"
+            # Cancel-then-restart: let the dying task release the .part file
+            # before a fresh one resumes from it.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
         self._tasks[model_id] = asyncio.get_running_loop().create_task(self._run(entry, models_dir))
         return "started"
 
@@ -110,9 +128,19 @@ class DownloadManager:
         try:
             await download_model(entry, models_dir, progress)
         except asyncio.CancelledError:
+            self._finish(entry.id)
             self.events.publish("model.download.cancelled", model=entry.id)
             raise
         except Exception as exc:  # DownloadError, network, disk — all UI-facing
+            self._finish(entry.id)
             self.events.publish("model.download.failed", model=entry.id, error=str(exc))
         else:
+            self._finish(entry.id)
             self.events.publish("model.download.done", model=entry.id)
+
+    def _finish(self, model_id: str) -> None:
+        # Bookkeeping must clear BEFORE the terminal event goes out: a UI
+        # that refetches /models on the event must not see downloading=True
+        # for a download that just ended.
+        self._tasks.pop(model_id, None)
+        self._progress.pop(model_id, None)

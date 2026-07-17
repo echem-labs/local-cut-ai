@@ -296,6 +296,30 @@ async def test_package_generates_thumbnail_and_publish_kit(rig):
     assert len([n for n in store.load_graph(project.id).nodes if n == "thumbnail"]) == 1
 
 
+async def test_package_thumbnail_runs_after_script_approval_in_beginner_mode(rig):
+    """Packaging is script-derived: once the script checkpoint passes, the
+    thumbnail must render without waiting for the storyboard gate — it used
+    to be silently dropped."""
+    store, queue, service = rig
+    project = service.create_from_prompt("city gardens", target_duration_s=12, mode="beginner")
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(project.id, 100)
+        )
+    )
+    service.approve(project.id, "script")
+    service.package(project.id)
+
+    def thumbnail_done() -> bool:
+        aux = service.scene_board(project.id)["aux"]
+        return bool((aux.get("thumbnail") or {}).get("artifact_hash"))
+
+    await wait_for(thumbnail_done)
+    # The storyboard gate still holds for scene clips.
+    assert not any(j.spec.node_id.endswith(".clip") for j in queue.list(project.id, 1000))
+
+
 async def test_finalize_upgrades_unpinned_clip_models(rig):
     """The final ladder can switch the clip *model* (LTX drafts → Wan
     finals); pinned clips keep the identity of their approved artifact."""

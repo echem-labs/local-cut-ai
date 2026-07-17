@@ -45,7 +45,7 @@ from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.loader import load_manifest
-from ..manifest.manager import DownloadManager
+from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
@@ -206,16 +206,21 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/models", dependencies=[Authed])
     async def models() -> list[dict]:
-        # Per-file exists() checks scale with the manifest — keep them off
-        # the loop that serves /ws progress fan-out.
-        return await asyncio.to_thread(downloads.status)
+        try:
+            # Per-file exists() checks scale with the manifest — keep them
+            # off the loop that serves /ws progress fan-out.
+            return await asyncio.to_thread(downloads.status)
+        except ManifestError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/models/{model_id}/download", dependencies=[Authed])
     async def start_download(model_id: ModelId) -> dict:
         try:
-            return {"status": downloads.start(model_id)}
+            return {"status": await downloads.start(model_id)}
         except KeyError:
             raise HTTPException(status_code=404, detail="unknown model id") from None
+        except ManifestError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

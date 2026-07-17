@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -18,9 +19,15 @@ import httpx
 
 from .model import ModelEntry, ModelFile
 
+logger = logging.getLogger(__name__)
+
 ProgressFn = Callable[[str, int, int], Awaitable[None]]  # (dest, done_bytes, total_bytes)
 
 _CHUNK = 1 << 20  # 1 MiB
+# Absolute stream ceiling when the manifest carries no size — a lying or
+# compromised server must never be able to fill the disk unbounded.
+_MAX_UNSIZED_BYTES = 100 << 30  # 100 GiB
+_SIZE_SLACK = 1 << 20  # manifest sizes are exact, but allow a stray chunk
 
 
 class DownloadError(RuntimeError):
@@ -82,18 +89,31 @@ async def download_file(
 
             if response.status_code in (200, 206):
                 total = int(response.headers.get("content-length", 0)) + offset
+                # Never trust the stream to end: a lying server must hit the
+                # manifest size (plus slack) or a hard ceiling, not the disk.
+                limit = file.size + _SIZE_SLACK if file.size else _MAX_UNSIZED_BYTES
                 mode = "ab" if offset else "wb"
                 done = offset
                 with part.open(mode) as out:
                     async for chunk in response.aiter_bytes(_CHUNK):
                         out.write(chunk)
                         done += len(chunk)
+                        if done > limit:
+                            part.unlink(missing_ok=True)
+                            raise DownloadError(
+                                f"{file.dest}: stream exceeded the expected "
+                                f"size ({done} > {limit} bytes) — aborted"
+                            )
                         if progress is not None:
                             await progress(file.dest, done, total or file.size)
     finally:
         if owns_client:
             await client.aclose()
 
+    if not file.sha256:
+        # Override manifests may omit checksums; that choice must at least
+        # be visible in the logs, not silent.
+        logger.warning("no sha256 in manifest for %s — skipping verification", file.dest)
     if file.sha256:
         # Hashing a multi-GB file must not stall the event loop.
         actual = await asyncio.to_thread(_sha256_of, part)
@@ -112,9 +132,7 @@ async def download_model(
     progress: ProgressFn | None = None,
 ) -> list[Path]:
     if not entry.files:
-        raise DownloadError(
-            f"model {entry.id} has no downloadable files in the manifest"
-        )
+        raise DownloadError(f"model {entry.id} has no downloadable files in the manifest")
     paths = []
     async with httpx.AsyncClient(
         follow_redirects=True, timeout=httpx.Timeout(30, read=120)

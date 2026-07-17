@@ -44,7 +44,10 @@ def test_cues_break_on_long_pause():
 
 
 def test_srt_roundtrip():
-    cues = [Cue(start=0.0, end=1.25, text="hello there"), Cue(start=61.5, end=63.0, text="minute two")]
+    cues = [
+        Cue(start=0.0, end=1.25, text="hello there"),
+        Cue(start=61.5, end=63.0, text="minute two"),
+    ]
     srt = cues_to_srt(cues)
     assert "00:00:00,000 --> 00:00:01,250" in srt
     assert "00:01:01,500 --> 00:01:03,000" in srt
@@ -87,8 +90,10 @@ async def test_real_narration_aligns_to_timed_captions(tmp_path):
     wav = await tts.execute(
         make_spec(
             NodeKind.NARRATION,
-            {"text": "Most animals have one heart. This creature has three.",
-             "voice": "calm narrator"},
+            {
+                "text": "Most animals have one heart. This creature has three.",
+                "voice": "calm narrator",
+            },
             output_hash="b" * 64,
         ),
         ExecutionContext(output_dir=tmp_path),

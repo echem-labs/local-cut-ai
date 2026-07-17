@@ -143,6 +143,30 @@ def test_all_packaged_templates_are_valid_json():
             assert "class_type" in node, f"{path.name}: non-node entry"
 
 
+def test_manifest_template_references_exist():
+    """Every comfy_graph_template named in the default manifest must ship as
+    a packaged template — a dangling reference fails every job for that
+    model with 'missing workflow template'."""
+    import importlib.resources
+
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.manifest.loader import load_manifest
+
+    packaged = {
+        p.name
+        for p in pathlib.Path(
+            str(importlib.resources.files("localcut_engine.comfy_templates"))
+        ).glob("*.json")
+    }
+    manifest = load_manifest(EngineConfig(data_dir=pathlib.Path("/nonexistent")))
+    dangling = {
+        m.id: m.comfy_graph_template
+        for m in manifest.models
+        if m.comfy_graph_template and m.comfy_graph_template not in packaged
+    }
+    assert dangling == {}
+
+
 def test_prompt_containing_placeholder_tokens_stays_literal():
     """User text must never be re-substituted by later placeholders."""
     backend = ComfyUIBackend()
@@ -231,6 +255,64 @@ def test_reexpansion_applies_new_screenplay():
     assert graph.nodes["s1.clip"].pinned
     assert "s2.clip" not in graph.nodes
     assert not any("s2" in (e.src.split(".")[0], e.dst.split(".")[0]) for e in graph.edges)
+
+
+def test_reexpansion_preserves_timeline_and_export_edit_state():
+    """Reorder/trims/transitions and the burn/sidecar choice are user work:
+    a script re-run refreshes derived params but must not wipe them (edits
+    referencing dropped scenes do get pruned)."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("topic")
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="one", visual="v1"),
+                Scene(id="b", duration_s=4, narration="two", visual="v2"),
+            ],
+        ),
+    )
+    graph.nodes["timeline"].params.update(
+        order=["s2", "s1"],
+        trims={"s1": {"in": 0.5}, "s2": {"in": 0.2}},
+        transitions={"s1": "crossfade"},
+    )
+    graph.nodes["export"].params["captions"] = "sidecar"
+
+    # Same scene count: everything survives verbatim.
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="uno", visual="w1"),
+                Scene(id="b", duration_s=4, narration="dos", visual="w2"),
+            ],
+        ),
+    )
+    timeline = graph.nodes["timeline"].params
+    assert timeline["order"] == ["s2", "s1"]
+    assert timeline["trims"] == {"s1": {"in": 0.5}, "s2": {"in": 0.2}}
+    assert timeline["transitions"] == {"s1": "crossfade"}
+    assert graph.nodes["export"].params["captions"] == "sidecar"
+
+    # Scene s2 dropped: its edit-state references are pruned with it.
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="only", visual="w1"),
+            ],
+        ),
+    )
+    timeline = graph.nodes["timeline"].params
+    assert timeline["order"] == ["s1"]
+    assert timeline["trims"] == {"s1": {"in": 0.5}}
+    assert timeline["transitions"] == {"s1": "crossfade"}
 
 
 def test_long_scene_splits_into_sequential_takes():

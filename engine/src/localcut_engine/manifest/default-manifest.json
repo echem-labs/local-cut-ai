@@ -171,7 +171,7 @@
           "hf": "black-forest-labs/FLUX.1-schnell"
         }
       ],
-      "comfy_graph_template": "flux_schnell_keyframe.json"
+      "comfy_graph_template": ""
     },
     {
       "id": "qwen3-14b-q4",

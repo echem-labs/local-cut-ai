@@ -12,8 +12,10 @@ from ..graph.compiler import JobSpec
 from ..graph.model import KEYFRAME_PORT, NodeKind
 from ..providers.registry import textgen_for_model, videogen_for_model
 from ..providers.textgen import ProviderError
+import json
+
 from .base import ExecutionBackend, ExecutionContext, GenerationError
-from .llm import _SYSTEM_PROMPT, LLMScriptBackend
+from .llm import _METADATA_PROMPT, _SYSTEM_PROMPT, LLMScriptBackend
 
 
 class CloudBackend(ExecutionBackend):
@@ -38,6 +40,15 @@ class CloudBackend(ExecutionBackend):
 
     async def _script(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         textgen = textgen_for_model(self.config, spec.model or "")
+        if spec.params.get("task") == "metadata":
+            # Publish-kit nodes are SCRIPT-kind with a different contract —
+            # same split the local LLM backend makes.
+            raw = await textgen.complete(
+                system=_METADATA_PROMPT, prompt=str(spec.params.get("prompt", ""))
+            )
+            out = ctx.output_path(spec.output_hash, ".metadata.json")
+            out.write_text(json.dumps(LLMScriptBackend._parse_metadata(raw), indent=2))
+            return out
         prompt = (
             f"Topic: {spec.params.get('prompt', '')}\n"
             f"Target duration: {spec.params.get('target_duration_s', 60)}s\n"

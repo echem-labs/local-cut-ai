@@ -134,6 +134,18 @@ class FFmpegBackend(ExecutionBackend):
             else:
                 window = min(clip_duration, float(trim_out)) if trim_out else clip_duration
                 duration = max(0.1, window - trim_in)
+            # A crossfade boundary overlaps this segment with the running
+            # chain by CROSSFADE_S — the stored start must say where the
+            # scene actually lands in the output, or caption alignment and
+            # every other consumer drifts late by 0.4s per crossfade. Guard
+            # mirrors _join_segments exactly (both sides long enough).
+            if (
+                segments
+                and segments[-1]["transition"] == "crossfade"
+                and start > 2 * CROSSFADE_S
+                and duration > 2 * CROSSFADE_S
+            ):
+                start -= CROSSFADE_S
             segments.append(
                 {
                     "scene": port,
@@ -314,7 +326,15 @@ class FFmpegBackend(ExecutionBackend):
                     f"{cur_v}[{i}:v]xfade=transition=fade:"
                     f"duration={CROSSFADE_S}:offset={offset:.3f}[v{i}]"
                 )
-                steps.append(f"{cur_a}[{i}:a]acrossfade=d={CROSSFADE_S}[a{i}]")
+                # Audio overlaps at full level (delay + mix), NOT acrossfade:
+                # a fade-in would swallow the first words of the next scene's
+                # narration, which starts flush with its segment.
+                delay_ms = round(offset * 1000)
+                steps.append(f"[{i}:a]adelay={delay_ms}:all=1[ad{i}]")
+                steps.append(
+                    f"{cur_a}[ad{i}]amix=inputs=2:duration=longest:"
+                    f"dropout_transition=0:normalize=0[a{i}]"
+                )
                 cur_duration += duration_i - CROSSFADE_S
             else:
                 steps.append(f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]")
@@ -419,6 +439,12 @@ class FFmpegBackend(ExecutionBackend):
                     )
                 )
                 trim_in = 0.0
+                # A pathologically short clip can hit the loop cap below
+                # target; repeat the crossfaded block rather than freezing
+                # the video track short of the narration.
+                step = window - CROSSFADE_S
+                if window + (_MAX_LOOPS - 1) * step < target:
+                    loop_hard = True
             else:
                 loop_hard = True
 
