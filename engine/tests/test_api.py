@@ -85,7 +85,7 @@ def test_backend_chain_parsing_and_composition(tmp_path):
 
     assert EngineConfig(backend="llm,comfy,mock").backend_chain == ["llm", "comfy", "mock"]
     assert EngineConfig(backend="local,mock").backend_chain == [
-        "llm", "comfy", "kokoro", "ffmpeg", "mock",
+        "llm", "comfy", "kokoro", "align", "ffmpeg", "mock",
     ]
 
     config = EngineConfig(
@@ -100,7 +100,8 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     # The full-local chain must resolve every generative kind (no dead lanes).
     local = _build_backends(EngineConfig(data_dir=tmp_path, backend="local"))
     for kind in (NodeKind.SCRIPT, NodeKind.KEYFRAME, NodeKind.CLIP, NodeKind.MUSIC,
-                 NodeKind.NARRATION, NodeKind.TIMELINE, NodeKind.EXPORT):
+                 NodeKind.NARRATION, NodeKind.CAPTIONS, NodeKind.TIMELINE,
+                 NodeKind.EXPORT):
         local.resolve(kind)  # raises if unrouted
 
     with pytest.raises(ValueError, match="unknown backend"):

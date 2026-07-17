@@ -60,6 +60,28 @@ def test_music_workflow_gets_brief_and_seconds():
     assert json.dumps(workflow)  # valid JSON throughout
 
 
+def test_final_quality_scales_steps_and_resolution():
+    """Draft→final ladder: same graph, one quality parameter."""
+    backend = ComfyUIBackend()
+    params = {"prompt": "x", "aspect": "9:16", "duration_s": 4}
+    draft = backend._fill_workflow(
+        make_spec(NodeKind.CLIP, params), keyframe_name="kf.png"
+    )
+    final = backend._fill_workflow(
+        make_spec(NodeKind.CLIP, params, quality="final"), keyframe_name="kf.png"
+    )
+    d, f = draft["img_to_video"]["inputs"], final["img_to_video"]["inputs"]
+    assert f["width"] > d["width"] and f["width"] % 32 == 0
+    assert final["sampler"]["inputs"]["steps"] > draft["sampler"]["inputs"]["steps"]
+    # Images already render at delivery resolution — only steps scale.
+    kf_draft = backend._fill_workflow(make_spec(NodeKind.KEYFRAME, params), None)
+    kf_final = backend._fill_workflow(
+        make_spec(NodeKind.KEYFRAME, params, quality="final"), None
+    )
+    assert kf_final["latent"]["inputs"]["width"] == kf_draft["latent"]["inputs"]["width"]
+    assert kf_final["sampler"]["inputs"]["steps"] > kf_draft["sampler"]["inputs"]["steps"]
+
+
 def test_voice_picker():
     assert pick_voice("energetic male narrator") == "am_michael"
     assert pick_voice("calm female voice") == "af_sarah"
@@ -167,8 +189,11 @@ def test_expansion_uses_requested_aspect_over_llm_echo():
 
     graph = prompt_template_graph("topic", aspect="9:16")
     expand_screenplay(graph, Screenplay(title="t", scenes=[
-        Scene(id="a", duration_s=4, narration="n", visual="v"),
+        Scene(id="a", duration_s=4, narration="n", visual="v", onscreen_text="HOOK!"),
     ]))  # screenplay.aspect defaults to "16:9"
     assert graph.nodes["s1.keyframe"].params["aspect"] == "9:16"
     assert graph.nodes["s1.clip"].params["aspect"] == "9:16"
     assert graph.nodes["export"].params["aspect"] == "9:16"
+    # On-screen text is presentation data: it rides on the timeline node so
+    # title edits never re-render clips.
+    assert graph.nodes["timeline"].params["overlays"] == {"s1": "HOOK!"}

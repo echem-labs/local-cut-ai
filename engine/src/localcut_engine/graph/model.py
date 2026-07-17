@@ -28,14 +28,16 @@ DEFAULT_PORT = "default"
 CAPTIONS_PORT = "captions"
 
 # Input ports whose artifacts are optional for assembly: their absence
-# degrades the output (no music bed) instead of failing the job.
+# degrades the output (no music bed, no burned captions) instead of failing
+# the job — and when the input later succeeds, its consumers re-render.
 # TIMING_PORT is listed for graphs expanded before the narration→clip edge
 # was dropped: no backend reads it, so it must never block a clip render.
-OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT}
+OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT, CAPTIONS_PORT}
 
 # Part of every timeline node's hash: bumping it invalidates cached EDLs
-# whenever their schema changes (v3: artifact paths relative to generated/).
-EDL_VERSION = 3
+# whenever their schema changes (v3: artifact paths relative to generated/;
+# v4: per-segment start/duration timing, overlays, trims, transitions).
+EDL_VERSION = 4
 
 # Node ids must stay addressable through the API's path params — the same
 # pattern guards both places.

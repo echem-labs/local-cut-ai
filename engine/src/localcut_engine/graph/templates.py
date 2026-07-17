@@ -94,8 +94,19 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         "timeline",
         NodeKind.TIMELINE,
         # edl_version is part of the node hash: bumping it invalidates
-        # cached timeline artifacts when the EDL schema changes.
-        params={"aspect": aspect, "edl_version": EDL_VERSION},
+        # cached timeline artifacts when the EDL schema changes. Overlays
+        # live here (not on clip nodes) because they are presentation-time
+        # data the assembly consumes — editing a title must not re-render
+        # the clip.
+        params={
+            "aspect": aspect,
+            "edl_version": EDL_VERSION,
+            "overlays": {
+                scene.id: scene.onscreen_text
+                for scene in screenplay.scenes
+                if scene.onscreen_text
+            },
+        },
     )
 
     for scene in screenplay.scenes:
@@ -168,7 +179,12 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         graph,
         "export",
         NodeKind.EXPORT,
-        params={"format": "mp4", "preset": "youtube", "aspect": aspect},
+        params={
+            "format": "mp4",
+            "preset": "youtube",
+            "aspect": aspect,
+            "captions": "burn",  # or "sidecar": keep the .srt external
+        },
     )
     _ensure_edge(graph, "timeline", "export")
     _ensure_edge(graph, "captions", "export", port=CAPTIONS_PORT)

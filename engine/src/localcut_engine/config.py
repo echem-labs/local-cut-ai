@@ -22,7 +22,7 @@ class EngineConfig(BaseModel):
     # config with a different data_dir (the CLI override path).
     models_dir: Path | None = None
     # Comma-separated backend chain, first match wins per node kind.
-    # Shorthands: "mock", "local" (= llm,comfy,kokoro,ffmpeg). A trailing
+    # Shorthands: "mock", "local" (= llm,comfy,kokoro,align,ffmpeg). A trailing
     # "mock" makes a hybrid: real backends where available, mock for the rest.
     backend: str = "mock"
     comfyui_url: str = "http://127.0.0.1:8188"
@@ -59,7 +59,7 @@ class EngineConfig(BaseModel):
         for name in self.backend.split(","):
             name = name.strip()
             if name == "local":
-                chain += ["llm", "comfy", "kokoro", "ffmpeg"]
+                chain += ["llm", "comfy", "kokoro", "align", "ffmpeg"]
             elif name:
                 chain.append(name)
         return chain

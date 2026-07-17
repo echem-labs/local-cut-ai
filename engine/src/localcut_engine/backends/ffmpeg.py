@@ -18,8 +18,10 @@ import tempfile
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, resolution_for
+from ..captions import srt_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
+    CAPTIONS_PORT,
     DEFAULT_PORT,
     MUSIC_PORT,
     SCENE_AUDIO_SUFFIX,
@@ -28,10 +30,15 @@ from ..graph.model import (
 )
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
-_KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT, NodeKind.CAPTIONS}
+_KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT}
 
 NARRATION_PAD_S = 0.35  # breathing room after each narration line
 MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
+CROSSFADE_S = 0.4  # video+audio overlap for the crossfade transition
+DIP_S = 0.25  # fade-to-black halves of the dip transition
+
+# Export bitrate by quality tier; draft favors speed, final favors fidelity.
+_VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
 
 
 class FFmpegBackend(ExecutionBackend):
@@ -51,16 +58,18 @@ class FFmpegBackend(ExecutionBackend):
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         match spec.kind:
             case NodeKind.TIMELINE:
-                return self._build_timeline(spec, ctx)
-            case NodeKind.CAPTIONS:
-                return self._build_captions(spec, ctx)
+                return await self._build_timeline(spec, ctx)
             case NodeKind.EXPORT:
                 return await self._export(spec, ctx)
         raise GenerationError(f"ffmpeg backend cannot handle {spec.kind}")
 
     # -- timeline: an explicit edit decision list (JSON) -----------------------
+    #
+    # The EDL is the single timing authority: segment starts and durations are
+    # computed here (narration drives scene duration) and consumed verbatim by
+    # both export and caption alignment — they must never re-derive timing.
 
-    def _build_timeline(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+    async def _build_timeline(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         def rel(path: Path | None) -> str | None:
             # EDLs are cached artifacts inside the .lcut dir: paths must stay
             # relative to generated/ or relocating the project bricks export.
@@ -70,29 +79,67 @@ class FFmpegBackend(ExecutionBackend):
             return p.name if p.parent == ctx.output_dir else str(p)
 
         narration = {
-            port.removesuffix(SCENE_AUDIO_SUFFIX): rel(path)
+            port.removesuffix(SCENE_AUDIO_SUFFIX): path
             for port, path in ctx.input_artifacts.items()
             if port.endswith(SCENE_AUDIO_SUFFIX)
         }
-        scenes = sorted(
-            (
-                (port, rel(path))
-                for port, path in ctx.input_artifacts.items()
-                if not port.endswith(SCENE_AUDIO_SUFFIX) and port != MUSIC_PORT
-            ),
-            key=lambda item: scene_sort_key(item[0]),
+        scenes = [
+            (port, path)
+            for port, path in ctx.input_artifacts.items()
+            if not port.endswith(SCENE_AUDIO_SUFFIX) and port != MUSIC_PORT
+        ]
+        order: list[str] = spec.params.get("order") or []
+        scenes.sort(
+            key=lambda item: (
+                (0, order.index(item[0])) if item[0] in order else (1,) + scene_sort_key(item[0])
+            )
         )
-        timeline = {
-            "aspect": spec.params.get("aspect", DEFAULT_ASPECT),
-            "video": [
+        trims: dict = spec.params.get("trims") or {}
+        transitions: dict = spec.params.get("transitions") or {}
+        overlays: dict = spec.params.get("overlays") or {}
+
+        segments = []
+        start = 0.0
+        for port, path in scenes:
+            clip_duration = await self._probe_duration(Path(path))
+            if clip_duration is None:
+                raise GenerationError(f"scene {port}: clip is not decodable media")
+            trim = trims.get(port) or {}
+            trim_in = max(0.0, float(trim.get("in", 0.0)))
+            trim_out = trim.get("out")
+            narr = narration.get(port)
+            narration_duration = (
+                await self._probe_duration(Path(narr)) if narr is not None else None
+            )
+            if narr is not None and narration_duration is None:
+                raise GenerationError(f"scene {port}: narration is not decodable media")
+            if narration_duration is not None:
+                # Narration drives scene duration; trims pick which part of
+                # the clip fills that window, they never cut speech.
+                duration = narration_duration + NARRATION_PAD_S
+            else:
+                window = (
+                    min(clip_duration, float(trim_out)) if trim_out else clip_duration
+                )
+                duration = max(0.1, window - trim_in)
+            segments.append(
                 {
                     "scene": port,
-                    "src": src,
-                    "narration": narration.get(port),
-                    "transition": "cut",
+                    "src": rel(path),
+                    "narration": rel(narration.get(port)),
+                    "start": round(start, 3),
+                    "duration": round(duration, 3),
+                    "clip_duration": round(clip_duration, 3),
+                    "trim_in": trim_in,
+                    "transition": str(transitions.get(port, "cut")),
+                    "onscreen_text": overlays.get(port),
                 }
-                for port, src in scenes
-            ],
+            )
+            start += duration
+        timeline = {
+            "aspect": spec.params.get("aspect", DEFAULT_ASPECT),
+            "video": segments,
+            "duration": round(start, 3),
             "music": rel(ctx.input_artifacts.get(MUSIC_PORT)) or "",
             "music_volume": MUSIC_BED_VOLUME,
         }
@@ -100,14 +147,7 @@ class FFmpegBackend(ExecutionBackend):
         out.write_text(json.dumps(timeline, indent=2))
         return out
 
-    def _build_captions(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        # v1 stub: forced alignment (faster-whisper) lands with the caption
-        # styling pass; until then emit an empty-but-valid sidecar.
-        out = ctx.output_path(spec.output_hash, ".srt")
-        out.write_text("")
-        return out
-
-    # -- export: scenes → timed segments → concat → music bed ------------------
+    # -- export: timed segments → transition chain → captions → music bed -----
 
     async def _export(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         timeline_path = ctx.input_artifacts.get(DEFAULT_PORT)
@@ -116,7 +156,7 @@ class FFmpegBackend(ExecutionBackend):
         timeline = json.loads(Path(timeline_path).read_text())
 
         def resolve(src: str | None) -> Path | None:
-            # EDL v3 stores names relative to generated/; absolute paths are
+            # EDLs store names relative to generated/; absolute paths are
             # tolerated for EDLs cached by older builds.
             if not src:
                 return None
@@ -137,34 +177,25 @@ class FFmpegBackend(ExecutionBackend):
 
         width, height = resolution_for(EXPORT_RESOLUTIONS, timeline.get("aspect"))
         encoder = await self._pick_encoder()
+        bitrate = _VIDEO_BITRATE.get(spec.quality, _VIDEO_BITRATE["draft"])
         # Never under generated/ — everything there is treated as an artifact.
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
         try:
             scene_files: list[Path] = []
             total = len(segments)
             for index, segment in enumerate(segments):
+                fade_in = index > 0 and segments[index - 1].get("transition") == "dip"
                 scene_files.append(
-                    await self._render_segment(segment, work / f"seg{index:03}.mp4",
-                                               width, height, encoder)
+                    await self._render_segment(
+                        segment, work / f"seg{index:03}.mp4", width, height,
+                        encoder, workdir=work, fade_in=fade_in,
+                    )
                 )
                 await ctx.progress(0.8 * (index + 1) / total)
 
-            # Concat *filter*, not the demuxer: stream-copy concat of AAC
-            # segments accumulates timestamp gaps (apad's trailing frames),
-            # drifting total duration ~0.4s per scene. The filter re-encode
-            # is sample-exact; TS-intermediate copy concat is the future
-            # optimization if export time ever matters.
-            cut = work / "cut.mp4"
-            inputs: list[str] = []
-            for path in scene_files:
-                inputs += ["-i", str(path)]
-            chains = "".join(f"[{i}:v][{i}:a]" for i in range(len(scene_files)))
-            await self._run(
-                *inputs,
-                "-filter_complex", f"{chains}concat=n={len(scene_files)}:v=1:a=1[v][a]",
-                "-map", "[v]", "-map", "[a]",
-                "-c:v", encoder, "-c:a", "aac", "-b:a", "160k",
-                str(cut),
+            burn = self._burnable_captions(spec, ctx, work)
+            cut = await self._join_segments(
+                segments, scene_files, work, encoder, bitrate, burn
             )
 
             out = ctx.output_path(spec.output_hash, ".mp4")
@@ -189,48 +220,158 @@ class FFmpegBackend(ExecutionBackend):
         await ctx.progress(1.0)
         return out
 
-    async def _render_segment(
-        self, segment: dict, out: Path, width: int, height: int, encoder: str
+    def _burnable_captions(
+        self, spec: JobSpec, ctx: ExecutionContext, work: Path
+    ) -> Path | None:
+        """The caption artifact as a styled ASS file, when burn-in applies."""
+        if spec.params.get("captions", "burn") != "burn":
+            return None
+        srt = ctx.input_artifacts.get(CAPTIONS_PORT)
+        if srt is None or not srt.exists() or not srt.read_text().strip():
+            return None
+        ass = work / "captions.ass"
+        ass.write_text(srt_to_ass(srt.read_text()))
+        return ass
+
+    async def _join_segments(
+        self,
+        segments: list[dict],
+        scene_files: list[Path],
+        work: Path,
+        encoder: str,
+        bitrate: str,
+        burn: Path | None,
     ) -> Path:
-        """One scene: video trimmed/looped to narration length + padding."""
+        """Pairwise transition chain: cut/dip boundaries concat, crossfade
+        boundaries xfade+acrossfade. The concat *filter* (not the demuxer) is
+        deliberate — stream-copy concat of AAC segments accumulates timestamp
+        gaps and drifts total duration; the re-encode is sample-exact."""
+        cut = work / "cut.mp4"
+        inputs: list[str] = []
+        for path in scene_files:
+            inputs += ["-i", str(path)]
+
+        steps: list[str] = []
+        cur_v, cur_a = "[0:v]", "[0:a]"
+        cur_duration = float(segments[0]["duration"])
+        for i in range(1, len(scene_files)):
+            duration_i = float(segments[i]["duration"])
+            boundary = segments[i - 1].get("transition", "cut")
+            if (
+                boundary == "crossfade"
+                and cur_duration > CROSSFADE_S * 2
+                and duration_i > CROSSFADE_S * 2
+            ):
+                offset = cur_duration - CROSSFADE_S
+                steps.append(
+                    f"{cur_v}[{i}:v]xfade=transition=fade:"
+                    f"duration={CROSSFADE_S}:offset={offset:.3f}[v{i}]"
+                )
+                steps.append(f"{cur_a}[{i}:a]acrossfade=d={CROSSFADE_S}[a{i}]")
+                cur_duration += duration_i - CROSSFADE_S
+            else:
+                steps.append(
+                    f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]"
+                )
+                cur_duration += duration_i
+            cur_v, cur_a = f"[v{i}]", f"[a{i}]"
+
+        if burn is not None:
+            steps.append(f"{cur_v}ass='{burn}'[vout]")
+            cur_v = "[vout]"
+        if not steps:
+            # Single segment, nothing to burn: re-encode to the target rate.
+            await self._run(
+                "-i", str(scene_files[0]),
+                "-c:v", encoder, "-b:v", bitrate, "-c:a", "aac", "-b:a", "160k",
+                str(cut),
+            )
+            return cut
+
+        def map_arg(label: str) -> str:
+            # Raw input streams ("[0:a]") are mapped without brackets; only
+            # filtergraph outputs keep the label form.
+            return label[1:-1] if ":" in label else label
+
+        await self._run(
+            *inputs,
+            "-filter_complex", ";".join(steps),
+            "-map", map_arg(cur_v), "-map", map_arg(cur_a),
+            "-c:v", encoder, "-b:v", bitrate, "-c:a", "aac", "-b:a", "160k",
+            str(cut),
+        )
+        return cut
+
+    async def _render_segment(
+        self,
+        segment: dict,
+        out: Path,
+        width: int,
+        height: int,
+        encoder: str,
+        *,
+        workdir: Path,
+        fade_in: bool = False,
+    ) -> Path:
+        """One scene, cut to the EDL's stored duration (narration-driven),
+        with trims, dip fades and on-screen text applied at the source."""
         clip = str(segment["src"])
-        clip_duration = await self._probe_duration(Path(clip))
-        if clip_duration is None:
-            raise GenerationError(f"scene {segment.get('scene')}: clip is not decodable media")
+        target = float(segment["duration"])
+        clip_duration = float(segment.get("clip_duration") or 0.0)
+        if not clip_duration:
+            probed = await self._probe_duration(Path(clip))
+            if probed is None:
+                raise GenerationError(
+                    f"scene {segment.get('scene')}: clip is not decodable media"
+                )
+            clip_duration = probed
+        trim_in = float(segment.get("trim_in") or 0.0)
+        if trim_in >= clip_duration:
+            trim_in = 0.0  # a trim that consumed the whole clip is void
 
         narration = segment.get("narration")
-        narration_duration = (
-            await self._probe_duration(Path(narration)) if narration else None
-        )
-        if narration and narration_duration is None:
-            # A narration the timeline references but ffprobe can't read is
+        if narration is not None and not Path(narration).exists():
+            # A narration the timeline references but that vanished is
             # corruption — fail loudly rather than shipping a silent scene.
             raise GenerationError(
-                f"scene {segment.get('scene')}: narration is not decodable media"
+                f"scene {segment.get('scene')}: narration artifact is missing"
             )
-        target = (
-            narration_duration + NARRATION_PAD_S
-            if narration_duration is not None
-            else clip_duration
-        )
 
         args: list[str] = []
-        if clip_duration < target:
+        if trim_in:
+            args += ["-ss", f"{trim_in:.3f}"]
+        if clip_duration - trim_in < target:
             args += ["-stream_loop", "-1"]  # loop short clips up to target
         args += ["-i", clip]
-        if narration_duration is not None:
+        if narration is not None:
             args += ["-i", str(narration)]
             audio = ["-map", "1:a", "-af", "apad", "-c:a", "aac", "-b:a", "160k"]
         else:
             args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
             audio = ["-map", "1:a", "-c:a", "aac", "-b:a", "160k"]
+
         vf = (
             f"scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height},fps=24,format=yuv420p"
         )
+        text = segment.get("onscreen_text")
+        if text:
+            # textfile= sidesteps drawtext's escaping rules for user text.
+            textfile = workdir / f"{out.stem}.txt"
+            textfile.write_text(str(text))
+            vf += (
+                f",drawtext=textfile={textfile}:font=Sans:fontsize={height // 14}"
+                f":fontcolor=white:borderw={max(2, height // 270)}"
+                ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
+            )
+        if fade_in:
+            vf += f",fade=t=in:st=0:d={DIP_S}"
+        if segment.get("transition") == "dip":
+            vf += f",fade=t=out:st={max(0.0, target - DIP_S):.3f}:d={DIP_S}"
+
         await self._run(
             *args, "-t", f"{target:.3f}", "-map", "0:v", *audio,
-            "-vf", vf, "-c:v", encoder, str(out),
+            "-vf", vf, "-c:v", encoder, "-b:v", "12M", str(out),
         )
         return out
 

@@ -34,9 +34,21 @@ _SUBSTITUTIONS = (
     ("%%KEYFRAME%%", False),
     ("%%FRAMES%%", True),
     ("%%SECONDS%%", True),
+    ("%%STEPS%%", True),
     ("%%PROMPT%%", False),
 )
 PLACEHOLDERS = tuple(token for token, _ in _SUBSTITUTIONS)
+
+# Draft-tier sampler steps per kind; the draft→final ladder scales these and
+# (for clips) the render resolution — same graph, one quality parameter.
+_BASE_STEPS = {
+    NodeKind.KEYFRAME: 20,
+    NodeKind.THUMBNAIL: 20,
+    NodeKind.CLIP: 25,
+    NodeKind.MUSIC: 27,
+}
+_FINAL_STEPS_SCALE = 1.5
+_FINAL_RES_SCALE = 1.5  # clips only: drafts render small for pacing review
 
 # A workflow that produces no websocket message for this long is considered
 # wedged; the job fails instead of starving the GPU-serial scheduler forever.
@@ -81,12 +93,18 @@ class ComfyUIBackend(ExecutionBackend):
         text = self._template_path(spec).read_text()
         aspect = str(spec.params.get("aspect", DEFAULT_ASPECT))
         is_video = spec.kind is NodeKind.CLIP
+        is_final = spec.quality == "final"
         table = VIDEO_RESOLUTIONS if is_video else IMAGE_RESOLUTIONS
         divisor = 32 if is_video else 8  # LTX latents need /32 dims
         width, height = resolution_for(table, aspect)
         scale = float(spec.params.get("resolution_scale", 1.0))  # OOM ladder
+        if is_video and is_final:
+            scale *= _FINAL_RES_SCALE
         width = max(divisor, int(width * scale) // divisor * divisor)
         height = max(divisor, int(height * scale) // divisor * divisor)
+        steps = _BASE_STEPS.get(spec.kind, 20)
+        if is_final:
+            steps = round(steps * _FINAL_STEPS_SCALE)
 
         prompt = str(spec.params.get("prompt", ""))
         if is_video:
@@ -109,6 +127,7 @@ class ComfyUIBackend(ExecutionBackend):
             "%%KEYFRAME%%": keyframe_name or "",
             "%%FRAMES%%": str(frames),
             "%%SECONDS%%": str(duration_s),
+            "%%STEPS%%": str(steps),
             "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
         }
         for token, quoted in _SUBSTITUTIONS:

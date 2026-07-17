@@ -161,6 +161,43 @@
       "comfy_graph_template": "music_default.json"
     },
     {
+      "id": "faster-whisper-base-en",
+      "task": "transcribe",
+      "family": "whisper",
+      "version": "base.en",
+      "requirements": { "vram_gb": 0, "ram_gb": 2, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
+      "quality_score": 7.0,
+      "speed_score": 9.5,
+      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
+      "sources": [{ "hf": "Systran/faster-whisper-base.en" }],
+      "files": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main/model.bin",
+          "dest": "asr/faster-whisper-base.en/model.bin",
+          "sha256": "2a166925539a16005f14ff328359f9b9adb9dc4fb631bb3b227526862e93e2ef",
+          "size": 145216508
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main/config.json",
+          "dest": "asr/faster-whisper-base.en/config.json",
+          "sha256": "f3bc3821e9fc76a27bae538e11ae5b677dcdd352b4600429ce7951d398569aeb",
+          "size": 2227
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main/tokenizer.json",
+          "dest": "asr/faster-whisper-base.en/tokenizer.json",
+          "sha256": "929c5252409436dce1b38a75d1abbcb5e132d170d8e324e4e04ed915fa2d22df",
+          "size": 2128466
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main/vocabulary.txt",
+          "dest": "asr/faster-whisper-base.en/vocabulary.txt",
+          "sha256": "ff77588746d3a2595d32ab5b69ffd7b95ce2441ac57533cb66fc3eb575a115cf",
+          "size": 422309
+        }
+      ]
+    },
+    {
       "id": "faster-whisper-large-v3",
       "task": "transcribe",
       "family": "whisper",

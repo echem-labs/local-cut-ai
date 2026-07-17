@@ -65,6 +65,11 @@ async def test_timeline_and_export_narration_drives_timing(tmp_path, media):
     timeline = json.loads(timeline_path.read_text())
     assert [seg["scene"] for seg in timeline["video"]] == ["s1", "s2"]
     assert timeline["video"][0]["narration"].endswith("narr1.wav")
+    # The EDL is the timing authority: stored starts/durations are what
+    # export and caption alignment consume.
+    assert timeline["video"][0]["duration"] == pytest.approx(3 + 0.35, abs=0.05)
+    assert timeline["video"][1]["start"] == pytest.approx(3.35, abs=0.05)
+    assert timeline["duration"] == pytest.approx(4.7, abs=0.1)
 
     export_ctx = ExecutionContext(
         output_dir=out_dir, input_artifacts={"default": timeline_path}
@@ -115,6 +120,99 @@ async def test_export_skips_placeholder_music(tmp_path, media):
         export_ctx,
     )
     assert (await backend._probe_duration(out)) is not None  # still a valid video
+
+
+async def test_reorder_trim_and_transitions(tmp_path, media):
+    """Timeline v1 ops: order overrides scene sort, trims pick the clip
+    window, crossfades shorten the program by their overlap."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+
+    timeline_path = await backend.execute(
+        make_spec(
+            NodeKind.TIMELINE,
+            {
+                "aspect": "9:16",
+                "order": ["s2", "s1"],
+                "trims": {"s2": {"in": 0.5, "out": 1.5}},
+                "transitions": {"s2": "crossfade"},
+                "overlays": {"s1": "THREE HEARTS?!"},
+            },
+        ),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={
+                "s1": media["clip1"], "s1.audio": media["narr1"],
+                "s2": media["clip2"],  # no narration → trim window drives duration
+            },
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    assert [seg["scene"] for seg in edl["video"]] == ["s2", "s1"]
+    assert edl["video"][0]["duration"] == pytest.approx(1.0, abs=0.05)  # out-in
+    assert edl["video"][0]["transition"] == "crossfade"
+    assert edl["video"][1]["onscreen_text"] == "THREE HEARTS?!"
+
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="b" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    duration = await backend._probe_duration(out)
+    # s2 (1.0s) + s1 (3.35s) - crossfade overlap (0.4s)
+    assert duration == pytest.approx(1.0 + 3.35 - 0.4, abs=0.2)
+
+
+async def test_captions_burn_in(tmp_path, media):
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"s1": media["clip1"], "s1.audio": media["narr2"]},
+        ),
+    )
+    srt = tmp_path / "caps.srt"
+    srt.write_text("1\n00:00:00,100 --> 00:00:01,000\nhello captions\n")
+
+    burned = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"captions": "burn"}, output_hash="b" * 64),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"default": timeline_path, "captions": srt},
+        ),
+    )
+    sidecar = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"captions": "sidecar"}, output_hash="c" * 64),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"default": timeline_path, "captions": srt},
+        ),
+    )
+    d1, d2 = await backend._probe_duration(burned), await backend._probe_duration(sidecar)
+    assert d1 is not None and d2 is not None
+    assert d1 == pytest.approx(d2, abs=0.1)  # burn-in must not change timing
+
+
+async def test_final_quality_uses_higher_bitrate(tmp_path, media):
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"s1": media["clip1"], "s1.audio": media["narr1"]},
+        ),
+    )
+    draft = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="b" * 64, quality="draft"),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    final = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="c" * 64, quality="final"),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    assert final.stat().st_size > draft.stat().st_size * 1.5
 
 
 async def test_edl_paths_survive_project_relocation(tmp_path, media):

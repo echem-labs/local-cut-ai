@@ -37,7 +37,7 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": "%%SEED%%",
-      "steps": 20,
+      "steps": "%%STEPS%%",
       "cfg": 7.0,
       "sampler_name": "euler",
       "scheduler": "normal",

@@ -133,7 +133,12 @@ class Scheduler:
             report_progress=report,
         )
         try:
-            if missing and job.spec.kind in (NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT):
+            if missing and job.spec.kind in (
+                NodeKind.CLIP,
+                NodeKind.CAPTIONS,
+                NodeKind.TIMELINE,
+                NodeKind.EXPORT,
+            ):
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind)
             artifact = await backend.execute(job.spec, ctx)

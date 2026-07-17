@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
+from ..backends.align import AlignBackend
 from ..backends.base import BackendRegistry
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -58,11 +59,11 @@ OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
 JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
 
 
-def _kokoro_dests(config: EngineConfig) -> list[str] | None:
+def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
     """Weight paths come from the manifest (single source of truth) so a
-    manifest dest bump can't strand the backend probing stale paths."""
+    manifest dest bump can't strand a backend probing stale paths."""
     try:
-        entry = next(m for m in load_manifest(config).models if m.id == "kokoro-82m")
+        entry = next(m for m in load_manifest(config).models if m.id == model_id)
         return [f.dest for f in entry.files] or None
     except (StopIteration, OSError, ValueError):
         return None
@@ -92,7 +93,14 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(
                     KokoroBackend(
                         models_dir=config.resolved_models_dir,
-                        file_dests=_kokoro_dests(config),
+                        file_dests=_model_dests(config, "kokoro-82m"),
+                    )
+                )
+            case "align":
+                registry.register(
+                    AlignBackend(
+                        models_dir=config.resolved_models_dir,
+                        file_dests=_model_dests(config, "faster-whisper-base-en"),
                     )
                 )
             case "ffmpeg":
