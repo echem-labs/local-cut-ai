@@ -1,12 +1,14 @@
 import { useEffect } from "react";
+import { CheckpointBanner } from "../components/CheckpointBanner";
 import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
 import { StatusChip } from "../components/StatusRing";
 import { TimelineStrip } from "../components/TimelineStrip";
+import { ToolSession } from "../components/ToolSession";
 import { useApp } from "../store";
 
 /** Project window: scene board over a timeline strip; all modes land
- * here after generation. */
+ * here after generation. Tool sessions get a focused single panel. */
 export function Project() {
   const { currentProject, board, refreshBoard } = useApp();
 
@@ -17,11 +19,24 @@ export function Project() {
   if (!currentProject || !board) return null;
   const script = board.aux.script;
 
+  if (currentProject.mode.startsWith("tool:")) {
+    return (
+      <div>
+        <div className="board-header">
+          <h1>{currentProject.title}</h1>
+        </div>
+        <ToolSession />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="board-header">
         <h1>{currentProject.title}</h1>
       </div>
+
+      {currentProject.mode === "beginner" && <CheckpointBanner />}
 
       {board.scenes.length === 0 ? (
         <div className="banner">

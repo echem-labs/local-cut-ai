@@ -6,7 +6,11 @@ A cross-platform desktop app that turns a prompt or script into a finished video
 
 ## Status
 
-🚧 Early development — currently in the engine-spike phase: proving the spine (Electron UI ↔ Python orchestrator ↔ headless ComfyUI ↔ FFmpeg) that takes one prompt to a watchable 60-second video, unattended, on a 16 GB consumer GPU.
+🚧 Early development. The engine spike is complete — one prompt renders to a
+watchable 60-second video, unattended, on an 8 GB consumer GPU (script →
+storyboard → I2V clips → narration → music → assembly). Now building the MVP:
+word-timed captions, draft→final quality ladder, timeline editing, Quick
+Tools, review checkpoints, and BYOK cloud providers.
 
 ## What it will do
 
@@ -49,16 +53,31 @@ uv run localcut-engine download sdxl-base-1.0    # resumable, checksummed → ~/
 uv run localcut-engine serve --backend local,mock
 ```
 
-`local` expands to `llm,comfy,kokoro,ffmpeg`: `llm` speaks any OpenAI-compatible
-server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`, `LOCALCUT_LLM_MODEL`); `comfy`
-drives a headless ComfyUI on `:8188` via workflow-JSON templates (packaged
-defaults for SDXL keyframes/thumbnails, LTX-Video clips, and ACE-Step music;
-override per-file in `~/.localcut/comfy-templates/`); `kokoro` synthesizes
-narration on CPU (`localcut-engine download kokoro-82m`); `ffmpeg` handles
-assembly/export (`LOCALCUT_FFMPEG_BIN`). Kinds ComfyUI serves are gated by
-`LOCALCUT_COMFY_KINDS` (default `keyframe,thumbnail,clip,music`). Point ComfyUI
-at the shared weights dir with an `extra_model_paths.yaml` whose `base_path`
-is `~/.localcut/models`.
+`local` expands to `llm,comfy,kokoro,align,ffmpeg`: `llm` speaks any
+OpenAI-compatible server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`,
+`LOCALCUT_LLM_MODEL`); `comfy` drives a headless ComfyUI on `:8188` via
+workflow-JSON templates (packaged defaults for SDXL keyframes/thumbnails,
+LTX-Video clips, and ACE-Step music; override per-file in
+`~/.localcut/comfy-templates/`); `kokoro` synthesizes narration on CPU
+(`localcut-engine download kokoro-82m`); `align` turns narration into
+word-timed captions (`localcut-engine download faster-whisper-base-en`, CPU);
+`ffmpeg` handles assembly/export (`LOCALCUT_FFMPEG_BIN`) — captions burn in by
+default (set the export node's `captions` param to `sidecar` to keep the
+`.srt` external), on-screen titles render from the screenplay, and the
+timeline node's `order`/`trims`/`transitions` params drive re-cuts without
+re-rendering scenes. Kinds ComfyUI serves are gated by `LOCALCUT_COMFY_KINDS`
+(default `keyframe,thumbnail,clip,music`); "Finalize" re-renders at higher
+steps/resolution via the same graph's `quality` parameter. Point ComfyUI at
+the shared weights dir with an `extra_model_paths.yaml` whose `base_path` is
+`~/.localcut/models`.
+
+**Cloud (BYOK).** Nodes whose `model` is `cloud:*` route to provider adapters
+instead of the local chain — `cloud:claude-*` (Anthropic), `cloud:gpt-*`
+(OpenAI), `cloud:gemini-*` (Google) for scripts; `cloud:kling-2.5`,
+`cloud:veo-3.1-fast`, `cloud:wan-2.2-cloud` (via fal.ai) for clips. Keys come
+from `LOCALCUT_ANTHROPIC_KEY` / `LOCALCUT_OPENAI_KEY` / `LOCALCUT_GEMINI_KEY`
+/ `LOCALCUT_FAL_KEY` and are never persisted; `GET /providers` reports what's
+configured.
 
 **Desktop app** (Node ≥22):
 

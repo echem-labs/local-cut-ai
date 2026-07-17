@@ -1,6 +1,15 @@
 import { create } from "zustand";
 import { EngineClient } from "./api/client";
-import type { Board, EngineEvent, Job, NodeState, Project, SystemInfo } from "./api/types";
+import type {
+  Board,
+  Checkpoint,
+  EngineEvent,
+  Job,
+  NodeState,
+  Project,
+  SystemInfo,
+  ToolKind,
+} from "./api/types";
 
 declare global {
   interface Window {
@@ -28,7 +37,18 @@ interface AppState {
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   closeProject: () => void;
-  createFromPrompt: (prompt: string, duration: number, aspect: string) => Promise<void>;
+  createFromPrompt: (
+    prompt: string,
+    duration: number,
+    aspect: string,
+    mode: "prompt" | "beginner",
+  ) => Promise<void>;
+  createTool: (
+    tool: ToolKind,
+    input: { prompt?: string; text?: string; voice?: string },
+  ) => Promise<void>;
+  promote: () => Promise<void>;
+  approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   regenerate: (nodeId: string) => Promise<void>;
   editPrompt: (nodeId: string, prompt: string) => Promise<void>;
@@ -245,30 +265,70 @@ export const useApp = create<AppState>((set, get) => {
       set({ currentProject: null, board: null, jobs: [], selectedNode: null });
     },
 
-    createFromPrompt: async (prompt, duration, aspect) => {
+    createFromPrompt: async (prompt, duration, aspect, mode) => {
       const { client } = get();
       if (!client) return;
       const project = await client.createProject({
         prompt,
         target_duration_s: duration,
         aspect,
+        mode,
       });
       await get().openProject(project.id);
       await get().refreshHome();
+    },
+
+    createTool: async (tool, input) => {
+      const { client } = get();
+      if (!client) return;
+      const project = await client.createTool({ tool, ...input });
+      await get().openProject(project.id);
+      await get().refreshHome();
+    },
+
+    promote: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      const project = await client.promote(currentProject.id);
+      await get().openProject(project.id);
+      await get().refreshHome();
+    },
+
+    approve: async (checkpoint) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      const projectId = currentProject.id;
+      if (!currentProject.approvals.includes(checkpoint)) {
+        set({
+          currentProject: {
+            ...currentProject,
+            approvals: [...currentProject.approvals, checkpoint],
+          },
+        });
+      }
+      try {
+        await client.approve(projectId, checkpoint);
+      } catch (err) {
+        console.warn(`approve ${checkpoint} failed:`, err);
+        const { project } = await client.getProject(projectId);
+        if (get().currentProject?.id === projectId) set({ currentProject: project });
+        return;
+      }
+      await get().refreshBoard();
     },
 
     refreshBoard: async () => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
       const projectId = currentProject.id;
-      const [{ board }, jobs] = await Promise.all([
+      const [{ project, board }, jobs] = await Promise.all([
         client.getProject(projectId),
         client.listJobs(projectId),
       ]);
       // A late response for a previously open project must not clobber the
       // one the user has since opened.
       if (get().currentProject?.id !== projectId) return;
-      set({ board: withPending(board, projectId), jobs });
+      set({ currentProject: project, board: withPending(board, projectId), jobs });
     },
 
     regenerate: async (nodeId) => {

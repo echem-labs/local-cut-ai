@@ -3,7 +3,16 @@
  * here — HTTP + WS with token auth, never a file path (the same
  * client must work against a remote engine).
  */
-import type { Board, EngineConnection, EngineEvent, Job, Project, SystemInfo } from "./types";
+import type {
+  Board,
+  Checkpoint,
+  EngineConnection,
+  EngineEvent,
+  Job,
+  Project,
+  SystemInfo,
+  ToolKind,
+} from "./types";
 
 export class EngineClient {
   constructor(private readonly connection: EngineConnection) {}
@@ -29,8 +38,31 @@ export class EngineClient {
     target_duration_s?: number;
     aspect?: string;
     style_preset?: string;
+    mode?: "prompt" | "beginner";
   }): Promise<Project> {
     return this.request("/projects", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  createTool(body: {
+    tool: ToolKind;
+    prompt?: string;
+    text?: string;
+    voice?: string;
+    aspect?: string;
+    target_duration_s?: number;
+  }): Promise<Project> {
+    return this.request("/tools", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  promote(projectId: string): Promise<Project> {
+    return this.request(`/projects/${projectId}/promote`, { method: "POST" });
+  }
+
+  approve(projectId: string, checkpoint: Checkpoint): Promise<{ enqueued: number }> {
+    return this.request(`/projects/${projectId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ checkpoint }),
+    });
   }
 
   listProjects(): Promise<Project[]> {

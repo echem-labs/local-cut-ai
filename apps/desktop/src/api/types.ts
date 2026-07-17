@@ -10,6 +10,26 @@ export interface Project {
   title: string;
   created_at: number;
   mode: string;
+  approvals: string[];
+}
+
+export type ToolKind = "script" | "thumbnail" | "voiceover";
+
+export type Checkpoint = "script" | "storyboard";
+
+export interface ScreenplayScene {
+  id: string;
+  duration_s: number;
+  narration: string;
+  visual: string;
+  motion: string;
+  onscreen_text: string | null;
+}
+
+export interface Screenplay {
+  title: string;
+  hook: string;
+  scenes: ScreenplayScene[];
 }
 
 export type NodeStatus =
