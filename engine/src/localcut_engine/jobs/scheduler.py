@@ -90,7 +90,18 @@ class Scheduler:
                 except TimeoutError:
                     pass
                 continue
-            await self._execute(job)
+            try:
+                await self._execute(job)
+            except Exception:  # noqa: BLE001 — one job must never kill the loop
+                # _execute does pre-`try` work (persist RENDERING, publish
+                # job.started); if that raises (e.g. the queue db is locked)
+                # the exception would otherwise escape _run and stop the
+                # scheduler forever, wedging every later job as QUEUED.
+                logger.exception("scheduler crashed handling job %s", job.id)
+                if not self._fail_quietly(job):
+                    # Couldn't even persist the failure — back off so we don't
+                    # hot-loop the same still-QUEUED row against a locked db.
+                    await asyncio.sleep(1.0)
 
     async def _execute(self, job: Job) -> None:
         job.status = JobStatus.RENDERING
@@ -101,7 +112,9 @@ class Scheduler:
         except GenerationError:
             job.backend = None  # the resolve below fails the job properly
         self.queue.update(job)
-        self.events.publish("job.started", job_id=job.id, node_id=job.spec.node_id)
+        self.events.publish(
+            "job.started", job_id=job.id, node_id=job.spec.node_id, project_id=job.project_id
+        )
 
         persisted = 0.0
 
@@ -112,9 +125,20 @@ class Scheduler:
             # disk write per sampler step.
             if fraction - persisted >= 0.05:
                 persisted = fraction
-                self.queue.update(job)
+                # update() rewrites the whole row from the in-memory job, whose
+                # status is still RENDERING. If a cancel already landed, that
+                # write would clobber CANCELLED back to RENDERING and the job
+                # would run to completion — so never persist over a cancel.
+                # (report runs on the scheduler loop; cancel() writes from the
+                # same loop, so this check and the write can't be interleaved.)
+                if not self._was_cancelled(job):
+                    self.queue.update(job)
             self.events.publish(
-                "job.progress", job_id=job.id, node_id=job.spec.node_id, progress=fraction
+                "job.progress",
+                job_id=job.id,
+                node_id=job.spec.node_id,
+                progress=fraction,
+                project_id=job.project_id,
             )
 
         inputs: dict[str, Path] = {}
@@ -150,7 +174,11 @@ class Scheduler:
             job.finished_at = time.time()
             self.queue.update(job)
             self.events.publish(
-                "job.done", job_id=job.id, node_id=job.spec.node_id, artifact=str(artifact)
+                "job.done",
+                job_id=job.id,
+                node_id=job.spec.node_id,
+                artifact=str(artifact),
+                project_id=job.project_id,
             )
         except OOMError as exc:
             await self._handle_oom(job, exc)
@@ -164,7 +192,11 @@ class Scheduler:
             job.finished_at = time.time()
             self.queue.update(job)
             self.events.publish(
-                "job.failed", job_id=job.id, node_id=job.spec.node_id, error=str(exc)
+                "job.failed",
+                job_id=job.id,
+                node_id=job.spec.node_id,
+                error=str(exc),
+                project_id=job.project_id,
             )
             return
         # The hook runs outside the job's try: a follow-up failure (e.g.
@@ -185,6 +217,27 @@ class Scheduler:
         current = self.queue.get(job.id)
         return current is not None and current.status is JobStatus.CANCELLED
 
+    def _fail_quietly(self, job: Job) -> bool:
+        """Best-effort mark a job FAILED after an unexpected scheduler error.
+        Returns False if even the persist failed, so the loop can back off
+        instead of hot-looping the still-QUEUED row."""
+        try:
+            job.status = JobStatus.FAILED
+            job.error = "scheduler error while running the job"
+            job.finished_at = time.time()
+            self.queue.update(job)
+            self.events.publish(
+                "job.failed",
+                job_id=job.id,
+                node_id=job.spec.node_id,
+                error=job.error,
+                project_id=job.project_id,
+            )
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("could not persist failure for job %s", job.id)
+            return False
+
     async def _handle_oom(self, job: Job, exc: OOMError) -> None:
         if self._was_cancelled(job):
             return  # never resurrect a job the user cancelled mid-render
@@ -201,6 +254,7 @@ class Scheduler:
                 node_id=job.spec.node_id,
                 attempt=job.attempt,
                 fallback=rung,
+                project_id=job.project_id,
             )
             self.notify()
             return
@@ -215,4 +269,5 @@ class Scheduler:
             node_id=job.spec.node_id,
             error=job.error,
             suggestions=["lower_resolution", "smaller_model", "cloud"],
+            project_id=job.project_id,
         )
