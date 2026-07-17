@@ -292,13 +292,16 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     # -- quick tools: one-node micro-projects ----------------------------------
 
     class ToolRequest(BaseModel):
-        tool: Literal["script", "thumbnail", "voiceover"]
+        tool: Literal["script", "thumbnail", "voiceover", "image", "music", "clip"]
         prompt: str | None = Field(default=None, max_length=4000)
         text: str | None = Field(default=None, max_length=4000)
         voice: str = "narrator"
         aspect: str = "16:9"
         target_duration_s: int = Field(default=60, ge=5, le=600)
         style_preset: str = "cinematic"
+        # Single-clip generator: local I2V tops out at short takes.
+        motion: str = Field(default="", max_length=500)
+        duration_s: float = Field(default=5.0, ge=1.0, le=8.0)
 
     @app.post("/tools", dependencies=[Authed])
     async def create_tool(body: ToolRequest) -> dict:

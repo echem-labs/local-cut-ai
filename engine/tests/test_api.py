@@ -353,3 +353,21 @@ async def test_edit_applies_a_natural_language_plan(client, monkeypatch):
     response = await client.post(f"/projects/{pid}/edit", json={"instruction": "x"})
     assert response.status_code == 502
     assert "unusable" in response.json()["detail"]
+
+
+async def test_new_quick_tools_create_sessions(client):
+    """Image, music, and single-clip generators are one POST each; the clip
+    session carries its keyframe conditioning node."""
+    boards = {}
+    for tool, extra in (("image", {}), ("music", {}), ("clip", {"motion": "orbit"})):
+        response = await client.post("/tools", json={"tool": tool, "prompt": f"a {tool}", **extra})
+        assert response.status_code == 200
+        project = response.json()
+        assert project["mode"] == f"tool:{tool}"
+        boards[tool] = (await client.get(f"/projects/{project['id']}")).json()["board"]
+        assert tool in boards[tool]["aux"]
+    assert "keyframe" in boards["clip"]["aux"]
+    assert boards["clip"]["aux"]["clip"]["params"]["mode"] == "i2v"
+    assert boards["music"]["aux"]["music"]["params"]["brief"] == "a music"
+    # Tools still refuse an empty subject.
+    assert (await client.post("/tools", json={"tool": "image"})).status_code == 422

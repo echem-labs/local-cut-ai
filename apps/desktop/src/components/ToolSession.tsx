@@ -97,10 +97,15 @@ export function ToolSession() {
 
       {done && artifactUrl && (
         <>
-          {tool === "thumbnail" && (
-            <img className="tool-preview" src={artifactUrl} alt="Generated thumbnail" />
+          {(tool === "thumbnail" || tool === "image") && (
+            <img className="tool-preview" src={artifactUrl} alt={`Generated ${tool}`} />
           )}
-          {tool === "voiceover" && <audio controls src={artifactUrl} aria-label="Voiceover preview" />}
+          {(tool === "voiceover" || tool === "music") && (
+            <audio controls src={artifactUrl} aria-label={`${tool} preview`} />
+          )}
+          {tool === "clip" && (
+            <video className="tool-preview" controls src={artifactUrl} aria-label="Clip preview" />
+          )}
           {tool === "script" &&
             (screenplay ? (
               <ScriptTable screenplay={screenplay} />

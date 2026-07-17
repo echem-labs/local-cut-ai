@@ -48,8 +48,9 @@ def prompt_template_graph(
 
 
 def tool_graph(tool: str, params: dict) -> StoryGraph:
-    """Quick Tools are micro-projects: one node, same engine, same caching.
-    Their outputs export directly or promote into a full project."""
+    """Quick Tools are micro-projects: a tiny template graph (usually one
+    node; the clip tool carries its keyframe conditioning), same engine,
+    same caching. Outputs export directly or promote into a full project."""
     graph = StoryGraph()
     match tool:
         case "script":
@@ -87,6 +88,55 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
                     },
                 )
             )
+        case "image":
+            graph.add_node(
+                Node(
+                    id="image",
+                    kind=NodeKind.KEYFRAME,
+                    params={
+                        "prompt": str(params.get("prompt", "")),
+                        "aspect": str(params.get("aspect", "16:9")),
+                    },
+                )
+            )
+        case "music":
+            graph.add_node(
+                Node(
+                    id="music",
+                    kind=NodeKind.MUSIC,
+                    params={
+                        "brief": str(params.get("prompt", "")),
+                        "target_duration_s": int(params.get("target_duration_s", 60)),
+                    },
+                )
+            )
+        case "clip":
+            # I2V needs a source frame: the tool is keyframe → clip, so a
+            # standalone clip gets the same conditioning quality as a scene.
+            graph.add_node(
+                Node(
+                    id="keyframe",
+                    kind=NodeKind.KEYFRAME,
+                    params={
+                        "prompt": str(params.get("prompt", "")),
+                        "aspect": str(params.get("aspect", "16:9")),
+                    },
+                )
+            )
+            graph.add_node(
+                Node(
+                    id="clip",
+                    kind=NodeKind.CLIP,
+                    params={
+                        "prompt": str(params.get("prompt", "")),
+                        "motion": str(params.get("motion") or "slow cinematic camera move"),
+                        "duration_s": float(params.get("duration_s", 5.0)),
+                        "aspect": str(params.get("aspect", "16:9")),
+                        "mode": "i2v",
+                    },
+                )
+            )
+            graph.connect("keyframe", "clip", port=KEYFRAME_PORT)
         case _:
             raise ValueError(f"unknown quick tool: {tool!r}")
     return graph

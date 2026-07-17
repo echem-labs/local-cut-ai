@@ -13,7 +13,7 @@ export interface Project {
   approvals: string[];
 }
 
-export type ToolKind = "script" | "thumbnail" | "voiceover";
+export type ToolKind = "script" | "thumbnail" | "voiceover" | "image" | "music" | "clip";
 
 export type Checkpoint = "script" | "storyboard";
 

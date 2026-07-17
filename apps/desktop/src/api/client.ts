@@ -66,6 +66,8 @@ export class EngineClient {
     voice?: string;
     aspect?: string;
     target_duration_s?: number;
+    motion?: string;
+    duration_s?: number;
   }): Promise<Project> {
     return this.request("/tools", { method: "POST", body: JSON.stringify(body) });
   }

@@ -21,6 +21,24 @@ const TOOLS: { kind: ToolKind; label: string; glyph: string; placeholder: string
     glyph: "🎙",
     placeholder: "Paste the text to narrate…",
   },
+  {
+    kind: "image",
+    label: "Image",
+    glyph: "🎨",
+    placeholder: "e.g. Bioluminescent waves on a black-sand beach at night",
+  },
+  {
+    kind: "music",
+    label: "Music",
+    glyph: "🎵",
+    placeholder: "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds",
+  },
+  {
+    kind: "clip",
+    label: "Clip",
+    glyph: "🎬",
+    placeholder: "e.g. A hummingbird hovering at a red flower, macro detail",
+  },
 ];
 
 /** Home: one prompt box — the entire prompt-only mode — plus a
@@ -43,6 +61,7 @@ export function Home() {
   const [tool, setTool] = useState<ToolKind | null>(null);
   const [toolInput, setToolInput] = useState("");
   const [voice, setVoice] = useState("");
+  const [motion, setMotion] = useState("");
 
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
 
@@ -64,6 +83,7 @@ export function Home() {
         ...(tool === "voiceover"
           ? { text: toolInput.trim(), ...(voice.trim() ? { voice: voice.trim() } : {}) }
           : { prompt: toolInput.trim() }),
+        ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
       });
     } finally {
       setBusy(false);
@@ -167,6 +187,14 @@ export function Home() {
                 value={voice}
                 onChange={(event) => setVoice(event.target.value)}
                 aria-label="Voice"
+              />
+            )}
+            {activeTool.kind === "clip" && (
+              <input
+                placeholder="Camera motion (optional)"
+                value={motion}
+                onChange={(event) => setMotion(event.target.value)}
+                aria-label="Camera motion"
               />
             )}
             <div className="spacer" />

@@ -84,7 +84,7 @@ interface AppState {
   ) => Promise<void>;
   createTool: (
     tool: ToolKind,
-    input: { prompt?: string; text?: string; voice?: string },
+    input: { prompt?: string; text?: string; voice?: string; motion?: string },
   ) => Promise<void>;
   promote: () => Promise<void>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
