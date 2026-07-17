@@ -137,7 +137,11 @@ class JobQueue:
             row = self._db.execute("SELECT payload FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return False
-            job = Job.model_validate_json(row[0])
+            try:
+                job = Job.model_validate_json(row[0])
+            except ValidationError:
+                self._poison(job_id)  # unreadable payload: fail it, don't 500 the caller
+                return False
             if job.status not in (JobStatus.QUEUED, JobStatus.RENDERING):
                 return False
             job.status = JobStatus.CANCELLED
@@ -151,14 +155,23 @@ class JobQueue:
         write, resurrecting a job the deletion meant to stop."""
         with self._lock, self._db:
             rows = self._db.execute(
-                "SELECT payload FROM jobs WHERE project_id = ? AND status IN (?, ?)",
+                "SELECT id, payload FROM jobs WHERE project_id = ? AND status IN (?, ?)",
                 (project_id, JobStatus.QUEUED, JobStatus.RENDERING),
             ).fetchall()
-            for (payload,) in rows:
-                job = Job.model_validate_json(payload)
+            cancelled = 0
+            for job_id, payload in rows:
+                try:
+                    job = Job.model_validate_json(payload)
+                except ValidationError:
+                    # An unreadable row must not abort the whole deletion (which
+                    # would leave jobs rendering into a deleted project) — fail
+                    # it in place, like next_queued/_recover_interrupted do.
+                    self._poison(job_id)
+                    continue
                 job.status = JobStatus.CANCELLED
                 self._write(job)
-            return len(rows)
+                cancelled += 1
+            return cancelled
 
     def close(self) -> None:
         self._db.close()

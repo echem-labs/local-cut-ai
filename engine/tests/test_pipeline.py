@@ -391,3 +391,34 @@ def test_cancel_refuses_a_job_that_already_finished(tmp_path):
     queue.update(job)
     assert queue.cancel(job.id) is False  # DONE is terminal — not cancellable
     assert queue.get(job.id).status is JobStatus.DONE
+
+
+def test_cancel_project_cancels_only_in_flight_jobs(tmp_path):
+    """cancel_project marks every queued/rendering job of the project CANCELLED
+    and leaves terminal jobs and other projects untouched; a later scheduler
+    persist for a cancelled job is then refused."""
+    from conftest import make_spec
+
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    queue = JobQueue(tmp_path / "q.db")
+    rendering = Job(project_id="p", spec=make_spec(NodeKind.CLIP, output_hash="a" * 64))
+    queue.put(rendering)
+    rendering.status = JobStatus.RENDERING
+    queue.update(rendering)
+    done = Job(project_id="p", spec=make_spec(NodeKind.CLIP, output_hash="b" * 64))
+    queue.put(done)
+    done.status = JobStatus.DONE
+    queue.update(done)
+    other = Job(project_id="q", spec=make_spec(NodeKind.CLIP, output_hash="c" * 64))
+    queue.put(other)  # different project — must stay untouched
+
+    assert queue.cancel_project("p") == 1  # only the in-flight (rendering) job
+    assert queue.get(rendering.id).status is JobStatus.CANCELLED
+    assert queue.get(done.id).status is JobStatus.DONE  # terminal, not re-cancelled
+    assert queue.get(other.id).status is JobStatus.QUEUED  # other project untouched
+
+    rendering.status = JobStatus.DONE
+    assert queue.update_unless_cancelled(rendering) is False
+    assert queue.get(rendering.id).status is JobStatus.CANCELLED
