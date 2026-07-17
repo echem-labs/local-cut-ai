@@ -27,6 +27,15 @@ from .otio import FPS, edl_to_otio, timeline_seconds
 _RATE = int(FPS)
 
 
+def _xml_safe(text: str) -> str:
+    """Drop the C0 control characters XML 1.0 forbids even when escaped (all
+    but tab/newline/carriage-return). A raw one in a title or clip name — e.g.
+    a stray NUL or form-feed from an LLM-authored title — makes the whole
+    FCPXML non-well-formed, so FCP (and any conformant parser) rejects the
+    entire export rather than the one bad field."""
+    return "".join(ch for ch in text if ch in "\t\n\r" or ord(ch) >= 0x20)
+
+
 def _rt(seconds: float) -> str:
     """Frame-aligned rational time ("41/24s"); FCP rejects mid-frame cuts."""
     frames = round(seconds * _RATE)
@@ -47,6 +56,7 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
     """Convert a v5 EDL into an FCPXML 1.11 document (XML text). Raises
     ValueError for non-exportable EDLs, same contract as edl_to_otio."""
     doc = edl_to_otio(edl, resolve, name)
+    name = _xml_safe(name)  # user/LLM-authored title — never emit a raw control char
     tracks = {t["name"]: t for t in doc["tracks"]["children"]}
     width, height = resolution_for(EXPORT_RESOLUTIONS, edl.get("aspect"))
 
@@ -77,7 +87,7 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
                 resources,
                 "asset",
                 id=f"r{len(assets) + 2}",
-                name=str(clip.get("name") or Path(url).name),
+                name=_xml_safe(str(clip.get("name") or Path(url).name)),
                 start="0s",
                 duration=_rt(available["value"] / available["rate"]),
             )
@@ -109,7 +119,7 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
                     spine,
                     "asset-clip",
                     ref=asset_ref(child, audio=False),
-                    name=str(child.get("name") or ""),
+                    name=_xml_safe(str(child.get("name") or "")),
                     start=_rt(_node_start(child)),
                     duration=_rt(_node_seconds(child)),
                 )
@@ -143,7 +153,7 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
                     anchor,
                     "asset-clip",
                     ref=asset_ref(child, audio=True),
-                    name=str(child.get("name") or ""),
+                    name=_xml_safe(str(child.get("name") or "")),
                     lane=lane,
                     offset=_rt(anchor_start + position),
                     start=_rt(_node_start(child)),

@@ -395,11 +395,17 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 detail="voice samples require consent=true — an affirmation that you "
                 "have this speaker's permission to clone their voice",
             )
-        data = await request.body()
+        # Stream with a hard cap rather than buffering the whole body first:
+        # `await request.body()` reads the entire (possibly multi-GB) request
+        # into memory before any size check could reject it.
+        buffer = bytearray()
+        async for chunk in request.stream():
+            buffer.extend(chunk)
+            if len(buffer) > _ASSET_MAX_BYTES:
+                raise HTTPException(status_code=413, detail="asset exceeds the 50 MB limit")
+        data = bytes(buffer)
         if not data:
             raise HTTPException(status_code=422, detail="asset body is empty")
-        if len(data) > _ASSET_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="asset exceeds the 50 MB limit")
         return await asyncio.to_thread(
             service.add_asset, project_id, name, data, suffix in _AUDIO_EXTENSIONS
         )

@@ -195,7 +195,7 @@ class FFmpegBackend(ExecutionBackend):
                     "src_durations": take_durations,
                     "narration": rel(narration.get(port)),
                     "narration_duration": (
-                        round(narration_duration, 3) if narration_duration else None
+                        round(narration_duration, 3) if narration_duration is not None else None
                     ),
                     "start": round(start, 3),
                     "duration": round(duration, 3),
@@ -533,7 +533,11 @@ class FFmpegBackend(ExecutionBackend):
             textfile = workdir / f"{out.stem}.txt"
             textfile.write_text(str(text))
             vf += (
-                f",drawtext=textfile={textfile}:font=Sans:fontsize={height // 14}"
+                # Single-quote the path like the ass= filter above: an
+                # unquoted ':' or ',' in the temp dir path (legal in Linux
+                # paths, e.g. a TMPDIR with those chars) would otherwise be
+                # parsed as a drawtext option/filter separator and break -vf.
+                f",drawtext=textfile='{textfile}':font=Sans:fontsize={height // 14}"
                 f":fontcolor=white:borderw={max(2, height // 270)}"
                 ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
             )
