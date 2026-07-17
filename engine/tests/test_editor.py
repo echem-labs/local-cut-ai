@@ -270,3 +270,25 @@ def test_sanitize_survives_wrong_shaped_llm_values():
     assert by_node["s1.keyframe"]["prompt"] == "kept"  # good edit survives
     assert "timeline" not in by_node  # both malformed entries dropped
     assert len(warnings) >= 2
+
+
+def test_remove_scene_refused_when_timeline_pinned():
+    graph = make_graph()
+    graph.nodes["timeline"].pinned = True
+    ops, warnings = compile_edits(graph, plan({"action": "remove_scene", "scene_id": "s2"}))
+    assert ops == [] and any("unpin the timeline" in w for w in warnings)
+
+
+def test_revision_ignores_unrelated_nodes():
+    """A scene-scoped revision must not change when a different scene or the
+    timeline changes — else concurrent edits false-409 unrelated ones."""
+    from localcut_engine.graph.editor import graph_revision
+
+    graph = make_graph()
+    r_s1 = graph_revision(graph, "s1")
+    graph.nodes["s2.keyframe"].params["prompt"] = "unrelated change"
+    graph.nodes["timeline"].params["trims"] = {"s3": {"in": 1.0}}
+    assert graph_revision(graph, "s1") == r_s1  # s1 view is unaffected
+    # But a change to s1 itself does move it.
+    graph.nodes["s1.keyframe"].params["prompt"] = "changed"
+    assert graph_revision(graph, "s1") != r_s1

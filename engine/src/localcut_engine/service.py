@@ -209,7 +209,7 @@ class ProjectService:
         landing on content the model never saw."""
         with self._lock:
             graph = self.store.load_graph(project_id)
-            if revision is not None and graph_revision(graph) != revision:
+            if revision is not None and graph_revision(graph, scope) != revision:
                 raise ConflictError(
                     "the project changed while the edit was being generated — please retry"
                 )

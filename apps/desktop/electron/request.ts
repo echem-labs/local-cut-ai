@@ -15,6 +15,7 @@
  */
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import tls from "node:tls";
 
 export interface EngineTarget {
@@ -43,15 +44,20 @@ const derToPem = (der: Buffer): string =>
  */
 export function capturePinnedCert(target: EngineTarget): Promise<string> {
   const url = new URL(target.url);
+  // URL.hostname keeps IPv6 brackets ("[::1]") which tls.connect can't resolve,
+  // and url.port is "" for a default-port URL — normalize both so capture
+  // accepts every target the request path (https.request) would.
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const port = Number(url.port) || 443;
   // SNI with an IP literal is disallowed by RFC 6066 (Node warns); we pin the
   // exact cert regardless, so omit servername for IP hosts.
-  const isIp = /^[\d.]+$/.test(url.hostname) || url.hostname.includes(":");
+  const isIp = net.isIP(host) !== 0;
   return new Promise((resolve, reject) => {
     const socket = tls.connect(
       {
-        host: url.hostname,
-        port: Number(url.port),
-        ...(isIp ? {} : { servername: url.hostname }),
+        host,
+        port,
+        ...(isIp ? {} : { servername: host }),
         rejectUnauthorized: false,
       },
       () => {

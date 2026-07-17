@@ -234,3 +234,32 @@ def test_conditioning_applies_to_every_take_of_a_split_scene():
     for take in ("s1.clip", "s1.clip2"):
         srcs = [e.src for e in graph.edges if e.dst == take and e.port == "keyframe"]
         assert srcs == ["img"], f"{take} should animate from the asset, got {srcs}"
+
+
+def test_set_params_cannot_forge_voice_consent():
+    """The consent flag is server-owned: a client set_params must not be able
+    to stamp it onto an asset, or the voice_ref guard is bypassable."""
+    from localcut_engine.graph.model import Node, NodeKind
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    import pytest
+
+    graph = expand_screenplay(
+        prompt_template_graph("p"),
+        Screenplay(
+            title="t",
+            scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+        ),
+    )
+    # An audio-as-image asset that never went through the consent gate.
+    graph.add_node(Node(id="sneak", kind=NodeKind.ASSET, params={"sha256": "z"}))
+    apply_patch(graph, [PatchOp(op="set_params", node_id="sneak", params={"voice_consent": True})])
+    assert "voice_consent" not in graph.nodes["sneak"].params  # forge stripped
+
+    # And so the wire is still refused.
+    with pytest.raises(ValueError, match="consented voice-sample"):
+        apply_patch(
+            graph, [PatchOp(op="connect", node_id="s1.narration", src="sneak", port="voice_ref")]
+        )

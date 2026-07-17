@@ -71,36 +71,31 @@ export function Inspector() {
   // board refresh that changed nothing leaves in-progress typing alone,
   // while a genuine server change is picked up instead of being silently
   // reverted the next time Apply diffs against it.
+  // Each field re-seeds on selection change AND when ITS OWN server value
+  // moves (an NL edit, a regenerate) — but never when a SIBLING field moves,
+  // so an unsaved edit in one field is not discarded because another changed
+  // server-side. Per-field deps are what give that isolation.
   useEffect(() => {
     setPrompt(String(node?.params.prompt ?? node?.params.text ?? node?.params.brief ?? ""));
+  }, [selectedNode, node?.params.prompt, node?.params.text, node?.params.brief]);
+  useEffect(() => {
     setModel(node?.model ?? "");
+  }, [selectedNode, node?.model]);
+  useEffect(() => {
     setMotion(String(node?.params.motion ?? ""));
+  }, [selectedNode, node?.params.motion]);
+  useEffect(() => {
     setVoice(String(node?.params.voice ?? ""));
+  }, [selectedNode, node?.params.voice]);
+  useEffect(() => {
     setSpeed(node?.params.speed != null ? String(node.params.speed) : "1.0");
+  }, [selectedNode, node?.params.speed]);
+  useEffect(() => {
     setDuration(node?.params.duration_s != null ? String(node.params.duration_s) : "");
-    setSeed(node ? String(node.seed) : "");
-    // Deps are the server VALUES (not just selectedNode) on purpose: that is
-    // what makes typing survive a no-op refresh yet a real server change land.
-    // Seed is deliberately NOT a dep here: a New-Seed regenerate changes only
-    // the seed and must not wipe unsaved prose — that re-sync is its own
-    // effect below.
-  }, [
-    selectedNode,
-    node?.params.prompt,
-    node?.params.text,
-    node?.params.brief,
-    node?.model,
-    node?.params.motion,
-    node?.params.voice,
-    node?.params.speed,
-    node?.params.duration_s,
-  ]);
-
-  // Seed re-syncs on its own server move (New seed, NL edit) without touching
-  // the prose fields — so regenerating doesn't discard an unsaved prompt.
+  }, [selectedNode, node?.params.duration_s]);
   useEffect(() => {
     setSeed(node ? String(node.seed) : "");
-  }, [node?.seed]);
+  }, [selectedNode, node?.seed]);
 
   // Trim/overlay live on the timeline node and are edited optimistically, so
   // they re-seed only on selection change (a self-inflicted board refresh

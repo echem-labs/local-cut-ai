@@ -91,6 +91,9 @@ export function ToolSession() {
     }
   };
 
+  // Whichever node drives the display: the keyframe while it renders, else
+  // the tool node. `?? node` narrows the type (node is non-null past the
+  // guard) — progressNode itself is computed before it.
   const shown = progressNode ?? node;
   const stageLabel = shown === upstream ? "keyframe" : tool;
   return (

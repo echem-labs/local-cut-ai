@@ -145,7 +145,7 @@ def graph_view(graph: StoryGraph, scope: str = "project") -> dict:
         for node_id in ("music", "timeline", "export", "thumbnail"):
             if node_id in graph.nodes:
                 view[node_id] = node_view(node_id)
-    view["revision"] = graph_revision(graph)
+    view["revision"] = graph_revision(graph, scope)
     return view
 
 
@@ -264,18 +264,23 @@ def _merge_timeline(existing: dict, updates: dict) -> dict:
     return merged
 
 
-def graph_revision(graph: StoryGraph) -> str:
-    """A short digest of the graph's node identities and params. An edit is
-    compiled against a view of this graph; if a background script job
-    re-expands it (which renumbers scenes positionally) between view and
-    apply, the digest changes and the stale edit is refused rather than
-    landing on content the model never saw."""
+def graph_revision(graph: StoryGraph, scope: str = "project") -> str:
+    """A short digest of the SCENE nodes an edit is compiled against. The race
+    it guards is a background script job re-expanding the graph (which
+    renumbers scenes positionally) between view and apply; that rewrites scene
+    content, so hashing the in-scope scene members catches it. It deliberately
+    excludes the timeline/script/music/export nodes so an unrelated concurrent
+    param write (e.g. a debounced trim flush) can't false-409 the edit."""
     import hashlib
-    import json
 
+    members = [
+        (nid, node)
+        for nid, node in graph.nodes.items()
+        if "." in nid and (scope == "project" or nid.startswith(f"{scope}."))
+    ]
     payload = sorted(
         (nid, node.kind.value, json.dumps(node.params, sort_keys=True, default=str))
-        for nid, node in graph.nodes.items()
+        for nid, node in members
     )
     return hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
 
@@ -290,6 +295,7 @@ def compile_edits(
     scene_ids = set(_scene_ids(graph))
     removed: set[str] = set()
     updates: dict[str, dict[str, Any]] = {}
+    timeline_pinned = "timeline" in graph.nodes and graph.nodes["timeline"].pinned
 
     for edit in plan.edits:
         if edit.action == "remove_scene":
@@ -304,6 +310,12 @@ def compile_edits(
                 # remove_scene must honor pins exactly like update does — a
                 # locked scene isn't silently deleted by an edit.
                 warnings.append(f"remove_scene {sid!r}: scene has a pinned node")
+            elif timeline_pinned:
+                # Removing a scene means editing the timeline to drop its
+                # references; a pinned timeline serves a frozen EDL, so the
+                # removal would delete the nodes yet leave the cut unchanged.
+                # Refuse rather than apply a no-op-but-destructive edit.
+                warnings.append(f"remove_scene {sid!r}: unpin the timeline to remove scenes")
             else:
                 removed.add(sid)
             continue

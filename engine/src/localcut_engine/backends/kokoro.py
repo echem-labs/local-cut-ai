@@ -82,7 +82,11 @@ class KokoroBackend(ExecutionBackend):
         if not text:
             raise GenerationError("narration node has no text")
         voice = str(spec.params.get("voice_id") or pick_voice(str(spec.params.get("voice", ""))))
-        speed = float(spec.params.get("speed", 1.0))
+        # A raw /patch can carry a null/garbage speed; coerce safely.
+        try:
+            speed = float(spec.params.get("speed") or 1.0)
+        except (TypeError, ValueError):
+            speed = 1.0
 
         def synth() -> Path:
             import soundfile as sf

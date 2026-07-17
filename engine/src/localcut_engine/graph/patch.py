@@ -11,6 +11,11 @@ from pydantic import BaseModel
 
 from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 
+# Params the server owns and a client patch may never set — otherwise the
+# consent affirmation stamped by the asset-upload route (voice_consent) could
+# be forged onto any node, defeating the voice_ref guard below.
+_RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
+
 
 class PatchOp(BaseModel):
     op: Literal[
@@ -43,7 +48,11 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
         match op.op:
             case "set_params":
                 node = graph.nodes[op.node_id]
-                node.params = {**node.params, **(op.params or {})}
+                # Client patches never touch server-owned params (e.g. the
+                # consent flag): drop them so the value on the node is only
+                # ever what the server itself stamped.
+                incoming = {k: v for k, v in (op.params or {}).items() if k not in _RESERVED_PARAMS}
+                node.params = {**node.params, **incoming}
             case "set_seed":
                 graph.nodes[op.node_id].seed = op.seed if op.seed is not None else 0
             case "set_model":

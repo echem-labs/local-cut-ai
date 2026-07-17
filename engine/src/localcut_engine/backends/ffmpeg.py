@@ -151,10 +151,19 @@ class FFmpegBackend(ExecutionBackend):
             else:
                 window = min(clip_duration, float(trim_out)) if trim_out else clip_duration
                 duration = max(0.1, window - trim_in)
-            # Beat-align BEFORE the crossfade adjustment: the crossfade
-            # decision below and the one in _join_segments both gate on
-            # `duration > 2*CROSSFADE_S`, so they must see the same (snapped)
-            # value or the stored `start` and the rendered cut disagree.
+            # A crossfade boundary overlaps this segment with the running
+            # chain by CROSSFADE_S — the stored start must say where the scene
+            # actually lands in the output, or caption alignment and every
+            # other consumer drifts late by 0.4s per crossfade. Decide (and
+            # apply) this BEFORE beat-snap so the snap targets the real
+            # post-overlap start and the cut lands on the beat; the decision
+            # uses the raw duration and the clamp below keeps it stable.
+            prev_crossfade = bool(
+                segments and segments[-1]["transition"] == "crossfade" and start > 2 * CROSSFADE_S
+            )
+            crossfaded = prev_crossfade and duration > 2 * CROSSFADE_S
+            if crossfaded:
+                start -= CROSSFADE_S
             if beats:
                 # Flex only the pad: never below the speech floor, and never
                 # past real clip material or a user trim-out (which would
@@ -167,27 +176,18 @@ class FFmpegBackend(ExecutionBackend):
                     ceiling = min(duration + BEAT_SNAP_MAX_S, max(duration, material))
                 else:
                     ceiling = duration  # exact trimmed window — shrink-to-beat only
-                snapped = nearest_beat(
-                    start + duration,
-                    beats,
-                    music_duration,
-                    lo=start + floor,
-                    hi=start + ceiling,
-                )
+                lo, hi = start + floor, start + ceiling
+                # Keep the snapped duration on the same side of 2*CROSSFADE_S
+                # as the raw value, so the crossfade decision _join_segments
+                # re-derives from the stored duration matches the one made
+                # here (else a sub-second segment could flip it and drift).
+                if prev_crossfade and crossfaded:
+                    lo = max(lo, start + 2 * CROSSFADE_S + 0.001)
+                elif prev_crossfade:
+                    hi = min(hi, start + 2 * CROSSFADE_S)
+                snapped = nearest_beat(start + duration, beats, music_duration, lo=lo, hi=hi)
                 if snapped is not None:
                     duration = round(snapped - start, 3)
-            # A crossfade boundary overlaps this segment with the running
-            # chain by CROSSFADE_S — the stored start must say where the
-            # scene actually lands in the output, or caption alignment and
-            # every other consumer drifts late by 0.4s per crossfade. Guard
-            # mirrors _join_segments exactly (both sides long enough).
-            if (
-                segments
-                and segments[-1]["transition"] == "crossfade"
-                and start > 2 * CROSSFADE_S
-                and duration > 2 * CROSSFADE_S
-            ):
-                start -= CROSSFADE_S
             segments.append(
                 {
                     "scene": port,

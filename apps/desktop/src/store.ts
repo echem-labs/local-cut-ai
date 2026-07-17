@@ -410,6 +410,22 @@ export const useApp = create<AppState>((set, get) => {
     return establishing;
   };
 
+  // Pair/unpair swap the engine under us: drop every per-engine slice (zustand
+  // and module-level) so the old engine's in-flight PATCH, download bytes, and
+  // project list can't bleed into the new one, then reconnect.
+  const switchEngine = async () => {
+    resetEngineScopedState();
+    set({
+      currentProject: null,
+      board: null,
+      jobs: [],
+      projects: [],
+      models: [],
+      downloadErrors: {},
+    });
+    await establishOnce();
+  };
+
   return {
     client: null,
     engineError: null,
@@ -712,33 +728,13 @@ export const useApp = create<AppState>((set, get) => {
     pairRemote: async (code) => {
       const { ok, error } = await window.localcut.pairEngine(code);
       if (!ok) return error ?? "pairing failed";
-      // The engine changed under us: drop all per-engine state (zustand and
-      // module-level) and reconnect against the new one.
-      resetEngineScopedState();
-      set({
-        currentProject: null,
-        board: null,
-        jobs: [],
-        projects: [],
-        models: [],
-        downloadErrors: {},
-      });
-      await establishOnce();
+      await switchEngine(); // the engine changed under us — reset and reconnect
       return null;
     },
 
     unpairRemote: async () => {
       const { ok, error } = await window.localcut.unpairEngine();
-      resetEngineScopedState();
-      set({
-        currentProject: null,
-        board: null,
-        jobs: [],
-        projects: [],
-        models: [],
-        downloadErrors: {},
-      });
-      await establishOnce();
+      await switchEngine();
       return ok ? null : (error ?? "disconnect failed");
     },
 

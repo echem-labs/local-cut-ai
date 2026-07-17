@@ -14,7 +14,7 @@ from localcut_engine.backends.base import ExecutionContext
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
-from localcut_engine.otio import timeline_seconds
+from localcut_engine.otio import edl_to_otio, timeline_seconds
 
 FFMPEG = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
 
@@ -540,3 +540,101 @@ async def test_ducking_flag_flows_into_the_edl_and_both_mixes_export(tmp_path, m
             check=True,
         )
         assert "audio" in probe.stdout  # both mix graphs are valid end to end
+
+
+async def test_beat_align_with_crossfade_stays_consistent_and_on_beat(tmp_path):
+    """Regression: beat-snap + a crossfade boundary must keep the EDL length
+    equal to the OTIO length (no 0.4s drift) AND land the boundary on a beat.
+    The two pull in opposite directions — this pins both. Uses clips longer
+    than the narration so a beat sits inside the snap window."""
+    import numpy as np
+    import soundfile as sf
+
+    from localcut_engine.audio import ANALYSIS_RATE, estimate_beats
+
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    clip = synth(
+        tmp_path, "long.mp4", ["-f", "lavfi", "-i", "testsrc2=size=320x568:rate=24:duration=6"]
+    )
+    narr = synth(tmp_path, "n25.wav", ["-f", "lavfi", "-i", "sine=frequency=440:duration=2.5"])
+    rng = np.random.default_rng(5)
+    pcm = np.zeros(ANALYSIS_RATE * 12, dtype=np.float32)
+    for k in range(24):  # a click every 0.5s
+        i = int(k * 0.5 * ANALYSIS_RATE)
+        pcm[i : i + 256] = rng.uniform(-0.9, 0.9, 256).astype(np.float32)
+    click = tmp_path / "click.wav"
+    sf.write(click, pcm, ANALYSIS_RATE)
+    beats = estimate_beats(pcm)
+
+    ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={
+            "s1": clip,
+            "s1.audio": narr,  # 2.5s narration on a 6s clip → snap can flex
+            "s2": clip,
+            "s2.audio": narr,
+            "music": click,
+        },
+    )
+    edl = json.loads(
+        (
+            await backend.execute(
+                make_spec(
+                    NodeKind.TIMELINE,
+                    {"aspect": "9:16", "beat_align": True, "transitions": {"s1": "crossfade"}},
+                ),
+                ctx,
+            )
+        ).read_text()
+    )
+    resolve = lambda src: p if (p := Path(src)).is_absolute() else out_dir / p  # noqa: E731
+    doc = edl_to_otio(edl, resolve, "x")
+    # 1. No drift: the OTIO length equals the EDL program length.
+    assert timeline_seconds(doc) == pytest.approx(edl["duration"], abs=0.05)
+    # 2. On-beat: every boundary (stored start+duration) lands on a beat,
+    #    including the one whose start the crossfade pulled back.
+    for seg in edl["video"]:
+        end = seg["start"] + seg["duration"]
+        assert min(abs(end - b) for b in beats) < 0.06, f"{seg['scene']} end {end} off-beat"
+    # 3. The crossfade survived (both sides long enough after snapping).
+    assert edl["video"][0]["transition"] == "crossfade"
+    assert edl["video"][0]["duration"] > 2 * 0.4 and edl["video"][1]["duration"] > 2 * 0.4
+
+
+async def test_beat_align_narrationless_never_snaps_past_trim(tmp_path, media):
+    """A trimmed, narrationless segment snaps only backward (shrink-to-beat),
+    never past its window into footage the user cut."""
+    import numpy as np
+    import soundfile as sf
+
+    from localcut_engine.audio import ANALYSIS_RATE
+
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    rng = np.random.default_rng(9)
+    pcm = np.zeros(ANALYSIS_RATE * 4, dtype=np.float32)
+    for k in range(8):
+        i = int(k * 0.5 * ANALYSIS_RATE)
+        pcm[i : i + 256] = rng.uniform(-0.9, 0.9, 256).astype(np.float32)
+    click = tmp_path / "click.wav"
+    sf.write(click, pcm, ANALYSIS_RATE)
+
+    # No narration for s1; trim_out caps its window at 1.5s of the 2s clip.
+    ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={"s1": media["clip1"], "music": click},
+    )
+    edl = json.loads(
+        (
+            await backend.execute(
+                make_spec(
+                    NodeKind.TIMELINE,
+                    {"aspect": "9:16", "beat_align": True, "trims": {"s1": {"out": 1.5}}},
+                ),
+                ctx,
+            )
+        ).read_text()
+    )
+    seg = edl["video"][0]
+    assert seg["duration"] <= 1.5 + 0.001  # never past the trimmed window

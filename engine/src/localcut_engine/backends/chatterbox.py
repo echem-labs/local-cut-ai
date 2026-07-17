@@ -20,6 +20,8 @@ someone else's.
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
 from pathlib import Path
 
 from ..graph.compiler import JobSpec
@@ -27,6 +29,7 @@ from ..graph.model import VOICE_REF_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
 CLONE_MODEL = "local:chatterbox"
+_SPEED_MIN, _SPEED_MAX = 0.5, 2.0  # atempo's single-pass range
 
 _INSTALL_HINT = (
     "voice cloning requires the chatterbox-tts package (PyTorch) in the engine "
@@ -80,28 +83,44 @@ class ChatterboxBackend(ExecutionBackend):
         # Per-line pacing: Chatterbox has no native rate control, so honor
         # `speed` by pitch-preserving time-stretch of its output (Kokoro does
         # this internally). speed>1 = faster/shorter, matching Kokoro's sense.
-        speed = float(spec.params.get("speed", 1.0))
+        # A raw /patch can carry a null/garbage speed — coerce safely.
+        try:
+            speed = float(spec.params.get("speed") or 1.0)
+        except (TypeError, ValueError):
+            speed = 1.0
 
-        def synth() -> Path:
-            import numpy as np
-            import soundfile as sf
+        out = ctx.output_path(spec.output_hash, ".wav")  # also mkdirs output_dir
+        # Build in a temp dir on the SAME filesystem as the artifact (so the
+        # final move is an atomic rename) and publish `{hash}.wav` only once —
+        # a retime failure must never leave a full-speed file that the
+        # existence cache then serves as a valid render forever. A subdir
+        # isn't matched by the flat `{hash}.*` artifact scan.
+        tmp_dir = Path(tempfile.mkdtemp(prefix=".tts-", dir=ctx.output_dir))
+        try:
+            raw = tmp_dir / "raw.wav"
 
-            engine = self._load()
-            wav = engine.generate(text, audio_prompt_path=str(sample))
-            samples = wav.squeeze(0).cpu().numpy().astype(np.float32)
-            out = ctx.output_path(spec.output_hash, ".wav")
-            sf.write(out, samples, engine.sr)
-            return out
+            def synth() -> None:
+                import numpy as np
+                import soundfile as sf
 
-        out = await asyncio.to_thread(synth)
-        if abs(speed - 1.0) > 0.01:
-            await self._retime(out, speed)
+                engine = self._load()
+                wav = engine.generate(text, audio_prompt_path=str(sample))
+                samples = wav.squeeze(0).cpu().numpy().astype(np.float32)
+                sf.write(raw, samples, engine.sr)
+
+            await asyncio.to_thread(synth)
+            final = raw
+            if abs(speed - 1.0) > 0.01:
+                final = tmp_dir / "retimed.wav"
+                await self._retime(raw, final, speed)
+            final.replace(out)  # atomic rename within the project dir's fs
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         await ctx.progress(1.0)
         return out
 
-    async def _retime(self, path: Path, speed: float) -> None:
-        """Pitch-preserving tempo change via ffmpeg atempo, in place."""
-        tmp = path.with_suffix(".retimed.wav")
+    async def _retime(self, src: Path, dst: Path, speed: float) -> None:
+        """Pitch-preserving tempo change via ffmpeg atempo (src → dst)."""
         proc = await asyncio.create_subprocess_exec(
             self.ffmpeg_bin,
             "-y",
@@ -109,16 +128,13 @@ class ChatterboxBackend(ExecutionBackend):
             "-v",
             "error",
             "-i",
-            str(path),
+            str(src),
             "-filter:a",
-            f"atempo={max(0.5, min(2.0, speed)):.4f}",
-            str(tmp),
+            f"atempo={max(_SPEED_MIN, min(_SPEED_MAX, speed)):.4f}",
+            str(dst),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
         _, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            tmp.replace(path)
-        else:
-            tmp.unlink(missing_ok=True)
+        if proc.returncode != 0:
             raise GenerationError(f"chatterbox speed retime failed: {stderr.decode()[-300:]}")
