@@ -58,7 +58,7 @@ export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
 /** Focused single-panel view for tool:* micro-projects — one node,
  * one preview, one download, and (for scripts) one promote path. */
 export function ToolSession() {
-  const { board, client, currentProject, promote } = useApp();
+  const { board, client, currentProject, promote, actionError } = useApp();
   const [promoting, setPromoting] = useState(false);
 
   const tool = currentProject?.mode.startsWith("tool:")
@@ -121,6 +121,11 @@ export function ToolSession() {
               </button>
             )}
           </div>
+          {actionError?.scope === "promote" && (
+            <p className="hint error-text" role="alert">
+              {actionError.message}
+            </p>
+          )}
         </>
       )}
     </div>

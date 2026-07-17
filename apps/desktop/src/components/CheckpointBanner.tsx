@@ -8,7 +8,7 @@ const READY = ["draft", "final", "pinned"];
 /** Beginner-mode gate above the scene board: one message + one accent
  * approve button per checkpoint, gone once both are passed. */
 export function CheckpointBanner() {
-  const { board, client, currentProject, approve } = useApp();
+  const { board, client, currentProject, approve, actionError } = useApp();
   const [showScript, setShowScript] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -68,6 +68,11 @@ export function CheckpointBanner() {
               : "Approve storyboard"}
         </button>
       </div>
+      {actionError?.scope === "approve" && (
+        <p className="hint error-text" role="alert">
+          {actionError.message}
+        </p>
+      )}
       {stage === "script" &&
         showScript &&
         (screenplay ? (

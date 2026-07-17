@@ -63,19 +63,47 @@ export class ProviderKeyStore {
     return out;
   }
 
-  /** Merge updates into the store; an empty string removes that key. All
-   * surviving keys are re-encoded under the current encryption mode so the
-   * file never mixes encrypted and plaintext blobs. */
+  private encode(value: string, encrypted: boolean): string {
+    return encrypted
+      ? safeStorage.encryptString(value).toString("base64")
+      : Buffer.from(value, "utf8").toString("base64");
+  }
+
+  /** Merge updates into the store; an empty string removes that key.
+   *
+   * Untouched providers keep their stored blobs verbatim — decrypting them
+   * just to re-encrypt would silently drop every key the keychain can no
+   * longer read. Only an encryption-mode change forces a re-encode (so the
+   * file never mixes encrypted and plaintext blobs); a blob that cannot be
+   * decrypted then is unrecoverable and dropped with a warning. */
   set(updates: Partial<Record<ProviderKeyId, string>>): void {
+    const stored = this.read();
     const encrypted = safeStorage.isEncryptionAvailable();
-    const merged = { ...this.load(), ...updates };
-    const keys: Partial<Record<ProviderKeyId, string>> = {};
+
+    let keys: Partial<Record<ProviderKeyId, string>>;
+    if (encrypted === stored.encrypted) {
+      keys = { ...stored.keys };
+    } else {
+      keys = {};
+      for (const id of PROVIDER_KEY_IDS) {
+        const blob = stored.keys[id];
+        if (!blob) continue;
+        try {
+          const plain = stored.encrypted
+            ? safeStorage.decryptString(Buffer.from(blob, "base64"))
+            : Buffer.from(blob, "base64").toString("utf8");
+          keys[id] = this.encode(plain, encrypted);
+        } catch (error) {
+          console.warn(`[keys] dropping ${id} key — cannot re-encode after mode change:`, error);
+        }
+      }
+    }
+
     for (const id of PROVIDER_KEY_IDS) {
-      const value = merged[id];
-      if (!value) continue;
-      keys[id] = encrypted
-        ? safeStorage.encryptString(value).toString("base64")
-        : Buffer.from(value, "utf8").toString("base64");
+      const value = updates[id];
+      if (value === undefined) continue;
+      if (value) keys[id] = this.encode(value, encrypted);
+      else delete keys[id];
     }
     this.write({ encrypted, keys });
   }

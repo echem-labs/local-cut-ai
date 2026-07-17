@@ -722,6 +722,10 @@ textarea {
   font-size: var(--text-xs);
 }
 
+.error-text {
+  color: var(--status-failed);
+}
+
 .badge {
   font-size: var(--text-xs);
   padding: 1px var(--space-2);

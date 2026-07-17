@@ -26,7 +26,15 @@ const TOOLS: { kind: ToolKind; label: string; glyph: string; placeholder: string
 /** Home: one prompt box — the entire prompt-only mode — plus a
  * Quick Tools row and recent projects. Control budget: ≤6 elements. */
 export function Home() {
-  const { projects, createFromPrompt, createTool, openProject, openSettings, system } = useApp();
+  const {
+    projects,
+    createFromPrompt,
+    createTool,
+    openProject,
+    openSettings,
+    system,
+    actionError,
+  } = useApp();
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(60);
   const [aspect, setAspect] = useState("9:16");
@@ -122,6 +130,11 @@ export function Home() {
             {busy ? "Starting…" : "Generate"}
           </button>
         </div>
+        {actionError?.scope === "create" && (
+          <p className="hint error-text" role="alert">
+            {actionError.message}
+          </p>
+        )}
       </div>
 
       <div className="quick-tools" role="group" aria-label="Quick tools">
@@ -161,6 +174,11 @@ export function Home() {
               {busy ? "Starting…" : `Generate ${activeTool.label.toLowerCase()}`}
             </button>
           </div>
+          {actionError?.scope === "tool" && (
+            <p className="hint error-text" role="alert">
+              {actionError.message}
+            </p>
+          )}
         </div>
       )}
 

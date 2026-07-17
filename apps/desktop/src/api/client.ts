@@ -33,7 +33,16 @@ export class EngineClient {
       },
     });
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
+      const text = await response.text().catch(() => "");
+      let detail = text;
+      try {
+        // FastAPI errors are {"detail": "..."} — surface the message, not
+        // the JSON envelope.
+        const parsed = JSON.parse(text) as { detail?: unknown };
+        if (typeof parsed.detail === "string") detail = parsed.detail;
+      } catch {
+        /* not JSON — use the raw body */
+      }
       throw new Error(`engine ${response.status}: ${detail.slice(0, 300)}`);
     }
     return (await response.json()) as T;

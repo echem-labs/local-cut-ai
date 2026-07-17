@@ -44,9 +44,17 @@ declare global {
   }
 }
 
+/** A failed user action, tagged so the screen that started it can show
+ * the message next to its own button. */
+export interface ActionError {
+  scope: "create" | "tool" | "promote" | "approve";
+  message: string;
+}
+
 interface AppState {
   client: EngineClient | null;
   engineError: string | null;
+  actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
   currentProject: Project | null;
@@ -96,18 +104,35 @@ const FIRST_RUN_KEY = "localcut.firstRunDone";
 const REFRESH_DEBOUNCE_MS = 150;
 const RECONNECT_DELAY_MS = 3000;
 const PATCH_DEBOUNCE_MS = 300;
+// A stale /models snapshot can lag a terminal download event — refetch
+// once more after the engine has settled.
+const DOWNLOAD_SETTLE_MS = 1500;
 
 interface PendingPatch {
   projectId: string;
   params: Record<string, unknown>;
   timer: ReturnType<typeof setTimeout>;
+  // In-flight PATCH. The entry stays in the map until it resolves so
+  // withPending keeps shielding refreshes that raced the request.
+  sent?: Promise<void>;
 }
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshQueued = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
+// One in-flight establish, shared by connect and reconnect: StrictMode
+// double-mount must not open two sockets.
+let establishing: Promise<void> | null = null;
 const pendingPatches = new Map<string, PendingPatch>();
+// Download bookkeeping — the WS is fresher than any /models snapshot.
+// wsProgress holds the latest bytes per model; terminalDownloads marks
+// models whose download already ended so a stale row can't resurrect it.
+const wsProgress = new Map<string, { done: number; total: number }>();
+const terminalDownloads = new Set<string>();
+
+const messageOf = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err);
 
 export const useApp = create<AppState>((set, get) => {
   const scheduleReconnect = () => {
@@ -172,6 +197,9 @@ export const useApp = create<AppState>((set, get) => {
 
   // Download bars update in place from WS bytes — no HTTP refetch per tick.
   const applyDownloadProgress = (event: { model: string; done: number; total: number }) => {
+    // A progress tick means the download is live (again).
+    terminalDownloads.delete(event.model);
+    wsProgress.set(event.model, { done: event.done, total: event.total });
     set({
       models: get().models.map((row) =>
         row.id === event.model
@@ -181,27 +209,61 @@ export const useApp = create<AppState>((set, get) => {
     });
   };
 
+  // A /models response can be older than the WS stream it races: it may
+  // still say `downloading` after the terminal event, or carry byte counts
+  // behind the last progress tick. Never let it move a bar backward or
+  // resurrect a finished download.
+  const reconcileModels = (rows: ModelRow[]): ModelRow[] =>
+    rows.map((row) => {
+      if (row.downloaded) {
+        wsProgress.delete(row.id);
+        return row;
+      }
+      if (terminalDownloads.has(row.id)) {
+        return row.downloading ? { ...row, downloading: false, progress: null } : row;
+      }
+      const ws = wsProgress.get(row.id);
+      if (!ws) return row;
+      return {
+        ...row,
+        downloading: true,
+        progress: { done: Math.max(ws.done, row.progress?.done ?? 0), total: ws.total },
+      };
+    });
+
   // Param edits are optimistic: the board updates immediately, the PATCH is
   // debounced per node with changed keys merged, and the WS-driven refresh
   // brings back the server truth once the dirty subgraph re-renders.
-  const sendPatch = (nodeId: string) => {
+  // The pending entry outlives the request: it is removed only once the
+  // PATCH settles (and only if a newer edit hasn't replaced it), so a
+  // refresh whose GET raced the PATCH still gets the edit reapplied.
+  const sendPatch = (nodeId: string): Promise<void> => {
     const pending = pendingPatches.get(nodeId);
-    if (!pending) return;
+    if (!pending) return Promise.resolve();
+    if (pending.sent) return pending.sent; // already on the wire
     clearTimeout(pending.timer);
-    pendingPatches.delete(nodeId);
     const { client } = get();
-    if (!client) return;
-    client
+    if (!client) {
+      pendingPatches.delete(nodeId);
+      return Promise.resolve();
+    }
+    pending.sent = client
       .patch(pending.projectId, [{ op: "set_params", node_id: nodeId, params: pending.params }])
+      .then(() => undefined)
       .catch((err) => {
         console.warn(`patch ${nodeId} failed:`, err);
         void get().refreshBoard();
+      })
+      .finally(() => {
+        if (pendingPatches.get(nodeId) === pending) pendingPatches.delete(nodeId);
       });
+    return pending.sent;
   };
 
-  const flushPatches = () => {
-    for (const nodeId of [...pendingPatches.keys()]) sendPatch(nodeId);
-  };
+  // Resolves once every flushed PATCH has settled — callers that act on
+  // the flushed state (finalize, project switch) must await it.
+  const flushPatches = (): Promise<void> =>
+    Promise.all([...pendingPatches.keys()].map(sendPatch)).then(() => undefined);
 
   const applyAuxParams = (nodeId: string, params: Record<string, unknown>) => {
     const { board, client, currentProject } = get();
@@ -258,13 +320,20 @@ export const useApp = create<AppState>((set, get) => {
         ) {
           // Terminal states: record the failure, then refetch the
           // authoritative install flags.
+          terminalDownloads.add(event.model);
+          wsProgress.delete(event.model);
           const errors = { ...get().downloadErrors };
           if (event.type === "model.download.failed") errors[event.model] = event.error;
           else delete errors[event.model];
           set({ downloadErrors: errors });
-          get()
-            .refreshModels()
-            .catch((err) => console.warn("models refresh failed:", err));
+          const refetch = () =>
+            get()
+              .refreshModels()
+              .catch((err) => console.warn("models refresh failed:", err));
+          void refetch();
+          // The engine can still report `downloading` for a beat after the
+          // terminal event — refetch once more when it has settled.
+          setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
         } else if (event.type.startsWith("job.") || event.type === "project.expanded") {
           scheduleRefresh();
         }
@@ -284,9 +353,19 @@ export const useApp = create<AppState>((set, get) => {
     }
   };
 
+  // Concurrent callers share the same attempt; a second establish while one
+  // is mid-flight would subscribe twice and leak the first socket.
+  const establishOnce = () => {
+    establishing ??= establish().finally(() => {
+      establishing = null;
+    });
+    return establishing;
+  };
+
   return {
     client: null,
     engineError: null,
+    actionError: null,
     system: null,
     projects: [],
     currentProject: null,
@@ -300,12 +379,12 @@ export const useApp = create<AppState>((set, get) => {
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
-      await establish();
+      await establishOnce();
     },
 
     reconnect: async () => {
       try {
-        await establish();
+        await establishOnce();
       } catch (err) {
         console.warn("reconnect failed:", err);
       }
@@ -321,49 +400,69 @@ export const useApp = create<AppState>((set, get) => {
     openProject: async (id: string) => {
       const { client } = get();
       if (!client) return;
-      flushPatches();
+      // The GET must observe the flushed edits, not race them.
+      await flushPatches();
       const { project, board } = await client.getProject(id);
       set({ currentProject: project, board, selectedNode: null });
     },
 
     closeProject: () => {
-      flushPatches();
+      void flushPatches(); // nothing reads the project after this — fire and forget
       set({ currentProject: null, board: null, jobs: [], selectedNode: null });
     },
 
     createFromPrompt: async (prompt, duration, aspect, mode) => {
       const { client } = get();
       if (!client) return;
-      const project = await client.createProject({
-        prompt,
-        target_duration_s: duration,
-        aspect,
-        mode,
-      });
-      await get().openProject(project.id);
-      await get().refreshHome();
+      set({ actionError: null });
+      try {
+        const project = await client.createProject({
+          prompt,
+          target_duration_s: duration,
+          aspect,
+          mode,
+        });
+        await get().openProject(project.id);
+        await get().refreshHome();
+      } catch (err) {
+        console.warn("create project failed:", err);
+        set({ actionError: { scope: "create", message: messageOf(err) } });
+      }
     },
 
     createTool: async (tool, input) => {
       const { client } = get();
       if (!client) return;
-      const project = await client.createTool({ tool, ...input });
-      await get().openProject(project.id);
-      await get().refreshHome();
+      set({ actionError: null });
+      try {
+        const project = await client.createTool({ tool, ...input });
+        await get().openProject(project.id);
+        await get().refreshHome();
+      } catch (err) {
+        console.warn(`tool ${tool} failed:`, err);
+        set({ actionError: { scope: "tool", message: messageOf(err) } });
+      }
     },
 
     promote: async () => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
-      const project = await client.promote(currentProject.id);
-      await get().openProject(project.id);
-      await get().refreshHome();
+      set({ actionError: null });
+      try {
+        const project = await client.promote(currentProject.id);
+        await get().openProject(project.id);
+        await get().refreshHome();
+      } catch (err) {
+        console.warn("promote failed:", err);
+        set({ actionError: { scope: "promote", message: messageOf(err) } });
+      }
     },
 
     approve: async (checkpoint) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
       const projectId = currentProject.id;
+      set({ actionError: null });
       if (!currentProject.approvals.includes(checkpoint)) {
         set({
           currentProject: {
@@ -376,8 +475,24 @@ export const useApp = create<AppState>((set, get) => {
         await client.approve(projectId, checkpoint);
       } catch (err) {
         console.warn(`approve ${checkpoint} failed:`, err);
-        const { project } = await client.getProject(projectId);
-        if (get().currentProject?.id === projectId) set({ currentProject: project });
+        set({ actionError: { scope: "approve", message: messageOf(err) } });
+        try {
+          const { project } = await client.getProject(projectId);
+          if (get().currentProject?.id === projectId) set({ currentProject: project });
+        } catch (rollbackErr) {
+          // Can't refetch the truth either — at least undo the optimistic
+          // approval so the checkpoint banner comes back.
+          console.warn("approve rollback fetch failed:", rollbackErr);
+          const current = get().currentProject;
+          if (current?.id === projectId) {
+            set({
+              currentProject: {
+                ...current,
+                approvals: current.approvals.filter((a) => a !== checkpoint),
+              },
+            });
+          }
+        }
         return;
       }
       await get().refreshBoard();
@@ -426,7 +541,8 @@ export const useApp = create<AppState>((set, get) => {
     finalize: async () => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
-      flushPatches();
+      // The engine must compile with the flushed params, not race them.
+      await flushPatches();
       await client.finalize(currentProject.id);
       await get().refreshBoard();
     },
@@ -436,7 +552,7 @@ export const useApp = create<AppState>((set, get) => {
     refreshModels: async () => {
       const { client } = get();
       if (!client) return;
-      set({ models: await client.listModels() });
+      set({ models: reconcileModels(await client.listModels()) });
     },
 
     startDownload: async (modelId) => {
@@ -448,12 +564,12 @@ export const useApp = create<AppState>((set, get) => {
       }
       try {
         await client.startDownload(modelId);
+        // A fresh start voids any previous terminal state and byte counts.
+        terminalDownloads.delete(modelId);
+        wsProgress.delete(modelId);
       } catch (err) {
         set({
-          downloadErrors: {
-            ...get().downloadErrors,
-            [modelId]: err instanceof Error ? err.message : String(err),
-          },
+          downloadErrors: { ...get().downloadErrors, [modelId]: messageOf(err) },
         });
       }
       await get().refreshModels();
