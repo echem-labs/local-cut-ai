@@ -48,39 +48,46 @@ class FalVideoGen(VideoGen):
             payload["image_url"] = f"data:image/png;base64,{data}"
 
         headers = {"Authorization": f"Key {self.api_key}"}
-        async with httpx.AsyncClient(timeout=60) as client:
-            submit = await client.post(
-                f"{_QUEUE_BASE}/{self.path}", headers=headers, json={"input": payload}
-            )
-            if submit.status_code not in (200, 201):
-                raise ProviderError(f"fal submit: {submit.text[:300]}")
-            job = submit.json()
-            status_url = job["status_url"]
-            response_url = job["response_url"]
+        try:
+            # The read timeout bounds each poll/download call; the overall
+            # job is bounded separately by self.deadline_s below.
+            async with httpx.AsyncClient(timeout=httpx.Timeout(60, read=300)) as client:
+                submit = await client.post(
+                    f"{_QUEUE_BASE}/{self.path}", headers=headers, json={"input": payload}
+                )
+                if submit.status_code not in (200, 201):
+                    raise ProviderError(f"fal submit: {submit.text[:300]}")
+                job = submit.json()
+                status_url = job["status_url"]
+                response_url = job["response_url"]
 
-            deadline = asyncio.get_running_loop().time() + self.deadline_s
-            while True:
-                status = (await client.get(status_url, headers=headers)).json()
-                state = status.get("status")
-                if state == "COMPLETED":
-                    break
-                if state in ("FAILED", "CANCELLED"):
-                    raise ProviderError(f"fal job {state.lower()}: {status}")
-                if asyncio.get_running_loop().time() >= deadline:
-                    raise ProviderError(
-                        f"fal job exceeded {self.deadline_s:.0f}s — giving up"
-                    )
-                await asyncio.sleep(_POLL_INTERVAL_S)
+                deadline = asyncio.get_running_loop().time() + self.deadline_s
+                while True:
+                    status = (await client.get(status_url, headers=headers)).json()
+                    state = status.get("status")
+                    if state == "COMPLETED":
+                        break
+                    if state in ("FAILED", "CANCELLED"):
+                        raise ProviderError(f"fal job {state.lower()}: {status}")
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise ProviderError(
+                            f"fal job exceeded {self.deadline_s:.0f}s — giving up"
+                        )
+                    await asyncio.sleep(_POLL_INTERVAL_S)
 
-            result = (await client.get(response_url, headers=headers)).json()
-            video = result.get("video") or {}
-            url = video.get("url") if isinstance(video, dict) else None
-            if not url:
-                raise ProviderError(f"fal returned no video url: {str(result)[:300]}")
-            download = await client.get(url)
-            if download.status_code != 200:
-                raise ProviderError(f"fal video download failed: {download.status_code}")
-            return download.content
+                result = (await client.get(response_url, headers=headers)).json()
+                video = result.get("video") or {}
+                url = video.get("url") if isinstance(video, dict) else None
+                if not url:
+                    raise ProviderError(f"fal returned no video url: {str(result)[:300]}")
+                download = await client.get(url)
+                if download.status_code != 200:
+                    raise ProviderError(f"fal video download failed: {download.status_code}")
+                return download.content
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            # Transport failures and malformed queue responses must reach the
+            # backend as a ProviderError, not a raw exception it can't classify.
+            raise ProviderError(f"fal request failed: {exc}") from exc
 
     def quote(self, duration_s: float) -> PriceQuote:
         return PriceQuote(

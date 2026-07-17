@@ -466,7 +466,10 @@ class FFmpegBackend(ExecutionBackend):
             f"crop={width}:{height},fps=24,format=yuv420p"
         )
         if retime is not None:
-            vf = f"setpts={retime:.4f}*PTS,{vf}"
+            # Zero-base the PTS before scaling: input seeking (-ss) can leave
+            # a non-zero start PTS, which a bare N*PTS would amplify into a
+            # startup offset / A-V drift.
+            vf = f"setpts={retime:.4f}*(PTS-STARTPTS),{vf}"
         text = segment.get("onscreen_text")
         if text:
             # textfile= sidesteps drawtext's escaping rules for user text.

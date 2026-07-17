@@ -23,24 +23,32 @@ class AnthropicTextGen(TextGen):
         self.model = model
 
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": self.api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": max_tokens,
-                    "system": system,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                    },
+                    json={
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "system": system,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"anthropic request failed: {exc}") from exc
         if response.status_code != 200:
             raise ProviderError(f"anthropic: {response.text[:300]}")
-        blocks = response.json().get("content", [])
-        return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        # A 200 with an unexpected body must still fail as a provider error,
+        # not a raw KeyError the caller can't classify.
+        try:
+            blocks = response.json().get("content", [])
+            return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise ProviderError(f"anthropic returned an unreadable body: {exc}") from exc
 
     def quote(self, prompt_chars: int) -> PriceQuote:
         return PriceQuote(estimate=0.03, unit="per request", detail=self.model)
@@ -56,22 +64,28 @@ class OpenAICompatTextGen(TextGen):
         self.label = label
 
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
-        async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-            response = await client.post(
-                f"{self.base_url}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": self.model,
-                    "max_tokens": max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                },
-            )
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                    },
+                )
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"{self.label} request failed: {exc}") from exc
         if response.status_code != 200:
             raise ProviderError(f"{self.label}: {response.text[:300]}")
-        return response.json()["choices"][0]["message"]["content"]
+        try:
+            return response.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise ProviderError(f"{self.label} returned an unreadable body: {exc}") from exc
 
     def quote(self, prompt_chars: int) -> PriceQuote:
         return PriceQuote(estimate=0.02, unit="per request", detail=self.model)
