@@ -28,12 +28,22 @@ _RATE = int(FPS)
 
 
 def _xml_safe(text: str) -> str:
-    """Drop the C0 control characters XML 1.0 forbids even when escaped (all
-    but tab/newline/carriage-return). A raw one in a title or clip name — e.g.
-    a stray NUL or form-feed from an LLM-authored title — makes the whole
-    FCPXML non-well-formed, so FCP (and any conformant parser) rejects the
-    entire export rather than the one bad field."""
-    return "".join(ch for ch in text if ch in "\t\n\r" or ord(ch) >= 0x20)
+    """Keep only characters XML 1.0 permits as content: tab/newline/CR, and
+    the ranges U+0020–U+D7FF, U+E000–U+FFFD, U+10000–U+10FFFF. This drops C0
+    controls, lone surrogates (U+D800–U+DFFF), and the noncharacters
+    U+FFFE/U+FFFF — any of which, in a title or clip name (e.g. a stray NUL
+    from an LLM-authored title, or a surrogate from a surrogateescape decode),
+    would make the whole FCPXML non-well-formed, or crash the UTF-8 encode of
+    the HTTP response, so FCP (and any conformant parser) rejects the entire
+    export rather than the one bad field."""
+    return "".join(
+        ch
+        for ch in text
+        if ch in "\t\n\r"
+        or 0x20 <= ord(ch) <= 0xD7FF
+        or 0xE000 <= ord(ch) <= 0xFFFD
+        or 0x10000 <= ord(ch) <= 0x10FFFF
+    )
 
 
 def _rt(seconds: float) -> str:

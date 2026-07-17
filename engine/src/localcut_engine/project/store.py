@@ -142,7 +142,13 @@ class ProjectStore:
         generated = self.generated_dir(project_id)
         if not generated.is_dir():
             return set()
-        return {p.name.split(".")[0] for p in generated.iterdir()}
+        # Skip in-progress temp files/dirs (backends build artifacts under a
+        # leading-dot name and atomically rename into place): they are not
+        # artifacts, and their leading dot would otherwise split to an
+        # empty-string "hash" and pollute the cache set.
+        return {
+            p.name.split(".")[0] for p in generated.iterdir() if not p.name.startswith(".")
+        }
 
     def delete_artifacts(self, project_id: str, output_hash: str) -> int:
         """Drop every artifact stored under a hash (stale outputs that must
