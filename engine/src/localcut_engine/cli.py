@@ -23,8 +23,11 @@ def main(argv: list[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     serve = subcommands.add_parser("serve", help="run the engine API server")
-    serve.add_argument("--host", default=None, help="bind address (default 127.0.0.1; "
-                       "non-localhost requires an explicit --token)")
+    serve.add_argument(
+        "--host",
+        default=None,
+        help="bind address (default 127.0.0.1; non-localhost requires an explicit --token)",
+    )
     serve.add_argument("--port", type=int, default=None)
     serve.add_argument("--token", default=None, help="pairing token (generated if omitted)")
     serve.add_argument("--data-dir", default=None)
@@ -34,8 +37,11 @@ def main(argv: list[str] | None = None) -> int:
         help="backend chain, comma-separated; first match per node kind wins "
         "(e.g. 'mock', 'local', 'llm,comfy,mock')",
     )
-    serve.add_argument("--announce-fd3", action="store_true",
-                       help="write the connection info JSON to fd 3 (used by the desktop shell)")
+    serve.add_argument(
+        "--announce-fd3",
+        action="store_true",
+        help="write the connection info JSON to fd 3 (used by the desktop shell)",
+    )
 
     probe = subcommands.add_parser("probe", help="print the hardware profile and exit")
     del probe
@@ -81,9 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             "see the docs for remote-engine setup"
         )
 
-    connection_info = json.dumps(
-        {"host": config.host, "port": config.port, "token": config.token}
-    )
+    connection_info = json.dumps({"host": config.host, "port": config.port, "token": config.token})
     if args.announce_fd3:
         try:
             os.write(3, (connection_info + "\n").encode())
@@ -96,8 +100,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # access_log=False: request lines would log ?token=… query strings.
     uvicorn.run(
-        create_app(config), host=config.host, port=config.port,
-        log_level="info", access_log=False,
+        create_app(config),
+        host=config.host,
+        port=config.port,
+        log_level="info",
+        access_log=False,
     )
     return 0
 
@@ -114,8 +121,10 @@ def _models_command(args: argparse.Namespace) -> int:
 
     if args.command == "models":
         for entry in manifest.models:
-            status = "downloaded" if is_downloaded(entry, models_dir) else (
-                "available" if entry.files else "no-files"
+            status = (
+                "downloaded"
+                if is_downloaded(entry, models_dir)
+                else ("available" if entry.files else "no-files")
             )
             print(f"{entry.id:32} {entry.task:12} {entry.license.id:12} {status}")
         return 0

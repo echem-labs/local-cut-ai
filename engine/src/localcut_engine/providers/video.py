@@ -70,9 +70,7 @@ class FalVideoGen(VideoGen):
                     if state in ("FAILED", "CANCELLED"):
                         raise ProviderError(f"fal job {state.lower()}: {status}")
                     if asyncio.get_running_loop().time() >= deadline:
-                        raise ProviderError(
-                            f"fal job exceeded {self.deadline_s:.0f}s — giving up"
-                        )
+                        raise ProviderError(f"fal job exceeded {self.deadline_s:.0f}s — giving up")
                     await asyncio.sleep(_POLL_INTERVAL_S)
 
                 result = (await client.get(response_url, headers=headers)).json()

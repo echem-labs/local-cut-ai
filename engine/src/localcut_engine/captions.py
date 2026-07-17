@@ -47,11 +47,7 @@ def words_to_cues(words: list[Word]) -> list[Cue]:
         if current:
             span = word.end - current[0].start
             gap = word.start - current[-1].end
-            if (
-                len(current) >= MAX_CUE_WORDS
-                or span > MAX_CUE_SPAN_S
-                or gap > CUE_GAP_BREAK_S
-            ):
+            if len(current) >= MAX_CUE_WORDS or span > MAX_CUE_SPAN_S or gap > CUE_GAP_BREAK_S:
                 flush()
         current.append(word)
         if word.text.strip().endswith(_SENTENCE_ENDS):

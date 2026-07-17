@@ -58,9 +58,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 graph.add_node(op.node)
             case "remove_node":
                 dirty |= graph.downstream_of(op.node_id)
-                graph.edges = [
-                    e for e in graph.edges if op.node_id not in (e.src, e.dst)
-                ]
+                graph.edges = [e for e in graph.edges if op.node_id not in (e.src, e.dst)]
                 graph.nodes.pop(op.node_id, None)
                 continue
         dirty.add(op.node_id)

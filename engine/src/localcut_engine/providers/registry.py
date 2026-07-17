@@ -60,10 +60,7 @@ def configured_providers(config: EngineConfig) -> list[dict]:
         "google": config.gemini_key,
         "fal": config.fal_key,
     }
-    return [
-        {**info.model_dump(), "configured": bool(keys.get(info.id))}
-        for info in PROVIDERS
-    ]
+    return [{**info.model_dump(), "configured": bool(keys.get(info.id))} for info in PROVIDERS]
 
 
 def textgen_for_model(config: EngineConfig, model: str) -> TextGen:
@@ -74,9 +71,13 @@ def textgen_for_model(config: EngineConfig, model: str) -> TextGen:
         case "anthropic":
             return AnthropicTextGen(api_key=key, model=name)
         case "openai":
-            return OpenAICompatTextGen(api_key=key, model=name, base_url=_OPENAI_BASE, label="openai")
+            return OpenAICompatTextGen(
+                api_key=key, model=name, base_url=_OPENAI_BASE, label="openai"
+            )
         case "google":
-            return OpenAICompatTextGen(api_key=key, model=name, base_url=_GEMINI_BASE, label="gemini")
+            return OpenAICompatTextGen(
+                api_key=key, model=name, base_url=_GEMINI_BASE, label="gemini"
+            )
     raise ProviderError(f"{provider} serves no text capability")
 
 

@@ -55,9 +55,7 @@ class JobQueue:
         """A payload this build can't parse (schema skew, disk damage) must
         fail visibly instead of wedging the queue."""
         logger.error("job %s has an unreadable payload; marking failed", job_id)
-        self._db.execute(
-            "UPDATE jobs SET status = ? WHERE id = ?", (JobStatus.FAILED, job_id)
-        )
+        self._db.execute("UPDATE jobs SET status = ? WHERE id = ?", (JobStatus.FAILED, job_id))
 
     def _write(self, job: Job) -> None:
         self._db.execute(

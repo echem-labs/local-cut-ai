@@ -93,9 +93,7 @@ class ProjectStore:
         return Project.model_validate_json(meta.read_text())
 
     def save_meta(self, project: Project) -> None:
-        _write_atomic(
-            self._dir(project.id) / "meta.json", project.model_dump_json(indent=2)
-        )
+        _write_atomic(self._dir(project.id) / "meta.json", project.model_dump_json(indent=2))
 
     def list(self) -> list[Project]:
         projects = []
@@ -115,14 +113,10 @@ class ProjectStore:
         return True
 
     def save_graph(self, project_id: str, graph: StoryGraph) -> None:
-        _write_atomic(
-            self._dir(project_id) / "project.json", graph.model_dump_json(indent=2)
-        )
+        _write_atomic(self._dir(project_id) / "project.json", graph.model_dump_json(indent=2))
 
     def load_graph(self, project_id: str) -> StoryGraph:
-        graph = StoryGraph.model_validate_json(
-            (self._dir(project_id) / "project.json").read_text()
-        )
+        graph = StoryGraph.model_validate_json((self._dir(project_id) / "project.json").read_text())
         # EDL schema migration: stamping the current version changes the
         # timeline's hash, which is exactly what invalidates cached EDLs
         # written by older builds (absent or stale edl_version).

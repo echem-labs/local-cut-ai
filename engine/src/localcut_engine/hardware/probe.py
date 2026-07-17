@@ -44,7 +44,10 @@ def _detect_nvidia() -> list[GPU]:
     try:
         output = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10, check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
         ).stdout
     except (subprocess.SubprocessError, OSError):
         return []
