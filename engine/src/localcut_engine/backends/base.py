@@ -60,11 +60,24 @@ class ExecutionBackend(ABC):
 class BackendRegistry:
     def __init__(self) -> None:
         self._backends: list[ExecutionBackend] = []
+        self._cloud: ExecutionBackend | None = None
 
     def register(self, backend: ExecutionBackend) -> None:
         self._backends.append(backend)
 
-    def resolve(self, kind: NodeKind) -> ExecutionBackend:
+    def register_cloud(self, backend: ExecutionBackend) -> None:
+        """The cloud backend is model-driven, not chain-driven: any node
+        whose model is `cloud:*` routes here regardless of the chain."""
+        self._cloud = backend
+
+    def resolve(self, kind: NodeKind, model: str | None = None) -> ExecutionBackend:
+        if (
+            model
+            and model.startswith("cloud:")
+            and self._cloud is not None
+            and self._cloud.supports(kind)
+        ):
+            return self._cloud
         for backend in self._backends:
             if backend.supports(kind):
                 return backend

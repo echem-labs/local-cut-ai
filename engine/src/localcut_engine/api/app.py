@@ -30,6 +30,7 @@ from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
 from ..backends.base import BackendRegistry
+from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
 from ..backends.kokoro import KokoroBackend
@@ -45,6 +46,7 @@ from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.loader import load_manifest
 from ..manifest.recommend import recommend_slate
+from ..providers.registry import configured_providers
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
 from ..service import ProjectService
 
@@ -107,6 +109,9 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(FFmpegBackend(ffmpeg_bin=config.ffmpeg_bin))
             case _:
                 raise ValueError(f"unknown backend in chain: {name!r}")
+    # Model-driven, not chain-driven: `cloud:*` node models route here no
+    # matter what the local chain looks like (BYOK, keys via config).
+    registry.register_cloud(CloudBackend(config))
     return registry
 
 
@@ -187,6 +192,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
         return load_manifest(config).model_dump()
+
+    @app.get("/providers", dependencies=[Authed])
+    async def providers() -> list[dict]:
+        # Which BYOK providers exist and whether a key is present — the
+        # settings UI's "what leaves this machine" panel reads this.
+        return configured_providers(config)
 
     # -- projects --------------------------------------------------------------
 

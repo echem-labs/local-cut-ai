@@ -97,7 +97,7 @@ class Scheduler:
         job.progress = 0.0
         job.started_at = time.time()
         try:
-            job.backend = self.backends.resolve(job.spec.kind).name
+            job.backend = self.backends.resolve(job.spec.kind, job.spec.model).name
         except GenerationError:
             job.backend = None  # the resolve below fails the job properly
         self.queue.update(job)
@@ -140,7 +140,7 @@ class Scheduler:
                 NodeKind.EXPORT,
             ):
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
-            backend = self.backends.resolve(job.spec.kind)
+            backend = self.backends.resolve(job.spec.kind, job.spec.model)
             artifact = await backend.execute(job.spec, ctx)
             if self._was_cancelled(job):
                 return

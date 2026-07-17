@@ -31,6 +31,12 @@ class EngineConfig(BaseModel):
     llm_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3:14b"
     ffmpeg_bin: str = "ffmpeg"
+    # BYOK cloud keys (never persisted by the engine; the desktop shell
+    # sources them from the OS keychain and passes them via environment).
+    anthropic_key: str | None = None
+    openai_key: str | None = None
+    gemini_key: str | None = None
+    fal_key: str | None = None
 
     @classmethod
     def from_env(cls) -> EngineConfig:
