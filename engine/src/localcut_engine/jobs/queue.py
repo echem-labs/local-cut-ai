@@ -129,20 +129,36 @@ class JobQueue:
         return [Job.model_validate_json(r[0]) for r in rows]
 
     def cancel(self, job_id: str) -> bool:
-        job = self.get(job_id)
-        if job is None or job.status not in (JobStatus.QUEUED, JobStatus.RENDERING):
-            return False
-        job.status = JobStatus.CANCELLED
-        self.update(job)
-        return True
+        # Read-modify-write under a single lock hold so the CANCELLED write is
+        # atomic against a concurrent scheduler persist (update_unless_cancelled
+        # reads status under the same lock): the job ends up either DONE (it
+        # finished first) or CANCELLED — never resurrected, in either order.
+        with self._lock, self._db:
+            row = self._db.execute("SELECT payload FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                return False
+            job = Job.model_validate_json(row[0])
+            if job.status not in (JobStatus.QUEUED, JobStatus.RENDERING):
+                return False
+            job.status = JobStatus.CANCELLED
+            self._write(job)
+            return True
 
     def cancel_project(self, project_id: str) -> int:
-        """Cancel every in-flight job of a project (project deletion)."""
-        jobs = self.active(project_id)
-        for job in jobs:
-            job.status = JobStatus.CANCELLED
-            self.update(job)
-        return len(jobs)
+        """Cancel every in-flight job of a project (project deletion). Reads and
+        writes each row under one lock hold — the previous active()-then-update()
+        split let a scheduler persist land between the read and the CANCELLED
+        write, resurrecting a job the deletion meant to stop."""
+        with self._lock, self._db:
+            rows = self._db.execute(
+                "SELECT payload FROM jobs WHERE project_id = ? AND status IN (?, ?)",
+                (project_id, JobStatus.QUEUED, JobStatus.RENDERING),
+            ).fetchall()
+            for (payload,) in rows:
+                job = Job.model_validate_json(payload)
+                job.status = JobStatus.CANCELLED
+                self._write(job)
+            return len(rows)
 
     def close(self) -> None:
         self._db.close()

@@ -374,3 +374,20 @@ def test_update_unless_cancelled_never_resurrects_a_cancel(tmp_path):
     job.status = JobStatus.DONE
     assert queue.update_unless_cancelled(job) is False
     assert queue.get(job.id).status is JobStatus.CANCELLED
+
+
+def test_cancel_refuses_a_job_that_already_finished(tmp_path):
+    """The atomic cancel must not cancel a job that already reached a terminal
+    state — a completed render outranks a late cancel, in either arrival order."""
+    from conftest import make_spec
+
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    queue = JobQueue(tmp_path / "q.db")
+    job = Job(project_id="p", spec=make_spec(NodeKind.CLIP))
+    queue.put(job)
+    job.status = JobStatus.DONE
+    queue.update(job)
+    assert queue.cancel(job.id) is False  # DONE is terminal — not cancellable
+    assert queue.get(job.id).status is JobStatus.DONE

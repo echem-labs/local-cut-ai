@@ -187,12 +187,16 @@ class Scheduler:
             await self._handle_oom(job, exc)
             return
         except Exception as exc:  # noqa: BLE001 — job isolation boundary
-            logger.exception("job %s failed", job.id)
             job.status = JobStatus.FAILED
             job.error = str(exc)
             job.finished_at = time.time()
             if not self.queue.update_unless_cancelled(job):
-                return  # the user's cancel outranks whatever the render died of
+                # The user's cancel outranks whatever the render died of — bail
+                # before logging so an intentional cancel isn't recorded as a
+                # spurious ERROR with a traceback (still inside the except, so
+                # the log below keeps its traceback for real failures).
+                return
+            logger.exception("job %s failed", job.id)
             self.events.publish(
                 "job.failed",
                 job_id=job.id,
