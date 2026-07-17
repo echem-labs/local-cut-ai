@@ -12,8 +12,10 @@ storyboard → I2V clips → narration → music → assembly). The MVP feature 
 is in place: word-timed captions, draft→final quality ladder (up to Wan 2.2
 finals), timeline editing, scene splitting, Quick Tools, review checkpoints,
 BYOK cloud providers, in-app model downloads with a first-run hardware
-screen, publish-kit generation, and OTIO handoff. Next up: installers
-(Windows/NVIDIA, Ubuntu, macOS beta).
+screen, publish-kit generation, and OTIO handoff. Editing depth is landing
+next: natural-language edits ("make scene 2 darker") that patch the project
+graph, and an advanced per-node inspector (seeds, model overrides, pinning)
+are in. Still to come: installers (Windows/NVIDIA, Ubuntu, macOS beta).
 
 ## What it will do
 
@@ -85,6 +87,14 @@ first-run screen and Settings → model library use exactly that. Per project,
 `POST /projects/{id}/package` generates a thumbnail plus an LLM
 title/description/hashtags kit, and `GET /projects/{id}/export/otio` hands
 the current timeline to pro NLEs as OpenTimelineIO.
+
+**Prompt-based editing.** `POST /projects/{id}/edit` takes a natural-language
+instruction ("make scene 2 darker", "crossfade everything", "remove scene 3")
+at project or scene scope: the LLM sees a whitelisted view of the graph,
+returns a constrained edit plan, and the engine compiles it into the same
+validated patch ops the inspector uses — only the dirty subgraph re-renders.
+Edits run on the local script LLM by default; pass `model: "cloud:…"` to
+opt a single edit into a BYOK provider.
 
 **Cloud (BYOK).** Nodes whose `model` is `cloud:*` route to provider adapters
 instead of the local chain — `cloud:claude-*` (Anthropic), `cloud:gpt-*`

@@ -8,11 +8,13 @@ Rules enforced here, not by convention:
 """
 
 import asyncio
+import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import (
     Depends,
     FastAPI,
@@ -29,7 +31,7 @@ from pydantic import BaseModel, Field
 from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
-from ..backends.base import BackendRegistry
+from ..backends.base import BackendRegistry, GenerationError
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -38,6 +40,7 @@ from ..backends.llm import LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..config import EngineConfig
 from ..events import EventBus
+from ..graph.editor import EDIT_SYSTEM_PROMPT, parse_edit_plan
 from ..graph.model import NODE_ID_PATTERN
 from ..graph.patch import PatchOp
 from ..hardware.probe import probe_hardware
@@ -47,7 +50,8 @@ from ..jobs.scheduler import Scheduler
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
-from ..providers.registry import configured_providers
+from ..providers.registry import configured_providers, textgen_for_model
+from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
 from ..service import ProjectService
 
@@ -363,6 +367,45 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # the caller's fault, not a server fault.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"dirty": sorted(dirty)}
+
+    class EditBody(BaseModel):
+        instruction: str = Field(min_length=1, max_length=2000)
+        # "project" (everything) or a scene id — the same shape node ids use.
+        scope: str = Field(default="project", pattern=NODE_ID_PATTERN)
+        # None → the local script LLM; "cloud:*" → BYOK textgen. Cloud is
+        # opt-in per request: an edit must never silently spend the user's key.
+        model: str | None = None
+
+    @app.post("/projects/{project_id}/edit", dependencies=[Authed])
+    async def edit_project(project_id: ProjectId, body: EditBody) -> dict:
+        """Natural-language edit: the LLM sees the whitelisted graph view,
+        returns an edit plan, and the plan compiles into ordinary patch ops."""
+        _get_project(project_id)
+        if body.model is not None and not body.model.startswith("cloud:"):
+            raise HTTPException(status_code=422, detail="edit model must be a cloud:* text model")
+        try:
+            view = await asyncio.to_thread(service.edit_view, project_id, body.scope)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"unknown scene: {body.scope}") from None
+        prompt = f"Project view:\n{json.dumps(view)}\n\nInstruction: {body.instruction}"
+        try:
+            if body.model:
+                raw = await textgen_for_model(config, body.model).complete(
+                    system=EDIT_SYSTEM_PROMPT, prompt=prompt
+                )
+            else:
+                # Interactive path onto the same local server as script jobs,
+                # with the same VRAM-yield discipline (Ollama serializes
+                # concurrent requests internally).
+                raw = await LLMScriptBackend(
+                    base_url=config.llm_url, model=config.llm_model
+                ).complete(prompt, system=EDIT_SYSTEM_PROMPT)
+            plan = parse_edit_plan(raw)
+        except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
+            # The model or its transport failed us, not the client.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        result = await asyncio.to_thread(service.apply_edit_plan, project_id, plan, body.scope)
+        return {"summary": plan.summary, **result}
 
     class RegenerateBody(BaseModel):
         seed: int | None = None

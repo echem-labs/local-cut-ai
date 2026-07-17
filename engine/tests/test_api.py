@@ -291,3 +291,65 @@ async def test_manifest_default_slate_is_downloadable(client):
     kokoro = next(m for m in manifest.models if m.id == "kokoro-82m")
     assert kokoro.files, "kokoro-82m must be downloadable (backend suggests it)"
     assert all(f.sha256 for f in kokoro.files)
+
+
+async def test_edit_applies_a_natural_language_plan(client, monkeypatch):
+    """POST /edit: the (patched) LLM returns a plan, the compiler applies the
+    legal parts, and the graph actually changes. Bad scopes and non-cloud
+    model overrides fail before any LLM call; LLM failures are 502s."""
+    from localcut_engine.backends.llm import LLMScriptBackend
+
+    created = await client.post("/projects", json={"prompt": "city of glass"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+
+    async def fake_complete(self, prompt, system):
+        assert "Project view" in prompt and "city of glass" in prompt
+        return json.dumps(
+            {
+                "summary": "made scene 1 nocturnal",
+                "edits": [
+                    {
+                        "action": "update",
+                        "node_id": "s1.keyframe",
+                        "params": {"prompt": "night city", "aspect": "1:1"},
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", fake_complete)
+    response = await client.post(
+        f"/projects/{pid}/edit", json={"instruction": "make scene 1 at night"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"] == "made scene 1 nocturnal"
+    assert body["ops"] == 1
+    assert "s1.clip" in body["dirty"]  # the downstream cone re-renders
+    assert any("not editable" in w for w in body["warnings"])  # aspect blocked
+
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["s1.keyframe"]["params"]["prompt"] == "night city"
+    assert graph["nodes"]["s1.keyframe"]["params"]["aspect"] != "1:1"
+
+    assert (
+        await client.post(f"/projects/{pid}/edit", json={"instruction": "x", "scope": "s99"})
+    ).status_code == 404
+    assert (
+        await client.post(f"/projects/{pid}/edit", json={"instruction": "x", "model": "local:qwen"})
+    ).status_code == 422
+
+    async def broken_complete(self, prompt, system):
+        return "Sure! I've made those edits for you."
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", broken_complete)
+    response = await client.post(f"/projects/{pid}/edit", json={"instruction": "x"})
+    assert response.status_code == 502
+    assert "unusable" in response.json()["detail"]

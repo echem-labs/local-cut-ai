@@ -3,6 +3,7 @@ import { EngineClient } from "./api/client";
 import type {
   Board,
   Checkpoint,
+  EditResult,
   EngineEvent,
   Job,
   ModelRow,
@@ -66,6 +67,9 @@ interface AppState {
   downloadErrors: Record<string, string>;
   firstRunDone: boolean;
   settingsOpen: boolean;
+  // One natural-language edit at a time — the LLM call is slow and a second
+  // plan compiled against the pre-edit view would fight the first.
+  editBusy: boolean;
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
@@ -86,7 +90,12 @@ interface AppState {
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   regenerate: (nodeId: string) => Promise<void>;
-  editPrompt: (nodeId: string, prompt: string) => Promise<void>;
+  applyNode: (
+    nodeId: string,
+    changes: { params?: Record<string, unknown>; seed?: number; model?: string | null },
+  ) => Promise<void>;
+  togglePin: (nodeId: string, pin: boolean) => Promise<void>;
+  edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
   applyTimeline: (params: Record<string, unknown>) => void;
   applyExport: (params: Record<string, unknown>) => void;
   finalize: () => Promise<void>;
@@ -334,7 +343,11 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
-        } else if (event.type.startsWith("job.") || event.type === "project.expanded") {
+        } else if (
+          event.type.startsWith("job.") ||
+          event.type === "project.expanded" ||
+          event.type === "project.edited"
+        ) {
           scheduleRefresh();
         }
       },
@@ -376,6 +389,7 @@ export const useApp = create<AppState>((set, get) => {
     downloadErrors: {},
     firstRunDone: localStorage.getItem(FIRST_RUN_KEY) === "1",
     settingsOpen: false,
+    editBusy: false,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -519,19 +533,44 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshBoard();
     },
 
-    editPrompt: async (nodeId, prompt) => {
+    applyNode: async (nodeId, changes) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
-      // Different node kinds read different content params.
-      const key = nodeId.endsWith(".narration")
-        ? "text"
-        : nodeId === "music"
-          ? "brief"
-          : "prompt";
-      await client.patch(currentProject.id, [
-        { op: "set_params", node_id: nodeId, params: { [key]: prompt } },
-      ]);
+      const ops: Parameters<EngineClient["patch"]>[1] = [];
+      if (changes.params && Object.keys(changes.params).length > 0) {
+        ops.push({ op: "set_params", node_id: nodeId, params: changes.params });
+      }
+      if (changes.seed !== undefined) {
+        ops.push({ op: "set_seed", node_id: nodeId, seed: changes.seed });
+      }
+      if (changes.model !== undefined) {
+        ops.push({ op: "set_model", node_id: nodeId, model: changes.model });
+      }
+      if (ops.length === 0) return;
+      await client.patch(currentProject.id, ops);
       await get().refreshBoard();
+    },
+
+    togglePin: async (nodeId, pin) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      await client.patch(currentProject.id, [{ op: pin ? "pin" : "unpin", node_id: nodeId }]);
+      await get().refreshBoard();
+    },
+
+    edit: async (instruction, scope = "project") => {
+      const { client, currentProject, editBusy } = get();
+      if (!client || !currentProject || editBusy) return null;
+      // The LLM's view must include the user's latest manual tweaks.
+      await flushPatches();
+      set({ editBusy: true });
+      try {
+        const result = await client.edit(currentProject.id, { instruction, scope });
+        await get().refreshBoard();
+        return result;
+      } finally {
+        set({ editBusy: false });
+      }
     },
 
     applyTimeline: (params) => applyAuxParams("timeline", params),

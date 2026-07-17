@@ -6,6 +6,7 @@
 import type {
   Board,
   Checkpoint,
+  EditResult,
   EngineConnection,
   EngineEvent,
   Job,
@@ -97,11 +98,28 @@ export class EngineClient {
 
   patch(
     projectId: string,
-    ops: { op: string; node_id: string; params?: Record<string, unknown> }[],
+    ops: {
+      op: string;
+      node_id: string;
+      params?: Record<string, unknown>;
+      seed?: number;
+      model?: string | null;
+    }[],
   ): Promise<{ dirty: string[] }> {
     return this.request(`/projects/${projectId}/patch`, {
       method: "POST",
       body: JSON.stringify({ ops }),
+    });
+  }
+
+  /** Natural-language edit; scope is "project" or a scene id. */
+  edit(
+    projectId: string,
+    body: { instruction: string; scope?: string; model?: string },
+  ): Promise<EditResult> {
+    return this.request(`/projects/${projectId}/edit`, {
+      method: "POST",
+      body: JSON.stringify(body),
     });
   }
 

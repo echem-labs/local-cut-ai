@@ -49,6 +49,8 @@ export interface NodeState {
   artifact_hash: string | null;
   params: Record<string, unknown>;
   seed: number;
+  model: string | null;
+  pinned: boolean;
 }
 
 export interface SceneCardModel {
@@ -138,6 +140,14 @@ export interface Provider {
   configured: boolean;
 }
 
+/** POST /projects/:id/edit — what the LLM's plan actually did. */
+export interface EditResult {
+  summary: string;
+  ops: number;
+  dirty: string[];
+  warnings: string[];
+}
+
 export interface Job {
   id: string;
   project_id: string;
@@ -155,6 +165,7 @@ export type EngineEvent =
   | { type: "job.retrying"; job_id: string; node_id: string; attempt: number }
   | { type: "project.compiled"; project_id: string; enqueued: number }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
+  | { type: "project.edited"; project_id: string; ops: number; summary: string }
   // done/total are bytes across the whole model, throttled to ~0.5s.
   | { type: "model.download.progress"; model: string; file: string; done: number; total: number }
   | { type: "model.download.done"; model: string }

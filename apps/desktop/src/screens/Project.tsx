@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { CheckpointBanner } from "../components/CheckpointBanner";
+import { EditPrompt } from "../components/EditPrompt";
 import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
 import { StatusChip } from "../components/StatusRing";
@@ -45,11 +46,17 @@ export function Project() {
             : "Writing the script and breaking it into scenes…"}
         </div>
       ) : (
-        <div className="scene-grid">
-          {board.scenes.map((scene) => (
-            <SceneCard key={scene.scene_id} scene={scene} />
-          ))}
-        </div>
+        <>
+          <EditPrompt
+            scope="project"
+            placeholder='Describe a change — "make it punchier", "crossfade everything", "remove scene 3"'
+          />
+          <div className="scene-grid">
+            {board.scenes.map((scene) => (
+              <SceneCard key={scene.scene_id} scene={scene} />
+            ))}
+          </div>
+        </>
       )}
 
       <TimelineStrip />

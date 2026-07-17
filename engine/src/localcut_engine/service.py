@@ -16,6 +16,7 @@ from pathlib import Path
 from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
+from .graph.editor import EditPlan, compile_edits, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
@@ -156,6 +157,28 @@ class ProjectService:
             if dirty:
                 self._enqueue_dirty(project_id, graph)
         return dirty
+
+    def edit_view(self, project_id: str, scope: str) -> dict:
+        """The whitelisted graph view a natural-language edit works from."""
+        with self._lock:
+            return graph_view(self.store.load_graph(project_id), scope)
+
+    def apply_edit_plan(self, project_id: str, plan: EditPlan, scope: str) -> dict:
+        """Compile an LLM edit plan against the live graph and apply it.
+        Validation and apply share one lock hold, so the plan can't be
+        checked against one graph state and applied to another."""
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            ops, warnings = compile_edits(graph, plan, scope)
+            dirty = apply_patch(graph, ops) if ops else set()
+            if ops:
+                self.store.save_graph(project_id, graph)
+            if dirty:
+                self._enqueue_dirty(project_id, graph)
+        self.events.publish(
+            "project.edited", project_id=project_id, ops=len(ops), summary=plan.summary
+        )
+        return {"ops": len(ops), "dirty": sorted(dirty), "warnings": warnings}
 
     def regenerate(self, project_id: str, node_id: str, seed: int | None = None) -> None:
         with self._lock:
@@ -469,6 +492,9 @@ class ProjectService:
                 "artifact_hash": out_hash if out_hash in cached else None,
                 "params": node.params,
                 "seed": node.seed,
+                # The advanced inspector edits these directly.
+                "model": node.model,
+                "pinned": node.pinned,
             }
 
         scenes = []
