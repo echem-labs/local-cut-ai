@@ -72,7 +72,19 @@ class MockBackend(ExecutionBackend):
             await ctx.progress((step + 1) / _PROGRESS_STEPS)
 
         out = ctx.output_path(spec.output_hash, _SUFFIX[spec.kind])
-        if spec.kind is NodeKind.SCRIPT:
+        if spec.kind is NodeKind.SCRIPT and spec.params.get("task") == "metadata":
+            out = ctx.output_path(spec.output_hash, ".metadata.json")
+            out.write_text(
+                json.dumps(
+                    {
+                        "title": "Mock publish title",
+                        "description": "Mock description of the video.",
+                        "hashtags": ["mock", "localcut"],
+                    },
+                    indent=2,
+                )
+            )
+        elif spec.kind is NodeKind.SCRIPT:
             screenplay = mock_screenplay(
                 prompt=str(spec.params.get("prompt", "")),
                 target_duration_s=int(spec.params.get("target_duration_s", 60)),

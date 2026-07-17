@@ -16,8 +16,12 @@ def test_clip_workflow_respects_ltx_constraints():
     backend = ComfyUIBackend()
     spec = make_spec(
         NodeKind.CLIP,
-        {"prompt": 'a "quoted" prompt\nwith newline', "motion": "slow push-in",
-         "aspect": "9:16", "duration_s": 4.5},
+        {
+            "prompt": 'a "quoted" prompt\nwith newline',
+            "motion": "slow push-in",
+            "aspect": "9:16",
+            "duration_s": 4.5,
+        },
         seed=7,
     )
     workflow = backend._fill_workflow(spec, keyframe_name="kf.png")
@@ -64,9 +68,7 @@ def test_final_quality_scales_steps_and_resolution():
     """Draft→final ladder: same graph, one quality parameter."""
     backend = ComfyUIBackend()
     params = {"prompt": "x", "aspect": "9:16", "duration_s": 4}
-    draft = backend._fill_workflow(
-        make_spec(NodeKind.CLIP, params), keyframe_name="kf.png"
-    )
+    draft = backend._fill_workflow(make_spec(NodeKind.CLIP, params), keyframe_name="kf.png")
     final = backend._fill_workflow(
         make_spec(NodeKind.CLIP, params, quality="final"), keyframe_name="kf.png"
     )
@@ -75,11 +77,39 @@ def test_final_quality_scales_steps_and_resolution():
     assert final["sampler"]["inputs"]["steps"] > draft["sampler"]["inputs"]["steps"]
     # Images already render at delivery resolution — only steps scale.
     kf_draft = backend._fill_workflow(make_spec(NodeKind.KEYFRAME, params), None)
-    kf_final = backend._fill_workflow(
-        make_spec(NodeKind.KEYFRAME, params, quality="final"), None
-    )
+    kf_final = backend._fill_workflow(make_spec(NodeKind.KEYFRAME, params, quality="final"), None)
     assert kf_final["latent"]["inputs"]["width"] == kf_draft["latent"]["inputs"]["width"]
     assert kf_final["sampler"]["inputs"]["steps"] > kf_draft["sampler"]["inputs"]["steps"]
+
+
+def test_model_switches_workflow_template():
+    """Model switching is a template swap fed by the manifest: a clip whose
+    model is the Wan entry renders through the Wan workflow (16 fps frame
+    rule, two-stage sampler handover), everything else keeps the default."""
+    backend = ComfyUIBackend(model_templates={"wan2.2-i2v-14b-fp8": "wan22_i2v.json"})
+    params = {"prompt": "x", "motion": "pan", "aspect": "9:16", "duration_s": 5}
+    spec = make_spec(
+        NodeKind.CLIP, params, model="local:wan2.2-i2v-14b-fp8", quality="final", seed=3
+    )
+    assert backend._template_path(spec).name == "wan22_i2v.json"
+    workflow = backend._fill_workflow(spec, keyframe_name="kf.png")
+    i2v = workflow["img_to_video"]["inputs"]
+    assert i2v["length"] == 81  # 5 s at 16 fps, 4n+1
+    assert i2v["width"] % 32 == 0 and i2v["height"] % 32 == 0
+    high, low = workflow["sampler_high"]["inputs"], workflow["sampler_low"]["inputs"]
+    assert high["end_at_step"] == low["start_at_step"] > 0  # mid-schedule handover
+    assert high["steps"] == low["steps"]
+    assert workflow["sampler_high"]["inputs"]["noise_seed"] == 3
+    assert workflow["create_video"]["inputs"]["fps"] == 16
+
+    # Unlisted (or absent) models keep the kind's default template.
+    assert backend._template_path(make_spec(NodeKind.CLIP, params)).name == "clip_default.json"
+    assert (
+        backend._template_path(
+            make_spec(NodeKind.CLIP, params, model="local:some-other-model")
+        ).name
+        == "clip_default.json"
+    )
 
 
 def test_voice_picker():
@@ -96,8 +126,12 @@ def test_all_packaged_templates_are_valid_json():
 
     templates = pathlib.Path(str(importlib.resources.files("localcut_engine.comfy_templates")))
     names = {p.name for p in templates.glob("*.json")}
-    assert {"keyframe_default.json", "thumbnail_default.json",
-            "clip_default.json", "music_default.json"} <= names
+    assert {
+        "keyframe_default.json",
+        "thumbnail_default.json",
+        "clip_default.json",
+        "music_default.json",
+    } <= names
     for path in templates.glob("*.json"):
         text = path.read_text()
         # Substitute via the same table the backend exports, so templates and
@@ -114,8 +148,12 @@ def test_prompt_containing_placeholder_tokens_stays_literal():
     backend = ComfyUIBackend()
     spec = make_spec(
         NodeKind.CLIP,
-        {"prompt": "render %%KEYFRAME%% and %%SEED%% literally", "motion": "pan",
-         "aspect": "9:16", "duration_s": 4},
+        {
+            "prompt": "render %%KEYFRAME%% and %%SEED%% literally",
+            "motion": "pan",
+            "aspect": "9:16",
+            "duration_s": 4,
+        },
     )
     workflow = backend._fill_workflow(spec, keyframe_name="server-kf.png")
     text = workflow["positive"]["inputs"]["text"]
@@ -150,7 +188,9 @@ def test_scene_ids_are_canonicalized_on_expansion():
     graph = prompt_template_graph("topic")
     expand_screenplay(graph, screenplay)
     assert {n for n in graph.nodes if n.endswith(".clip")} == {
-        "s1.clip", "s2.clip", "s3.clip",
+        "s1.clip",
+        "s2.clip",
+        "s3.clip",
     }
     # Narration order preserved: s1 is the first scene as authored.
     assert graph.nodes["s1.narration"].params["text"] == "a"
@@ -163,22 +203,84 @@ def test_reexpansion_applies_new_screenplay():
     from localcut_engine.schema import Scene, Screenplay
 
     graph = prompt_template_graph("topic")
-    expand_screenplay(graph, Screenplay(title="t", scenes=[
-        Scene(id="a", duration_s=4, narration="one", visual="v1"),
-        Scene(id="b", duration_s=4, narration="two", visual="v2"),
-    ]))
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="one", visual="v1"),
+                Scene(id="b", duration_s=4, narration="two", visual="v2"),
+            ],
+        ),
+    )
     graph.nodes["s1.keyframe"].seed = 99  # user state must survive re-runs
     graph.nodes["s1.clip"].pinned = True
 
-    expand_screenplay(graph, Screenplay(title="t", scenes=[
-        Scene(id="x", duration_s=4, narration="uno", visual="w1"),
-    ]))
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="x", duration_s=4, narration="uno", visual="w1"),
+            ],
+        ),
+    )
     assert graph.nodes["s1.narration"].params["text"] == "uno"
     assert graph.nodes["s1.keyframe"].params["prompt"].startswith("w1")
     assert graph.nodes["s1.keyframe"].seed == 99
     assert graph.nodes["s1.clip"].pinned
     assert "s2.clip" not in graph.nodes
     assert not any("s2" in (e.src.split(".")[0], e.dst.split(".")[0]) for e in graph.edges)
+
+
+def test_long_scene_splits_into_sequential_takes():
+    """Narration past the clip-length ceiling splits the scene into takes on
+    the same keyframe — no single stretched clip. Re-scripting shorter drops
+    the surplus takes."""
+    from localcut_engine.graph.model import KEYFRAME_PORT
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("topic")
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=20, narration="long", visual="v1", motion="pan"),
+                Scene(id="b", duration_s=4, narration="short", visual="v2"),
+            ],
+        ),
+    )
+    takes = sorted(n for n in graph.nodes if n.startswith("s1.clip"))
+    assert takes == ["s1.clip", "s1.clip2", "s1.clip3"]
+    for take_id in takes:
+        node = graph.nodes[take_id]
+        assert node.params["duration_s"] == pytest.approx(20 / 3, abs=0.01)
+        # Every take conditions on the same approved keyframe.
+        assert any(
+            e.src == "s1.keyframe" and e.dst == take_id and e.port == KEYFRAME_PORT
+            for e in graph.edges
+        )
+    # Later takes are distinct shots, not copies of take 1.
+    assert graph.nodes["s1.clip"].params["motion"] != graph.nodes["s1.clip2"].params["motion"]
+    ports = {e.port for e in graph.edges if e.dst == "timeline" and e.src.startswith("s1.clip")}
+    assert ports == {"s1", "s1.p2", "s1.p3"}
+    # Short scenes keep the hash-stable single-take shape (no take marker).
+    assert "take" not in graph.nodes["s2.clip"].params
+    assert "s2.clip2" not in graph.nodes
+
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="short now", visual="v1"),
+            ],
+        ),
+    )
+    assert "s1.clip2" not in graph.nodes and "s1.clip3" not in graph.nodes
+    assert not any("clip2" in (e.src, e.dst) or "clip3" in (e.src, e.dst) for e in graph.edges)
 
 
 def test_expansion_uses_requested_aspect_over_llm_echo():
@@ -188,9 +290,15 @@ def test_expansion_uses_requested_aspect_over_llm_echo():
     from localcut_engine.schema import Scene, Screenplay
 
     graph = prompt_template_graph("topic", aspect="9:16")
-    expand_screenplay(graph, Screenplay(title="t", scenes=[
-        Scene(id="a", duration_s=4, narration="n", visual="v", onscreen_text="HOOK!"),
-    ]))  # screenplay.aspect defaults to "16:9"
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="t",
+            scenes=[
+                Scene(id="a", duration_s=4, narration="n", visual="v", onscreen_text="HOOK!"),
+            ],
+        ),
+    )  # screenplay.aspect defaults to "16:9"
     assert graph.nodes["s1.keyframe"].params["aspect"] == "9:16"
     assert graph.nodes["s1.clip"].params["aspect"] == "9:16"
     assert graph.nodes["export"].params["aspect"] == "9:16"

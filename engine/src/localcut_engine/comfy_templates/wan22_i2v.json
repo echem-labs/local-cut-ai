@@ -1,0 +1,117 @@
+{
+  "unet_high": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "unet_low": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "sampling_high": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": { "model": ["unet_high", 0], "shift": 8.0 }
+  },
+  "sampling_low": {
+    "class_type": "ModelSamplingSD3",
+    "inputs": { "model": ["unet_low", 0], "shift": 8.0 }
+  },
+  "clip": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": { "vae_name": "wan_2.1_vae.safetensors" }
+  },
+  "load_keyframe": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "%%KEYFRAME%%" }
+  },
+  "positive": {
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "%%PROMPT%%", "clip": ["clip", 0] }
+  },
+  "negative": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "static, worst quality, inconsistent motion, blurry, jittery, distorted, watermark, text overlay",
+      "clip": ["clip", 0]
+    }
+  },
+  "img_to_video": {
+    "class_type": "WanImageToVideo",
+    "inputs": {
+      "positive": ["positive", 0],
+      "negative": ["negative", 0],
+      "vae": ["vae", 0],
+      "start_image": ["load_keyframe", 0],
+      "width": "%%WIDTH%%",
+      "height": "%%HEIGHT%%",
+      "length": "%%FRAMES16%%",
+      "batch_size": 1
+    }
+  },
+  "sampler_high": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": "%%SEED%%",
+      "steps": "%%STEPS%%",
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": "%%HALF_STEPS%%",
+      "return_with_leftover_noise": "enable",
+      "model": ["sampling_high", 0],
+      "positive": ["img_to_video", 0],
+      "negative": ["img_to_video", 1],
+      "latent_image": ["img_to_video", 2]
+    }
+  },
+  "sampler_low": {
+    "class_type": "KSamplerAdvanced",
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": "%%SEED%%",
+      "steps": "%%STEPS%%",
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": "%%HALF_STEPS%%",
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": ["sampling_low", 0],
+      "positive": ["img_to_video", 0],
+      "negative": ["img_to_video", 1],
+      "latent_image": ["sampler_high", 0]
+    }
+  },
+  "decode": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["sampler_low", 0], "vae": ["vae", 0] }
+  },
+  "create_video": {
+    "class_type": "CreateVideo",
+    "inputs": { "images": ["decode", 0], "fps": 16 }
+  },
+  "save": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": ["create_video", 0],
+      "filename_prefix": "localcut_clip_wan",
+      "format": "mp4",
+      "codec": "h264"
+    }
+  }
+}

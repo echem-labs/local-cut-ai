@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -36,6 +37,11 @@ NARRATION_PAD_S = 0.35  # breathing room after each narration line
 MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
 CROSSFADE_S = 0.4  # video+audio overlap for the crossfade transition
 DIP_S = 0.25  # fade-to-black halves of the dip transition
+# A clip may be slowed at most this much to fill its narration window —
+# visible slow-mo never ships silently; past the bound the clip loops with
+# a crossfaded seam instead.
+RETIME_MAX = 1.15
+_MAX_LOOPS = 30  # loop-with-crossfade input cap (degenerate short clips)
 
 # Export bitrate by quality tier; draft favors speed, final favors fidelity.
 _VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
@@ -83,16 +89,19 @@ class FFmpegBackend(ExecutionBackend):
             for port, path in ctx.input_artifacts.items()
             if port.endswith(SCENE_AUDIO_SUFFIX)
         }
-        scenes = [
-            (port, path)
-            for port, path in ctx.input_artifacts.items()
-            if not port.endswith(SCENE_AUDIO_SUFFIX) and port != MUSIC_PORT
-        ]
+        # Scene ports are "s3" or "s3.p2" — the sequential takes of a scene
+        # whose narration outruns one clip. Takes group under their scene:
+        # the EDL treats them as one virtual clip.
+        takes: dict[str, list[tuple[int, Path]]] = {}
+        for port, path in ctx.input_artifacts.items():
+            if port.endswith(SCENE_AUDIO_SUFFIX) or port == MUSIC_PORT:
+                continue
+            base, _, suffix = port.partition(".p")
+            takes.setdefault(base, []).append((int(suffix) if suffix.isdigit() else 1, path))
         order: list[str] = spec.params.get("order") or []
-        scenes.sort(
-            key=lambda item: (
-                (0, order.index(item[0])) if item[0] in order else (1,) + scene_sort_key(item[0])
-            )
+        scenes = sorted(
+            takes,
+            key=lambda sid: (0, order.index(sid)) if sid in order else (1,) + scene_sort_key(sid),
         )
         trims: dict = spec.params.get("trims") or {}
         transitions: dict = spec.params.get("transitions") or {}
@@ -100,10 +109,15 @@ class FFmpegBackend(ExecutionBackend):
 
         segments = []
         start = 0.0
-        for port, path in scenes:
-            clip_duration = await self._probe_duration(Path(path))
-            if clip_duration is None:
-                raise GenerationError(f"scene {port}: clip is not decodable media")
+        for port in scenes:
+            srcs = [path for _, path in sorted(takes[port])]
+            take_durations = []
+            for src in srcs:
+                take_duration = await self._probe_duration(Path(src))
+                if take_duration is None:
+                    raise GenerationError(f"scene {port}: clip is not decodable media")
+                take_durations.append(round(take_duration, 3))
+            clip_duration = sum(take_durations)
             trim = trims.get(port) or {}
             trim_in = max(0.0, float(trim.get("in", 0.0)))
             trim_out = trim.get("out")
@@ -118,15 +132,17 @@ class FFmpegBackend(ExecutionBackend):
                 # the clip fills that window, they never cut speech.
                 duration = narration_duration + NARRATION_PAD_S
             else:
-                window = (
-                    min(clip_duration, float(trim_out)) if trim_out else clip_duration
-                )
+                window = min(clip_duration, float(trim_out)) if trim_out else clip_duration
                 duration = max(0.1, window - trim_in)
             segments.append(
                 {
                     "scene": port,
-                    "src": rel(path),
+                    "srcs": [rel(src) for src in srcs],
+                    "src_durations": take_durations,
                     "narration": rel(narration.get(port)),
+                    "narration_duration": (
+                        round(narration_duration, 3) if narration_duration else None
+                    ),
                     "start": round(start, 3),
                     "duration": round(duration, 3),
                     "clip_duration": round(clip_duration, 3),
@@ -136,11 +152,14 @@ class FFmpegBackend(ExecutionBackend):
                 }
             )
             start += duration
+        music_path = ctx.input_artifacts.get(MUSIC_PORT)
+        music_duration = await self._probe_duration(Path(music_path)) if music_path else None
         timeline = {
             "aspect": spec.params.get("aspect", DEFAULT_ASPECT),
             "video": segments,
             "duration": round(start, 3),
-            "music": rel(ctx.input_artifacts.get(MUSIC_PORT)) or "",
+            "music": rel(music_path) or "",
+            "music_duration": round(music_duration, 3) if music_duration else None,
             "music_volume": MUSIC_BED_VOLUME,
         }
         out = ctx.output_path(spec.output_hash, ".timeline.json")
@@ -167,9 +186,14 @@ class FFmpegBackend(ExecutionBackend):
         if not segments:
             raise GenerationError("timeline has no video segments")
         for segment in segments:
-            segment["src"] = resolve(segment["src"])
+            sources = segment.get("srcs") or [segment.get("src")]
+            segment["srcs"] = [resolve(src) for src in sources if src]
             segment["narration"] = resolve(segment.get("narration"))
-        lost = [s["scene"] for s in segments if not s["src"].exists()]
+        lost = [
+            s["scene"]
+            for s in segments
+            if not s["srcs"] or any(not src.exists() for src in s["srcs"])
+        ]
         if lost:
             # Never silently ship a shorter video: a referenced clip that
             # vanished is corruption, and regenerating it is the fix.
@@ -184,31 +208,56 @@ class FFmpegBackend(ExecutionBackend):
             scene_files: list[Path] = []
             total = len(segments)
             for index, segment in enumerate(segments):
+                srcs = segment["srcs"]
+                if len(srcs) > 1:
+                    # A split scene's takes become one normalized source
+                    # before the timing policy applies.
+                    segment["src"] = await self._merge_takes(
+                        srcs, work / f"seg{index:03}-takes.mp4", width, height, encoder
+                    )
+                else:
+                    segment["src"] = srcs[0]
                 fade_in = index > 0 and segments[index - 1].get("transition") == "dip"
                 scene_files.append(
                     await self._render_segment(
-                        segment, work / f"seg{index:03}.mp4", width, height,
-                        encoder, workdir=work, fade_in=fade_in,
+                        segment,
+                        work / f"seg{index:03}.mp4",
+                        width,
+                        height,
+                        encoder,
+                        workdir=work,
+                        fade_in=fade_in,
                     )
                 )
                 await ctx.progress(0.8 * (index + 1) / total)
 
             burn = self._burnable_captions(spec, ctx, work)
-            cut = await self._join_segments(
-                segments, scene_files, work, encoder, bitrate, burn
-            )
+            cut = await self._join_segments(segments, scene_files, work, encoder, bitrate, burn)
 
             out = ctx.output_path(spec.output_hash, ".mp4")
             music = resolve(timeline.get("music", ""))
             if music is not None and await self._probe_duration(music) is not None:
                 volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
                 await self._run(
-                    "-i", str(cut), "-stream_loop", "-1", "-i", str(music),
+                    "-i",
+                    str(cut),
+                    "-stream_loop",
+                    "-1",
+                    "-i",
+                    str(music),
                     "-filter_complex",
                     f"[1:a]volume={volume}[m];"
                     "[0:a][m]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[a]",
-                    "-map", "0:v", "-map", "[a]",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "[a]",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
                     str(out),
                 )
             else:
@@ -220,9 +269,7 @@ class FFmpegBackend(ExecutionBackend):
         await ctx.progress(1.0)
         return out
 
-    def _burnable_captions(
-        self, spec: JobSpec, ctx: ExecutionContext, work: Path
-    ) -> Path | None:
+    def _burnable_captions(self, spec: JobSpec, ctx: ExecutionContext, work: Path) -> Path | None:
         """The caption artifact as a styled ASS file, when burn-in applies."""
         if spec.params.get("captions", "burn") != "burn":
             return None
@@ -270,9 +317,7 @@ class FFmpegBackend(ExecutionBackend):
                 steps.append(f"{cur_a}[{i}:a]acrossfade=d={CROSSFADE_S}[a{i}]")
                 cur_duration += duration_i - CROSSFADE_S
             else:
-                steps.append(
-                    f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]"
-                )
+                steps.append(f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]")
                 cur_duration += duration_i
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
 
@@ -282,8 +327,16 @@ class FFmpegBackend(ExecutionBackend):
         if not steps:
             # Single segment, nothing to burn: re-encode to the target rate.
             await self._run(
-                "-i", str(scene_files[0]),
-                "-c:v", encoder, "-b:v", bitrate, "-c:a", "aac", "-b:a", "160k",
+                "-i",
+                str(scene_files[0]),
+                "-c:v",
+                encoder,
+                "-b:v",
+                bitrate,
+                "-c:a",
+                "aac",
+                "-b:a",
+                "160k",
                 str(cut),
             )
             return cut
@@ -295,9 +348,20 @@ class FFmpegBackend(ExecutionBackend):
 
         await self._run(
             *inputs,
-            "-filter_complex", ";".join(steps),
-            "-map", map_arg(cur_v), "-map", map_arg(cur_a),
-            "-c:v", encoder, "-b:v", bitrate, "-c:a", "aac", "-b:a", "160k",
+            "-filter_complex",
+            ";".join(steps),
+            "-map",
+            map_arg(cur_v),
+            "-map",
+            map_arg(cur_a),
+            "-c:v",
+            encoder,
+            "-b:v",
+            bitrate,
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
             str(cut),
         )
         return cut
@@ -321,9 +385,7 @@ class FFmpegBackend(ExecutionBackend):
         if not clip_duration:
             probed = await self._probe_duration(Path(clip))
             if probed is None:
-                raise GenerationError(
-                    f"scene {segment.get('scene')}: clip is not decodable media"
-                )
+                raise GenerationError(f"scene {segment.get('scene')}: clip is not decodable media")
             clip_duration = probed
         trim_in = float(segment.get("trim_in") or 0.0)
         if trim_in >= clip_duration:
@@ -333,15 +395,38 @@ class FFmpegBackend(ExecutionBackend):
         if narration is not None and not Path(narration).exists():
             # A narration the timeline references but that vanished is
             # corruption — fail loudly rather than shipping a silent scene.
-            raise GenerationError(
-                f"scene {segment.get('scene')}: narration artifact is missing"
-            )
+            raise GenerationError(f"scene {segment.get('scene')}: narration artifact is missing")
+
+        # Timing policy (in order): clip long enough → trim; short by ≤ the
+        # retime bound → slow it slightly; shorter → loop with a crossfaded
+        # seam; degenerate (clip shorter than a crossfade) → hard loop.
+        window = max(0.01, clip_duration - trim_in)
+        retime = None
+        loop_hard = False
+        if window < target:
+            stretch = target / window
+            if stretch <= RETIME_MAX:
+                retime = stretch
+            elif window > 2 * CROSSFADE_S:
+                clip = str(
+                    await self._loop_source(
+                        clip,
+                        trim_in,
+                        window,
+                        target,
+                        workdir / f"{out.stem}-loop.mp4",
+                        encoder,
+                    )
+                )
+                trim_in = 0.0
+            else:
+                loop_hard = True
 
         args: list[str] = []
         if trim_in:
             args += ["-ss", f"{trim_in:.3f}"]
-        if clip_duration - trim_in < target:
-            args += ["-stream_loop", "-1"]  # loop short clips up to target
+        if loop_hard:
+            args += ["-stream_loop", "-1"]
         args += ["-i", clip]
         if narration is not None:
             args += ["-i", str(narration)]
@@ -354,6 +439,8 @@ class FFmpegBackend(ExecutionBackend):
             f"scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height},fps=24,format=yuv420p"
         )
+        if retime is not None:
+            vf = f"setpts={retime:.4f}*PTS,{vf}"
         text = segment.get("onscreen_text")
         if text:
             # textfile= sidesteps drawtext's escaping rules for user text.
@@ -370,8 +457,94 @@ class FFmpegBackend(ExecutionBackend):
             vf += f",fade=t=out:st={max(0.0, target - DIP_S):.3f}:d={DIP_S}"
 
         await self._run(
-            *args, "-t", f"{target:.3f}", "-map", "0:v", *audio,
-            "-vf", vf, "-c:v", encoder, "-b:v", "12M", str(out),
+            *args,
+            "-t",
+            f"{target:.3f}",
+            "-map",
+            "0:v",
+            *audio,
+            "-vf",
+            vf,
+            "-c:v",
+            encoder,
+            "-b:v",
+            "12M",
+            str(out),
+        )
+        return out
+
+    async def _merge_takes(
+        self, srcs: list[Path], out: Path, width: int, height: int, encoder: str
+    ) -> Path:
+        """Concat a split scene's sequential takes into one source. Each take
+        is normalized first — the concat filter needs uniform geometry, and
+        takes can differ (e.g. one re-rendered down the OOM ladder)."""
+        args: list[str] = []
+        filters: list[str] = []
+        for index, src in enumerate(srcs):
+            args += ["-i", str(src)]
+            filters.append(
+                f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},fps=24,format=yuv420p[v{index}]"
+            )
+        chain = "".join(f"[v{i}]" for i in range(len(srcs)))
+        filters.append(f"{chain}concat=n={len(srcs)}:v=1:a=0[v]")
+        await self._run(
+            *args,
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[v]",
+            "-an",
+            "-c:v",
+            encoder,
+            "-b:v",
+            "12M",
+            str(out),
+        )
+        return out
+
+    async def _loop_source(
+        self,
+        clip: str,
+        trim_in: float,
+        window: float,
+        target: float,
+        out: Path,
+        encoder: str,
+    ) -> Path:
+        """Extend a clip past the retime bound by repeating it with
+        crossfaded seams — never a hard loop cut, never silent slow-mo."""
+        step = window - CROSSFADE_S
+        loops = min(_MAX_LOOPS, 1 + math.ceil((target - window) / step))
+        args: list[str] = []
+        for _ in range(loops):
+            if trim_in:
+                args += ["-ss", f"{trim_in:.3f}"]
+            args += ["-i", clip]
+        steps: list[str] = []
+        cur, cur_len = "[0:v]", window
+        for i in range(1, loops):
+            steps.append(
+                f"{cur}[{i}:v]xfade=transition=fade:"
+                f"duration={CROSSFADE_S}:offset={cur_len - CROSSFADE_S:.3f}[x{i}]"
+            )
+            cur = f"[x{i}]"
+            cur_len += step
+        await self._run(
+            *args,
+            "-filter_complex",
+            ";".join(steps),
+            "-map",
+            cur,
+            "-t",
+            f"{target:.3f}",
+            "-an",
+            "-c:v",
+            encoder,
+            "-b:v",
+            "12M",
+            str(out),
         )
         return out
 
@@ -380,8 +553,12 @@ class FFmpegBackend(ExecutionBackend):
     async def _run(self, *args: str) -> None:
         try:
             process = await asyncio.create_subprocess_exec(
-                self.ffmpeg_bin, "-y", "-hide_banner", *args,
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                self.ffmpeg_bin,
+                "-y",
+                "-hide_banner",
+                *args,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
             raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
@@ -394,9 +571,16 @@ class FFmpegBackend(ExecutionBackend):
             return None
         try:
             process = await asyncio.create_subprocess_exec(
-                self.ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
-                "-of", "csv=p=0", str(path),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                self.ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
             )
         except FileNotFoundError as exc:
             raise GenerationError(
@@ -418,15 +602,25 @@ class FFmpegBackend(ExecutionBackend):
             for candidate in ("h264_nvenc", "libopenh264", "mpeg4"):
                 try:
                     process = await asyncio.create_subprocess_exec(
-                        self.ffmpeg_bin, "-y", "-hide_banner",
-                        "-f", "lavfi", "-i", "color=black:size=256x256:duration=0.1",
-                        "-frames:v", "1", "-c:v", candidate, "-f", "null", "-",
-                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                        self.ffmpeg_bin,
+                        "-y",
+                        "-hide_banner",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "color=black:size=256x256:duration=0.1",
+                        "-frames:v",
+                        "1",
+                        "-c:v",
+                        candidate,
+                        "-f",
+                        "null",
+                        "-",
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
                     )
                 except FileNotFoundError as exc:
-                    raise GenerationError(
-                        f"ffmpeg binary not found: {self.ffmpeg_bin}"
-                    ) from exc
+                    raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
                 await process.communicate()
                 if process.returncode == 0:
                     self._encoder = candidate

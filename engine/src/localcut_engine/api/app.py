@@ -23,7 +23,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi import Path as PathParam
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .. import ENGINE_API_VERSION, __version__
@@ -45,6 +45,7 @@ from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.loader import load_manifest
+from ..manifest.manager import DownloadManager
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
@@ -59,6 +60,7 @@ ProjectId = Annotated[str, PathParam(pattern=PROJECT_ID_PATTERN)]
 NodeId = Annotated[str, PathParam(pattern=NODE_ID_PATTERN)]
 OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
 JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
+ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
 
 
 def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
@@ -80,15 +82,22 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
             case "mock":
                 registry.register(MockBackend())
             case "llm":
-                registry.register(
-                    LLMScriptBackend(base_url=config.llm_url, model=config.llm_model)
-                )
+                registry.register(LLMScriptBackend(base_url=config.llm_url, model=config.llm_model))
             case "comfy":
+                try:
+                    model_templates = {
+                        m.id: m.comfy_graph_template
+                        for m in load_manifest(config).models
+                        if m.comfy_graph_template
+                    }
+                except (OSError, ValueError):
+                    model_templates = {}  # broken override manifest — defaults still work
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
                         templates_dir=config.data_dir / "comfy-templates",
                         kinds=config.comfy_kinds,
+                        model_templates=model_templates,
                     )
                 )
             case "kokoro":
@@ -133,11 +142,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         on_job_done=service.on_job_done,
     )
     service.scheduler = scheduler
+    downloads = DownloadManager(config, events)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         scheduler.start()
         yield
+        await downloads.shutdown()
         await scheduler.stop()
         queue.close()
 
@@ -193,10 +204,47 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def models_manifest() -> dict:
         return load_manifest(config).model_dump()
 
+    @app.get("/models", dependencies=[Authed])
+    async def models() -> list[dict]:
+        # Per-file exists() checks scale with the manifest — keep them off
+        # the loop that serves /ws progress fan-out.
+        return await asyncio.to_thread(downloads.status)
+
+    @app.post("/models/{model_id}/download", dependencies=[Authed])
+    async def start_download(model_id: ModelId) -> dict:
+        try:
+            return {"status": downloads.start(model_id)}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown model id") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/models/{model_id}/download", dependencies=[Authed])
+    async def cancel_download(model_id: ModelId) -> dict:
+        if not downloads.cancel(model_id):
+            raise HTTPException(status_code=409, detail="model is not downloading")
+        return {"ok": True}
+
     @app.get("/providers", dependencies=[Authed])
     async def providers() -> list[dict]:
         # Which BYOK providers exist and whether a key is present — the
         # settings UI's "what leaves this machine" panel reads this.
+        return configured_providers(config)
+
+    class ProviderKeys(BaseModel):
+        anthropic_key: str | None = None
+        openai_key: str | None = None
+        gemini_key: str | None = None
+        fal_key: str | None = None
+
+    @app.put("/providers/keys", dependencies=[Authed])
+    async def set_provider_keys(body: ProviderKeys) -> list[dict]:
+        # Keys live only in this process: the desktop shell owns persistence
+        # (OS keychain) and re-sends them on every engine start. Cloud
+        # adapters read the config at call time, so updates apply live.
+        # Omitted fields are untouched; null or empty clears a key.
+        for field, value in body.model_dump(exclude_unset=True).items():
+            setattr(config, field, (value or "").strip() or None)
         return configured_providers(config)
 
     # -- projects --------------------------------------------------------------
@@ -326,7 +374,32 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId) -> dict:
         _get_project(project_id)
-        return {"enqueued": await asyncio.to_thread(service.finalize, project_id)}
+        return {
+            "enqueued": await asyncio.to_thread(
+                service.finalize, project_id, config.final_clip_model
+            )
+        }
+
+    @app.post("/projects/{project_id}/package", dependencies=[Authed])
+    async def package(project_id: ProjectId) -> dict:
+        _get_project(project_id)
+        try:
+            nodes = await asyncio.to_thread(service.package, project_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"nodes": nodes}
+
+    @app.get("/projects/{project_id}/export/otio", dependencies=[Authed])
+    async def export_otio(project_id: ProjectId) -> JSONResponse:
+        _get_project(project_id)
+        try:
+            document = await asyncio.to_thread(service.export_otio, project_id)
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(
+            document,
+            headers={"Content-Disposition": f'attachment; filename="{project_id}.otio"'},
+        )
 
     @app.delete("/projects/{project_id}", dependencies=[Authed])
     async def delete_project(project_id: ProjectId) -> dict:

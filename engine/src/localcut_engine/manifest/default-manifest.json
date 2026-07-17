@@ -8,13 +8,57 @@
       "family": "wan",
       "version": "2.2",
       "quant": "fp8",
-      "requirements": { "vram_gb": 16, "ram_gb": 32, "disk_gb": 17, "backends": ["cuda"] },
-      "perf_class": { "rtx4090": "~90s / 5s@720p", "rtx3060": "~6min / 5s@480p" },
+      "requirements": {
+        "vram_gb": 16,
+        "ram_gb": 32,
+        "disk_gb": 36,
+        "backends": [
+          "cuda"
+        ]
+      },
+      "perf_class": {
+        "rtx4090": "~90s / 5s@720p",
+        "rtx3060": "~6min / 5s@480p"
+      },
       "quality_score": 8.6,
       "speed_score": 4.0,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Wan-AI/Wan2.2-I2V-A14B" }],
-      "comfy_graph_template": "wan22_i2v.json"
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Wan-AI/Wan2.2-I2V-A14B"
+        }
+      ],
+      "comfy_graph_template": "wan22_i2v.json",
+      "files": [
+        {
+          "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+          "dest": "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+          "sha256": "6122e79d55e0f235698d11d657f3b196c5273c830da00b2b013c5a048d5e6a42",
+          "size": 14294742832
+        },
+        {
+          "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+          "dest": "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+          "sha256": "5471a457b6ac404202a5fbe6c11595a3d5641fc766b00f38763f72303fffc21e",
+          "size": 14294742832
+        },
+        {
+          "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+          "dest": "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+          "sha256": "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68",
+          "size": 6735906897
+        },
+        {
+          "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+          "dest": "vae/wan_2.1_vae.safetensors",
+          "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b",
+          "size": 253815318
+        }
+      ]
     },
     {
       "id": "ltx-video-0.9-i2v",
@@ -22,8 +66,19 @@
       "family": "ltx",
       "version": "0.9",
       "quant": "fp8",
-      "requirements": { "vram_gb": 12, "ram_gb": 16, "disk_gb": 10, "backends": ["cuda", "mps"] },
-      "perf_class": { "rtx4090": "near-realtime", "rtx3060": "~40s / 5s@480p" },
+      "requirements": {
+        "vram_gb": 12,
+        "ram_gb": 16,
+        "disk_gb": 10,
+        "backends": [
+          "cuda",
+          "mps"
+        ]
+      },
+      "perf_class": {
+        "rtx4090": "near-realtime",
+        "rtx3060": "~40s / 5s@480p"
+      },
       "quality_score": 7.2,
       "speed_score": 9.0,
       "license": {
@@ -32,7 +87,11 @@
         "verdict": "conditions",
         "notes": "commercial with thresholds - verify current terms before shipping as default"
       },
-      "sources": [{ "hf": "Lightricks/LTX-Video" }],
+      "sources": [
+        {
+          "hf": "Lightricks/LTX-Video"
+        }
+      ],
       "files": [
         {
           "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.5.safetensors",
@@ -54,11 +113,27 @@
       "task": "image.gen",
       "family": "sdxl",
       "version": "1.0",
-      "requirements": { "vram_gb": 8, "ram_gb": 16, "disk_gb": 7, "backends": ["cuda", "mps"] },
+      "requirements": {
+        "vram_gb": 8,
+        "ram_gb": 16,
+        "disk_gb": 7,
+        "backends": [
+          "cuda",
+          "mps"
+        ]
+      },
       "quality_score": 7.5,
       "speed_score": 7.0,
-      "license": { "id": "openrail++", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "stabilityai/stable-diffusion-xl-base-1.0" }],
+      "license": {
+        "id": "openrail++",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "stabilityai/stable-diffusion-xl-base-1.0"
+        }
+      ],
       "files": [
         {
           "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
@@ -75,11 +150,27 @@
       "family": "flux",
       "version": "1",
       "quant": "gguf-q8",
-      "requirements": { "vram_gb": 12, "ram_gb": 24, "disk_gb": 12, "backends": ["cuda", "mps"] },
+      "requirements": {
+        "vram_gb": 12,
+        "ram_gb": 24,
+        "disk_gb": 12,
+        "backends": [
+          "cuda",
+          "mps"
+        ]
+      },
       "quality_score": 8.4,
       "speed_score": 8.0,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "black-forest-labs/FLUX.1-schnell" }],
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "black-forest-labs/FLUX.1-schnell"
+        }
+      ],
       "comfy_graph_template": "flux_schnell_keyframe.json"
     },
     {
@@ -88,11 +179,28 @@
       "family": "qwen",
       "version": "3",
       "quant": "q4_k_m",
-      "requirements": { "vram_gb": 10, "ram_gb": 16, "disk_gb": 9, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": {
+        "vram_gb": 10,
+        "ram_gb": 16,
+        "disk_gb": 9,
+        "backends": [
+          "cuda",
+          "mps",
+          "cpu"
+        ]
+      },
       "quality_score": 8.0,
       "speed_score": 7.0,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Qwen/Qwen3-14B-GGUF" }]
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Qwen/Qwen3-14B-GGUF"
+        }
+      ]
     },
     {
       "id": "qwen3-8b-q4",
@@ -100,21 +208,55 @@
       "family": "qwen",
       "version": "3",
       "quant": "q4_k_m",
-      "requirements": { "vram_gb": 6, "ram_gb": 12, "disk_gb": 5, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": {
+        "vram_gb": 6,
+        "ram_gb": 12,
+        "disk_gb": 5,
+        "backends": [
+          "cuda",
+          "mps",
+          "cpu"
+        ]
+      },
       "quality_score": 7.2,
       "speed_score": 8.0,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Qwen/Qwen3-8B-GGUF" }]
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Qwen/Qwen3-8B-GGUF"
+        }
+      ]
     },
     {
       "id": "kokoro-82m",
       "task": "speech.tts",
       "family": "kokoro",
-      "requirements": { "vram_gb": 0, "ram_gb": 8, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": {
+        "vram_gb": 0,
+        "ram_gb": 8,
+        "disk_gb": 1,
+        "backends": [
+          "cuda",
+          "mps",
+          "cpu"
+        ]
+      },
       "quality_score": 7.0,
       "speed_score": 9.5,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "hexgrad/Kokoro-82M" }],
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "hexgrad/Kokoro-82M"
+        }
+      ],
       "files": [
         {
           "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
@@ -134,22 +276,54 @@
       "id": "chatterbox-tts",
       "task": "speech.tts",
       "family": "chatterbox",
-      "requirements": { "vram_gb": 6, "ram_gb": 16, "disk_gb": 4, "backends": ["cuda", "mps"] },
+      "requirements": {
+        "vram_gb": 6,
+        "ram_gb": 16,
+        "disk_gb": 4,
+        "backends": [
+          "cuda",
+          "mps"
+        ]
+      },
       "quality_score": 8.5,
       "speed_score": 6.0,
-      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "ResembleAI/chatterbox" }]
+      "license": {
+        "id": "mit",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "ResembleAI/chatterbox"
+        }
+      ]
     },
     {
       "id": "ace-step-v1-3.5b",
       "task": "music.gen",
       "family": "ace-step",
       "version": "1.0",
-      "requirements": { "vram_gb": 8, "ram_gb": 16, "disk_gb": 8, "backends": ["cuda", "mps"] },
+      "requirements": {
+        "vram_gb": 8,
+        "ram_gb": 16,
+        "disk_gb": 8,
+        "backends": [
+          "cuda",
+          "mps"
+        ]
+      },
       "quality_score": 7.8,
       "speed_score": 8.5,
-      "license": { "id": "apache-2.0", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Comfy-Org/ACE-Step_ComfyUI_repackaged" }],
+      "license": {
+        "id": "apache-2.0",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Comfy-Org/ACE-Step_ComfyUI_repackaged"
+        }
+      ],
       "files": [
         {
           "url": "https://huggingface.co/Comfy-Org/ACE-Step_ComfyUI_repackaged/resolve/main/all_in_one/ace_step_v1_3.5b.safetensors",
@@ -165,11 +339,28 @@
       "task": "transcribe",
       "family": "whisper",
       "version": "base.en",
-      "requirements": { "vram_gb": 0, "ram_gb": 2, "disk_gb": 1, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": {
+        "vram_gb": 0,
+        "ram_gb": 2,
+        "disk_gb": 1,
+        "backends": [
+          "cuda",
+          "mps",
+          "cpu"
+        ]
+      },
       "quality_score": 7.0,
       "speed_score": 9.5,
-      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Systran/faster-whisper-base.en" }],
+      "license": {
+        "id": "mit",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Systran/faster-whisper-base.en"
+        }
+      ],
       "files": [
         {
           "url": "https://huggingface.co/Systran/faster-whisper-base.en/resolve/main/model.bin",
@@ -202,11 +393,28 @@
       "task": "transcribe",
       "family": "whisper",
       "version": "large-v3",
-      "requirements": { "vram_gb": 4, "ram_gb": 8, "disk_gb": 3, "backends": ["cuda", "mps", "cpu"] },
+      "requirements": {
+        "vram_gb": 4,
+        "ram_gb": 8,
+        "disk_gb": 3,
+        "backends": [
+          "cuda",
+          "mps",
+          "cpu"
+        ]
+      },
       "quality_score": 9.0,
       "speed_score": 8.0,
-      "license": { "id": "mit", "commercial": true, "verdict": "commercial" },
-      "sources": [{ "hf": "Systran/faster-whisper-large-v3" }]
+      "license": {
+        "id": "mit",
+        "commercial": true,
+        "verdict": "commercial"
+      },
+      "sources": [
+        {
+          "hf": "Systran/faster-whisper-large-v3"
+        }
+      ]
     }
   ]
 }

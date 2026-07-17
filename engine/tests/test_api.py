@@ -1,3 +1,10 @@
+import asyncio
+import hashlib
+import json
+import threading
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
 import httpx
 import pytest
 
@@ -10,11 +17,14 @@ async def client(tmp_path):
     config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")
     app = create_app(config)
     transport = httpx.ASGITransport(app=app)
-    async with transport, httpx.AsyncClient(
-        transport=transport,
-        base_url="http://engine",
-        headers={"Authorization": "Bearer test-token"},
-    ) as http:
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+    ):
         async with app.router.lifespan_context(app):
             yield http
 
@@ -69,9 +79,7 @@ async def test_path_params_reject_non_identifier_input(client):
     pid = created.json()["id"]
     assert (await client.get(f"/projects/{pid}/artifacts/*")).status_code == 422
     assert (await client.get(f"/projects/{pid}/artifacts/{'a' * 64}")).status_code in (404, 422)
-    bad_node = await client.post(
-        f"/projects/{pid}/nodes/no-such-node/regenerate", json={}
-    )
+    bad_node = await client.post(f"/projects/{pid}/nodes/no-such-node/regenerate", json={})
     assert bad_node.status_code == 404
 
 
@@ -85,7 +93,12 @@ def test_backend_chain_parsing_and_composition(tmp_path):
 
     assert EngineConfig(backend="llm,comfy,mock").backend_chain == ["llm", "comfy", "mock"]
     assert EngineConfig(backend="local,mock").backend_chain == [
-        "llm", "comfy", "kokoro", "align", "ffmpeg", "mock",
+        "llm",
+        "comfy",
+        "kokoro",
+        "align",
+        "ffmpeg",
+        "mock",
     ]
 
     config = EngineConfig(
@@ -99,9 +112,16 @@ def test_backend_chain_parsing_and_composition(tmp_path):
 
     # The full-local chain must resolve every generative kind (no dead lanes).
     local = _build_backends(EngineConfig(data_dir=tmp_path, backend="local"))
-    for kind in (NodeKind.SCRIPT, NodeKind.KEYFRAME, NodeKind.CLIP, NodeKind.MUSIC,
-                 NodeKind.NARRATION, NodeKind.CAPTIONS, NodeKind.TIMELINE,
-                 NodeKind.EXPORT):
+    for kind in (
+        NodeKind.SCRIPT,
+        NodeKind.KEYFRAME,
+        NodeKind.CLIP,
+        NodeKind.MUSIC,
+        NodeKind.NARRATION,
+        NodeKind.CAPTIONS,
+        NodeKind.TIMELINE,
+        NodeKind.EXPORT,
+    ):
         local.resolve(kind)  # raises if unrouted
 
     with pytest.raises(ValueError, match="unknown backend"):
@@ -113,9 +133,7 @@ async def test_create_project_validates_aspect_and_duration(client):
     # durations only fail later as opaque job errors — both must 422 here.
     bad_aspect = await client.post("/projects", json={"prompt": "x", "aspect": "4:3"})
     assert bad_aspect.status_code == 422
-    bad_duration = await client.post(
-        "/projects", json={"prompt": "x", "target_duration_s": 0}
-    )
+    bad_duration = await client.post("/projects", json={"prompt": "x", "target_duration_s": 0})
     assert bad_duration.status_code == 422
 
 
@@ -142,9 +160,7 @@ def test_data_dir_override_relocates_models_dir(tmp_path, monkeypatch):
 
 
 async def test_quick_tools_create_and_validate(client):
-    voiced = await client.post(
-        "/tools", json={"tool": "voiceover", "text": "hello world"}
-    )
+    voiced = await client.post("/tools", json={"tool": "voiceover", "text": "hello world"})
     assert voiced.status_code == 200
     assert voiced.json()["mode"] == "tool:voiceover"
 
@@ -159,6 +175,101 @@ async def test_promote_requires_a_finished_script(client):
     created = await client.post("/projects", json={"prompt": "x"})
     response = await client.post(f"/projects/{created.json()['id']}/promote")
     assert response.status_code == 409  # full projects aren't tool sessions
+
+
+async def test_model_download_api_lifecycle(client, tmp_path):
+    """POST /models/{id}/download runs the manifest download in the
+    background; GET /models reflects install state throughout."""
+    payload = b"localcut-tiny-weights" * 200
+    (tmp_path / "weights.bin").write_bytes(payload)
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
+    )
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    manifest = {
+        "models": [
+            {
+                "id": "tiny-model",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [
+                    {
+                        "url": f"http://127.0.0.1:{httpd.server_address[1]}/weights.bin",
+                        "dest": "checkpoints/tiny.bin",
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": len(payload),
+                    }
+                ],
+            },
+            {
+                "id": "weightless",
+                "task": "text.llm",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+            },
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest))
+    try:
+        rows = {r["id"]: r for r in (await client.get("/models")).json()}
+        row = rows["tiny-model"]
+        assert not row["downloaded"] and row["size_bytes"] == len(payload)
+
+        started = await client.post("/models/tiny-model/download")
+        assert started.json()["status"] == "started"
+        for _ in range(200):
+            rows = {r["id"]: r for r in (await client.get("/models")).json()}
+            if rows["tiny-model"]["downloaded"]:
+                break
+            await asyncio.sleep(0.02)
+        assert rows["tiny-model"]["downloaded"]
+        assert (tmp_path / "models/checkpoints/tiny.bin").read_bytes() == payload
+
+        # Restarting a completed download is a cheap no-op, not a refetch.
+        again = await client.post("/models/tiny-model/download")
+        assert again.json()["status"] == "downloaded"
+
+        assert (await client.post("/models/no-such-model/download")).status_code == 404
+        assert (await client.post("/models/weightless/download")).status_code == 409
+        assert (await client.delete("/models/tiny-model/download")).status_code == 409
+    finally:
+        httpd.shutdown()
+
+
+async def test_provider_keys_are_runtime_only(client):
+    """PUT /providers/keys updates the live config: omitted fields stay,
+    empty string clears — and nothing lands on disk (shell owns keychain)."""
+    status = {p["id"]: p["configured"] for p in (await client.get("/providers")).json()}
+    assert status["anthropic"] is False
+
+    updated = await client.put("/providers/keys", json={"anthropic_key": "sk-test"})
+    assert {p["id"]: p["configured"] for p in updated.json()}["anthropic"] is True
+
+    updated = await client.put("/providers/keys", json={"anthropic_key": "", "fal_key": "fk"})
+    status = {p["id"]: p["configured"] for p in updated.json()}
+    assert status["anthropic"] is False  # empty string clears
+    assert status["fal"] is True
+
+
+async def test_otio_export_conflicts_before_a_real_timeline(client):
+    """Mock EDLs (and unrendered timelines) must 409 with a reason — never
+    500, never an empty document."""
+    created = await client.post("/projects", json={"prompt": "x"})
+    response = await client.get(f"/projects/{created.json()['id']}/export/otio")
+    assert response.status_code == 409
+    assert "timeline" in response.json()["detail"]
+
+
+async def test_package_conflicts_before_script_renders(client):
+    created = await client.post("/projects", json={"prompt": "x", "mode": "beginner"})
+    # Beginner mode gates everything behind script approval, so the script
+    # itself may still be rendering — but packaging must fail cleanly either
+    # way until the screenplay artifact exists.
+    response = await client.post(f"/projects/{created.json()['id']}/package")
+    assert response.status_code in (200, 409)
 
 
 async def test_manifest_default_slate_is_downloadable(client):

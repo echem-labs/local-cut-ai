@@ -8,6 +8,8 @@ captions, timeline and export nodes.
 
 from __future__ import annotations
 
+import math
+
 from ..schema import Screenplay
 from .model import (
     EDL_VERSION,
@@ -90,6 +92,13 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
     return graph
 
 
+# Local video models top out at short takes; a scene whose narration runs
+# longer splits into sequential takes on the same approved keyframe rather
+# than stretching one clip into silent slow-mo (assembly enforces the ±15%
+# retime bound on whatever length actually renders).
+MAX_CLIP_S = 8.0
+
+
 def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) -> Node:
     """Add the node, or refresh its derived params in place — seed, pin and
     frozen_hash are user state and survive re-expansion."""
@@ -106,7 +115,8 @@ def _ensure_edge(graph: StoryGraph, src: str, dst: str, port: str = "default") -
 
 
 def _remove_scene(graph: StoryGraph, scene_id: str) -> None:
-    members = {f"{scene_id}.keyframe", f"{scene_id}.clip", f"{scene_id}.narration"}
+    # Prefix-based: a split scene owns clip takes beyond the fixed member set.
+    members = {n for n in graph.nodes if n.startswith(f"{scene_id}.")}
     graph.edges = [e for e in graph.edges if e.src not in members and e.dst not in members]
     for node_id in members:
         graph.nodes.pop(node_id, None)
@@ -147,9 +157,7 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             "aspect": aspect,
             "edl_version": EDL_VERSION,
             "overlays": {
-                scene.id: scene.onscreen_text
-                for scene in screenplay.scenes
-                if scene.onscreen_text
+                scene.id: scene.onscreen_text for scene in screenplay.scenes if scene.onscreen_text
             },
         },
     )
@@ -168,19 +176,44 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
                 "aspect": aspect,
             },
         )
-        _ensure_node(
-            graph,
-            clip_id,
-            NodeKind.CLIP,
-            params={
+        takes = max(1, math.ceil(scene.duration_s / MAX_CLIP_S))
+        take_s = round(scene.duration_s / takes, 3)
+        for take in range(1, takes + 1):
+            take_id = clip_id if take == 1 else f"{clip_id}{take}"
+            params = {
                 "prompt": scene.visual,
-                "motion": scene.motion,
-                "duration_s": scene.duration_s,
+                # Later takes vary the camera direction: same approved
+                # keyframe, visibly distinct motion — not a copy of take 1.
+                "motion": scene.motion
+                if take == 1
+                else f"{scene.motion}, continuing shot, alternate take {take}",
+                "duration_s": take_s if takes > 1 else scene.duration_s,
                 "aspect": aspect,
                 "mode": "i2v",  # I2V from the approved keyframe
                 "onscreen_text": scene.onscreen_text,
-            },
-        )
+            }
+            if takes > 1:
+                params["take"] = take  # single-take params stay hash-stable
+            _ensure_node(graph, take_id, NodeKind.CLIP, params=params)
+            _ensure_edge(graph, kf_id, take_id, port=KEYFRAME_PORT)
+            _ensure_edge(
+                graph,
+                take_id,
+                "timeline",
+                port=scene.id if take == 1 else f"{scene.id}.p{take}",
+            )
+        # Takes beyond the new count (narration shortened on re-script).
+        for stale_take in [
+            n
+            for n in list(graph.nodes)
+            if n.startswith(clip_id)
+            and n != clip_id
+            and n.removeprefix(clip_id).isdigit()
+            and int(n.removeprefix(clip_id)) > takes
+        ]:
+            graph.edges = [e for e in graph.edges if stale_take not in (e.src, e.dst)]
+            graph.nodes.pop(stale_take)
+
         _ensure_node(
             graph,
             narr_id,
@@ -188,9 +221,7 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             params={"text": scene.narration, "voice": screenplay.style.voice},
         )
         _ensure_edge(graph, "script", kf_id)
-        _ensure_edge(graph, kf_id, clip_id, port=KEYFRAME_PORT)
         _ensure_edge(graph, "script", narr_id)
-        _ensure_edge(graph, clip_id, "timeline", port=scene.id)
         _ensure_edge(graph, narr_id, "timeline", port=f"{scene.id}{SCENE_AUDIO_SUFFIX}")
 
     # Scenes the new screenplay no longer has (and legacy narration→clip

@@ -53,9 +53,7 @@ class RangeHandler(SimpleHTTPRequestHandler):
 @pytest.fixture
 def server(tmp_path):
     (tmp_path / "weights.bin").write_bytes(PAYLOAD)
-    httpd = ThreadingHTTPServer(
-        ("127.0.0.1", 0), partial(RangeHandler, directory=str(tmp_path))
-    )
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(RangeHandler, directory=str(tmp_path)))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -134,6 +132,66 @@ def test_is_downloaded(tmp_path):
     (tmp_path / "checkpoints").mkdir(parents=True)
     (tmp_path / "checkpoints/y.bin").write_bytes(b"x")
     assert is_downloaded(entry, tmp_path)
+
+
+async def test_manager_publishes_terminal_events(server, tmp_path):
+    """The background manager mirrors download outcomes onto the event bus —
+    the UI's progress bars have no other signal."""
+    import json
+
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.events import EventBus
+    from localcut_engine.manifest.manager import DownloadManager
+
+    good = hashlib.sha256(PAYLOAD).hexdigest()
+    manifest = {
+        "models": [
+            {
+                "id": "tiny",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [
+                    {
+                        "url": f"{server}/weights.bin",
+                        "dest": "checkpoints/weights.bin",
+                        "sha256": good,
+                        "size": len(PAYLOAD),
+                    }
+                ],
+            },
+            {
+                "id": "broken",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [{"url": f"{server}/missing.bin", "dest": "checkpoints/missing.bin"}],
+            },
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest))
+    config = EngineConfig(data_dir=tmp_path)
+    events = EventBus()
+    queue = events.subscribe()
+    manager = DownloadManager(config, events)
+
+    assert manager.start("tiny") == "started"
+    assert manager.start("broken") == "started"
+    with pytest.raises(KeyError):
+        manager.start("no-such-model")
+    await manager._tasks["tiny"]
+    await manager._tasks["broken"]
+
+    seen = []
+    while not queue.empty():
+        seen.append(queue.get_nowait())
+    outcomes = {e.get("model"): e["type"] for e in seen if e["type"].endswith(("done", "failed"))}
+    assert outcomes["tiny"] == "model.download.done"
+    assert outcomes["broken"] == "model.download.failed"
+    assert manager.start("tiny") == "downloaded"
+    assert not manager.cancel("tiny")  # nothing in flight
 
 
 async def test_traversal_dest_rejected_even_with_relative_models_dir(tmp_path, monkeypatch):

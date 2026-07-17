@@ -24,6 +24,12 @@ screenplay with this exact shape (no markdown fences, JSON only):
 Scenes are 3-8 seconds each. Narration is spoken aloud; visual is an image-generation prompt; \
 motion is a short camera direction. The first scene must hook the viewer instantly."""
 
+_METADATA_PROMPT = """You are a short-form video publisher. Given a video's script, produce a \
+JSON publish kit with this exact shape (no markdown fences, JSON only):
+{"title": str, "description": str, "hashtags": [str]}
+Title under 70 characters, hook first, no all-caps clickbait. Description is 2-3 sentences. \
+5-10 hashtags, lowercase, without the # symbol."""
+
 
 class LLMScriptBackend(ExecutionBackend):
     name = "llm"
@@ -61,6 +67,17 @@ class LLMScriptBackend(ExecutionBackend):
                 f"cloud model {spec.model!r} requested but no cloud provider is "
                 "configured (BYOK providers arrive in a later phase)"
             )
+        if spec.params.get("task") == "metadata":
+            # Publish kit (title/description/hashtags) from the script — a
+            # second LLM task on the same backend, not a new node kind.
+            raw = await self._local_complete(
+                str(spec.params.get("prompt", "")), system=_METADATA_PROMPT
+            )
+            if self.unload_after:
+                await self._unload()
+            out = ctx.output_path(spec.output_hash, ".metadata.json")
+            out.write_text(json.dumps(self._parse_metadata(raw), indent=2))
+            return out
         raw = await self._local_complete(prompt)
         if self.unload_after:
             await self._unload()
@@ -71,14 +88,14 @@ class LLMScriptBackend(ExecutionBackend):
         out.write_text(screenplay.model_dump_json(indent=2))
         return out
 
-    async def _local_complete(self, prompt: str) -> str:
+    async def _local_complete(self, prompt: str, system: str = _SYSTEM_PROMPT) -> str:
         async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
                 json={
                     "model": self.model,
                     "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
                     ],
                     "response_format": {"type": "json_object"},
@@ -109,3 +126,19 @@ class LLMScriptBackend(ExecutionBackend):
             return Screenplay.model_validate(json.loads(text))
         except (json.JSONDecodeError, ValueError) as exc:
             raise GenerationError(f"LLM returned an invalid screenplay: {exc}") from exc
+
+    @staticmethod
+    def _parse_metadata(raw: str) -> dict:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.split("```")[1].removeprefix("json").strip()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise GenerationError(f"LLM returned an invalid publish kit: {exc}") from exc
+        hashtags = data.get("hashtags") or []
+        return {
+            "title": str(data.get("title", ""))[:120],
+            "description": str(data.get("description", "")),
+            "hashtags": [str(tag).lstrip("#") for tag in hashtags if str(tag).strip()],
+        }

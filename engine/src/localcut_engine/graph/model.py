@@ -36,8 +36,9 @@ OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT, CAPTIONS_PORT}
 
 # Part of every timeline node's hash: bumping it invalidates cached EDLs
 # whenever their schema changes (v3: artifact paths relative to generated/;
-# v4: per-segment start/duration timing, overlays, trims, transitions).
-EDL_VERSION = 4
+# v4: per-segment start/duration timing, overlays, trims, transitions;
+# v5: segments carry `srcs` — the sequential takes of a split scene).
+EDL_VERSION = 5
 
 # Node ids must stay addressable through the API's path params — the same
 # pattern guards both places.

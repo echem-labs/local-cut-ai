@@ -33,7 +33,9 @@ _SUBSTITUTIONS = (
     ("%%HEIGHT%%", True),
     ("%%KEYFRAME%%", False),
     ("%%FRAMES%%", True),
+    ("%%FRAMES16%%", True),  # 16 fps models (Wan) count frames differently
     ("%%SECONDS%%", True),
+    ("%%HALF_STEPS%%", True),  # two-stage samplers hand over mid-schedule
     ("%%STEPS%%", True),
     ("%%PROMPT%%", False),
 )
@@ -64,17 +66,24 @@ class ComfyUIBackend(ExecutionBackend):
         base_url: str = "http://127.0.0.1:8188",
         templates_dir: Path | None = None,
         kinds: str = "keyframe,thumbnail,clip",
+        model_templates: dict[str, str] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.templates_dir = templates_dir
         self.kinds = {NodeKind(k.strip()) for k in kinds.split(",") if k.strip()}
+        # Manifest-fed model id → workflow template. Model switching (e.g.
+        # LTX drafts, Wan finals) is a template swap, not new code.
+        self.model_templates = model_templates or {}
         self.client_id = uuid.uuid4().hex
 
     def supports(self, kind: NodeKind) -> bool:
         return kind in self.kinds
 
     def _template_path(self, spec: JobSpec) -> Path:
-        template_name = str(spec.params.get("comfy_template") or f"{spec.kind.value}_default.json")
+        by_model = self.model_templates.get((spec.model or "").removeprefix("local:"))
+        template_name = str(
+            spec.params.get("comfy_template") or by_model or f"{spec.kind.value}_default.json"
+        )
         # Template names are bare filenames from the model manifest; params
         # are user-editable, so a path-shaped value must never leave the dir.
         if Path(template_name).name != template_name:
@@ -118,15 +127,18 @@ class ComfyUIBackend(ExecutionBackend):
         duration_s = float(duration_raw)
         if duration_s <= 0:
             raise GenerationError(f"invalid duration for {spec.node_id}: {duration_raw!r}")
-        # LTX frame counts must be 8n+1.
+        # LTX frame counts must be 8n+1 (24 fps); Wan's must be 4n+1 (16 fps).
         frames = max(9, round(duration_s * 24 / 8) * 8 + 1)
+        frames16 = max(5, round(duration_s * 16 / 4) * 4 + 1)
         values = {
             "%%SEED%%": str(spec.seed),
             "%%WIDTH%%": str(width),
             "%%HEIGHT%%": str(height),
             "%%KEYFRAME%%": keyframe_name or "",
             "%%FRAMES%%": str(frames),
+            "%%FRAMES16%%": str(frames16),
             "%%SECONDS%%": str(duration_s),
+            "%%HALF_STEPS%%": str(max(1, steps // 2)),
             "%%STEPS%%": str(steps),
             "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
         }
@@ -258,9 +270,7 @@ class ComfyUIBackend(ExecutionBackend):
                 if deadline_s > 10.0 and await self._queue_state(prompt_id) is None:
                     # Socket-drop recovery: the prompt is neither queued nor
                     # running and produced no history — it is genuinely gone.
-                    raise GenerationError(
-                        "ComfyUI dropped the workflow without producing output"
-                    )
+                    raise GenerationError("ComfyUI dropped the workflow without producing output")
                 await asyncio.sleep(0.2 if deadline_s <= 10.0 else 2.0)
 
             # Previews/temps are not artifacts; video kinds prefer video
@@ -280,9 +290,7 @@ class ComfyUIBackend(ExecutionBackend):
                 candidates[0][1] if candidates else None,
             )
             if item is None:
-                raise GenerationError(
-                    "ComfyUI workflow finished without a retrievable output"
-                )
+                raise GenerationError("ComfyUI workflow finished without a retrievable output")
 
             params = {
                 "filename": item["filename"],
@@ -296,8 +304,7 @@ class ComfyUIBackend(ExecutionBackend):
             ) as file_response:
                 if file_response.status_code != 200:
                     raise GenerationError(
-                        f"ComfyUI /view returned {file_response.status_code} "
-                        f"for {item['filename']}"
+                        f"ComfyUI /view returned {file_response.status_code} for {item['filename']}"
                     )
                 with out.open("wb") as handle:
                     async for chunk in file_response.aiter_bytes(1 << 20):

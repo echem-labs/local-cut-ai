@@ -13,13 +13,14 @@ def make_spec(
     output_hash: str = "a" * 64,
     input_hashes: dict[str, str] | None = None,
     quality: str = "draft",
+    model: str | None = None,
 ) -> JobSpec:
     return JobSpec(
         node_id=node_id or kind.value,
         kind=kind,
         output_hash=output_hash,
         params=params or {},
-        model=None,
+        model=model,
         seed=seed,
         input_hashes=input_hashes or {},
         quality=quality,

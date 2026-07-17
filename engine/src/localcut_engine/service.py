@@ -7,6 +7,7 @@ rest of the pipeline is enqueued.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import threading
@@ -15,12 +16,13 @@ from pathlib import Path
 from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
-from .graph.model import OPTIONAL_PORTS, NodeKind, StoryGraph, scene_sort_key
+from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
+from .otio import edl_to_otio
 from .project.store import Project, ProjectStore
 from .schema import Screenplay
 
@@ -136,9 +138,7 @@ class ProjectService:
             if checkpoint not in project.approvals:
                 project.approvals.append(checkpoint)
                 self.store.save_meta(project)
-            self.events.publish(
-                "project.approved", project_id=project_id, checkpoint=checkpoint
-            )
+            self.events.publish("project.approved", project_id=project_id, checkpoint=checkpoint)
             return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
 
     # -- editing -----------------------------------------------------------
@@ -160,10 +160,20 @@ class ProjectService:
             self.store.save_graph(project_id, graph)
             self._enqueue_dirty(project_id, graph)
 
-    def finalize(self, project_id: str) -> int:
-        """Draft → final ladder: re-render at target quality."""
+    def finalize(self, project_id: str, clip_model: str | None = None) -> int:
+        """Draft → final ladder: re-render at target quality. When a final
+        clip model is configured (e.g. Wan 2.2 on 16 GB tiers), unpinned
+        clips switch to it — the ladder upgrades the model, not just steps."""
         with self._lock:
             graph = self.store.load_graph(project_id)
+            if clip_model:
+                changed = False
+                for node in graph.nodes.values():
+                    if node.kind is NodeKind.CLIP and not node.pinned and node.model != clip_model:
+                        node.model = clip_model
+                        changed = True
+                if changed:
+                    self.store.save_graph(project_id, graph)
             return self._enqueue_dirty(project_id, graph, quality="final")
 
     def delete(self, project_id: str) -> bool:
@@ -173,11 +183,77 @@ class ProjectService:
             self.queue.cancel_project(project_id)
             return self.store.delete(project_id)
 
+    def package(self, project_id: str) -> list[str]:
+        """On-demand publish kit: a thumbnail conditioned on the screenplay
+        plus LLM title/description/hashtags. Both join the graph as nodes —
+        cached, regenerable, served through the normal artifact routes —
+        rather than running as a side channel."""
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            script = graph.nodes.get("script")
+            if script is None or script.kind is not NodeKind.SCRIPT:
+                raise LookupError("project has no script to package from")
+            history = self.queue.list(project_id, 1000)
+            cached = self.store.cached_hashes(project_id)
+            memo = dict(self._frozen_pins(graph, history, cached))
+            script_artifact = self.store.resolve_artifact(
+                project_id, graph.output_hash("script", memo)
+            )
+            if script_artifact is None:
+                raise LookupError("script has not rendered yet")
+            screenplay = Screenplay.model_validate_json(script_artifact.read_text())
+
+            summary = " ".join(
+                [screenplay.title, screenplay.hook] + [s.narration for s in screenplay.scenes]
+            ).strip()[:2000]
+            hero = screenplay.scenes[0] if screenplay.scenes else None
+            thumb_prompt = ", ".join(
+                part
+                for part in (
+                    hero.visual if hero else screenplay.title,
+                    screenplay.style.visual,
+                    "bold, high contrast, title-safe thumbnail composition",
+                )
+                if part
+            )
+            for node_id, kind, params in (
+                ("thumbnail", NodeKind.THUMBNAIL, {"prompt": thumb_prompt, "aspect": "16:9"}),
+                ("metadata", NodeKind.SCRIPT, {"task": "metadata", "prompt": summary}),
+            ):
+                node = graph.nodes.get(node_id)
+                if node is None:
+                    graph.add_node(Node(id=node_id, kind=kind, params=params))
+                else:
+                    node.params = params  # re-package follows the current script
+            self.store.save_graph(project_id, graph)
+            self._enqueue_dirty(project_id, graph)
+            return ["thumbnail", "metadata"]
+
+    def export_otio(self, project_id: str) -> dict:
+        """The current timeline as an OTIO document for pro-NLE handoff.
+        Raises LookupError while the timeline hasn't rendered (or is stale
+        for the current graph) and ValueError for non-exportable EDLs."""
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            if "timeline" not in graph.nodes:
+                raise LookupError("project has no timeline")
+            history = self.queue.list(project_id, 1000)
+            cached = self.store.cached_hashes(project_id)
+            memo = dict(self._frozen_pins(graph, history, cached))
+            edl_path = self.store.resolve_artifact(project_id, graph.output_hash("timeline", memo))
+            if edl_path is None:
+                raise LookupError("timeline is not rendered for the current edit")
+            project = self.store.get(project_id)
+            edl = json.loads(edl_path.read_text())
+        return edl_to_otio(
+            edl,
+            resolve=lambda src: p if (p := Path(src)).is_absolute() else edl_path.parent / p,
+            name=project.title if project else project_id,
+        )
+
     # -- compile & enqueue ---------------------------------------------------
 
-    def _frozen_pins(
-        self, graph: StoryGraph, jobs: list[Job], cached: set[str]
-    ) -> dict[str, str]:
+    def _frozen_pins(self, graph: StoryGraph, jobs: list[Job], cached: set[str]) -> dict[str, str]:
         """Pinned node id → output hash of its frozen artifact. The hash
         snapshotted on the node at pin time is authoritative (it survives any
         amount of job history); pre-snapshot graphs fall back to the newest
@@ -242,9 +318,7 @@ class ProjectService:
 
         # Skip nodes that already have an identical job in flight — quality
         # included, so finalize still enqueues finals over active drafts.
-        active = {
-            (job.spec.output_hash, job.spec.quality) for job in self.queue.active(project_id)
-        }
+        active = {(job.spec.output_hash, job.spec.quality) for job in self.queue.active(project_id)}
         project = self.store.get(project_id)
         enqueued = 0
         for spec in plan.jobs:
@@ -280,7 +354,13 @@ class ProjectService:
         await asyncio.to_thread(self._on_job_done_sync, job)
 
     def _on_job_done_sync(self, job: Job) -> None:
-        if job.spec.kind is NodeKind.SCRIPT and job.artifact is not None:
+        # Only the project's script node expands — a "metadata" publish-kit
+        # job is SCRIPT-kind too but must never re-shape the graph.
+        if (
+            job.spec.kind is NodeKind.SCRIPT
+            and job.spec.node_id == "script"
+            and job.artifact is not None
+        ):
             meta = self.store.get(job.project_id)
             if meta is not None and meta.mode.startswith("tool:"):
                 return  # tool sessions stay one node; promotion expands
@@ -384,21 +464,32 @@ class ProjectService:
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}
         scene_ids = sorted(raw_ids, key=scene_sort_key)
         for sid in scene_ids:
-            scenes.append(
-                {
-                    "scene_id": sid,
-                    "keyframe": node_state(f"{sid}.keyframe"),
-                    "clip": node_state(f"{sid}.clip"),
-                    "narration": node_state(f"{sid}.narration"),
-                }
+            card = {
+                "scene_id": sid,
+                "keyframe": node_state(f"{sid}.keyframe"),
+                "clip": node_state(f"{sid}.clip"),
+                "narration": node_state(f"{sid}.narration"),
+            }
+            # A split scene has sequential takes beyond ".clip" — surface
+            # them so the card can show aggregate render state.
+            extra = sorted(
+                (
+                    n
+                    for n in graph.nodes
+                    if n.startswith(f"{sid}.clip")
+                    and n != f"{sid}.clip"
+                    and n.removeprefix(f"{sid}.clip").isdigit()
+                ),
+                key=lambda n: int(n.removeprefix(f"{sid}.clip")),
             )
+            if extra:
+                card["clip_takes"] = [node_state(n) for n in extra]
+            scenes.append(card)
         # Fixed order for the pipeline nodes, then anything else at the top
         # level (Quick Tool nodes like "thumbnail"/"voiceover").
         aux_ids = [
             n for n in ("script", "music", "captions", "timeline", "export") if n in graph.nodes
         ]
         aux_ids += sorted(n for n in graph.nodes if "." not in n and n not in aux_ids)
-        aux = {
-            n: state for n in aux_ids if (state := node_state(n)) is not None
-        }
+        aux = {n: state for n in aux_ids if (state := node_state(n)) is not None}
         return {"scenes": scenes, "aux": aux}
