@@ -151,6 +151,31 @@ class FFmpegBackend(ExecutionBackend):
             else:
                 window = min(clip_duration, float(trim_out)) if trim_out else clip_duration
                 duration = max(0.1, window - trim_in)
+            # Beat-align BEFORE the crossfade adjustment: the crossfade
+            # decision below and the one in _join_segments both gate on
+            # `duration > 2*CROSSFADE_S`, so they must see the same (snapped)
+            # value or the stored `start` and the rendered cut disagree.
+            if beats:
+                # Flex only the pad: never below the speech floor, and never
+                # past real clip material or a user trim-out (which would
+                # reveal footage they cut or loop the clip just to hit a beat).
+                floor = (
+                    narration_duration + BEAT_MIN_PAD_S if narration_duration is not None else 0.1
+                )
+                if narration_duration is not None:
+                    material = max(0.0, clip_duration - trim_in)
+                    ceiling = min(duration + BEAT_SNAP_MAX_S, max(duration, material))
+                else:
+                    ceiling = duration  # exact trimmed window — shrink-to-beat only
+                snapped = nearest_beat(
+                    start + duration,
+                    beats,
+                    music_duration,
+                    lo=start + floor,
+                    hi=start + ceiling,
+                )
+                if snapped is not None:
+                    duration = round(snapped - start, 3)
             # A crossfade boundary overlaps this segment with the running
             # chain by CROSSFADE_S — the stored start must say where the
             # scene actually lands in the output, or caption alignment and
@@ -163,21 +188,6 @@ class FFmpegBackend(ExecutionBackend):
                 and duration > 2 * CROSSFADE_S
             ):
                 start -= CROSSFADE_S
-            if beats:
-                # Snap this boundary to the nearest beat by flexing the pad:
-                # never below the speech floor, never far past the window.
-                floor = (
-                    narration_duration + BEAT_MIN_PAD_S if narration_duration is not None else 0.1
-                )
-                snapped = nearest_beat(
-                    start + duration,
-                    beats,
-                    music_duration,
-                    lo=start + floor,
-                    hi=start + duration + BEAT_SNAP_MAX_S,
-                )
-                if snapped is not None:
-                    duration = round(snapped - start, 3)
             segments.append(
                 {
                     "scene": port,

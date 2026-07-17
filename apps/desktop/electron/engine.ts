@@ -97,5 +97,8 @@ export class EngineManager {
       this.child.kill("SIGTERM");
       this.child = null;
     }
+    // Drop the connection too: a stopped engine's URL/token is dead, and a
+    // later failed restart must read as "no connection", not a stale one.
+    this.connection = null;
   }
 }

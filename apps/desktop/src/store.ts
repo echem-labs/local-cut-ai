@@ -34,6 +34,7 @@ declare global {
         connection: { url: string; token: string } | null;
         error: string | null;
         remote?: boolean;
+        remotePaired?: boolean;
       }>;
       pairEngine: (code: string) => Promise<{ ok: boolean; error: string | null }>;
       unpairEngine: () => Promise<{ ok: boolean; error: string | null }>;
@@ -73,8 +74,11 @@ interface AppState {
   // One natural-language edit at a time — the LLM call is slow and a second
   // plan compiled against the pre-edit view would fight the first.
   editBusy: boolean;
-  // True when the connection points at a paired remote engine (GPU box).
+  // True when the connection points at a *verified* remote engine (GPU box).
   remoteEngine: boolean;
+  // True when a pairing exists on disk even if the remote is unreachable —
+  // so the UI can always offer Disconnect rather than stranding on a dead box.
+  remotePaired: boolean;
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
@@ -151,6 +155,17 @@ const terminalDownloads = new Set<string>();
 
 const messageOf = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
+
+// Drop all per-engine module state — pending edits, download bookkeeping —
+// when the engine itself changes (pair/unpair). Otherwise the old engine's
+// in-flight PATCH fires at the new one, and its download bytes/errors bleed
+// into the new engine's model list.
+const resetEngineScopedState = () => {
+  for (const pending of pendingPatches.values()) clearTimeout(pending.timer);
+  pendingPatches.clear();
+  wsProgress.clear();
+  terminalDownloads.clear();
+};
 
 export const useApp = create<AppState>((set, get) => {
   const scheduleReconnect = () => {
@@ -317,13 +332,24 @@ export const useApp = create<AppState>((set, get) => {
   const establish = async () => {
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
-    const { connection, error, remote } = await window.localcut.getEngineConnection();
+    const { connection, error, remote, remotePaired } =
+      await window.localcut.getEngineConnection();
     if (!connection) {
-      set({ client: null, engineError: error ?? "engine unavailable", remoteEngine: false });
+      set({
+        client: null,
+        engineError: error ?? "engine unavailable",
+        remoteEngine: false,
+        remotePaired: remotePaired === true,
+      });
       return;
     }
     const client = new EngineClient(connection);
-    set({ client, engineError: null, remoteEngine: remote === true });
+    set({
+      client,
+      engineError: null,
+      remoteEngine: remote === true,
+      remotePaired: remotePaired === true,
+    });
 
     unsubscribe = client.subscribe(
       (event: EngineEvent) => {
@@ -400,6 +426,7 @@ export const useApp = create<AppState>((set, get) => {
     settingsOpen: false,
     editBusy: false,
     remoteEngine: false,
+    remotePaired: false,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -685,15 +712,32 @@ export const useApp = create<AppState>((set, get) => {
     pairRemote: async (code) => {
       const { ok, error } = await window.localcut.pairEngine(code);
       if (!ok) return error ?? "pairing failed";
-      // The engine changed under us: drop per-engine state and reconnect.
-      set({ currentProject: null, board: null, jobs: [], projects: [], models: [] });
+      // The engine changed under us: drop all per-engine state (zustand and
+      // module-level) and reconnect against the new one.
+      resetEngineScopedState();
+      set({
+        currentProject: null,
+        board: null,
+        jobs: [],
+        projects: [],
+        models: [],
+        downloadErrors: {},
+      });
       await establishOnce();
       return null;
     },
 
     unpairRemote: async () => {
       const { ok, error } = await window.localcut.unpairEngine();
-      set({ currentProject: null, board: null, jobs: [], projects: [], models: [] });
+      resetEngineScopedState();
+      set({
+        currentProject: null,
+        board: null,
+        jobs: [],
+        projects: [],
+        models: [],
+        downloadErrors: {},
+      });
       await establishOnce();
       return ok ? null : (error ?? "disconnect failed");
     },

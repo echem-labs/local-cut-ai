@@ -62,26 +62,29 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
         height=str(height),
     )
 
-    # One asset resource per referenced media file.
-    asset_ids: dict[str, str] = {}
+    # One asset resource per referenced media file, keyed by url so a file
+    # used in more than one role (video + audio) is a single asset carrying
+    # both flags — a video-only asset would import silent.
+    assets: dict[str, ET.Element] = {}
 
     def asset_ref(clip: dict, audio: bool) -> str:
         media = clip["media_reference"]
         url = media["target_url"]
-        if url not in asset_ids:
-            asset_ids[url] = f"r{len(asset_ids) + 2}"
+        asset = assets.get(url)
+        if asset is None:
             available = media["available_range"]["duration"]
             asset = ET.SubElement(
                 resources,
                 "asset",
-                id=asset_ids[url],
+                id=f"r{len(assets) + 2}",
                 name=str(clip.get("name") or Path(url).name),
                 start="0s",
                 duration=_rt(available["value"] / available["rate"]),
             )
-            asset.set("hasAudio" if audio else "hasVideo", "1")
             ET.SubElement(asset, "media-rep", kind="original-media", src=url)
-        return asset_ids[url]
+            assets[url] = asset
+        asset.set("hasAudio" if audio else "hasVideo", "1")
+        return asset.get("id")
 
     library = ET.SubElement(root, "library")
     event = ET.SubElement(library, "event", name="LocalCut")

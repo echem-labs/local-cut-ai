@@ -237,6 +237,19 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
                 "aspect": aspect,
             },
         )
+        # What feeds this scene's keyframe port: the generated keyframe by
+        # default, or a user asset the scene was conditioned on. Conditioning
+        # is a scene-level choice, so a scene that later splits into takes
+        # animates every take from the same source, not take 1 alone.
+        conditioned = next(
+            (
+                e.src
+                for e in graph.edges
+                if e.dst == clip_id and e.port == KEYFRAME_PORT and e.src != kf_id
+            ),
+            None,
+        )
+        kf_source = conditioned or kf_id
         takes = max(1, math.ceil(scene.duration_s / MAX_CLIP_S))
         take_s = round(scene.duration_s / takes, 3)
         for take in range(1, takes + 1):
@@ -257,9 +270,10 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
                 params["take"] = take  # single-take params stay hash-stable
             _ensure_node(graph, take_id, NodeKind.CLIP, params=params)
             # User conditioning is user state: a clip whose keyframe port was
-            # rewired to an uploaded asset keeps that source across re-runs.
+            # rewired to an uploaded asset keeps that source across re-runs,
+            # and new takes of a conditioned scene draw from the same asset.
             if not any(e.dst == take_id and e.port == KEYFRAME_PORT for e in graph.edges):
-                _ensure_edge(graph, kf_id, take_id, port=KEYFRAME_PORT)
+                _ensure_edge(graph, kf_source, take_id, port=KEYFRAME_PORT)
             _ensure_edge(
                 graph,
                 take_id,

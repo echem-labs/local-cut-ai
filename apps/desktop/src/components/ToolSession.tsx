@@ -65,6 +65,13 @@ export function ToolSession() {
     ? currentProject.mode.slice("tool:".length)
     : null;
   const node = tool ? board?.aux[tool] : undefined;
+  // The clip tool is a keyframe→clip graph: while the keyframe renders (the
+  // long pole) the clip sits queued, so show the keyframe's live progress —
+  // and its error, which would otherwise be hidden behind the clip's
+  // secondary "missing upstream artifact" failure.
+  const upstream = tool === "clip" ? board?.aux.keyframe : undefined;
+  const progressNode =
+    upstream && !READY.includes(upstream.status) ? upstream : node;
   const done = node ? READY.includes(node.status) : false;
   const artifactUrl =
     node?.artifact_hash && client && currentProject
@@ -84,16 +91,18 @@ export function ToolSession() {
     }
   };
 
+  const shown = progressNode ?? node;
+  const stageLabel = shown === upstream ? "keyframe" : tool;
   return (
     <div className="tool-session">
       <div className="tool-status">
-        <StatusRing status={node.status} progress={node.progress} />
-        <span style={{ textTransform: "capitalize" }}>{node.status}</span>
-        {node.status === "rendering" && <span>{Math.round(node.progress * 100)}%</span>}
+        <StatusRing status={shown.status} progress={shown.progress} />
+        <span style={{ textTransform: "capitalize" }}>{shown.status}</span>
+        {shown.status === "rendering" && <span>{Math.round(shown.progress * 100)}%</span>}
       </div>
 
-      {node.error && <div className="banner error">{node.error}</div>}
-      {!done && !node.error && <div className="banner">Generating {tool}…</div>}
+      {shown.error && <div className="banner error">{shown.error}</div>}
+      {!done && !shown.error && <div className="banner">Generating {stageLabel}…</div>}
 
       {done && artifactUrl && (
         <>

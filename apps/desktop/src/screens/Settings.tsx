@@ -22,6 +22,7 @@ export function Settings() {
     resetFirstRun,
     refreshModels,
     remoteEngine,
+    remotePaired,
     pairRemote,
     unpairRemote,
   } = useApp();
@@ -176,11 +177,19 @@ export function Settings() {
           paste its pairing code here — this laptop becomes the remote control. Projects and
           renders live with the engine.
         </p>
-        {remoteEngine ? (
+        {remotePaired ? (
           <div className="provider-row">
             <div className="grow">
-              <div className="name">Paired with {client?.baseUrl ?? "remote engine"}</div>
-              <div className="meta">All generation runs on the remote engine.</div>
+              <div className="name">
+                {remoteEngine
+                  ? `Paired with ${client?.baseUrl ?? "remote engine"}`
+                  : "Paired with a remote engine (currently unreachable)"}
+              </div>
+              <div className="meta">
+                {remoteEngine
+                  ? "All generation runs on the remote engine."
+                  : "Disconnect to fall back to the local engine."}
+              </div>
             </div>
             <button
               className="btn-ghost"

@@ -3,7 +3,7 @@ import path from "node:path";
 import { EngineManager } from "./engine";
 import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
-import { engineRequest } from "./request";
+import { capturePinnedCert, engineRequest } from "./request";
 
 const engine = new EngineManager();
 const keyStore = new ProviderKeyStore();
@@ -14,6 +14,19 @@ let remoteConnection: RemotePairing | null = null;
 
 const activeConnection = (): RemotePairing | { url: string; token: string } | null =>
   remoteConnection ?? engine.connection;
+
+/** The base64 body of a PEM cert, whitespace/format-independent, for an
+ * exact-cert compare that doesn't depend on fingerprint string encoding. */
+const pemBody = (pem: string): string =>
+  pem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, "");
+
+const authorityOf = (url: string): string | null => {
+  try {
+    return new URL(url).host; // host:port — identical across https/wss
+  } catch {
+    return null;
+  }
+};
 
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
@@ -38,27 +51,49 @@ async function createWindow(): Promise<void> {
   }
 }
 
-// Chromium-side pinning for the renderer's fetch/WebSocket/media requests:
-// accept exactly the paired engine's self-signed certificate, nothing else.
+// Chromium-side pinning for the renderer's fetch/WebSocket/media requests.
+// Match by authority (so wss://host:port maps to the https://host:port
+// pairing) and accept ONLY the exact pinned certificate — an origin match
+// alone is never sufficient.
 app.on("certificate-error", (event, _webContents, url, _error, certificate, callback) => {
   const pairing = remoteStore.load();
-  if (pairing?.fingerprint && url.startsWith(pairing.url)) {
-    const presented = Buffer.from(
-      certificate.fingerprint.replace(/^sha256\//, ""),
-      "base64",
-    ).toString("hex");
-    if (presented === pairing.fingerprint) {
-      event.preventDefault();
-      callback(true);
-      return;
-    }
+  const paired = pairing?.url ? authorityOf(pairing.url) : null;
+  if (
+    pairing?.cert &&
+    paired &&
+    authorityOf(url) === paired &&
+    certificate.data &&
+    pemBody(certificate.data) === pemBody(pairing.cert)
+  ) {
+    event.preventDefault();
+    callback(true);
+    return;
   }
   callback(false);
 });
 
+/** Ensure the pairing carries its pinned certificate, capturing it (and
+ * verifying its fingerprint against the trusted pairing code) if absent.
+ * No token is sent during capture, so a MITM is caught before anything
+ * sensitive leaves the process. Mutates and returns the pairing. */
+async function ensurePinned(pairing: RemotePairing): Promise<RemotePairing> {
+  const secure = (() => {
+    try {
+      return new URL(pairing.url).protocol === "https:";
+    } catch {
+      return false;
+    }
+  })();
+  if (secure && !pairing.cert) {
+    pairing.cert = await capturePinnedCert(pairing);
+  }
+  return pairing;
+}
+
 /** Prove a pairing works before trusting it: pinned TLS, live engine, and
  * a token the engine actually accepts. */
 async function verifyPairing(pairing: RemotePairing): Promise<void> {
+  await ensurePinned(pairing);
   let health;
   try {
     health = await engineRequest(pairing, "health");
@@ -81,6 +116,7 @@ async function connectEngine(): Promise<void> {
   const pairing = remoteStore.load();
   if (pairing) {
     await verifyPairing(pairing);
+    remoteStore.save(pairing); // persist a freshly-captured cert
     remoteConnection = pairing;
     return;
   }
@@ -146,13 +182,16 @@ ipcMain.handle("engine:connection", () => ({
   connection: activeConnection(),
   error: engineError,
   remote: remoteConnection !== null,
+  // A pairing on disk even if the remote is currently unreachable — so the
+  // UI can always offer Disconnect and isn't stranded on a dead box.
+  remotePaired: remoteStore.exists(),
 }));
 
 ipcMain.handle("engine:pair", async (_event, code: unknown) => {
   if (typeof code !== "string") return { ok: false, error: "pairing code must be text" };
   try {
     const pairing = parsePairingCode(code);
-    await verifyPairing(pairing);
+    await verifyPairing(pairing); // captures + pins the cert, checks the token
     remoteStore.save(pairing);
     remoteConnection = pairing;
     engineError = null;

@@ -98,7 +98,9 @@ def nearest_beat(
                 candidates.extend(k * period + b for b in beats)
     else:
         candidates = beats
-    best = min(candidates, key=lambda b: abs(b - t), default=None)
-    if best is None or not (lo <= best <= hi):
+    # Filter to the window FIRST, then pick the closest — otherwise a nearer
+    # out-of-window beat shadows a valid in-window one and the snap is skipped.
+    in_window = [b for b in candidates if lo <= b <= hi]
+    if not in_window:
         return None
-    return round(best, 3)
+    return round(min(in_window, key=lambda b: abs(b - t)), 3)

@@ -148,3 +148,89 @@ def test_conditioning_edge_survives_reexpansion_and_disconnect_restores():
     assert keyframe_sources() == []
     expand_screenplay(graph, screenplay)  # …and the free port re-wires normally
     assert keyframe_sources() == ["s1.keyframe"]
+
+
+def test_connect_rejects_cycles_and_self_loops():
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    screenplay = Screenplay(
+        title="t",
+        scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+    )
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+
+    import pytest
+
+    # A self-loop and a back-edge (timeline is downstream of s1.clip) both
+    # raise before any edge is added — the graph never persists a cycle.
+    with pytest.raises(ValueError, match="cycle"):
+        apply_patch(graph, [PatchOp(op="connect", node_id="s1.clip", src="s1.clip", port="x")])
+    with pytest.raises(ValueError, match="cycle"):
+        apply_patch(graph, [PatchOp(op="connect", node_id="script", src="timeline", port="x")])
+    # The graph is still acyclic and readable.
+    assert graph.topological_order()
+
+
+def test_voice_ref_rejects_unconsented_sources():
+    from localcut_engine.graph.model import Node, NodeKind
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    import pytest
+
+    screenplay = Screenplay(
+        title="t",
+        scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+    )
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+    graph.add_node(Node(id="img", kind=NodeKind.ASSET, params={"sha256": "x"}))  # no consent
+    graph.add_node(
+        Node(id="voice", kind=NodeKind.ASSET, params={"sha256": "y", "voice_consent": True})
+    )
+
+    with pytest.raises(ValueError, match="consented voice-sample"):
+        apply_patch(
+            graph, [PatchOp(op="connect", node_id="s1.narration", src="img", port="voice_ref")]
+        )
+    # A wav from another node (not an asset) is likewise refused.
+    with pytest.raises(ValueError, match="consented voice-sample"):
+        apply_patch(
+            graph,
+            [PatchOp(op="connect", node_id="s1.narration", src="s1.keyframe", port="voice_ref")],
+        )
+    # The consented sample is accepted.
+    apply_patch(
+        graph, [PatchOp(op="connect", node_id="s1.narration", src="voice", port="voice_ref")]
+    )
+    assert any(e.src == "voice" and e.port == "voice_ref" for e in graph.edges)
+
+
+def test_conditioning_applies_to_every_take_of_a_split_scene():
+    """A scene conditioned on an asset that later splits into takes animates
+    all takes from the asset, not the generated keyframe for the new ones."""
+    from localcut_engine.graph.model import Node, NodeKind
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("p")
+    short = Screenplay(
+        title="t", scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")]
+    )
+    expand_screenplay(graph, short)
+    graph.add_node(Node(id="img", kind=NodeKind.ASSET, params={"sha256": "x"}))
+    apply_patch(graph, [PatchOp(op="connect", node_id="s1.clip", src="img", port="keyframe")])
+
+    # The narration grows so the scene now needs two takes.
+    long = Screenplay(
+        title="t",
+        scenes=[Scene(id="s1", duration_s=14.0, narration="much longer", visual="v", motion="m")],
+    )
+    expand_screenplay(graph, long)
+    assert "s1.clip2" in graph.nodes  # split happened
+    for take in ("s1.clip", "s1.clip2"):
+        srcs = [e.src for e in graph.edges if e.dst == take and e.port == "keyframe"]
+        assert srcs == ["img"], f"{take} should animate from the asset, got {srcs}"

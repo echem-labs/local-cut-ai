@@ -17,7 +17,7 @@ from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
 from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
-from .graph.editor import EditPlan, compile_edits, graph_view
+from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
@@ -29,6 +29,10 @@ from .project.store import Project, ProjectStore
 from .schema import Screenplay
 
 logger = logging.getLogger(__name__)
+
+
+class ConflictError(RuntimeError):
+    """A request lost a race with concurrent state (maps to HTTP 409)."""
 
 
 class ProjectService:
@@ -193,12 +197,22 @@ class ProjectService:
         with self._lock:
             return graph_view(self.store.load_graph(project_id), scope)
 
-    def apply_edit_plan(self, project_id: str, plan: EditPlan, scope: str) -> dict:
+    def apply_edit_plan(
+        self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
+    ) -> dict:
         """Compile an LLM edit plan against the live graph and apply it.
         Validation and apply share one lock hold, so the plan can't be
-        checked against one graph state and applied to another."""
+        checked against one graph state and applied to another. `revision`
+        is the digest of the graph the plan was built from; if a background
+        script job re-expanded (renumbering scenes) during the LLM call, the
+        digest no longer matches and the stale plan is refused rather than
+        landing on content the model never saw."""
         with self._lock:
             graph = self.store.load_graph(project_id)
+            if revision is not None and graph_revision(graph) != revision:
+                raise ConflictError(
+                    "the project changed while the edit was being generated — please retry"
+                )
             ops, warnings = compile_edits(graph, plan, scope)
             dirty = apply_patch(graph, ops) if ops else set()
             if ops:

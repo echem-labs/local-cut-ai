@@ -14,6 +14,9 @@ export interface RemotePairing {
   url: string;
   token: string;
   fingerprint?: string;
+  // The engine's exact certificate (PEM), captured and fingerprint-verified
+  // at pair time, then pinned for every request. Absent until captured.
+  cert?: string;
 }
 
 /** Decode and validate a pairing code (base64url JSON printed by
@@ -60,10 +63,17 @@ export class RemoteEngineStore {
         url: raw.url,
         token: raw.token,
         fingerprint: typeof raw.fingerprint === "string" ? raw.fingerprint : undefined,
+        cert: typeof raw.cert === "string" ? raw.cert : undefined,
       };
     } catch {
       return null;
     }
+  }
+
+  /** Is a pairing on disk, regardless of whether the engine is reachable?
+   * The UI needs this to always offer Disconnect for a dead remote. */
+  exists(): boolean {
+    return fs.existsSync(this.file);
   }
 
   save(pairing: RemotePairing): void {

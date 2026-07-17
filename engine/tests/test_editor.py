@@ -136,9 +136,31 @@ def test_value_sanitizers_clamp_and_validate():
     assert by_node["s1.clip"]["duration_s"] == 15.0  # clamped
     assert by_node["timeline"]["transitions"] == {"s2": "crossfade"}
     assert by_node["timeline"]["order"] == ["s2", "s1"]  # deduped, unknowns dropped
-    assert by_node["timeline"]["overlays"] == {"s1": None}  # None clears a title
+    # make_graph seeds s1's overlay ("BOOM"); a null clears just that entry.
+    assert by_node["timeline"]["overlays"] == {}
     assert "export" not in by_node  # bad caption mode → no op at all
     assert any("must be one of" in w for w in warnings)
+
+
+def test_timeline_dict_edits_merge_per_scene():
+    """A plan touching one scene's overlay/transition must carry the others
+    forward — set_params replaces a whole key, so the compiler pre-merges."""
+    graph = make_graph()
+    graph.nodes["timeline"].params["overlays"] = {"s1": "BOOM", "s2": "keep me"}
+    graph.nodes["timeline"].params["transitions"] = {"s1": "crossfade"}
+    ops, _ = compile_edits(
+        graph,
+        plan(
+            {
+                "action": "update",
+                "node_id": "timeline",
+                "params": {"overlays": {"s3": "new"}, "transitions": {"s2": "dip"}},
+            }
+        ),
+    )
+    params = next(op.params for op in ops if op.node_id == "timeline")
+    assert params["overlays"] == {"s1": "BOOM", "s2": "keep me", "s3": "new"}
+    assert params["transitions"] == {"s1": "crossfade", "s2": "dip"}
 
 
 # -- removing scenes --------------------------------------------------------
@@ -217,3 +239,34 @@ def test_audio_direction_params_sanitize():
     assert by_node["timeline"]["beat_align"] is True
     assert "order" not in by_node["timeline"]  # not a list → dropped
     assert any("not a list" in w for w in warnings)
+
+
+def test_remove_scene_respects_pins():
+    graph = make_graph()
+    graph.nodes["s2.clip"].pinned = True
+    ops, warnings = compile_edits(graph, plan({"action": "remove_scene", "scene_id": "s2"}))
+    assert ops == [] and any("pinned" in w for w in warnings)
+
+
+def test_sanitize_survives_wrong_shaped_llm_values():
+    """A malformed plan must degrade to warnings, never raise (which would
+    500 the /edit route and lose the plan's good edits)."""
+    graph = make_graph()
+    ops, warnings = compile_edits(
+        graph,
+        plan(
+            {
+                "action": "update",
+                "node_id": "timeline",
+                "params": {
+                    "transitions": {"s1": ["crossfade"]},  # unhashable
+                    "trims": {"s2": 2.5},  # not an object
+                },
+            },
+            {"action": "update", "node_id": "s1.keyframe", "params": {"prompt": "kept"}},
+        ),
+    )
+    by_node = {op.node_id: op.params for op in ops}
+    assert by_node["s1.keyframe"]["prompt"] == "kept"  # good edit survives
+    assert "timeline" not in by_node  # both malformed entries dropped
+    assert len(warnings) >= 2

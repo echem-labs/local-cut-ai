@@ -46,3 +46,12 @@ def test_nearest_beat_respects_window_and_looping():
     # The grid repeats with the (looped) track: 2.0s track → beat at 2.5.
     assert nearest_beat(2.45, beats, period=2.0, lo=2.2, hi=2.7) == 2.5
     assert nearest_beat(0.1, [], period=None, lo=0.0, hi=1.0) is None
+
+
+def test_nearest_beat_prefers_in_window_over_globally_closest():
+    """Regression: a nearer out-of-window beat must not shadow a valid
+    in-window one (which used to return None and silently skip the snap)."""
+    beats = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    # 1.72 is closest to 1.5 (out of window) but 2.0 is inside [1.52, 2.07].
+    assert nearest_beat(1.72, beats, period=None, lo=1.52, hi=2.07) == 2.0
+    assert nearest_beat(1.72, beats, period=3.0, lo=1.52, hi=2.07) == 2.0

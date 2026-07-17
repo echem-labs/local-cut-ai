@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from .model import Node, StoryGraph
+from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 
 
 class PatchOp(BaseModel):
@@ -81,6 +81,22 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # generated keyframe in the same op.
                 if op.src is None or op.port is None:
                     raise ValueError("connect requires src and port")
+                # A cycle would make output_hash (and topological_order)
+                # recurse forever; reject it here so a bad wire can never be
+                # persisted, rather than 500-looping every later read.
+                if op.src == op.node_id or op.src in graph.downstream_of(op.node_id):
+                    raise ValueError(f"connect {op.src}->{op.node_id} would create a cycle")
+                # The voice_ref port is the consent chokepoint: only a
+                # consented voice-sample asset may feed a cloning backend, so
+                # an image (or any un-affirmed node) can never be wired in.
+                if op.port == VOICE_REF_PORT:
+                    src_node = graph.nodes.get(op.src)
+                    if (
+                        src_node is None
+                        or src_node.kind is not NodeKind.ASSET
+                        or not src_node.params.get("voice_consent")
+                    ):
+                        raise ValueError("voice_ref accepts only a consented voice-sample asset")
                 graph.edges = [
                     e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
                 ]

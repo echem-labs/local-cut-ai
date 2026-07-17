@@ -56,7 +56,7 @@ from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
-from ..service import ProjectService
+from ..service import ConflictError, ProjectService
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,11 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     )
                 )
             case "chatterbox":
-                registry.register(ChatterboxBackend(models_dir=config.resolved_models_dir))
+                registry.register(
+                    ChatterboxBackend(
+                        models_dir=config.resolved_models_dir, ffmpeg_bin=config.ffmpeg_bin
+                    )
+                )
             case "kokoro":
                 registry.register(
                     KokoroBackend(
@@ -452,7 +456,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
             # The model or its transport failed us, not the client.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-        result = await asyncio.to_thread(service.apply_edit_plan, project_id, plan, body.scope)
+        try:
+            result = await asyncio.to_thread(
+                service.apply_edit_plan, project_id, plan, body.scope, view.get("revision")
+            )
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"summary": plan.summary, **result}
 
     class RegenerateBody(BaseModel):

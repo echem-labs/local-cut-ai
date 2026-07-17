@@ -145,6 +145,7 @@ def graph_view(graph: StoryGraph, scope: str = "project") -> dict:
         for node_id in ("music", "timeline", "export", "thumbnail"):
             if node_id in graph.nodes:
                 view[node_id] = node_view(node_id)
+    view["revision"] = graph_revision(graph)
     return view
 
 
@@ -205,11 +206,16 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
                 warnings.append(f"{label}: unknown scene {sid!r}")
                 continue
             if key == "transitions":
-                if entry in _TRANSITIONS:
+                # `entry in _TRANSITIONS` hashes entry — a list/dict from the
+                # model would raise TypeError, so gate on str first.
+                if isinstance(entry, str) and entry in _TRANSITIONS:
                     clean[sid] = entry
                 else:
                     warnings.append(f"{label}[{sid}]: must be one of {sorted(_TRANSITIONS)}")
             elif key == "trims":
+                if not isinstance(entry, dict):
+                    warnings.append(f"{label}[{sid}]: must be an object with in/out")
+                    continue
                 try:
                     trim = {k: max(0.0, float(entry[k])) for k in ("in", "out") if entry.get(k)}
                 except (TypeError, ValueError):
@@ -224,15 +230,54 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
     return _clean_text(value, _MAX_TEXT, warnings, label)
 
 
+_TIMELINE_MAPS = ("overlays", "trims", "transitions")
+
+
 def _scrub_removed(params: dict, removed: set[str]) -> dict:
     """Timeline params with every reference to the removed scenes dropped."""
     scrubbed: dict[str, Any] = {}
     if isinstance(order := params.get("order"), list):
         scrubbed["order"] = [s for s in order if s not in removed]
-    for key in ("trims", "transitions", "overlays"):
+    for key in _TIMELINE_MAPS:
         if isinstance(entries := params.get(key), dict):
             scrubbed[key] = {s: v for s, v in entries.items() if s not in removed}
     return scrubbed
+
+
+def _merge_timeline(existing: dict, updates: dict) -> dict:
+    """Fold the plan's timeline edits onto the live timeline params PER SCENE.
+    set_params replaces a whole key, so a plan touching one scene's overlay
+    must carry the others' forward or they vanish; a null overlay clears just
+    that scene. `order` is a full-list replacement (already sanitized)."""
+    merged: dict[str, Any] = {}
+    for key, value in updates.items():
+        if key in _TIMELINE_MAPS and isinstance(value, dict):
+            base = dict(existing.get(key) or {})
+            for sid, entry in value.items():
+                if key == "overlays" and entry is None:
+                    base.pop(sid, None)  # clear this title only
+                else:
+                    base[sid] = entry
+            merged[key] = base
+        else:
+            merged[key] = value
+    return merged
+
+
+def graph_revision(graph: StoryGraph) -> str:
+    """A short digest of the graph's node identities and params. An edit is
+    compiled against a view of this graph; if a background script job
+    re-expands it (which renumbers scenes positionally) between view and
+    apply, the digest changes and the stale edit is refused rather than
+    landing on content the model never saw."""
+    import hashlib
+    import json
+
+    payload = sorted(
+        (nid, node.kind.value, json.dumps(node.params, sort_keys=True, default=str))
+        for nid, node in graph.nodes.items()
+    )
+    return hashlib.sha256(json.dumps(payload).encode()).hexdigest()[:16]
 
 
 def compile_edits(
@@ -255,6 +300,10 @@ def compile_edits(
                 warnings.append(f"remove_scene: unknown scene {sid!r}")
             elif len(scene_ids - removed - {sid}) < 1:
                 warnings.append(f"remove_scene {sid!r}: cannot remove the only remaining scene")
+            elif any(graph.nodes[n].pinned for n in graph.nodes if n.startswith(f"{sid}.")):
+                # remove_scene must honor pins exactly like update does — a
+                # locked scene isn't silently deleted by an edit.
+                warnings.append(f"remove_scene {sid!r}: scene has a pinned node")
             else:
                 removed.add(sid)
             continue
@@ -291,12 +340,20 @@ def compile_edits(
             PatchOp(op="remove_node", node_id=member)
             for member in sorted(n for n in graph.nodes if n.startswith(f"{sid}."))
         )
-    timeline_params = dict(updates.get("timeline") or {})
+    existing_timeline = graph.nodes["timeline"].params if "timeline" in graph.nodes else {}
+    # Per-scene merge so a plan touching one scene's overlay/trim/transition
+    # doesn't wipe the others (set_params replaces a whole key).
+    timeline_params = _merge_timeline(existing_timeline, updates.get("timeline") or {})
     if removed and "timeline" in graph.nodes:
         # Scrub after the plan's own timeline edits so a reorder that also
         # removes a scene doesn't resurrect it from the pre-edit params.
-        merged = {**graph.nodes["timeline"].params, **timeline_params}
+        merged = {**existing_timeline, **timeline_params}
         timeline_params.update(_scrub_removed(merged, removed))
     if timeline_params:
-        ops.append(PatchOp(op="set_params", node_id="timeline", params=timeline_params))
+        if "timeline" in graph.nodes and graph.nodes["timeline"].pinned:
+            # A pinned timeline serves its frozen EDL; scrubbing its params
+            # would only diverge saved state from render. Leave it be.
+            warnings.append("timeline is pinned; skipped timeline edits")
+        else:
+            ops.append(PatchOp(op="set_params", node_id="timeline", params=timeline_params))
     return ops, warnings

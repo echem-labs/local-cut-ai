@@ -65,16 +65,39 @@ export function Inspector() {
     ? isClip || ["script", "thumbnail"].includes(selectedNode) || selectedNode.endsWith(".keyframe")
     : false;
 
-  // Re-seed from the server value only when the selection changes — board
-  // refreshes must not clobber in-progress typing.
+  // Re-seed node-owned fields whenever their SERVER value moves — on
+  // selection change AND when an NL edit or script re-expansion rewrites the
+  // selected node. Keying on the values (not just selectedNode) means a
+  // board refresh that changed nothing leaves in-progress typing alone,
+  // while a genuine server change is picked up instead of being silently
+  // reverted the next time Apply diffs against it.
   useEffect(() => {
     setPrompt(String(node?.params.prompt ?? node?.params.text ?? node?.params.brief ?? ""));
-    setSeed(node ? String(node.seed) : "");
     setModel(node?.model ?? "");
     setMotion(String(node?.params.motion ?? ""));
     setVoice(String(node?.params.voice ?? ""));
     setSpeed(node?.params.speed != null ? String(node.params.speed) : "1.0");
     setDuration(node?.params.duration_s != null ? String(node.params.duration_s) : "");
+    setSeed(node ? String(node.seed) : "");
+    // Deps are the server VALUES (not just selectedNode) on purpose: that is
+    // what makes typing survive a no-op refresh yet a real server change land.
+  }, [
+    selectedNode,
+    node?.params.prompt,
+    node?.params.text,
+    node?.params.brief,
+    node?.model,
+    node?.params.motion,
+    node?.params.voice,
+    node?.params.speed,
+    node?.params.duration_s,
+    node?.seed,
+  ]);
+
+  // Trim/overlay live on the timeline node and are edited optimistically, so
+  // they re-seed only on selection change (a self-inflicted board refresh
+  // must not fight the field the user is typing into).
+  useEffect(() => {
     const trims = (timelineParams?.trims ?? {}) as Record<
       string,
       { in?: number; out?: number } | undefined
@@ -85,13 +108,6 @@ export function Inspector() {
     setTrimOut(trim?.out != null ? String(trim.out) : "");
     setOverlay(sceneId ? String(overlays[sceneId] ?? "") : "");
   }, [selectedNode]);
-
-  // Re-sync the seed only when the server value itself moved (New seed,
-  // NL edit): an unchanged-seed refresh must not clobber a half-typed one,
-  // and a stale field must not silently revert a regeneration on Apply.
-  useEffect(() => {
-    setSeed(node ? String(node.seed) : "");
-  }, [node?.seed]);
 
   if (!node) return null;
 

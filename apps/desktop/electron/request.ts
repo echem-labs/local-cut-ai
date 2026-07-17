@@ -1,24 +1,73 @@
 /**
  * Main-process HTTP to the engine. The renderer's requests ride Chromium
- * (where `certificate-error` handles pinning); the shell's own calls
- * (health checks, provider-key PUTs) go through Node, so the self-signed
- * remote certificate must be pinned here explicitly: verification is
- * BY FINGERPRINT — matching pin passes, anything else fails, CA validity
- * is irrelevant either way.
+ * (pinned in main.ts's `certificate-error` handler); the shell's own calls
+ * (health checks, provider-key PUTs) go through Node here.
+ *
+ * Pinning a self-signed cert in Node is NOT done with `checkServerIdentity`
+ * — that hook only runs after CA-chain verification succeeds, which it never
+ * does for a self-signed cert, so with `rejectUnauthorized:false` it is
+ * skipped entirely and nothing is checked. Instead we capture the engine's
+ * exact certificate once at pair time (verifying its fingerprint against the
+ * trusted pairing code), then pass that PEM as the sole `ca`. Every later
+ * request runs full verification against that one cert — real pinning, so an
+ * on-path attacker presenting any other cert is rejected before the bearer
+ * token or any provider key leaves this process.
  */
 import http from "node:http";
 import https from "node:https";
-import type { PeerCertificate } from "node:tls";
+import tls from "node:tls";
 
 export interface EngineTarget {
   url: string;
   token: string;
   fingerprint?: string;
+  cert?: string; // pinned PEM, captured at pair time
 }
 
 export interface EngineResponse {
   status: number;
   body: string;
+}
+
+const derToPem = (der: Buffer): string =>
+  `-----BEGIN CERTIFICATE-----\n${(der.toString("base64").match(/.{1,64}/g) ?? []).join(
+    "\n",
+  )}\n-----END CERTIFICATE-----\n`;
+
+/**
+ * Open a bare TLS handshake to the engine (no request bytes, no token),
+ * capture its leaf certificate, and confirm its SHA-256 fingerprint equals
+ * the one carried by the trusted pairing code. Returns the certificate as
+ * PEM to pin. Rejects on any mismatch — so a MITM's cert is caught before a
+ * single authenticated byte is sent.
+ */
+export function capturePinnedCert(target: EngineTarget): Promise<string> {
+  const url = new URL(target.url);
+  // SNI with an IP literal is disallowed by RFC 6066 (Node warns); we pin the
+  // exact cert regardless, so omit servername for IP hosts.
+  const isIp = /^[\d.]+$/.test(url.hostname) || url.hostname.includes(":");
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect(
+      {
+        host: url.hostname,
+        port: Number(url.port),
+        ...(isIp ? {} : { servername: url.hostname }),
+        rejectUnauthorized: false,
+      },
+      () => {
+        const cert = socket.getPeerCertificate();
+        socket.end();
+        const fingerprint = (cert.fingerprint256 ?? "").replace(/:/g, "").toLowerCase();
+        if (!cert.raw || !target.fingerprint || fingerprint !== target.fingerprint) {
+          reject(new Error("engine certificate does not match the pairing — re-pair the engine"));
+          return;
+        }
+        resolve(derToPem(cert.raw));
+      },
+    );
+    socket.on("error", reject);
+    socket.setTimeout(10_000, () => socket.destroy(new Error("engine handshake timed out")));
+  });
 }
 
 export function engineRequest(
@@ -28,6 +77,10 @@ export function engineRequest(
 ): Promise<EngineResponse> {
   const url = new URL(path, `${target.url}/`);
   const secure = url.protocol === "https:";
+  if (secure && !target.cert) {
+    // Refuse to send the token over an unpinned TLS channel.
+    return Promise.reject(new Error("remote engine certificate is not pinned yet"));
+  }
   const headers: Record<string, string> = { Authorization: `Bearer ${target.token}` };
   if (init?.body) headers["Content-Type"] = "application/json";
 
@@ -39,21 +92,11 @@ export function engineRequest(
         headers,
         ...(secure
           ? {
-              // Pin, don't chain: the engine's certificate is self-signed by
-              // design, so CA verification is off and identity is decided
-              // during the handshake — before any request byte (or the
-              // bearer token) leaves this process.
-              rejectUnauthorized: false,
-              checkServerIdentity: (_host: string, cert: PeerCertificate) => {
-                const fingerprint = (cert.fingerprint256 ?? "")
-                  .replace(/:/g, "")
-                  .toLowerCase();
-                return target.fingerprint && fingerprint === target.fingerprint
-                  ? undefined
-                  : new Error(
-                      "engine certificate does not match the pairing — re-pair the engine",
-                    );
-              },
+              // Pin to the captured cert: it becomes the only trusted CA, so
+              // verification passes iff the engine presents that exact cert.
+              // Hostname is irrelevant once the cert itself is pinned.
+              ca: [target.cert as string],
+              checkServerIdentity: () => undefined,
             }
           : {}),
       },

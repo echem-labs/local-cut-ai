@@ -459,3 +459,44 @@ async def test_voice_samples_are_consent_gated(client):
     image = await client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]
+
+
+async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypatch):
+    """If the graph is re-expanded (scene renumbering) while the LLM is
+    thinking, the stale plan must 409, not land on content it never saw."""
+    from localcut_engine.backends.llm import LLMScriptBackend
+
+    created = await client.post("/projects", json={"prompt": "stale test"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+
+    # The LLM "thinks" — and during that window the project is patched, which
+    # moves the revision the view was built against.
+    async def edit_during_which_graph_changes(self, prompt, system):
+        await client.post(
+            f"/projects/{pid}/patch",
+            json={
+                "ops": [
+                    {"op": "set_params", "node_id": "s1.keyframe", "params": {"prompt": "moved"}}
+                ]
+            },
+        )
+        return json.dumps(
+            {
+                "summary": "x",
+                "edits": [
+                    {"action": "update", "node_id": "s1.narration", "params": {"text": "late"}}
+                ],
+            }
+        )
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", edit_during_which_graph_changes)
+    response = await client.post(f"/projects/{pid}/edit", json={"instruction": "change it"})
+    assert response.status_code == 409
+    assert "changed" in response.json()["detail"]
