@@ -35,10 +35,22 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
             case "set_model":
                 graph.nodes[op.node_id].model = op.model
             case "pin":
-                graph.nodes[op.node_id].pinned = True
+                node = graph.nodes[op.node_id]
+                node.pinned = True
+                # Snapshot the output identity now (seeding already-frozen
+                # pins so chained pins compose): the freeze must survive any
+                # amount of job history and upstream edits.
+                memo = {
+                    nid: n.frozen_hash
+                    for nid, n in graph.nodes.items()
+                    if n.pinned and n.frozen_hash
+                }
+                node.frozen_hash = graph.output_hash(op.node_id, memo)
                 continue  # pinning dirties nothing
             case "unpin":
-                graph.nodes[op.node_id].pinned = False
+                node = graph.nodes[op.node_id]
+                node.pinned = False
+                node.frozen_hash = None
                 continue
             case "add_node":
                 if op.node is None:

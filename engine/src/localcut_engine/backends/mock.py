@@ -7,10 +7,10 @@ all exercised for real.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
+from ..aspects import DEFAULT_ASPECT
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from ..schema import Scene, Screenplay
@@ -58,28 +58,25 @@ def mock_screenplay(prompt: str, target_duration_s: int, aspect: str, seed: int)
     )
 
 
+_PROGRESS_STEPS = 4
+
+
 class MockBackend(ExecutionBackend):
     name = "mock"
-
-    def __init__(self, step_delay_s: float = 0.0, steps: int = 4) -> None:
-        self.step_delay_s = step_delay_s
-        self.steps = steps
 
     def supports(self, kind: NodeKind) -> bool:
         return kind in _SUFFIX
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        for step in range(self.steps):
-            if self.step_delay_s:
-                await asyncio.sleep(self.step_delay_s)
-            await ctx.progress((step + 1) / self.steps)
+        for step in range(_PROGRESS_STEPS):
+            await ctx.progress((step + 1) / _PROGRESS_STEPS)
 
         out = ctx.output_path(spec.output_hash, _SUFFIX[spec.kind])
         if spec.kind is NodeKind.SCRIPT:
             screenplay = mock_screenplay(
                 prompt=str(spec.params.get("prompt", "")),
                 target_duration_s=int(spec.params.get("target_duration_s", 60)),
-                aspect=str(spec.params.get("aspect", "16:9")),
+                aspect=str(spec.params.get("aspect", DEFAULT_ASPECT)),
                 seed=spec.seed,
             )
             out.write_text(screenplay.model_dump_json(indent=2))

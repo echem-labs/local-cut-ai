@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { NodeState } from "../api/types";
 import { useApp } from "../store";
 
 /** Right drawer, exists only when something is selected.
@@ -12,12 +13,16 @@ export function Inspector() {
       ? [
           ...board.scenes.flatMap((s) => [s.keyframe, s.clip, s.narration]),
           ...Object.values(board.aux),
-        ].find((n) => n.node_id === selectedNode)
+        ]
+          .filter((n): n is NodeState => n !== null)
+          .find((n) => n.node_id === selectedNode)
       : undefined;
 
+  // Re-seed from the server value only when the selection changes — board
+  // refreshes must not clobber in-progress typing.
   useEffect(() => {
     setPrompt(String(node?.params.prompt ?? node?.params.text ?? ""));
-  }, [selectedNode, node]);
+  }, [selectedNode]);
 
   if (!node) return null;
 

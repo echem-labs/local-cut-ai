@@ -10,6 +10,7 @@ import pytest
 from localcut_engine.backends.base import BackendRegistry
 from localcut_engine.backends.mock import MockBackend
 from localcut_engine.events import EventBus
+from localcut_engine.graph.patch import PatchOp
 from localcut_engine.jobs.models import JobStatus
 from localcut_engine.jobs.queue import JobQueue
 from localcut_engine.jobs.scheduler import Scheduler
@@ -92,6 +93,64 @@ async def test_regenerate_only_dirties_one_scene(rig):
         f"{s['scene_id']}.clip" for s in board["scenes"] if s["scene_id"] != first_scene
     }
     assert not (new_node_ids & other_clips)
+
+
+async def test_finalize_enqueues_over_active_draft(tmp_path):
+    """Quality is excluded from the content hash, so the in-flight dedupe
+    must key on (hash, quality) — or finalize silently ships drafts."""
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)  # no scheduler: jobs stay queued
+    project = service.create_from_prompt("tide pools", target_duration_s=24)
+
+    assert len(queue.list(project.id, 100)) == 1  # draft script queued
+    assert service.finalize(project.id) == 1  # final not deduped away by the draft
+    qualities = {(j.spec.node_id, j.spec.quality) for j in queue.list(project.id, 100)}
+    assert qualities == {("script", "draft"), ("script", "final")}
+    # Same-quality re-enqueue is still deduped.
+    graph = store.load_graph(project.id)
+    assert service._enqueue_dirty(project.id, graph) == 0
+
+
+async def test_cancel_project_stops_inflight_jobs(tmp_path):
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)  # no scheduler: jobs stay queued
+    p1 = service.create_from_prompt("one")
+    p2 = service.create_from_prompt("two")
+
+    assert service.delete(p1.id)
+    assert store.get(p1.id) is None
+    assert all(j.status is JobStatus.CANCELLED for j in queue.list(p1.id, 100))
+    assert all(j.status is JobStatus.QUEUED for j in queue.list(p2.id, 100))
+
+
+async def test_script_regenerate_applies_new_screenplay(rig):
+    """The re-run's screenplay must land in the scene nodes — not re-render
+    the old content while the new script is discarded."""
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools at noon", target_duration_s=24)
+
+    def export_hash():
+        return service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash")
+
+    await wait_for(lambda: bool(export_hash()))
+    board = service.scene_board(project.id)
+    old_text = board["scenes"][0]["narration"]["params"]["text"]
+
+    # A new prompt yields a different mock screenplay on the script re-run.
+    service.patch(
+        project.id,
+        [PatchOp(op="set_params", node_id="script", params={"prompt": "volcanoes at dawn"})],
+    )
+    await wait_for(
+        lambda: service.scene_board(project.id)["scenes"][0]["narration"]["params"]["text"]
+        != old_text
+    )
+    board = service.scene_board(project.id)
+    assert "volcanoes at dawn" in board["scenes"][0]["narration"]["params"]["text"]
 
 
 async def test_queue_recovers_interrupted_jobs(tmp_path):

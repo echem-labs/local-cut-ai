@@ -5,26 +5,20 @@ import json
 import pathlib
 
 import pytest
+from conftest import make_spec
 
 from localcut_engine.backends.comfyui import ComfyUIBackend
 from localcut_engine.backends.kokoro import pick_voice
-from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
-
-
-def spec_for(kind: NodeKind, params: dict, seed: int = 7) -> JobSpec:
-    return JobSpec(
-        node_id="n", kind=kind, output_hash="a" * 64,
-        params=params, model=None, seed=seed, input_hashes={},
-    )
 
 
 def test_clip_workflow_respects_ltx_constraints():
     backend = ComfyUIBackend()
-    spec = spec_for(
+    spec = make_spec(
         NodeKind.CLIP,
         {"prompt": 'a "quoted" prompt\nwith newline', "motion": "slow push-in",
          "aspect": "9:16", "duration_s": 4.5},
+        seed=7,
     )
     workflow = backend._fill_workflow(spec, keyframe_name="kf.png")
     i2v = workflow["img_to_video"]["inputs"]
@@ -37,7 +31,7 @@ def test_clip_workflow_respects_ltx_constraints():
 
 def test_oom_ladder_scale_keeps_dimensions_valid():
     backend = ComfyUIBackend()
-    spec = spec_for(
+    spec = make_spec(
         NodeKind.CLIP,
         {"prompt": "x", "aspect": "9:16", "duration_s": 5, "resolution_scale": 0.5},
     )
@@ -50,7 +44,7 @@ def test_oom_ladder_scale_keeps_dimensions_valid():
 def test_keyframe_workflow_uses_image_resolution():
     backend = ComfyUIBackend()
     workflow = backend._fill_workflow(
-        spec_for(NodeKind.KEYFRAME, {"prompt": "octopus", "aspect": "9:16"}), None
+        make_spec(NodeKind.KEYFRAME, {"prompt": "octopus", "aspect": "9:16"}), None
     )
     latent = workflow["latent"]["inputs"]
     assert (latent["width"], latent["height"]) == (768, 1344)
@@ -59,7 +53,7 @@ def test_keyframe_workflow_uses_image_resolution():
 def test_music_workflow_gets_brief_and_seconds():
     backend = ComfyUIBackend(kinds="keyframe,thumbnail,clip,music")
     workflow = backend._fill_workflow(
-        spec_for(NodeKind.MUSIC, {"brief": "lofi upbeat", "target_duration_s": 32}), None
+        make_spec(NodeKind.MUSIC, {"brief": "lofi upbeat", "target_duration_s": 32}), None
     )
     assert workflow["latent"]["inputs"]["seconds"] == 32.0
     assert "lofi upbeat" in workflow["positive"]["inputs"]["tags"]
@@ -96,7 +90,7 @@ def test_all_packaged_templates_are_valid_json():
 def test_prompt_containing_placeholder_tokens_stays_literal():
     """User text must never be re-substituted by later placeholders."""
     backend = ComfyUIBackend()
-    spec = spec_for(
+    spec = make_spec(
         NodeKind.CLIP,
         {"prompt": "render %%KEYFRAME%% and %%SEED%% literally", "motion": "pan",
          "aspect": "9:16", "duration_s": 4},
@@ -112,7 +106,7 @@ def test_zero_duration_rejected():
     from localcut_engine.backends.base import GenerationError
 
     backend = ComfyUIBackend()
-    spec = spec_for(NodeKind.CLIP, {"prompt": "x", "aspect": "9:16", "duration_s": 0})
+    spec = make_spec(NodeKind.CLIP, {"prompt": "x", "aspect": "9:16", "duration_s": 0})
     with pytest.raises(GenerationError, match="invalid duration"):
         backend._fill_workflow(spec, keyframe_name="kf.png")
 
@@ -138,3 +132,43 @@ def test_scene_ids_are_canonicalized_on_expansion():
     }
     # Narration order preserved: s1 is the first scene as authored.
     assert graph.nodes["s1.narration"].params["text"] == "a"
+
+
+def test_reexpansion_applies_new_screenplay():
+    """A regenerated script must actually land: params updated in place,
+    surplus scenes dropped, user state (seed/pin) preserved."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("topic")
+    expand_screenplay(graph, Screenplay(title="t", scenes=[
+        Scene(id="a", duration_s=4, narration="one", visual="v1"),
+        Scene(id="b", duration_s=4, narration="two", visual="v2"),
+    ]))
+    graph.nodes["s1.keyframe"].seed = 99  # user state must survive re-runs
+    graph.nodes["s1.clip"].pinned = True
+
+    expand_screenplay(graph, Screenplay(title="t", scenes=[
+        Scene(id="x", duration_s=4, narration="uno", visual="w1"),
+    ]))
+    assert graph.nodes["s1.narration"].params["text"] == "uno"
+    assert graph.nodes["s1.keyframe"].params["prompt"].startswith("w1")
+    assert graph.nodes["s1.keyframe"].seed == 99
+    assert graph.nodes["s1.clip"].pinned
+    assert "s2.clip" not in graph.nodes
+    assert not any("s2" in (e.src.split(".")[0], e.dst.split(".")[0]) for e in graph.edges)
+
+
+def test_expansion_uses_requested_aspect_over_llm_echo():
+    """The user's aspect is authoritative; the LLM echo (or its 16:9 schema
+    default when omitted) must not override it."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("topic", aspect="9:16")
+    expand_screenplay(graph, Screenplay(title="t", scenes=[
+        Scene(id="a", duration_s=4, narration="n", visual="v"),
+    ]))  # screenplay.aspect defaults to "16:9"
+    assert graph.nodes["s1.keyframe"].params["aspect"] == "9:16"
+    assert graph.nodes["s1.clip"].params["aspect"] == "9:16"
+    assert graph.nodes["export"].params["aspect"] == "9:16"

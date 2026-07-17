@@ -16,17 +16,27 @@ from pathlib import Path
 import httpx
 import websockets
 
-from ..aspects import IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
+from ..aspects import DEFAULT_ASPECT, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
-from ..graph.model import NodeKind
+from ..graph.model import KEYFRAME_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError
 
 _OOM_MARKERS = ("out of memory", "cuda oom", "allocation failed")
 
-# Placeholders _fill_workflow substitutes into workflow templates. Exported
-# so template-validity tests iterate the same table the code uses.
-PLACEHOLDERS = ("%%PROMPT%%", "%%SEED%%", "%%WIDTH%%", "%%HEIGHT%%",
-                "%%KEYFRAME%%", "%%FRAMES%%", "%%SECONDS%%")
+# The one substitution table: (token, json_quoted). Order matters —
+# %%PROMPT%% is last so user text can never be rewritten by later
+# replacements. _fill_workflow and the template-validity tests both derive
+# from this, so the two cannot drift.
+_SUBSTITUTIONS = (
+    ("%%SEED%%", True),
+    ("%%WIDTH%%", True),
+    ("%%HEIGHT%%", True),
+    ("%%KEYFRAME%%", False),
+    ("%%FRAMES%%", True),
+    ("%%SECONDS%%", True),
+    ("%%PROMPT%%", False),
+)
+PLACEHOLDERS = tuple(token for token, _ in _SUBSTITUTIONS)
 
 # A workflow that produces no websocket message for this long is considered
 # wedged; the job fails instead of starving the GPU-serial scheduler forever.
@@ -69,7 +79,7 @@ class ComfyUIBackend(ExecutionBackend):
     def _fill_workflow(self, spec: JobSpec, keyframe_name: str | None) -> dict:
         """Load the workflow template and substitute %%PLACEHOLDERS%%."""
         text = self._template_path(spec).read_text()
-        aspect = str(spec.params.get("aspect", "16:9"))
+        aspect = str(spec.params.get("aspect", DEFAULT_ASPECT))
         is_video = spec.kind is NodeKind.CLIP
         table = VIDEO_RESOLUTIONS if is_video else IMAGE_RESOLUTIONS
         divisor = 32 if is_video else 8  # LTX latents need /32 dims
@@ -92,28 +102,26 @@ class ComfyUIBackend(ExecutionBackend):
             raise GenerationError(f"invalid duration for {spec.node_id}: {duration_raw!r}")
         # LTX frame counts must be 8n+1.
         frames = max(9, round(duration_s * 24 / 8) * 8 + 1)
-        # %%PROMPT%% substitutes LAST: user text may contain placeholder
-        # tokens, and substituting it first would let later replacements
-        # rewrite the user's prompt (or corrupt the workflow JSON).
-        replacements = {
-            '"%%SEED%%"': str(spec.seed),
-            '"%%WIDTH%%"': str(width),
-            '"%%HEIGHT%%"': str(height),
+        values = {
+            "%%SEED%%": str(spec.seed),
+            "%%WIDTH%%": str(width),
+            "%%HEIGHT%%": str(height),
             "%%KEYFRAME%%": keyframe_name or "",
-            '"%%FRAMES%%"': str(frames),
-            '"%%SECONDS%%"': str(duration_s),
+            "%%FRAMES%%": str(frames),
+            "%%SECONDS%%": str(duration_s),
             "%%PROMPT%%": json.dumps(prompt)[1:-1],  # JSON-escaped, no quotes
         }
-        for placeholder, value in replacements.items():
-            text = text.replace(placeholder, value)
+        for token, quoted in _SUBSTITUTIONS:
+            text = text.replace(f'"{token}"' if quoted else token, values[token])
         return json.loads(text)
 
     async def _upload_input(self, client: httpx.AsyncClient, path: Path) -> str:
         """Upload a conditioning image (I2V keyframe); returns the server-side
         name to reference from a LoadImage node."""
+        payload_bytes = await asyncio.to_thread(path.read_bytes)
         response = await client.post(
             f"{self.base_url}/upload/image",
-            files={"image": (path.name, path.read_bytes(), "image/png")},
+            files={"image": (path.name, payload_bytes, "image/png")},
             data={"overwrite": "true"},
         )
         if response.status_code != 200:
@@ -125,7 +133,7 @@ class ComfyUIBackend(ExecutionBackend):
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         async with httpx.AsyncClient(timeout=60) as client:
             keyframe_name = None
-            keyframe = ctx.input_artifacts.get("keyframe")
+            keyframe = ctx.input_artifacts.get(KEYFRAME_PORT)
             if keyframe is not None and spec.kind is NodeKind.CLIP:
                 keyframe_name = await self._upload_input(client, keyframe)
             workflow = self._fill_workflow(spec, keyframe_name)
@@ -141,20 +149,32 @@ class ComfyUIBackend(ExecutionBackend):
                 if response.status_code != 200:
                     raise GenerationError(f"ComfyUI rejected workflow: {response.text[:500]}")
                 prompt_id = response.json()["prompt_id"]
-                await self._stream_progress(ws, prompt_id, ctx)
-        return await self._collect_output(prompt_id, spec, ctx)
+                finished = await self._stream_progress(ws, prompt_id, ctx)
+        # A dropped socket is not a failed render: keep polling history for
+        # as long as the inactivity watchdog would have allowed.
+        return await self._collect_output(
+            prompt_id, spec, ctx, deadline_s=1.0 if finished else INACTIVITY_TIMEOUT_S
+        )
 
-    async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> None:
+    async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> bool:
+        """Consume events until the workflow finishes (True) or the socket
+        drops mid-run (False — history polling takes over)."""
         while True:
             try:
                 raw = await asyncio.wait_for(ws.recv(), timeout=INACTIVITY_TIMEOUT_S)
             except TimeoutError as exc:
+                if await self._queue_state(prompt_id) == "pending":
+                    # Waiting behind someone else's work on a shared server —
+                    # ComfyUI only sends execution events to the owning
+                    # client, so silence here is not a wedge.
+                    continue
+                await self._cancel_prompt(prompt_id)
                 raise GenerationError(
                     f"ComfyUI produced no events for {INACTIVITY_TIMEOUT_S}s — "
                     "the workflow appears wedged"
                 ) from exc
             except websockets.ConnectionClosed:
-                return  # socket gone — fall through to history collection
+                return False
             if isinstance(raw, bytes):
                 continue  # preview frames — forwarded in a later phase
             message = json.loads(raw)
@@ -175,35 +195,92 @@ class ComfyUIBackend(ExecutionBackend):
                 and data.get("node") is None
                 and data.get("prompt_id") == prompt_id
             ):
-                return  # workflow finished
+                return True  # workflow finished
 
-    async def _collect_output(self, prompt_id: str, spec: JobSpec, ctx: ExecutionContext) -> Path:
+    async def _queue_state(self, prompt_id: str) -> str | None:
+        """'pending' | 'running' | None, from ComfyUI's queue endpoint."""
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                payload = (await client.get(f"{self.base_url}/queue")).json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        for state, key in (("running", "queue_running"), ("pending", "queue_pending")):
+            for item in payload.get(key, []):
+                if len(item) > 1 and item[1] == prompt_id:
+                    return state
+        return None
+
+    async def _cancel_prompt(self, prompt_id: str) -> None:
+        """Best-effort server-side cancel — a failed job must not leave an
+        orphaned prompt occupying the GPU behind the scheduler's back."""
+        try:
+            state = await self._queue_state(prompt_id)
+            async with httpx.AsyncClient(timeout=10) as client:
+                if state == "pending":
+                    await client.post(f"{self.base_url}/queue", json={"delete": [prompt_id]})
+                elif state == "running":
+                    await client.post(f"{self.base_url}/interrupt")
+        except httpx.HTTPError:
+            pass
+
+    async def _collect_output(
+        self, prompt_id: str, spec: JobSpec, ctx: ExecutionContext, deadline_s: float = 10.0
+    ) -> Path:
         async with httpx.AsyncClient(timeout=30) as client:
-            for _ in range(50):
+            history = None
+            deadline = asyncio.get_running_loop().time() + deadline_s
+            while True:
                 response = await client.get(f"{self.base_url}/history/{prompt_id}")
                 history = response.json().get(prompt_id)
                 if history:
                     break
-                await asyncio.sleep(0.2)
-            else:
-                raise GenerationError("ComfyUI produced no history for the workflow")
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise GenerationError("ComfyUI produced no history for the workflow")
+                if deadline_s > 10.0 and await self._queue_state(prompt_id) is None:
+                    # Socket-drop recovery: the prompt is neither queued nor
+                    # running and produced no history — it is genuinely gone.
+                    raise GenerationError(
+                        "ComfyUI dropped the workflow without producing output"
+                    )
+                await asyncio.sleep(0.2 if deadline_s <= 10.0 else 2.0)
 
+            # Previews/temps are not artifacts; video kinds prefer video
+            # containers, music prefers audio.
+            preference = {
+                NodeKind.CLIP: ("videos", "gifs"),
+                NodeKind.MUSIC: ("audio",),
+            }.get(spec.kind, ("images",))
+            candidates: list[tuple[str, dict]] = []
             for node_output in history.get("outputs", {}).values():
                 for key in ("images", "gifs", "videos", "audio"):
                     for item in node_output.get(key, []):
-                        params = {
-                            "filename": item["filename"],
-                            "subfolder": item.get("subfolder", ""),
-                            "type": item.get("type", "output"),
-                        }
-                        file_response = await client.get(f"{self.base_url}/view", params=params)
-                        if file_response.status_code != 200:
-                            raise GenerationError(
-                                f"ComfyUI /view returned {file_response.status_code} "
-                                f"for {item['filename']}"
-                            )
-                        suffix = Path(item["filename"]).suffix or ".bin"
-                        out = ctx.output_path(spec.output_hash, suffix)
-                        out.write_bytes(file_response.content)
-                        return out
-        raise GenerationError("ComfyUI workflow finished without a retrievable output")
+                        if item.get("type", "output") == "output":
+                            candidates.append((key, item))
+            item = next(
+                (entry for key, entry in candidates if key in preference),
+                candidates[0][1] if candidates else None,
+            )
+            if item is None:
+                raise GenerationError(
+                    "ComfyUI workflow finished without a retrievable output"
+                )
+
+            params = {
+                "filename": item["filename"],
+                "subfolder": item.get("subfolder", ""),
+                "type": item.get("type", "output"),
+            }
+            suffix = Path(item["filename"]).suffix or ".bin"
+            out = ctx.output_path(spec.output_hash, suffix)
+            async with client.stream(
+                "GET", f"{self.base_url}/view", params=params
+            ) as file_response:
+                if file_response.status_code != 200:
+                    raise GenerationError(
+                        f"ComfyUI /view returned {file_response.status_code} "
+                        f"for {item['filename']}"
+                    )
+                with out.open("wb") as handle:
+                    async for chunk in file_response.aiter_bytes(1 << 20):
+                        await asyncio.to_thread(handle.write, chunk)
+            return out

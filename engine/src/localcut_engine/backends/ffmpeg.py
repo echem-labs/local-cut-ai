@@ -17,7 +17,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from ..aspects import EXPORT_RESOLUTIONS, resolution_for
+from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
 from ..graph.model import (
     DEFAULT_PORT,
@@ -61,21 +61,29 @@ class FFmpegBackend(ExecutionBackend):
     # -- timeline: an explicit edit decision list (JSON) -----------------------
 
     def _build_timeline(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        def rel(path: Path | None) -> str | None:
+            # EDLs are cached artifacts inside the .lcut dir: paths must stay
+            # relative to generated/ or relocating the project bricks export.
+            if path is None:
+                return None
+            p = Path(path)
+            return p.name if p.parent == ctx.output_dir else str(p)
+
         narration = {
-            port.removesuffix(SCENE_AUDIO_SUFFIX): str(path)
+            port.removesuffix(SCENE_AUDIO_SUFFIX): rel(path)
             for port, path in ctx.input_artifacts.items()
             if port.endswith(SCENE_AUDIO_SUFFIX)
         }
         scenes = sorted(
             (
-                (port, str(path))
+                (port, rel(path))
                 for port, path in ctx.input_artifacts.items()
                 if not port.endswith(SCENE_AUDIO_SUFFIX) and port != MUSIC_PORT
             ),
             key=lambda item: scene_sort_key(item[0]),
         )
         timeline = {
-            "aspect": spec.params.get("aspect", "16:9"),
+            "aspect": spec.params.get("aspect", DEFAULT_ASPECT),
             "video": [
                 {
                     "scene": port,
@@ -85,7 +93,7 @@ class FFmpegBackend(ExecutionBackend):
                 }
                 for port, src in scenes
             ],
-            "music": str(ctx.input_artifacts.get(MUSIC_PORT, "")),
+            "music": rel(ctx.input_artifacts.get(MUSIC_PORT)) or "",
             "music_volume": MUSIC_BED_VOLUME,
         }
         out = ctx.output_path(spec.output_hash, ".timeline.json")
@@ -106,16 +114,28 @@ class FFmpegBackend(ExecutionBackend):
         if timeline_path is None or not Path(timeline_path).exists():
             raise GenerationError("export job is missing its timeline input")
         timeline = json.loads(Path(timeline_path).read_text())
+
+        def resolve(src: str | None) -> Path | None:
+            # EDL v3 stores names relative to generated/; absolute paths are
+            # tolerated for EDLs cached by older builds.
+            if not src:
+                return None
+            p = Path(src)
+            return p if p.is_absolute() else ctx.output_dir / p
+
         segments = timeline["video"]
         if not segments:
             raise GenerationError("timeline has no video segments")
-        lost = [s["scene"] for s in segments if not Path(s["src"]).exists()]
+        for segment in segments:
+            segment["src"] = resolve(segment["src"])
+            segment["narration"] = resolve(segment.get("narration"))
+        lost = [s["scene"] for s in segments if not s["src"].exists()]
         if lost:
             # Never silently ship a shorter video: a referenced clip that
             # vanished is corruption, and regenerating it is the fix.
             raise GenerationError(f"clip artifacts missing for scenes: {lost}")
 
-        width, height = resolution_for(EXPORT_RESOLUTIONS, timeline.get("aspect", "16:9"))
+        width, height = resolution_for(EXPORT_RESOLUTIONS, timeline.get("aspect"))
         encoder = await self._pick_encoder()
         # Never under generated/ — everything there is treated as an artifact.
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
@@ -148,11 +168,11 @@ class FFmpegBackend(ExecutionBackend):
             )
 
             out = ctx.output_path(spec.output_hash, ".mp4")
-            music = timeline.get("music", "")
-            if music and await self._probe_duration(Path(music)) is not None:
+            music = resolve(timeline.get("music", ""))
+            if music is not None and await self._probe_duration(music) is not None:
                 volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
                 await self._run(
-                    "-i", str(cut), "-stream_loop", "-1", "-i", music,
+                    "-i", str(cut), "-stream_loop", "-1", "-i", str(music),
                     "-filter_complex",
                     f"[1:a]volume={volume}[m];"
                     "[0:a][m]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[a]",
@@ -161,7 +181,9 @@ class FFmpegBackend(ExecutionBackend):
                     str(out),
                 )
             else:
-                await self._run("-i", str(cut), "-c", "copy", str(out))
+                # Same container either side — the no-music path is a rename,
+                # not a remux.
+                shutil.move(str(cut), str(out))
         finally:
             shutil.rmtree(work, ignore_errors=True)
         await ctx.progress(1.0)
@@ -171,7 +193,7 @@ class FFmpegBackend(ExecutionBackend):
         self, segment: dict, out: Path, width: int, height: int, encoder: str
     ) -> Path:
         """One scene: video trimmed/looped to narration length + padding."""
-        clip = segment["src"]
+        clip = str(segment["src"])
         clip_duration = await self._probe_duration(Path(clip))
         if clip_duration is None:
             raise GenerationError(f"scene {segment.get('scene')}: clip is not decodable media")
@@ -253,12 +275,17 @@ class FFmpegBackend(ExecutionBackend):
         if self._encoder is None:
             # No libx264: GPL encoders are excluded by the licensing policy.
             for candidate in ("h264_nvenc", "libopenh264", "mpeg4"):
-                process = await asyncio.create_subprocess_exec(
-                    self.ffmpeg_bin, "-y", "-hide_banner",
-                    "-f", "lavfi", "-i", "color=black:size=256x256:duration=0.1",
-                    "-frames:v", "1", "-c:v", candidate, "-f", "null", "-",
-                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                )
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        self.ffmpeg_bin, "-y", "-hide_banner",
+                        "-f", "lavfi", "-i", "color=black:size=256x256:duration=0.1",
+                        "-frames:v", "1", "-c:v", candidate, "-f", "null", "-",
+                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                    )
+                except FileNotFoundError as exc:
+                    raise GenerationError(
+                        f"ffmpeg binary not found: {self.ffmpeg_bin}"
+                    ) from exc
                 await process.communicate()
                 if process.returncode == 0:
                     self._encoder = candidate

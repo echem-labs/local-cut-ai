@@ -32,6 +32,3 @@ class Screenplay(BaseModel):
     aspect: str = "16:9"
     style: SceneStyle = SceneStyle()
     scenes: list[Scene] = []
-
-    def scene(self, scene_id: str) -> Scene | None:
-        return next((s for s in self.scenes if s.id == scene_id), None)

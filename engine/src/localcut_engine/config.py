@@ -9,7 +9,7 @@ import os
 import secrets
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 
 class EngineConfig(BaseModel):
@@ -17,7 +17,10 @@ class EngineConfig(BaseModel):
     port: int = 7830
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))
     data_dir: Path = Field(default_factory=lambda: Path.home() / ".localcut")
-    models_dir: Path | None = None  # defaulted to <data_dir>/models by the validator
+    # None = <data_dir>/models, derived lazily: materializing it eagerly
+    # would freeze the default into model_dump() and break rebuilding the
+    # config with a different data_dir (the CLI override path).
+    models_dir: Path | None = None
     # Comma-separated backend chain, first match wins per node kind.
     # Shorthands: "mock", "local" (= llm,comfy,kokoro,ffmpeg). A trailing
     # "mock" makes a hybrid: real backends where available, mock for the rest.
@@ -28,12 +31,6 @@ class EngineConfig(BaseModel):
     llm_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3:14b"
     ffmpeg_bin: str = "ffmpeg"
-
-    @model_validator(mode="after")
-    def _default_models_dir(self) -> EngineConfig:
-        if self.models_dir is None:
-            self.models_dir = self.data_dir / "models"
-        return self
 
     @classmethod
     def from_env(cls) -> EngineConfig:
@@ -54,8 +51,7 @@ class EngineConfig(BaseModel):
 
     @property
     def resolved_models_dir(self) -> Path:
-        assert self.models_dir is not None  # set by the validator
-        return self.models_dir
+        return self.models_dir if self.models_dir is not None else self.data_dir / "models"
 
     @property
     def backend_chain(self) -> list[str]:

@@ -12,7 +12,6 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
-from ..providers.base import TextGen
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
@@ -33,7 +32,6 @@ class LLMScriptBackend(ExecutionBackend):
         self,
         base_url: str = "http://127.0.0.1:11434/v1",
         model: str = "qwen3:14b",
-        cloud_provider: TextGen | None = None,
         unload_after: bool = True,
     ) -> None:
         base = base_url.rstrip("/")
@@ -42,7 +40,6 @@ class LLMScriptBackend(ExecutionBackend):
         self.root_url = base.removesuffix("/v1")
         self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
-        self.cloud_provider = cloud_provider
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
         # before image/video jobs run (LLM → unload → image batch).
         self.unload_after = unload_after
@@ -57,13 +54,16 @@ class LLMScriptBackend(ExecutionBackend):
             f"Aspect: {spec.params.get('aspect', '9:16')}\n"
             f"Style preset: {spec.params.get('style_preset', 'cinematic')}"
         )
-        use_cloud = spec.model is not None and spec.model.startswith("cloud:")
-        if use_cloud and self.cloud_provider is not None:
-            raw = await self.cloud_provider.complete(system=_SYSTEM_PROMPT, prompt=prompt)
-        else:
-            raw = await self._local_complete(prompt)
-            if self.unload_after:
-                await self._unload()
+        if spec.model is not None and spec.model.startswith("cloud:"):
+            # Never fall back to the local model silently — the user asked
+            # for cloud quality and would believe they got it.
+            raise GenerationError(
+                f"cloud model {spec.model!r} requested but no cloud provider is "
+                "configured (BYOK providers arrive in a later phase)"
+            )
+        raw = await self._local_complete(prompt)
+        if self.unload_after:
+            await self._unload()
         await ctx.progress(0.9)
 
         screenplay = self._parse_screenplay(raw)

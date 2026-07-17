@@ -12,7 +12,14 @@ export interface Project {
   mode: string;
 }
 
-export type NodeStatus = "queued" | "rendering" | "draft" | "final" | "failed" | "pinned";
+export type NodeStatus =
+  | "queued"
+  | "rendering"
+  | "draft"
+  | "final"
+  | "failed"
+  | "cancelled"
+  | "pinned";
 
 export interface NodeState {
   node_id: string;
@@ -26,9 +33,10 @@ export interface NodeState {
 
 export interface SceneCardModel {
   scene_id: string;
-  keyframe: NodeState;
+  // keyframe/narration can be removed via remove_node patches; clip never is.
+  keyframe: NodeState | null;
   clip: NodeState;
-  narration: NodeState;
+  narration: NodeState | null;
 }
 
 export interface Board {

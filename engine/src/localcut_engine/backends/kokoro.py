@@ -37,12 +37,22 @@ def pick_voice(brief: str) -> str:
     return _DEFAULT_VOICE
 
 
+# Fallbacks when no manifest is available; normally the dests come from the
+# kokoro-82m manifest entry so a manifest update moves the probe with it.
+_DEFAULT_DESTS = ("tts/kokoro-v1.0.onnx", "tts/voices-v1.0.bin")
+
+
 class KokoroBackend(ExecutionBackend):
     name = "kokoro"
 
-    def __init__(self, models_dir: Path) -> None:
-        self.model_path = models_dir / "tts" / "kokoro-v1.0.onnx"
-        self.voices_path = models_dir / "tts" / "voices-v1.0.bin"
+    def __init__(self, models_dir: Path, file_dests: list[str] | None = None) -> None:
+        dests = file_dests or list(_DEFAULT_DESTS)
+        self.model_path = models_dir / next(
+            (d for d in dests if d.endswith(".onnx")), _DEFAULT_DESTS[0]
+        )
+        self.voices_path = models_dir / next(
+            (d for d in dests if d.endswith(".bin")), _DEFAULT_DESTS[1]
+        )
         self._engine = None
         self._lock = asyncio.Lock()
 

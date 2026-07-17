@@ -6,7 +6,7 @@ import { useApp } from "./store";
 
 /** One window, one persistent left rail. */
 export default function App() {
-  const { connect, currentProject, closeProject } = useApp();
+  const { connect, currentProject, closeProject, engineError } = useApp();
 
   useEffect(() => {
     void connect();
@@ -26,7 +26,10 @@ export default function App() {
         <button disabled title="Phase 1">Assets</button>
         <button disabled title="Phase 1">Export</button>
       </nav>
-      <main className="content">{currentProject ? <Project /> : <Home />}</main>
+      <main className="content">
+        {engineError && <div className="banner error">{engineError}</div>}
+        {currentProject ? <Project /> : <Home />}
+      </main>
       <QueueTray />
     </div>
   );

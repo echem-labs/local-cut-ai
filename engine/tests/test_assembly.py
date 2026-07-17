@@ -5,8 +5,10 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
+from conftest import make_spec
 
 from localcut_engine.backends.base import ExecutionContext
 from localcut_engine.backends.ffmpeg import FFmpegBackend
@@ -45,13 +47,6 @@ def media(tmp_path):
     }
 
 
-def spec_for(kind: NodeKind, params: dict | None = None) -> JobSpec:
-    return JobSpec(
-        node_id=kind.value, kind=kind, output_hash="e" * 64,
-        params=params or {}, model=None, seed=0, input_hashes={},
-    )
-
-
 async def test_timeline_and_export_narration_drives_timing(tmp_path, media):
     backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
     out_dir = tmp_path / "generated"
@@ -65,7 +60,7 @@ async def test_timeline_and_export_narration_drives_timing(tmp_path, media):
         },
     )
     timeline_path = await backend.execute(
-        spec_for(NodeKind.TIMELINE, {"aspect": "9:16"}), timeline_ctx
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}), timeline_ctx
     )
     timeline = json.loads(timeline_path.read_text())
     assert [seg["scene"] for seg in timeline["video"]] == ["s1", "s2"]
@@ -109,7 +104,7 @@ async def test_export_skips_placeholder_music(tmp_path, media):
                          "music": fake_music},
     )
     timeline_path = await backend.execute(
-        spec_for(NodeKind.TIMELINE, {"aspect": "1:1"}), timeline_ctx
+        make_spec(NodeKind.TIMELINE, {"aspect": "1:1"}), timeline_ctx
     )
     export_ctx = ExecutionContext(
         output_dir=out_dir, input_artifacts={"default": timeline_path}
@@ -120,3 +115,33 @@ async def test_export_skips_placeholder_music(tmp_path, media):
         export_ctx,
     )
     assert (await backend._probe_duration(out)) is not None  # still a valid video
+
+
+async def test_edl_paths_survive_project_relocation(tmp_path, media):
+    """Artifacts referenced by a cached EDL live in generated/ — the EDL must
+    store them relative to it, or moving/restoring a project bricks export."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    out_dir.mkdir()
+    clip = Path(shutil.copy(media["clip1"], out_dir / "aa.mp4"))
+    narr = Path(shutil.copy(media["narr2"], out_dir / "bb.wav"))
+
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}, output_hash="e" * 64),
+        ExecutionContext(
+            output_dir=out_dir, input_artifacts={"s1": clip, "s1.audio": narr}
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    assert edl["video"][0]["src"] == "aa.mp4"  # relative, not absolute
+
+    relocated = tmp_path / "restored-elsewhere"
+    shutil.move(str(out_dir), str(relocated))
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="d" * 64),
+        ExecutionContext(
+            output_dir=relocated,
+            input_artifacts={"default": relocated / timeline_path.name},
+        ),
+    )
+    assert (await backend._probe_duration(out)) is not None

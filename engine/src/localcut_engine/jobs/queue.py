@@ -5,11 +5,16 @@ are requeued (the render was interrupted).
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .models import Job, JobStatus
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -34,13 +39,25 @@ class JobQueue:
     def _recover_interrupted(self) -> None:
         with self._lock, self._db:
             rows = self._db.execute(
-                "SELECT payload FROM jobs WHERE status = ?", (JobStatus.RENDERING,)
+                "SELECT id, payload FROM jobs WHERE status = ?", (JobStatus.RENDERING,)
             ).fetchall()
-            for (payload,) in rows:
-                job = Job.model_validate_json(payload)
+            for job_id, payload in rows:
+                try:
+                    job = Job.model_validate_json(payload)
+                except ValidationError:
+                    self._poison(job_id)
+                    continue
                 job.status = JobStatus.QUEUED
                 job.progress = 0.0
                 self._write(job)
+
+    def _poison(self, job_id: str) -> None:
+        """A payload this build can't parse (schema skew, disk damage) must
+        fail visibly instead of wedging the queue."""
+        logger.error("job %s has an unreadable payload; marking failed", job_id)
+        self._db.execute(
+            "UPDATE jobs SET status = ? WHERE id = ?", (JobStatus.FAILED, job_id)
+        )
 
     def _write(self, job: Job) -> None:
         self._db.execute(
@@ -58,12 +75,19 @@ class JobQueue:
         self.put(job)
 
     def next_queued(self) -> Job | None:
-        with self._lock:
-            row = self._db.execute(
-                "SELECT payload FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1",
-                (JobStatus.QUEUED,),
-            ).fetchone()
-        return Job.model_validate_json(row[0]) if row else None
+        while True:
+            with self._lock:
+                row = self._db.execute(
+                    "SELECT id, payload FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1",
+                    (JobStatus.QUEUED,),
+                ).fetchone()
+            if row is None:
+                return None
+            try:
+                return Job.model_validate_json(row[1])
+            except ValidationError:
+                with self._lock, self._db:
+                    self._poison(row[0])
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
@@ -81,6 +105,16 @@ class JobQueue:
             rows = self._db.execute(query, (*params, limit)).fetchall()
         return [Job.model_validate_json(r[0]) for r in rows]
 
+    def active(self, project_id: str) -> list[Job]:
+        """Queued/rendering jobs only — indexed, so callers that just need
+        the in-flight set skip hydrating the whole history."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM jobs WHERE project_id = ? AND status IN (?, ?)",
+                (project_id, JobStatus.QUEUED, JobStatus.RENDERING),
+            ).fetchall()
+        return [Job.model_validate_json(r[0]) for r in rows]
+
     def cancel(self, job_id: str) -> bool:
         job = self.get(job_id)
         if job is None or job.status not in (JobStatus.QUEUED, JobStatus.RENDERING):
@@ -89,12 +123,13 @@ class JobQueue:
         self.update(job)
         return True
 
-    def counts(self) -> dict[str, int]:
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT status, COUNT(*) FROM jobs GROUP BY status"
-            ).fetchall()
-        return {status: count for status, count in rows}
+    def cancel_project(self, project_id: str) -> int:
+        """Cancel every in-flight job of a project (project deletion)."""
+        jobs = self.active(project_id)
+        for job in jobs:
+            job.status = JobStatus.CANCELLED
+            self.update(job)
+        return len(jobs)
 
     def close(self) -> None:
         self._db.close()

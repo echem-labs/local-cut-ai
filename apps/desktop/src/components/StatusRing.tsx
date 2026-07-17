@@ -6,6 +6,7 @@ const COLORS: Record<NodeStatus, string> = {
   draft: "var(--status-draft)",
   final: "var(--status-final)",
   failed: "var(--status-failed)",
+  cancelled: "var(--text-tertiary)",
   pinned: "var(--status-pinned)",
 };
 

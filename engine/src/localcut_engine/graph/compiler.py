@@ -25,6 +25,10 @@ EXECUTABLE_KINDS = {
     NodeKind.THUMBNAIL,
 }
 
+# Kinds whose output differs between draft and final quality: finalize
+# re-renders these even when a draft artifact is cached.
+QUALITY_SENSITIVE_KINDS = {NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT}
+
 
 class JobSpec(BaseModel):
     node_id: str

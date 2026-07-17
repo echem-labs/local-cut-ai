@@ -83,6 +83,28 @@ def test_pin_dirties_nothing():
     assert g.nodes["kf"].pinned
 
 
+def test_pin_snapshots_output_identity_on_the_node():
+    """The freeze must not depend on job history (which is windowed): the
+    hash is captured on the node at pin time and cleared on unpin."""
+    g = small_graph()
+    expected = g.output_hash("kf")
+    apply_patch(g, [PatchOp(op="pin", node_id="kf")])
+    assert g.nodes["kf"].frozen_hash == expected
+    # An upstream edit must not move the snapshot.
+    apply_patch(g, [PatchOp(op="set_params", node_id="script", params={"prompt": "new"})])
+    assert g.nodes["kf"].frozen_hash == expected
+    apply_patch(g, [PatchOp(op="unpin", node_id="kf")])
+    assert g.nodes["kf"].frozen_hash is None
+
+
+def test_node_ids_are_constrained():
+    """Patch bodies must not smuggle in ids the API's path params reject."""
+    with pytest.raises(ValueError):
+        Node(id=".leading-dot", kind=NodeKind.CLIP)
+    with pytest.raises(ValueError):
+        Node(id="a" * 200, kind=NodeKind.CLIP)
+
+
 def test_template_expansion_builds_full_pipeline():
     g = prompt_template_graph("why octopuses have three hearts", target_duration_s=40)
     screenplay = mock_screenplay("why octopuses have three hearts", 40, "9:16", seed=0)

@@ -107,6 +107,39 @@ def test_backend_chain_parsing_and_composition(tmp_path):
         _build_backends(EngineConfig(data_dir=tmp_path, backend="bogus"))
 
 
+async def test_create_project_validates_aspect_and_duration(client):
+    # Unknown aspects silently render as the default one downstream; bad
+    # durations only fail later as opaque job errors — both must 422 here.
+    bad_aspect = await client.post("/projects", json={"prompt": "x", "aspect": "4:3"})
+    assert bad_aspect.status_code == 422
+    bad_duration = await client.post(
+        "/projects", json={"prompt": "x", "target_duration_s": 0}
+    )
+    assert bad_duration.status_code == 422
+
+
+async def test_patch_input_errors_are_422_not_500(client):
+    created = await client.post("/projects", json={"prompt": "x"})
+    pid = created.json()["id"]
+    # add_node without a node body raises ValueError in apply_patch.
+    response = await client.post(
+        f"/projects/{pid}/patch",
+        json={"ops": [{"op": "add_node", "node_id": "extra"}]},
+    )
+    assert response.status_code == 422
+
+
+def test_data_dir_override_relocates_models_dir(tmp_path, monkeypatch):
+    """The CLI rebuilds the config from from_env().model_dump() + overrides;
+    a --data-dir override must carry the derived models_dir with it."""
+    monkeypatch.delenv("LOCALCUT_DATA_DIR", raising=False)
+    monkeypatch.delenv("LOCALCUT_MODELS_DIR", raising=False)
+    merged = EngineConfig(
+        **{**EngineConfig.from_env().model_dump(), "data_dir": tmp_path / "elsewhere"}
+    )
+    assert merged.resolved_models_dir == tmp_path / "elsewhere" / "models"
+
+
 async def test_manifest_default_slate_is_downloadable(client):
     """Every default model a backend error message points at must actually
     be fetchable: entries for tasks we ship backends for need files[]."""

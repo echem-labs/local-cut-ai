@@ -24,7 +24,7 @@ async function createWindow(): Promise<void> {
   if (devUrl) {
     await window.loadURL(devUrl);
   } else {
-    await window.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    await window.loadFile(path.join(__dirname, "..", "..", "dist", "index.html"));
   }
 }
 

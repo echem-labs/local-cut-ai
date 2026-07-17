@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "LocalCut AI desktop shell — Electron + React frontend for the LocalCut engine",
-  "main": "dist-electron/main.js",
+  "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
     "dev": "concurrently -k \"vite\" \"npm:dev:electron\"",

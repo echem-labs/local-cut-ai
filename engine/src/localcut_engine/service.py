@@ -6,12 +6,15 @@ rest of the pipeline is enqueued.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from pathlib import Path
 
+from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
-from .graph.compiler import compile_graph
-from .graph.model import NodeKind, StoryGraph, scene_sort_key
+from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
+from .graph.model import OPTIONAL_PORTS, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
 from .graph.templates import expand_screenplay, prompt_template_graph
 from .jobs.models import Job, JobStatus
@@ -24,11 +27,21 @@ logger = logging.getLogger(__name__)
 
 
 class ProjectService:
-    def __init__(self, store: ProjectStore, queue: JobQueue, events: EventBus) -> None:
+    def __init__(
+        self,
+        store: ProjectStore,
+        queue: JobQueue,
+        events: EventBus,
+        backends: BackendRegistry | None = None,
+    ) -> None:
         self.store = store
         self.queue = queue
         self.events = events
+        self.backends = backends  # cache trust: who renders which kind now
         self.scheduler: Scheduler | None = None  # attached by the app factory
+        # Handlers run off the event loop; graph read-modify-write cycles
+        # must not interleave.
+        self._lock = threading.Lock()
 
     # -- creation ----------------------------------------------------------
 
@@ -46,43 +59,57 @@ class ProjectService:
             aspect=aspect,
             style_preset=style_preset,
         )
-        project = self.store.create(title=prompt, graph=graph)
-        self._enqueue_dirty(project.id, graph)
+        with self._lock:
+            project = self.store.create(title=prompt, graph=graph)
+            self._enqueue_dirty(project.id, graph)
         return project
 
     # -- editing -----------------------------------------------------------
 
     def patch(self, project_id: str, ops: list[PatchOp]) -> set[str]:
-        graph = self.store.load_graph(project_id)
-        dirty = apply_patch(graph, ops)
-        self.store.save_graph(project_id, graph)
-        if dirty:
-            self._enqueue_dirty(project_id, graph)
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            dirty = apply_patch(graph, ops)
+            self.store.save_graph(project_id, graph)
+            if dirty:
+                self._enqueue_dirty(project_id, graph)
         return dirty
 
     def regenerate(self, project_id: str, node_id: str, seed: int | None = None) -> None:
-        graph = self.store.load_graph(project_id)
-        node = graph.nodes[node_id]
-        node.seed = seed if seed is not None else node.seed + 1
-        self.store.save_graph(project_id, graph)
-        self._enqueue_dirty(project_id, graph)
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            node = graph.nodes[node_id]
+            node.seed = seed if seed is not None else node.seed + 1
+            self.store.save_graph(project_id, graph)
+            self._enqueue_dirty(project_id, graph)
 
     def finalize(self, project_id: str) -> int:
         """Draft → final ladder: re-render at target quality."""
-        graph = self.store.load_graph(project_id)
-        return self._enqueue_dirty(project_id, graph, quality="final")
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            return self._enqueue_dirty(project_id, graph, quality="final")
+
+    def delete(self, project_id: str) -> bool:
+        """Remove the project and stop its in-flight work — otherwise the
+        scheduler keeps rendering into (and recreating) the deleted dir."""
+        with self._lock:
+            self.queue.cancel_project(project_id)
+            return self.store.delete(project_id)
 
     # -- compile & enqueue ---------------------------------------------------
 
     def _frozen_pins(
-        self, project_id: str, graph: StoryGraph, jobs: list[Job]
+        self, graph: StoryGraph, jobs: list[Job], cached: set[str]
     ) -> dict[str, str]:
-        """Pinned node id → output hash of its newest completed artifact.
-        Derived from job history (persistent), so pins survive restarts and
-        upstream edits alike. `jobs` is the caller's newest-first job list —
-        listed once and shared to avoid re-reading the queue."""
+        """Pinned node id → output hash of its frozen artifact. The hash
+        snapshotted on the node at pin time is authoritative (it survives any
+        amount of job history); pre-snapshot graphs fall back to the newest
+        completed job. Either way the artifact must still exist."""
         frozen: dict[str, str] = {}
-        for job in jobs:  # newest first
+        for node_id, node in graph.nodes.items():
+            if node.pinned and node.frozen_hash and node.frozen_hash in cached:
+                frozen[node_id] = node.frozen_hash
+        for job in jobs:  # newest first — legacy fallback
             node = graph.nodes.get(job.spec.node_id)
             if (
                 node is not None
@@ -90,38 +117,60 @@ class ProjectService:
                 and job.spec.node_id not in frozen
                 and job.status is JobStatus.DONE
                 and job.artifact
-                and self.store.resolve_artifact(project_id, job.spec.output_hash) is not None
+                and job.spec.output_hash in cached
             ):
                 frozen[job.spec.node_id] = job.spec.output_hash
         return frozen
 
+    def _distrusted_hashes(self, history: list[Job], cached: set[str]) -> set[str]:
+        """Cached hashes whose newest producer is no longer the backend that
+        would render that kind today (e.g. mock placeholders after switching
+        to a real chain) must re-render, not get served as artifacts."""
+        if self.backends is None:
+            return set()
+        distrusted: set[str] = set()
+        seen: set[str] = set()
+        for job in history:  # newest first wins per hash
+            out_hash = job.spec.output_hash
+            if job.status is not JobStatus.DONE or out_hash in seen:
+                continue
+            seen.add(out_hash)
+            if job.backend is None or out_hash not in cached:
+                continue  # pre-tracking history stays trusted
+            try:
+                expected = self.backends.resolve(job.spec.kind).name
+            except GenerationError:
+                continue
+            if job.backend != expected:
+                distrusted.add(out_hash)
+        return distrusted
+
     def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
         cached = self.store.cached_hashes(project_id)
         history = self.queue.list(project_id, 1000)
-        frozen = self._frozen_pins(project_id, graph, history)
+        cached -= self._distrusted_hashes(history, cached)
+        frozen = self._frozen_pins(graph, history, cached)
         if quality == "final":
             # Finals re-render generation nodes even when a draft is cached;
             # quality is part of the job, not the node hash, so drop cached
-            # entries for clip-class nodes (pinned/frozen ones stay).
+            # entries for quality-sensitive nodes (pinned/frozen ones stay).
             memo: dict[str, str] = dict(frozen)
             clip_hashes = {
                 graph.output_hash(n, memo)
                 for n, node in graph.nodes.items()
-                if node.kind in (NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT)
-                and not node.pinned
+                if node.kind in QUALITY_SENSITIVE_KINDS and not node.pinned
             }
             cached -= clip_hashes
         plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
 
-        # Skip nodes that already have an identical job in flight.
-        active_hashes = {
-            job.spec.output_hash
-            for job in history
-            if job.status in (JobStatus.QUEUED, JobStatus.RENDERING)
+        # Skip nodes that already have an identical job in flight — quality
+        # included, so finalize still enqueues finals over active drafts.
+        active = {
+            (job.spec.output_hash, job.spec.quality) for job in self.queue.active(project_id)
         }
         enqueued = 0
         for spec in plan.jobs:
-            if spec.output_hash in active_hashes:
+            if (spec.output_hash, spec.quality) in active:
                 continue
             self.queue.put(Job(project_id=project_id, spec=spec))
             enqueued += 1
@@ -133,31 +182,75 @@ class ProjectService:
     # -- scheduler hook ------------------------------------------------------
 
     async def on_job_done(self, job: Job) -> None:
-        if job.spec.kind is not NodeKind.SCRIPT or job.artifact is None:
+        # Graph IO + recompiles are blocking; keep them off the event loop
+        # that streams progress.
+        await asyncio.to_thread(self._on_job_done_sync, job)
+
+    def _on_job_done_sync(self, job: Job) -> None:
+        if job.spec.kind is NodeKind.SCRIPT and job.artifact is not None:
+            with self._lock:
+                graph = self.store.load_graph(job.project_id)
+                screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
+                # Idempotent: first run builds the subgraphs, re-runs patch
+                # the new screenplay into the existing nodes.
+                expand_screenplay(graph, screenplay)
+                self.store.save_graph(job.project_id, graph)
+                self.events.publish(
+                    "project.expanded",
+                    project_id=job.project_id,
+                    scenes=[s.id for s in screenplay.scenes],
+                )
+                self._enqueue_dirty(job.project_id, graph)
             return
+        with self._lock:
+            self._heal_optional_consumers(job)
+
+    def _heal_optional_consumers(self, job: Job) -> None:
+        """A consumer that ran while this node's artifact was missing (only
+        possible through an optional port) cached output built without it —
+        under a hash that already includes this input, so nothing would ever
+        re-render it. Drop those artifacts and recompile."""
         graph = self.store.load_graph(job.project_id)
-        if "timeline" in graph.nodes:
-            return  # already expanded (script re-runs patch scenes separately, v2)
-        screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
-        expand_screenplay(graph, screenplay)
-        self.store.save_graph(job.project_id, graph)
-        self.events.publish(
-            "project.expanded",
-            project_id=job.project_id,
-            scenes=[s.id for s in screenplay.scenes],
-        )
-        self._enqueue_dirty(job.project_id, graph)
+        if job.spec.node_id not in graph.nodes:
+            return
+        optional_dsts = [
+            e.dst
+            for e in graph.edges
+            if e.src == job.spec.node_id and e.port in OPTIONAL_PORTS and e.dst in graph.nodes
+        ]
+        if not optional_dsts:
+            return
+        cached = self.store.cached_hashes(job.project_id)
+        history = self.queue.list(job.project_id, 1000)
+        memo = dict(self._frozen_pins(graph, history, cached))
+        stale: set[str] = set()
+        for dst in optional_dsts:
+            if graph.output_hash(dst, memo) in cached:
+                stale.add(dst)
+                stale |= graph.downstream_of(dst)
+        dropped = 0
+        for node_id in stale:
+            if node_id in graph.nodes:
+                dropped += self.store.delete_artifacts(
+                    job.project_id, graph.output_hash(node_id, memo)
+                )
+        if dropped:
+            self._enqueue_dirty(job.project_id, graph)
 
     # -- read model for the UI ------------------------------------------------
 
     def scene_board(self, project_id: str) -> dict:
         """Scene cards + statuses, derived from graph × jobs × artifacts."""
+        with self._lock:
+            return self._scene_board(project_id)
+
+    def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
         history = self.queue.list(project_id, 1000)
         jobs = {job.spec.node_id: job for job in reversed(history)}
         cached = self.store.cached_hashes(project_id)
         # Frozen pins hash against their existing artifact (see compiler).
-        memo: dict[str, str] = dict(self._frozen_pins(project_id, graph, history))
+        memo: dict[str, str] = dict(self._frozen_pins(graph, history, cached))
 
         def node_state(node_id: str) -> dict | None:
             node = graph.nodes.get(node_id)
@@ -165,14 +258,20 @@ class ProjectService:
                 return None  # removed via patch — the card shows what's left
             job = jobs.get(node_id)
             out_hash = graph.output_hash(node_id, memo)
+            # In-flight work outranks a stale cached artifact: a queued
+            # final re-render must not read as already 'final'.
             if node.pinned:
                 status = "pinned"
-            elif out_hash in cached:
-                status = "final" if (job and job.spec.quality == "final") else "draft"
             elif job and job.status is JobStatus.RENDERING:
                 status = "rendering"
+            elif job and job.status is JobStatus.QUEUED:
+                status = "queued"
+            elif out_hash in cached:
+                status = "final" if (job and job.spec.quality == "final") else "draft"
             elif job and job.status is JobStatus.FAILED:
                 status = "failed"
+            elif job and job.status is JobStatus.CANCELLED:
+                status = "cancelled"
             else:
                 status = "queued"
             return {

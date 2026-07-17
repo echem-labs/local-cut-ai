@@ -3,17 +3,16 @@ model files are present (dev machines / self-hosted CI)."""
 
 import os
 import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
+from conftest import make_spec
 
 from localcut_engine.backends.base import ExecutionContext, GenerationError
+from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.backends.kokoro import KokoroBackend
+from localcut_engine.config import EngineConfig
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
-
-from localcut_engine.config import EngineConfig
 
 MODELS_DIR = EngineConfig.from_env().resolved_models_dir
 KOKORO_PRESENT = (MODELS_DIR / "tts" / "kokoro-v1.0.onnx").exists() and (
@@ -22,10 +21,11 @@ KOKORO_PRESENT = (MODELS_DIR / "tts" / "kokoro-v1.0.onnx").exists() and (
 
 
 def narration_spec(text: str) -> JobSpec:
-    return JobSpec(
-        node_id="s1.narration", kind=NodeKind.NARRATION, output_hash="b" * 64,
-        params={"text": text, "voice": "energetic narrator"},
-        model=None, seed=0, input_hashes={},
+    return make_spec(
+        NodeKind.NARRATION,
+        {"text": text, "voice": "energetic narrator"},
+        node_id="s1.narration",
+        output_hash="b" * 64,
     )
 
 
@@ -49,11 +49,8 @@ async def test_real_synthesis_produces_playable_wav(tmp_path):
         ExecutionContext(output_dir=tmp_path),
     )
     assert out.suffix == ".wav" and out.stat().st_size > 10_000
-    ffprobe = os.environ.get("LOCALCUT_FFMPEG_BIN")
-    ffprobe = str(Path(ffprobe).with_name("ffprobe")) if ffprobe else shutil.which("ffprobe")
-    if ffprobe:
-        duration = float(subprocess.run(
-            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(out)],
-            capture_output=True, text=True, check=True,
-        ).stdout.strip())
+    ffmpeg = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
+    if ffmpeg:
+        duration = await FFmpegBackend(ffmpeg_bin=ffmpeg)._probe_duration(out)
+        assert duration is not None
         assert 1.0 < duration < 15.0  # sane spoken length for one sentence

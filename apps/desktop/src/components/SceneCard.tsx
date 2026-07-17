@@ -7,19 +7,21 @@ import { StatusRing } from "./StatusRing";
 export function SceneCard({ scene }: { scene: SceneCardModel }) {
   const { client, currentProject, selectedNode, select, regenerate } = useApp();
   const clip = scene.clip;
-  const keyframeHash = scene.keyframe.artifact_hash;
-  const selected = selectedNode === clip.node_id || selectedNode === scene.keyframe.node_id;
-  const narrationText = String(scene.narration.params.text ?? "");
+  const keyframe = scene.keyframe;
+  const primary = keyframe ?? clip;
+  const keyframeHash = keyframe?.artifact_hash ?? null;
+  const selected = selectedNode === clip.node_id || selectedNode === keyframe?.node_id;
+  const narrationText = scene.narration ? String(scene.narration.params.text ?? "") : "";
 
   return (
     <div
       className={`scene-card ${selected ? "selected" : ""}`}
-      onClick={() => select(scene.keyframe.node_id)}
+      onClick={() => select(primary.node_id)}
       role="button"
       tabIndex={0}
       aria-label={`Scene ${scene.scene_id}, ${clip.status}`}
       onKeyDown={(event) => {
-        if (event.key === "Enter") select(scene.keyframe.node_id);
+        if (event.key === "Enter") select(primary.node_id);
         if (event.key.toLowerCase() === "r") void regenerate(clip.node_id);
       }}
     >
@@ -59,7 +61,7 @@ export function SceneCard({ scene }: { scene: SceneCardModel }) {
               aria-label="Edit prompt"
               onClick={(event) => {
                 event.stopPropagation();
-                select(scene.keyframe.node_id);
+                select(primary.node_id);
               }}
             >
               ✏️

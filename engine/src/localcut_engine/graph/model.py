@@ -29,7 +29,17 @@ CAPTIONS_PORT = "captions"
 
 # Input ports whose artifacts are optional for assembly: their absence
 # degrades the output (no music bed) instead of failing the job.
-OPTIONAL_PORTS = {MUSIC_PORT}
+# TIMING_PORT is listed for graphs expanded before the narration→clip edge
+# was dropped: no backend reads it, so it must never block a clip render.
+OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT}
+
+# Part of every timeline node's hash: bumping it invalidates cached EDLs
+# whenever their schema changes (v3: artifact paths relative to generated/).
+EDL_VERSION = 3
+
+# Node ids must stay addressable through the API's path params — the same
+# pattern guards both places.
+NODE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 
 
 def scene_sort_key(scene_id: str) -> tuple:
@@ -53,12 +63,15 @@ class NodeKind(StrEnum):
 
 
 class Node(BaseModel):
-    id: str
+    id: str = Field(pattern=NODE_ID_PATTERN)
     kind: NodeKind
     params: dict[str, Any] = Field(default_factory=dict)
     seed: int = 0
     model: str | None = None  # e.g. "local:wan2.2-i2v-14b-fp8" or "cloud:veo-3.1-fast"
     pinned: bool = False  # locked from regeneration
+    # Output identity captured at pin time; lives on the node so pins hold
+    # regardless of how much job history the project accumulates.
+    frozen_hash: str | None = None
 
     def fingerprint_payload(self) -> dict[str, Any]:
         return {

@@ -9,6 +9,7 @@ Rules enforced here, not by convention:
 
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -26,6 +27,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .. import ENGINE_API_VERSION, __version__
+from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.base import BackendRegistry
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -34,23 +36,36 @@ from ..backends.llm import LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..config import EngineConfig
 from ..events import EventBus
+from ..graph.model import NODE_ID_PATTERN
 from ..graph.patch import PatchOp
 from ..hardware.probe import probe_hardware
+from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.loader import load_manifest
 from ..manifest.recommend import recommend_slate
-from ..project.store import ProjectStore
+from ..project.store import PROJECT_ID_PATTERN, ProjectStore
 from ..service import ProjectService
 
 logger = logging.getLogger(__name__)
 
 # Path params are identifiers, never paths: reject anything that could act
 # as a filesystem component or glob before it reaches the store layer.
-ProjectId = Annotated[str, PathParam(pattern=r"^[a-f0-9]{10}$")]
-NodeId = Annotated[str, PathParam(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")]
+# Id patterns live next to their generators so the two cannot drift.
+ProjectId = Annotated[str, PathParam(pattern=PROJECT_ID_PATTERN)]
+NodeId = Annotated[str, PathParam(pattern=NODE_ID_PATTERN)]
 OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
-JobId = Annotated[str, PathParam(pattern=r"^[a-f0-9]{12}$")]
+JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
+
+
+def _kokoro_dests(config: EngineConfig) -> list[str] | None:
+    """Weight paths come from the manifest (single source of truth) so a
+    manifest dest bump can't strand the backend probing stale paths."""
+    try:
+        entry = next(m for m in load_manifest(config).models if m.id == "kokoro-82m")
+        return [f.dest for f in entry.files] or None
+    except (StopIteration, OSError, ValueError):
+        return None
 
 
 def _build_backends(config: EngineConfig) -> BackendRegistry:
@@ -74,7 +89,12 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     )
                 )
             case "kokoro":
-                registry.register(KokoroBackend(models_dir=config.resolved_models_dir))
+                registry.register(
+                    KokoroBackend(
+                        models_dir=config.resolved_models_dir,
+                        file_dests=_kokoro_dests(config),
+                    )
+                )
             case "ffmpeg":
                 registry.register(FFmpegBackend(ffmpeg_bin=config.ffmpeg_bin))
             case _:
@@ -89,10 +109,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     events = EventBus()
     store = ProjectStore(config.projects_dir)
     queue = JobQueue(config.queue_db)
-    service = ProjectService(store, queue, events)
+    backends = _build_backends(config)
+    service = ProjectService(store, queue, events, backends=backends)
     scheduler = Scheduler(
         queue=queue,
-        backends=_build_backends(config),
+        backends=backends,
         events=events,
         output_dir_for=store.generated_dir,
         resolve_artifact=store.resolve_artifact,
@@ -108,11 +129,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         queue.close()
 
     app = FastAPI(title="LocalCut Engine", version=__version__, lifespan=lifespan)
-    app.state.config = config
-    app.state.service = service
-    app.state.events = events
 
     # -- auth ---------------------------------------------------------------
+
+    def token_ok(presented: str | None) -> bool:
+        # Constant-time: the engine supports non-localhost binds, where a
+        # timing oracle on an early-exit compare would leak the token.
+        return presented is not None and secrets.compare_digest(presented, config.token)
 
     async def auth(
         authorization: Annotated[str | None, Header()] = None,
@@ -121,7 +144,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         presented = token
         if authorization and authorization.startswith("Bearer "):
             presented = authorization.removeprefix("Bearer ")
-        if presented != config.token:
+        if not token_ok(presented):
             raise HTTPException(status_code=401, detail="invalid or missing engine token")
 
     Authed = Depends(auth)
@@ -161,13 +184,23 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     class CreateProject(BaseModel):
         prompt: str = Field(min_length=1, max_length=4000)
-        target_duration_s: int = 60
+        # Bounds mirror the screenplay schema (scene duration gt=0 le=60):
+        # values outside them would only fail later as opaque job errors.
+        target_duration_s: int = Field(default=60, ge=5, le=600)
         aspect: str = "9:16"
         style_preset: str = "cinematic"
 
     @app.post("/projects", dependencies=[Authed])
     async def create_project(body: CreateProject) -> dict:
-        project = service.create_from_prompt(
+        if body.aspect not in EXPORT_RESOLUTIONS:
+            # An unknown aspect would silently render as the default one.
+            raise HTTPException(
+                status_code=422,
+                detail=f"unsupported aspect {body.aspect!r} — "
+                f"one of: {', '.join(sorted(EXPORT_RESOLUTIONS))}",
+            )
+        project = await asyncio.to_thread(
+            service.create_from_prompt,
             body.prompt,
             target_duration_s=body.target_duration_s,
             aspect=body.aspect,
@@ -188,10 +221,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.get("/projects/{project_id}", dependencies=[Authed])
     async def get_project(project_id: ProjectId) -> dict:
         project = _get_project(project_id)
-        return {
-            "project": project.model_dump(),
-            "board": service.scene_board(project_id),
-        }
+        # Board building reads sqlite + scans generated/ — keep it off the
+        # loop that serves /ws progress fan-out.
+        board = await asyncio.to_thread(service.scene_board, project_id)
+        return {"project": project.model_dump(), "board": board}
 
     @app.get("/projects/{project_id}/graph", dependencies=[Authed])
     async def get_graph(project_id: ProjectId) -> dict:
@@ -205,9 +238,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def patch_project(project_id: ProjectId, body: PatchBody) -> dict:
         _get_project(project_id)
         try:
-            dirty = service.patch(project_id, body.ops)
+            dirty = await asyncio.to_thread(service.patch, project_id, body.ops)
         except KeyError as exc:
             raise HTTPException(status_code=422, detail=f"unknown node: {exc}") from exc
+        except ValueError as exc:
+            # apply_patch input errors (duplicate id, missing node body) are
+            # the caller's fault, not a server fault.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"dirty": sorted(dirty)}
 
     class RegenerateBody(BaseModel):
@@ -217,7 +254,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def regenerate(project_id: ProjectId, node_id: NodeId, body: RegenerateBody) -> dict:
         _get_project(project_id)
         try:
-            service.regenerate(project_id, node_id, body.seed)
+            await asyncio.to_thread(service.regenerate, project_id, node_id, body.seed)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"unknown node: {exc}") from exc
         return {"ok": True}
@@ -225,11 +262,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId) -> dict:
         _get_project(project_id)
-        return {"enqueued": service.finalize(project_id)}
+        return {"enqueued": await asyncio.to_thread(service.finalize, project_id)}
 
     @app.delete("/projects/{project_id}", dependencies=[Authed])
     async def delete_project(project_id: ProjectId) -> dict:
-        if not store.delete(project_id):
+        # Via the service: in-flight jobs must be cancelled or the scheduler
+        # renders into (and recreates) the deleted directory.
+        if not await asyncio.to_thread(service.delete, project_id):
             raise HTTPException(status_code=404, detail="project not found")
         return {"ok": True}
 
@@ -237,7 +276,8 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/jobs", dependencies=[Authed])
     async def list_jobs(project_id: str | None = None) -> list[dict]:
-        return [j.model_dump() for j in queue.list(project_id)]
+        jobs = await asyncio.to_thread(queue.list, project_id)
+        return [j.model_dump() for j in jobs]
 
     @app.post("/jobs/{job_id}/cancel", dependencies=[Authed])
     async def cancel_job(job_id: JobId) -> dict:
@@ -259,7 +299,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.websocket("/ws")
     async def ws_events(websocket: WebSocket, token: str | None = None) -> None:
-        if token != config.token:
+        presented = token
+        authorization = websocket.headers.get("authorization", "")
+        if authorization.startswith("Bearer "):
+            presented = authorization.removeprefix("Bearer ")
+        if not token_ok(presented):
             await websocket.close(code=4401)
             return
         await websocket.accept()

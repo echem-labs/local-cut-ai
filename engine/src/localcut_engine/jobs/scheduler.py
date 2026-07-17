@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from ..backends.base import BackendRegistry, ExecutionContext, OOMError
+from ..backends.base import BackendRegistry, ExecutionContext, GenerationError, OOMError
 from ..graph.model import OPTIONAL_PORTS, NodeKind
 from ..events import EventBus
 from .models import Job, JobStatus
@@ -48,10 +48,13 @@ class Scheduler:
         self.on_job_done = on_job_done
         self._wakeup = asyncio.Event()
         self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._stopping = False
 
     def start(self) -> None:
-        self._task = asyncio.get_running_loop().create_task(self._run(), name="scheduler")
+        self._loop = asyncio.get_running_loop()
+        self.events.bind_to_running_loop()
+        self._task = self._loop.create_task(self._run(), name="scheduler")
 
     async def stop(self) -> None:
         self._stopping = True
@@ -60,16 +63,30 @@ class Scheduler:
             await self._task
 
     def notify(self) -> None:
-        """Call after enqueueing work."""
-        self._wakeup.set()
+        """Call after enqueueing work — safe from worker threads."""
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if self._loop is not None and running is not self._loop:
+            self._loop.call_soon_threadsafe(self._wakeup.set)
+        else:
+            self._wakeup.set()
 
     async def _run(self) -> None:
         while not self._stopping:
-            job = self.queue.next_queued()
+            try:
+                job = self.queue.next_queued()
+            except Exception:  # noqa: BLE001 — a bad row must not kill the loop
+                logger.exception("scheduler failed to read the queue; retrying")
+                await asyncio.sleep(5.0)
+                continue
             if job is None:
                 self._wakeup.clear()
                 try:
-                    await asyncio.wait_for(self._wakeup.wait(), timeout=2.0)
+                    # Every in-process enqueue calls notify(); the timeout only
+                    # covers out-of-process writers sharing the queue db.
+                    await asyncio.wait_for(self._wakeup.wait(), timeout=30.0)
                 except TimeoutError:
                     pass
                 continue
@@ -79,11 +96,23 @@ class Scheduler:
         job.status = JobStatus.RENDERING
         job.progress = 0.0
         job.started_at = time.time()
+        try:
+            job.backend = self.backends.resolve(job.spec.kind).name
+        except GenerationError:
+            job.backend = None  # the resolve below fails the job properly
         self.queue.update(job)
         self.events.publish("job.started", job_id=job.id, node_id=job.spec.node_id)
 
+        persisted = 0.0
+
         async def report(fraction: float) -> None:
+            nonlocal persisted
             job.progress = fraction
+            # Persist coarsely so board polls see live progress without a
+            # disk write per sampler step.
+            if fraction - persisted >= 0.05:
+                persisted = fraction
+                self.queue.update(job)
             self.events.publish(
                 "job.progress", job_id=job.id, node_id=job.spec.node_id, progress=fraction
             )
@@ -108,8 +137,7 @@ class Scheduler:
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind)
             artifact = await backend.execute(job.spec, ctx)
-            current = self.queue.get(job.id)
-            if current is not None and current.status is JobStatus.CANCELLED:
+            if self._was_cancelled(job):
                 return
             job.status = JobStatus.DONE
             job.progress = 1.0
@@ -119,11 +147,12 @@ class Scheduler:
             self.events.publish(
                 "job.done", job_id=job.id, node_id=job.spec.node_id, artifact=str(artifact)
             )
-            if self.on_job_done is not None:
-                await self.on_job_done(job)
         except OOMError as exc:
             await self._handle_oom(job, exc)
+            return
         except Exception as exc:  # noqa: BLE001 — job isolation boundary
+            if self._was_cancelled(job):
+                return  # the user's cancel outranks whatever the render died of
             logger.exception("job %s failed", job.id)
             job.status = JobStatus.FAILED
             job.error = str(exc)
@@ -132,8 +161,28 @@ class Scheduler:
             self.events.publish(
                 "job.failed", job_id=job.id, node_id=job.spec.node_id, error=str(exc)
             )
+            return
+        # The hook runs outside the job's try: a follow-up failure (e.g.
+        # screenplay expansion) must not flip a persisted DONE to FAILED.
+        if self.on_job_done is not None:
+            try:
+                await self.on_job_done(job)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("post-completion hook failed for job %s", job.id)
+                self.events.publish(
+                    "project.error",
+                    project_id=job.project_id,
+                    node_id=job.spec.node_id,
+                    error=str(exc),
+                )
+
+    def _was_cancelled(self, job: Job) -> bool:
+        current = self.queue.get(job.id)
+        return current is not None and current.status is JobStatus.CANCELLED
 
     async def _handle_oom(self, job: Job, exc: OOMError) -> None:
+        if self._was_cancelled(job):
+            return  # never resurrect a job the user cancelled mid-render
         if job.attempt < len(FALLBACK_LADDER):
             rung = FALLBACK_LADDER[job.attempt]
             job.attempt += 1
