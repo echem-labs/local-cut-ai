@@ -290,6 +290,13 @@ class ComfyUIBackend(ExecutionBackend):
                 candidates[0][1] if candidates else None,
             )
             if item is None:
+                # No output. If the socket dropped on a server-side OOM, the
+                # error survives only in history.status — surface it as
+                # OOMError so the scheduler still walks the resolution/steps
+                # fallback ladder instead of failing the job outright.
+                status_text = json.dumps(history.get("status", {})).lower()
+                if any(marker in status_text for marker in _OOM_MARKERS):
+                    raise OOMError("ComfyUI ran out of memory")
                 raise GenerationError("ComfyUI workflow finished without a retrievable output")
 
             params = {
@@ -299,14 +306,24 @@ class ComfyUIBackend(ExecutionBackend):
             }
             suffix = Path(item["filename"]).suffix or ".bin"
             out = ctx.output_path(spec.output_hash, suffix)
-            async with client.stream(
-                "GET", f"{self.base_url}/view", params=params
-            ) as file_response:
-                if file_response.status_code != 200:
-                    raise GenerationError(
-                        f"ComfyUI /view returned {file_response.status_code} for {item['filename']}"
-                    )
-                with out.open("wb") as handle:
-                    async for chunk in file_response.aiter_bytes(1 << 20):
-                        await asyncio.to_thread(handle.write, chunk)
+            # Stream into a temp file and rename into place only on success: a
+            # mid-stream connection drop must never leave a truncated
+            # `{hash}{suffix}` that the existence-cache serves as a valid render
+            # forever (ChatterboxBackend guards its output the same way).
+            tmp = out.with_name(f".partial-{uuid.uuid4().hex}{suffix}")
+            try:
+                async with client.stream(
+                    "GET", f"{self.base_url}/view", params=params
+                ) as file_response:
+                    if file_response.status_code != 200:
+                        raise GenerationError(
+                            f"ComfyUI /view returned {file_response.status_code} "
+                            f"for {item['filename']}"
+                        )
+                    with tmp.open("wb") as handle:
+                        async for chunk in file_response.aiter_bytes(1 << 20):
+                            await asyncio.to_thread(handle.write, chunk)
+                tmp.replace(out)
+            finally:
+                tmp.unlink(missing_ok=True)
             return out

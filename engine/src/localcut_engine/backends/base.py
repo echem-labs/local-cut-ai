@@ -5,6 +5,7 @@ wrapped behind this from day one so a future in-house backend is a drop-in.
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -37,6 +38,24 @@ class ExecutionContext:
     def output_path(self, output_hash: str, suffix: str) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         return self.output_dir / f"{output_hash}{suffix}"
+
+    def publish_bytes(self, output_hash: str, suffix: str, data: bytes) -> Path:
+        """Write an artifact atomically: build in a temp file on the SAME
+        filesystem, then rename into place. A crash mid-write must never leave
+        a truncated `{hash}{suffix}` that the existence-cache then serves as a
+        valid render forever. The leading-dot temp name is not matched by the
+        flat `{hash}.*` artifact scan."""
+        out = self.output_path(output_hash, suffix)
+        tmp = out.with_name(f".partial-{uuid.uuid4().hex}{suffix}")
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(out)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return out
+
+    def publish_text(self, output_hash: str, suffix: str, text: str) -> Path:
+        return self.publish_bytes(output_hash, suffix, text.encode())
 
     async def progress(self, fraction: float) -> None:
         if self.report_progress is not None:
@@ -80,13 +99,16 @@ class BackendRegistry:
         self._cloud = backend
 
     def resolve(self, kind: NodeKind, model: str | None = None) -> ExecutionBackend:
-        if (
-            model
-            and model.startswith("cloud:")
-            and self._cloud is not None
-            and self._cloud.supports(kind)
-        ):
-            return self._cloud
+        if model and model.startswith("cloud:"):
+            # A cloud:* model is an explicit provider choice. It must route to
+            # the cloud backend or fail — never silently fall through to a
+            # local backend (whose default serves_model() accepts any model)
+            # and hand back local output the user believes came from the cloud.
+            if self._cloud is not None and self._cloud.supports(kind):
+                return self._cloud
+            raise GenerationError(
+                f"cloud model {model!r} is not available for {kind.value} nodes"
+            )
         for backend in self._backends:
             if backend.supports(kind) and backend.serves_model(model):
                 return backend

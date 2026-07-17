@@ -71,16 +71,16 @@ class LLMScriptBackend(ExecutionBackend):
             # Publish kit (title/description/hashtags) from the script — a
             # second LLM task on the same backend, not a new node kind.
             raw = await self.complete(str(spec.params.get("prompt", "")), system=_METADATA_PROMPT)
-            out = ctx.output_path(spec.output_hash, ".metadata.json")
-            out.write_text(json.dumps(self._parse_metadata(raw), indent=2))
-            return out
+            return ctx.publish_text(
+                spec.output_hash, ".metadata.json", json.dumps(self._parse_metadata(raw), indent=2)
+            )
         raw = await self.complete(prompt, system=_SYSTEM_PROMPT)
         await ctx.progress(0.9)
 
         screenplay = self._parse_screenplay(raw)
-        out = ctx.output_path(spec.output_hash, ".screenplay.json")
-        out.write_text(screenplay.model_dump_json(indent=2))
-        return out
+        return ctx.publish_text(
+            spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
+        )
 
     async def complete(self, prompt: str, system: str) -> str:
         """One-shot completion with the same VRAM-yield discipline as jobs:

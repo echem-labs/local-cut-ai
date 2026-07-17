@@ -46,9 +46,11 @@ class CloudBackend(ExecutionBackend):
             raw = await textgen.complete(
                 system=_METADATA_PROMPT, prompt=str(spec.params.get("prompt", ""))
             )
-            out = ctx.output_path(spec.output_hash, ".metadata.json")
-            out.write_text(json.dumps(LLMScriptBackend._parse_metadata(raw), indent=2))
-            return out
+            return ctx.publish_text(
+                spec.output_hash,
+                ".metadata.json",
+                json.dumps(LLMScriptBackend._parse_metadata(raw), indent=2),
+            )
         prompt = (
             f"Topic: {spec.params.get('prompt', '')}\n"
             f"Target duration: {spec.params.get('target_duration_s', 60)}s\n"
@@ -58,9 +60,9 @@ class CloudBackend(ExecutionBackend):
         raw = await textgen.complete(system=_SYSTEM_PROMPT, prompt=prompt)
         await ctx.progress(0.9)
         screenplay = LLMScriptBackend._parse_screenplay(raw)
-        out = ctx.output_path(spec.output_hash, ".screenplay.json")
-        out.write_text(screenplay.model_dump_json(indent=2))
-        return out
+        return ctx.publish_text(
+            spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
+        )
 
     async def _clip(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         videogen = videogen_for_model(self.config, spec.model or "")
@@ -70,7 +72,6 @@ class CloudBackend(ExecutionBackend):
         data = await videogen.generate(
             prompt, duration_s, image_path=str(keyframe) if keyframe else None
         )
-        out = ctx.output_path(spec.output_hash, ".mp4")
-        out.write_bytes(data)
+        out = ctx.publish_bytes(spec.output_hash, ".mp4", data)
         await ctx.progress(1.0)
         return out

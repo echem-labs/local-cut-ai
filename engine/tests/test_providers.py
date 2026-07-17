@@ -155,5 +155,39 @@ def test_registry_cloud_override_is_model_driven(tmp_path):
     assert registry.resolve(NodeKind.SCRIPT) is local
     assert registry.resolve(NodeKind.SCRIPT, "local:qwen") is local
     assert registry.resolve(NodeKind.SCRIPT, "cloud:claude-sonnet-5") is cloud
-    # Kinds the cloud backend can't serve fall back to the chain.
+    # A model-less request for a kind the cloud backend can't serve falls back
+    # to the chain.
     assert registry.resolve(NodeKind.SCRIPT, None) is local
+
+
+def test_cloud_model_never_falls_back_to_local():
+    """A cloud:* model on a kind the cloud backend can't serve must raise, not
+    silently render on a local backend and hand back local output the user
+    believes came from the cloud."""
+    from localcut_engine.backends.base import GenerationError
+
+    class Local(ExecutionBackend):
+        name = "local"
+
+        def supports(self, kind):
+            return kind is NodeKind.KEYFRAME
+
+        async def execute(self, spec, ctx):
+            raise NotImplementedError
+
+    class CloudScriptOnly(ExecutionBackend):
+        name = "cloud"
+
+        def supports(self, kind):
+            return kind is NodeKind.SCRIPT
+
+        async def execute(self, spec, ctx):
+            raise NotImplementedError
+
+    registry = BackendRegistry()
+    registry.register(Local())
+    registry.register_cloud(CloudScriptOnly())
+    with pytest.raises(GenerationError, match="not available"):
+        registry.resolve(NodeKind.KEYFRAME, "cloud:midjourney")
+    # A local model on the same kind still resolves to the local backend.
+    assert registry.resolve(NodeKind.KEYFRAME, "local:sdxl").name == "local"
