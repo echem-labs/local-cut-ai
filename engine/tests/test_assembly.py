@@ -14,10 +14,15 @@ from localcut_engine.backends.base import ExecutionContext
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
+from localcut_engine.otio import timeline_seconds
 
 FFMPEG = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
 
 pytestmark = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg not installed")
+
+
+def _tracks_by_name(doc: dict) -> dict:
+    return {t["name"]: t for t in doc["tracks"]["children"]}
 
 
 def synth(tmp_path, name: str, args: list[str]):
@@ -346,7 +351,7 @@ async def test_edl_converts_to_otio_for_nle_handoff(tmp_path, media):
     doc = edl_to_otio(edl, resolve=lambda src: tmp_path / src, name="handoff test")
 
     assert doc["OTIO_SCHEMA"] == "Timeline.1"
-    tracks = {t["name"]: t for t in doc["tracks"]["children"]}
+    tracks = _tracks_by_name(doc)
     assert set(tracks) == {"Video", "Narration", "Music"}
 
     video = tracks["Video"]["children"]
@@ -354,8 +359,8 @@ async def test_edl_converts_to_otio_for_nle_handoff(tmp_path, media):
     # s1 spans both takes (3.35 s across 2+2 s of media), s2 uses one.
     assert [c["name"] for c in clips] == ["s1 take 1", "s1 take 2", "s2"]
     assert clips[0]["media_reference"]["target_url"].endswith("clip1.mp4")
-    total_frames = sum(c["source_range"]["duration"]["value"] for c in video)
-    assert total_frames == pytest.approx(edl["duration"] * 24, abs=2)
+    # OTIO's own length rule (transition-safe) equals the EDL program.
+    assert timeline_seconds(doc) == pytest.approx(edl["duration"], abs=0.05)
 
     narration = tracks["Narration"]["children"]
     spoken = [c for c in narration if c["OTIO_SCHEMA"] == "Clip.1"]
@@ -365,23 +370,6 @@ async def test_edl_converts_to_otio_for_nle_handoff(tmp_path, media):
 
     with pytest.raises(ValueError, match="no video segments"):
         edl_to_otio({"node": "mock"}, resolve=lambda s: tmp_path / s, name="x")
-
-
-def _otio_timeline_seconds(doc: dict) -> float:
-    """Replicate OTIO's own duration math: a track's length is the sum of its
-    clip/gap durations — transitions overlap their neighbours and add nothing
-    — and the timeline is the longest track."""
-
-    def track_seconds(track: dict) -> float:
-        total = 0.0
-        for child in track["children"]:
-            if child["OTIO_SCHEMA"] == "Transition.1":
-                continue
-            rng = child["source_range"]["duration"]
-            total += rng["value"] / rng["rate"]
-        return total
-
-    return max(track_seconds(t) for t in doc["tracks"]["children"])
 
 
 async def test_otio_crossfade_matches_rendered_length(tmp_path, media):
@@ -420,10 +408,10 @@ async def test_otio_crossfade_matches_rendered_length(tmp_path, media):
 
     doc = edl_to_otio(edl, resolve=lambda src: tmp_path / src, name="xfade")
     # OTIO total == EDL total == rendered MP4 — the whole point of the fix.
-    assert _otio_timeline_seconds(doc) == pytest.approx(edl["duration"], abs=0.05)
-    assert _otio_timeline_seconds(doc) == pytest.approx(rendered, abs=0.15)
+    assert timeline_seconds(doc) == pytest.approx(edl["duration"], abs=0.05)
+    assert timeline_seconds(doc) == pytest.approx(rendered, abs=0.15)
 
-    video = tracks_by_name(doc)["Video"]["children"]
+    video = _tracks_by_name(doc)["Video"]["children"]
     transitions = [c for c in video if c["OTIO_SCHEMA"] == "Transition.1"]
     assert len(transitions) == 1  # one dissolve at the s1→s2 seam
     t = transitions[0]
@@ -433,12 +421,8 @@ async def test_otio_crossfade_matches_rendered_length(tmp_path, media):
     assert video[0]["OTIO_SCHEMA"] != "Transition.1"
     assert video[-1]["OTIO_SCHEMA"] != "Transition.1"
     # Cuts, by contrast, add no transition.
-    narration = tracks_by_name(doc)["Narration"]["children"]
+    narration = _tracks_by_name(doc)["Narration"]["children"]
     assert not [c for c in narration if c["OTIO_SCHEMA"] == "Transition.1"]
-
-
-def tracks_by_name(doc: dict) -> dict:
-    return {t["name"]: t for t in doc["tracks"]["children"]}
 
 
 async def test_edl_paths_survive_project_relocation(tmp_path, media):
