@@ -513,14 +513,22 @@ export const useApp = create<AppState>((set, get) => {
       // Fetch jobs alongside the board: without this the jobs slice keeps
       // showing the previously open project's jobs until some WS event happens
       // to trigger a refresh (never, for an idle project).
+      let jobsFailed = false;
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(id),
         // Jobs are secondary: a transient /jobs failure must not abort opening
         // the project (it would surface as an unhandled rejection or a
-        // misleading "create failed"). Empty is fine — a refresh repopulates.
-        client.listJobs(id).catch(() => [] as Job[]),
+        // misleading "create failed"). Fall back to empty and self-heal below.
+        client.listJobs(id).catch(() => {
+          jobsFailed = true;
+          return [] as Job[];
+        }),
       ]);
       set({ currentProject: project, board, jobs, selectedNode: null });
+      // A progress-only stream won't refresh the jobs list, so an in-flight
+      // render would stay invisible in the queue tray after a failed fetch —
+      // retry once (refreshBoard no-ops if the user has since switched away).
+      if (jobsFailed) setTimeout(() => void get().refreshBoard(), 1000);
     },
 
     closeProject: () => {
