@@ -319,6 +319,122 @@ textarea {
   text-transform: capitalize;
 }
 
+/* ---- timeline strip ---- */
+.timeline-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-6);
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow-x: auto;
+}
+
+.tl-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  min-height: 36px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color var(--motion-fast);
+}
+
+.tl-chip.selected {
+  border-color: var(--accent);
+}
+
+.tl-chip.dragging {
+  opacity: 0.5;
+}
+
+.tl-chip .id {
+  font-weight: 550;
+}
+
+.tl-chip .dur {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.tl-chip .move {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-s);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.tl-chip:hover .move,
+.tl-chip.selected .move {
+  opacity: 1;
+}
+
+.tl-chip .move:hover:not(:disabled) {
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+
+.tl-chip .move:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.tl-transition {
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+  border-radius: var(--radius-s);
+  color: var(--text-tertiary);
+  transition: background var(--motion-fast);
+}
+
+.tl-transition:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.tl-export {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.seg-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+}
+
+.seg-toggle button {
+  padding: var(--space-1) var(--space-2);
+  min-height: 28px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  transition: background var(--motion-fast);
+}
+
+.seg-toggle button:hover {
+  background: var(--surface-2);
+}
+
+.seg-toggle button.active {
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
 /* ---- status ring ---- */
 .status-ring {
   width: 14px;
@@ -386,6 +502,17 @@ textarea {
 .inspector textarea:focus,
 .inspector input:focus {
   border-color: var(--accent);
+}
+
+.inspector .trim-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.inspector .hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
 }
 
 /* ---- queue tray ---- */
