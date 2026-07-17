@@ -31,7 +31,10 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 # Run as an unprivileged user: a network-reachable service that shells out to
-# ffmpeg and parses untrusted input must never be root. /data is owned by it.
+# ffmpeg and parses untrusted input must never be root. /data is owned by it,
+# and a named volume (compose default) inherits that ownership on first use.
+# A bind-mounted host directory keeps the host's ownership — chown it to uid
+# 10001 (or run `--user`) so the engine can write there.
 RUN useradd --system --uid 10001 --home-dir /app localcut \
     && mkdir -p /data \
     && chown -R localcut:localcut /app /data

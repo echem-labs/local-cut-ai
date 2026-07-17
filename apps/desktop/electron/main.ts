@@ -56,7 +56,10 @@ async function createWindow(): Promise<void> {
 // pairing) and accept ONLY the exact pinned certificate — an origin match
 // alone is never sufficient.
 app.on("certificate-error", (event, _webContents, url, _error, certificate, callback) => {
-  const pairing = remoteStore.load();
+  // Prefer the in-memory verified pairing (with its captured cert) to avoid a
+  // synchronous disk read on every TLS request in remote mode; fall back to
+  // the store only before the connection is established.
+  const pairing = remoteConnection ?? remoteStore.load();
   const paired = pairing?.url ? authorityOf(pairing.url) : null;
   if (
     pairing?.cert &&

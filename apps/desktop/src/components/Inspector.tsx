@@ -81,6 +81,9 @@ export function Inspector() {
     setSeed(node ? String(node.seed) : "");
     // Deps are the server VALUES (not just selectedNode) on purpose: that is
     // what makes typing survive a no-op refresh yet a real server change land.
+    // Seed is deliberately NOT a dep here: a New-Seed regenerate changes only
+    // the seed and must not wipe unsaved prose — that re-sync is its own
+    // effect below.
   }, [
     selectedNode,
     node?.params.prompt,
@@ -91,8 +94,13 @@ export function Inspector() {
     node?.params.voice,
     node?.params.speed,
     node?.params.duration_s,
-    node?.seed,
   ]);
+
+  // Seed re-syncs on its own server move (New seed, NL edit) without touching
+  // the prose fields — so regenerating doesn't discard an unsaved prompt.
+  useEffect(() => {
+    setSeed(node ? String(node.seed) : "");
+  }, [node?.seed]);
 
   // Trim/overlay live on the timeline node and are edited optimistically, so
   // they re-seed only on selection change (a self-inflicted board refresh
