@@ -367,6 +367,80 @@ async def test_edl_converts_to_otio_for_nle_handoff(tmp_path, media):
         edl_to_otio({"node": "mock"}, resolve=lambda s: tmp_path / s, name="x")
 
 
+def _otio_timeline_seconds(doc: dict) -> float:
+    """Replicate OTIO's own duration math: a track's length is the sum of its
+    clip/gap durations — transitions overlap their neighbours and add nothing
+    — and the timeline is the longest track."""
+
+    def track_seconds(track: dict) -> float:
+        total = 0.0
+        for child in track["children"]:
+            if child["OTIO_SCHEMA"] == "Transition.1":
+                continue
+            rng = child["source_range"]["duration"]
+            total += rng["value"] / rng["rate"]
+        return total
+
+    return max(track_seconds(t) for t in doc["tracks"]["children"])
+
+
+async def test_otio_crossfade_matches_rendered_length(tmp_path, media):
+    """With a crossfade, the OTIO timeline must be exactly as long as the
+    rendered MP4 (an editor's reference cut lines up frame-for-frame), and
+    the seam is a dissolve transition, not a silent cut."""
+    from localcut_engine.otio import edl_to_otio
+
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_path = await backend.execute(
+        make_spec(
+            NodeKind.TIMELINE,
+            {"aspect": "9:16", "transitions": {"s1": "crossfade"}},
+        ),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={
+                "s1": media["clip1"],
+                "s1.audio": media["narr1"],  # 3 s → 3.35 s
+                "s2": media["clip2"],
+                "s2.audio": media["narr2"],  # 1 s → 1.35 s
+                "music": media["music"],
+            },
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    # The crossfade pulled s2's start back by 0.4 s, shortening the program.
+    assert edl["duration"] == pytest.approx(3.35 + 1.35 - 0.4, abs=0.1)
+
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="a" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    rendered = await backend._probe_duration(out)
+
+    doc = edl_to_otio(edl, resolve=lambda src: tmp_path / src, name="xfade")
+    # OTIO total == EDL total == rendered MP4 — the whole point of the fix.
+    assert _otio_timeline_seconds(doc) == pytest.approx(edl["duration"], abs=0.05)
+    assert _otio_timeline_seconds(doc) == pytest.approx(rendered, abs=0.15)
+
+    video = tracks_by_name(doc)["Video"]["children"]
+    transitions = [c for c in video if c["OTIO_SCHEMA"] == "Transition.1"]
+    assert len(transitions) == 1  # one dissolve at the s1→s2 seam
+    t = transitions[0]
+    assert t["transition_type"] == "SMPTE_Dissolve"
+    assert t["in_offset"]["value"] > 0 and t["out_offset"]["value"] > 0
+    # A transition may never be the first or last item on a track.
+    assert video[0]["OTIO_SCHEMA"] != "Transition.1"
+    assert video[-1]["OTIO_SCHEMA"] != "Transition.1"
+    # Cuts, by contrast, add no transition.
+    narration = tracks_by_name(doc)["Narration"]["children"]
+    assert not [c for c in narration if c["OTIO_SCHEMA"] == "Transition.1"]
+
+
+def tracks_by_name(doc: dict) -> dict:
+    return {t["name"]: t for t in doc["tracks"]["children"]}
+
+
 async def test_edl_paths_survive_project_relocation(tmp_path, media):
     """Artifacts referenced by a cached EDL live in generated/ — the EDL must
     store them relative to it, or moving/restoring a project bricks export."""

@@ -10,6 +10,15 @@ their real source ranges (a scene's sequential takes become consecutive
 clips), the narration bed with true durations, and the music bed. Where
 export-time synthesis (retime/loop) fills a gap the media can't, a Gap
 lands in the track instead of a lying source range.
+
+Crossfades become OTIO dissolve transitions. OTIO's model: transitions are
+neighbours that overlap adjacent clips, so a track's duration is the sum of
+its *clip/gap* durations — transitions contribute zero. Our export instead
+shortens the program by the overlap, so to keep the OTIO timeline the same
+length as the rendered MP4 the outgoing clip is trimmed by the overlap and a
+`SMPTE_Dissolve` marks the seam. Dips don't change length and have no
+portable OTIO primitive (a fade *through* colour isn't a cross-dissolve), so
+they hand off as cuts — the editor re-applies the fade on clean sources.
 """
 
 from __future__ import annotations
@@ -18,6 +27,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 FPS = 24.0
+# Consecutive segment starts that overlap by more than this are a crossfade;
+# the threshold clears EDL rounding noise (≤ a few ms) while sitting far
+# below a real crossfade overlap (~0.4 s).
+_OVERLAP_EPS_S = 0.05
 
 
 def _time(seconds: float) -> dict:
@@ -49,8 +62,113 @@ def _gap(duration_s: float) -> dict:
     return {"OTIO_SCHEMA": "Gap.1", "source_range": _range(0.0, duration_s)}
 
 
+def _transition(in_offset_s: float, out_offset_s: float) -> dict:
+    return {
+        "OTIO_SCHEMA": "Transition.1",
+        "name": "crossfade",
+        "transition_type": "SMPTE_Dissolve",
+        "in_offset": _time(in_offset_s),
+        "out_offset": _time(out_offset_s),
+        "metadata": {},
+    }
+
+
 def _track(kind: str, name: str, children: list[dict]) -> dict:
     return {"OTIO_SCHEMA": "Track.1", "kind": kind, "name": name, "children": children}
+
+
+def _to_otio(item: dict) -> dict:
+    """Internal mutable item → OTIO node."""
+    if item["kind"] == "clip":
+        return _clip(item["name"], item["src"], item["src_start"], item["dur"], item["available"])
+    return _gap(item["dur"])
+
+
+def _trim_tail(items: list[dict], amount: float) -> None:
+    """Remove `amount` seconds from the end of a segment's item list —
+    shrinking or dropping trailing items so its total shortens by the
+    crossfade overlap (a clip loses source-range from its tail; a gap
+    shrinks). Mutates `items` in place."""
+    amount = round(amount, 3)
+    while amount > 0.001 and items:
+        last = items[-1]
+        if last["dur"] <= amount + 0.001:
+            amount = round(amount - last["dur"], 3)
+            items.pop()
+        else:
+            last["dur"] = round(last["dur"] - amount, 3)
+            amount = 0.0
+
+
+def _segment_video(segment: dict, resolve: Callable[[str], Path]) -> list[dict]:
+    """The clip/gap items that fill a segment's window — one clip per take,
+    a trailing gap where export synthesizes frames media can't state."""
+    window = float(segment["duration"])
+    srcs = segment.get("srcs") or ([segment["src"]] if segment.get("src") else [])
+    durations = segment.get("src_durations") or []
+    if len(durations) != len(srcs):
+        raise ValueError(f"segment {segment.get('scene')}: takes without durations")
+
+    items: list[dict] = []
+    remaining, offset = window, float(segment.get("trim_in") or 0.0)
+    for index, (src, available) in enumerate(zip(srcs, durations)):
+        if remaining <= 0.001:
+            break
+        if offset >= available:
+            offset -= available
+            continue
+        use = min(available - offset, remaining)
+        take_name = str(segment["scene"]) + (f" take {index + 1}" if len(srcs) > 1 else "")
+        items.append(
+            {
+                "kind": "clip",
+                "name": take_name,
+                "src": resolve(src),
+                "src_start": offset,
+                "dur": round(use, 3),
+                "available": available,
+            }
+        )
+        remaining -= use
+        offset = 0.0
+    if remaining > 0.001:
+        items.append({"kind": "gap", "dur": round(remaining, 3)})
+    return items
+
+
+def _segment_narration(segment: dict, resolve: Callable[[str], Path]) -> list[dict]:
+    window = float(segment["duration"])
+    narr = segment.get("narration")
+    narr_duration = segment.get("narration_duration")
+    if narr and narr_duration:
+        spoken = min(float(narr_duration), window)
+        items = [
+            {
+                "kind": "clip",
+                "name": f"{segment['scene']} narration",
+                "src": resolve(narr),
+                "src_start": 0.0,
+                "dur": round(spoken, 3),
+                "available": float(narr_duration),
+            }
+        ]
+        if window - spoken > 0.001:
+            items.append({"kind": "gap", "dur": round(window - spoken, 3)})
+        return items
+    return [{"kind": "gap", "dur": round(window, 3)}]
+
+
+def _overlaps(segments: list[dict]) -> list[float]:
+    """Overlap (seconds) each segment shares with the next, read straight
+    from the EDL's applied start positions — a crossfade pulls the next
+    start back, a cut/dip does not. Zero for the last segment."""
+    overlaps: list[float] = []
+    for i in range(len(segments) - 1):
+        end = float(segments[i]["start"]) + float(segments[i]["duration"])
+        overlap = round(end - float(segments[i + 1]["start"]), 3)
+        overlaps.append(overlap if overlap > _OVERLAP_EPS_S else 0.0)
+    overlaps.append(0.0)
+    return overlaps
 
 
 def edl_to_otio(edl: dict, resolve: Callable[[str], Path], name: str) -> dict:
@@ -60,49 +178,29 @@ def edl_to_otio(edl: dict, resolve: Callable[[str], Path], name: str) -> dict:
     if not isinstance(segments, list) or not segments:
         raise ValueError("timeline EDL has no video segments to export")
 
+    seg_video = [_segment_video(s, resolve) for s in segments]
+    seg_narr = [_segment_narration(s, resolve) for s in segments]
+    overlaps = _overlaps(segments)
+
+    # Trim the outgoing side of each crossfade so track totals equal the
+    # rendered (overlap-shortened) program, not the sum of full windows.
+    for items, overlap in zip(seg_video, overlaps):
+        if overlap:
+            _trim_tail(items, overlap)
+    for items, overlap in zip(seg_narr, overlaps):
+        if overlap:
+            _trim_tail(items, overlap)
+
     video: list[dict] = []
     narration: list[dict] = []
-    for segment in segments:
-        window = float(segment["duration"])
-        srcs = segment.get("srcs") or ([segment["src"]] if segment.get("src") else [])
-        durations = segment.get("src_durations") or []
-        if len(durations) != len(srcs):
-            raise ValueError(f"segment {segment.get('scene')}: takes without durations")
-
-        remaining, offset = window, float(segment.get("trim_in") or 0.0)
-        for index, (src, available) in enumerate(zip(srcs, durations)):
-            if remaining <= 0.001:
-                break
-            if offset >= available:
-                offset -= available
-                continue
-            use = min(available - offset, remaining)
-            take_name = str(segment["scene"]) + (f" take {index + 1}" if len(srcs) > 1 else "")
-            video.append(_clip(take_name, resolve(src), offset, use, available))
-            remaining -= use
-            offset = 0.0
-        if remaining > 0.001:
-            # Export synthesizes this span (bounded retime or crossfaded
-            # loop); media can't state it, so the handoff shows a gap.
-            video.append(_gap(remaining))
-
-        narr = segment.get("narration")
-        narr_duration = segment.get("narration_duration")
-        if narr and narr_duration:
-            spoken = min(float(narr_duration), window)
-            narration.append(
-                _clip(
-                    f"{segment['scene']} narration",
-                    resolve(narr),
-                    0.0,
-                    spoken,
-                    float(narr_duration),
-                )
-            )
-            if window - spoken > 0.001:
-                narration.append(_gap(window - spoken))
-        else:
-            narration.append(_gap(window))
+    for i, overlap in enumerate(overlaps):
+        video.extend(_to_otio(item) for item in seg_video[i])
+        narration.extend(_to_otio(item) for item in seg_narr[i])
+        if overlap and seg_video[i] and seg_video[i + 1]:
+            # Symmetric dissolve, clamped so neither offset exceeds the clip
+            # it reaches into (an OTIO validity constraint).
+            half = round(min(overlap / 2, seg_video[i][-1]["dur"], seg_video[i + 1][0]["dur"]), 3)
+            video.append(_transition(half, half))
 
     tracks = [_track("Video", "Video", video), _track("Audio", "Narration", narration)]
     music = edl.get("music")
