@@ -32,17 +32,27 @@ interface AppState {
   refreshBoard: () => Promise<void>;
   regenerate: (nodeId: string) => Promise<void>;
   editPrompt: (nodeId: string, prompt: string) => Promise<void>;
+  applyTimeline: (params: Record<string, unknown>) => void;
+  applyExport: (params: Record<string, unknown>) => void;
   finalize: () => Promise<void>;
   select: (nodeId: string | null) => void;
 }
 
 const REFRESH_DEBOUNCE_MS = 150;
 const RECONNECT_DELAY_MS = 3000;
+const PATCH_DEBOUNCE_MS = 300;
+
+interface PendingPatch {
+  projectId: string;
+  params: Record<string, unknown>;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let refreshQueued = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let unsubscribe: (() => void) | null = null;
+const pendingPatches = new Map<string, PendingPatch>();
 
 export const useApp = create<AppState>((set, get) => {
   const scheduleReconnect = () => {
@@ -103,6 +113,59 @@ export const useApp = create<AppState>((set, get) => {
         job.id === event.job_id ? { ...job, progress: event.progress } : job,
       ),
     });
+  };
+
+  // Param edits are optimistic: the board updates immediately, the PATCH is
+  // debounced per node with changed keys merged, and the WS-driven refresh
+  // brings back the server truth once the dirty subgraph re-renders.
+  const sendPatch = (nodeId: string) => {
+    const pending = pendingPatches.get(nodeId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingPatches.delete(nodeId);
+    const { client } = get();
+    if (!client) return;
+    client
+      .patch(pending.projectId, [{ op: "set_params", node_id: nodeId, params: pending.params }])
+      .catch((err) => {
+        console.warn(`patch ${nodeId} failed:`, err);
+        void get().refreshBoard();
+      });
+  };
+
+  const flushPatches = () => {
+    for (const nodeId of [...pendingPatches.keys()]) sendPatch(nodeId);
+  };
+
+  const applyAuxParams = (nodeId: string, params: Record<string, unknown>) => {
+    const { board, client, currentProject } = get();
+    const node = board?.aux[nodeId];
+    if (!board || !node || !client || !currentProject) return;
+    set({
+      board: {
+        ...board,
+        aux: { ...board.aux, [nodeId]: { ...node, params: { ...node.params, ...params } } },
+      },
+    });
+    const prev = pendingPatches.get(nodeId);
+    if (prev) clearTimeout(prev.timer);
+    const carried = prev?.projectId === currentProject.id ? prev.params : {};
+    pendingPatches.set(nodeId, {
+      projectId: currentProject.id,
+      params: { ...carried, ...params },
+      timer: setTimeout(() => sendPatch(nodeId), PATCH_DEBOUNCE_MS),
+    });
+  };
+
+  // Keep unsent optimistic edits on top of a freshly fetched board.
+  const withPending = (board: Board, projectId: string): Board => {
+    let aux = board.aux;
+    for (const [nodeId, pending] of pendingPatches) {
+      const node = aux[nodeId];
+      if (!node || pending.projectId !== projectId) continue;
+      aux = { ...aux, [nodeId]: { ...node, params: { ...node.params, ...pending.params } } };
+    }
+    return aux === board.aux ? board : { ...board, aux };
   };
 
   const establish = async () => {
@@ -172,12 +235,15 @@ export const useApp = create<AppState>((set, get) => {
     openProject: async (id: string) => {
       const { client } = get();
       if (!client) return;
+      flushPatches();
       const { project, board } = await client.getProject(id);
       set({ currentProject: project, board, selectedNode: null });
     },
 
-    closeProject: () =>
-      set({ currentProject: null, board: null, jobs: [], selectedNode: null }),
+    closeProject: () => {
+      flushPatches();
+      set({ currentProject: null, board: null, jobs: [], selectedNode: null });
+    },
 
     createFromPrompt: async (prompt, duration, aspect) => {
       const { client } = get();
@@ -202,7 +268,7 @@ export const useApp = create<AppState>((set, get) => {
       // A late response for a previously open project must not clobber the
       // one the user has since opened.
       if (get().currentProject?.id !== projectId) return;
-      set({ board, jobs });
+      set({ board: withPending(board, projectId), jobs });
     },
 
     regenerate: async (nodeId) => {
@@ -227,9 +293,14 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshBoard();
     },
 
+    applyTimeline: (params) => applyAuxParams("timeline", params),
+
+    applyExport: (params) => applyAuxParams("export", params),
+
     finalize: async () => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
+      flushPatches();
       await client.finalize(currentProject.id);
       await get().refreshBoard();
     },

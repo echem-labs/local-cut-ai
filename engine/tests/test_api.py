@@ -141,6 +141,26 @@ def test_data_dir_override_relocates_models_dir(tmp_path, monkeypatch):
     assert merged.resolved_models_dir == tmp_path / "elsewhere" / "models"
 
 
+async def test_quick_tools_create_and_validate(client):
+    voiced = await client.post(
+        "/tools", json={"tool": "voiceover", "text": "hello world"}
+    )
+    assert voiced.status_code == 200
+    assert voiced.json()["mode"] == "tool:voiceover"
+
+    missing = await client.post("/tools", json={"tool": "thumbnail"})
+    assert missing.status_code == 422  # thumbnail requires a prompt
+
+    board = await client.get(f"/projects/{voiced.json()['id']}")
+    assert "voiceover" in board.json()["board"]["aux"]  # tool node on the board
+
+
+async def test_promote_requires_a_finished_script(client):
+    created = await client.post("/projects", json={"prompt": "x"})
+    response = await client.post(f"/projects/{created.json()['id']}/promote")
+    assert response.status_code == 409  # full projects aren't tool sessions
+
+
 async def test_manifest_default_slate_is_downloadable(client):
     """Every default model a backend error message points at must actually
     be fetchable: entries for tasks we ship backends for need files[]."""

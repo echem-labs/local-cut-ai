@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import threading
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from .events import EventBus
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
 from .graph.model import OPTIONAL_PORTS, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
-from .graph.templates import expand_screenplay, prompt_template_graph
+from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
@@ -52,6 +53,7 @@ class ProjectService:
         target_duration_s: int = 60,
         aspect: str = "9:16",
         style_preset: str = "cinematic",
+        mode: str = "prompt",
     ) -> Project:
         graph = prompt_template_graph(
             prompt,
@@ -60,9 +62,84 @@ class ProjectService:
             style_preset=style_preset,
         )
         with self._lock:
-            project = self.store.create(title=prompt, graph=graph)
+            project = self.store.create(title=prompt, graph=graph, mode=mode)
             self._enqueue_dirty(project.id, graph)
         return project
+
+    def create_tool(self, tool: str, params: dict) -> Project:
+        """Quick Tool session: a one-node micro-project (doc: single artifact,
+        direct export, optional promote into a full project)."""
+        graph = tool_graph(tool, params)
+        title = str(params.get("prompt") or params.get("text") or tool)
+        with self._lock:
+            project = self.store.create(title=title, graph=graph, mode=f"tool:{tool}")
+            self._enqueue_dirty(project.id, graph)
+        return project
+
+    def promote_tool(self, project_id: str) -> Project:
+        """Script tool session → full prompt-mode project seeded with the
+        already-generated screenplay (the script node arrives pre-cached, so
+        promotion costs zero LLM work)."""
+        with self._lock:
+            meta = self.store.get(project_id)
+            if meta is None or meta.mode != "tool:script":
+                raise ValueError("only script tool sessions can be promoted")
+            graph = self.store.load_graph(project_id)
+            script = graph.nodes.get("script")
+            if script is None or script.kind is not NodeKind.SCRIPT:
+                raise ValueError("only script tool sessions can be promoted")
+            job = next(
+                (
+                    j
+                    for j in self.queue.list(project_id, 1000)
+                    if j.spec.node_id == "script"
+                    and j.status is JobStatus.DONE
+                    and j.artifact
+                    and Path(j.artifact).exists()
+                ),
+                None,
+            )
+            if job is None:
+                raise ValueError("the script has not finished generating yet")
+            screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
+
+            params = script.params
+            new_graph = prompt_template_graph(
+                str(params.get("prompt", "")),
+                target_duration_s=int(params.get("target_duration_s", 60)),
+                aspect=str(params.get("aspect", "9:16")),
+                style_preset=str(params.get("style_preset", "cinematic")),
+            )
+            new_graph.nodes["script"].seed = script.seed
+            expand_screenplay(new_graph, screenplay)
+            project = self.store.create(
+                title=screenplay.title or str(params.get("prompt", "")), graph=new_graph
+            )
+            # Seed the artifact under the new script node's hash: cached, so
+            # the pipeline starts at keyframes instead of re-running the LLM.
+            out_hash = new_graph.output_hash("script", {})
+            dest = self.store.generated_dir(project.id)
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy(job.artifact, dest / f"{out_hash}.screenplay.json")
+            self._enqueue_dirty(project.id, new_graph)
+        return project
+
+    def approve(self, project_id: str, checkpoint: str) -> int:
+        """Beginner-mode gates: passing a checkpoint releases the next stage
+        of jobs (script → storyboard review → full render)."""
+        if checkpoint not in ("script", "storyboard"):
+            raise ValueError(f"unknown checkpoint: {checkpoint!r}")
+        with self._lock:
+            project = self.store.get(project_id)
+            if project is None:
+                raise KeyError(project_id)
+            if checkpoint not in project.approvals:
+                project.approvals.append(checkpoint)
+                self.store.save_meta(project)
+            self.events.publish(
+                "project.approved", project_id=project_id, checkpoint=checkpoint
+            )
+            return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
 
     # -- editing -----------------------------------------------------------
 
@@ -168,16 +245,32 @@ class ProjectService:
         active = {
             (job.spec.output_hash, job.spec.quality) for job in self.queue.active(project_id)
         }
+        project = self.store.get(project_id)
         enqueued = 0
         for spec in plan.jobs:
             if (spec.output_hash, spec.quality) in active:
                 continue
+            if not self._checkpoint_open(project, spec.kind):
+                continue  # released later by POST .../approve
             self.queue.put(Job(project_id=project_id, spec=spec))
             enqueued += 1
         if enqueued and self.scheduler is not None:
             self.scheduler.notify()
         self.events.publish("project.compiled", project_id=project_id, enqueued=enqueued)
         return enqueued
+
+    @staticmethod
+    def _checkpoint_open(project: Project | None, kind: NodeKind) -> bool:
+        """Beginner mode pauses at checkpoints: the script must be approved
+        before storyboard work runs, and the storyboard before video/assembly
+        compute is spent. Other modes auto-approve."""
+        if project is None or project.mode != "beginner":
+            return True
+        if kind is NodeKind.SCRIPT:
+            return True
+        if kind in (NodeKind.KEYFRAME, NodeKind.NARRATION, NodeKind.MUSIC):
+            return "script" in project.approvals
+        return "storyboard" in project.approvals
 
     # -- scheduler hook ------------------------------------------------------
 
@@ -188,6 +281,9 @@ class ProjectService:
 
     def _on_job_done_sync(self, job: Job) -> None:
         if job.spec.kind is NodeKind.SCRIPT and job.artifact is not None:
+            meta = self.store.get(job.project_id)
+            if meta is not None and meta.mode.startswith("tool:"):
+                return  # tool sessions stay one node; promotion expands
             with self._lock:
                 graph = self.store.load_graph(job.project_id)
                 screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
@@ -296,9 +392,13 @@ class ProjectService:
                     "narration": node_state(f"{sid}.narration"),
                 }
             )
+        # Fixed order for the pipeline nodes, then anything else at the top
+        # level (Quick Tool nodes like "thumbnail"/"voiceover").
+        aux_ids = [
+            n for n in ("script", "music", "captions", "timeline", "export") if n in graph.nodes
+        ]
+        aux_ids += sorted(n for n in graph.nodes if "." not in n and n not in aux_ids)
         aux = {
-            n: state
-            for n in ("script", "music", "captions", "timeline", "export")
-            if (state := node_state(n)) is not None
+            n: state for n in aux_ids if (state := node_state(n)) is not None
         }
         return {"scenes": scenes, "aux": aux}

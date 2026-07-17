@@ -153,6 +153,59 @@ async def test_script_regenerate_applies_new_screenplay(rig):
     assert "volcanoes at dawn" in board["scenes"][0]["narration"]["params"]["text"]
 
 
+async def test_script_tool_promotes_to_full_project(rig):
+    """Quick Tool session → full project: the generated screenplay seeds the
+    new project's script node as a cached artifact (no LLM re-run)."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts", "aspect": "9:16"})
+    assert tool.mode == "tool:script"
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    promoted = service.promote_tool(tool.id)
+    assert promoted.id != tool.id and promoted.mode == "prompt"
+
+    await wait_for(
+        lambda: bool(
+            service.scene_board(promoted.id)["aux"].get("export", {}).get("artifact_hash")
+        )
+    )
+    # The script arrived pre-cached: the promoted project never ran an LLM job.
+    assert not [j for j in queue.list(promoted.id, 1000) if j.spec.node_id == "script"]
+    assert service.scene_board(promoted.id)["scenes"]
+
+
+async def test_beginner_mode_gates_stages_until_approved(rig):
+    store, queue, service = rig
+    project = service.create_from_prompt(
+        "volcano documentary", target_duration_s=24, mode="beginner"
+    )
+
+    def kinds_run() -> set[str]:
+        return {j.spec.kind.value for j in queue.list(project.id, 1000)}
+
+    # Script runs and expands, but nothing past the first checkpoint.
+    await wait_for(lambda: "script" in kinds_run())
+    await wait_for(lambda: bool(service.scene_board(project.id)["scenes"]))
+    assert kinds_run() == {"script"}
+
+    service.approve(project.id, "script")
+    await wait_for(lambda: "keyframe" in kinds_run() and "narration" in kinds_run())
+    assert "clip" not in kinds_run()  # storyboard not approved yet
+
+    service.approve(project.id, "storyboard")
+    await wait_for(
+        lambda: bool(
+            service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash")
+        )
+    )
+    assert store.get(project.id).approvals == ["script", "storyboard"]
+
+
 async def test_queue_recovers_interrupted_jobs(tmp_path):
     queue = JobQueue(tmp_path / "q.db")
     from localcut_engine.graph.compiler import JobSpec

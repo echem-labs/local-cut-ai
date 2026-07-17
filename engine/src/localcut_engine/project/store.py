@@ -53,7 +53,8 @@ class Project(BaseModel):
     id: str
     title: str
     created_at: float
-    mode: str = "prompt"  # prompt | beginner | advanced | flowchart
+    mode: str = "prompt"  # prompt | beginner | advanced | flowchart | tool:<name>
+    approvals: list[str] = []  # beginner checkpoints passed: script, storyboard
 
 
 class ProjectStore:
@@ -90,6 +91,11 @@ class ProjectStore:
         if not meta.exists():
             return None
         return Project.model_validate_json(meta.read_text())
+
+    def save_meta(self, project: Project) -> None:
+        _write_atomic(
+            self._dir(project.id) / "meta.json", project.model_dump_json(indent=2)
+        )
 
     def list(self) -> list[Project]:
         projects = []

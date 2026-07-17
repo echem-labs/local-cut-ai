@@ -45,6 +45,51 @@ def prompt_template_graph(
     return graph
 
 
+def tool_graph(tool: str, params: dict) -> StoryGraph:
+    """Quick Tools are micro-projects: one node, same engine, same caching.
+    Their outputs export directly or promote into a full project."""
+    graph = StoryGraph()
+    match tool:
+        case "script":
+            graph.add_node(
+                Node(
+                    id="script",
+                    kind=NodeKind.SCRIPT,
+                    params={
+                        "prompt": str(params.get("prompt", "")),
+                        "target_duration_s": int(params.get("target_duration_s", 60)),
+                        "aspect": str(params.get("aspect", "9:16")),
+                        "style_preset": str(params.get("style_preset", "cinematic")),
+                    },
+                )
+            )
+        case "thumbnail":
+            graph.add_node(
+                Node(
+                    id="thumbnail",
+                    kind=NodeKind.THUMBNAIL,
+                    params={
+                        "prompt": str(params.get("prompt", "")),
+                        "aspect": str(params.get("aspect", "16:9")),
+                    },
+                )
+            )
+        case "voiceover":
+            graph.add_node(
+                Node(
+                    id="voiceover",
+                    kind=NodeKind.NARRATION,
+                    params={
+                        "text": str(params.get("text", "")),
+                        "voice": str(params.get("voice", "narrator")),
+                    },
+                )
+            )
+        case _:
+            raise ValueError(f"unknown quick tool: {tool!r}")
+    return graph
+
+
 def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) -> Node:
     """Add the node, or refresh its derived params in place — seed, pin and
     frozen_hash are user state and survive re-expansion."""

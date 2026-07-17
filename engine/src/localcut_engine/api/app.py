@@ -11,7 +11,7 @@ import asyncio
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import (
     Depends,
@@ -197,23 +197,68 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         target_duration_s: int = Field(default=60, ge=5, le=600)
         aspect: str = "9:16"
         style_preset: str = "cinematic"
+        mode: Literal["prompt", "beginner"] = "prompt"
 
-    @app.post("/projects", dependencies=[Authed])
-    async def create_project(body: CreateProject) -> dict:
-        if body.aspect not in EXPORT_RESOLUTIONS:
+    def _check_aspect(aspect: str) -> None:
+        if aspect not in EXPORT_RESOLUTIONS:
             # An unknown aspect would silently render as the default one.
             raise HTTPException(
                 status_code=422,
-                detail=f"unsupported aspect {body.aspect!r} — "
+                detail=f"unsupported aspect {aspect!r} — "
                 f"one of: {', '.join(sorted(EXPORT_RESOLUTIONS))}",
             )
+
+    @app.post("/projects", dependencies=[Authed])
+    async def create_project(body: CreateProject) -> dict:
+        _check_aspect(body.aspect)
         project = await asyncio.to_thread(
             service.create_from_prompt,
             body.prompt,
             target_duration_s=body.target_duration_s,
             aspect=body.aspect,
             style_preset=body.style_preset,
+            mode=body.mode,
         )
+        return project.model_dump()
+
+    # -- quick tools: one-node micro-projects ----------------------------------
+
+    class ToolRequest(BaseModel):
+        tool: Literal["script", "thumbnail", "voiceover"]
+        prompt: str | None = Field(default=None, max_length=4000)
+        text: str | None = Field(default=None, max_length=4000)
+        voice: str = "narrator"
+        aspect: str = "16:9"
+        target_duration_s: int = Field(default=60, ge=5, le=600)
+        style_preset: str = "cinematic"
+
+    @app.post("/tools", dependencies=[Authed])
+    async def create_tool(body: ToolRequest) -> dict:
+        needs = "text" if body.tool == "voiceover" else "prompt"
+        if not (getattr(body, needs) or "").strip():
+            raise HTTPException(status_code=422, detail=f"{body.tool} requires {needs}")
+        _check_aspect(body.aspect)
+        project = await asyncio.to_thread(
+            service.create_tool, body.tool, body.model_dump(exclude={"tool"})
+        )
+        return project.model_dump()
+
+    class ApproveBody(BaseModel):
+        checkpoint: Literal["script", "storyboard"]
+
+    @app.post("/projects/{project_id}/approve", dependencies=[Authed])
+    async def approve(project_id: ProjectId, body: ApproveBody) -> dict:
+        _get_project(project_id)
+        enqueued = await asyncio.to_thread(service.approve, project_id, body.checkpoint)
+        return {"ok": True, "enqueued": enqueued}
+
+    @app.post("/projects/{project_id}/promote", dependencies=[Authed])
+    async def promote(project_id: ProjectId) -> dict:
+        _get_project(project_id)
+        try:
+            project = await asyncio.to_thread(service.promote_tool, project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return project.model_dump()
 
     @app.get("/projects", dependencies=[Authed])
