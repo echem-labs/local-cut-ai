@@ -8,9 +8,12 @@ A cross-platform desktop app that turns a prompt or script into a finished video
 
 🚧 Early development. The engine spike is complete — one prompt renders to a
 watchable 60-second video, unattended, on an 8 GB consumer GPU (script →
-storyboard → I2V clips → narration → music → assembly). Now building the MVP:
-word-timed captions, draft→final quality ladder, timeline editing, Quick
-Tools, review checkpoints, and BYOK cloud providers.
+storyboard → I2V clips → narration → music → assembly). The MVP feature set
+is in place: word-timed captions, draft→final quality ladder (up to Wan 2.2
+finals), timeline editing, scene splitting, Quick Tools, review checkpoints,
+BYOK cloud providers, in-app model downloads with a first-run hardware
+screen, publish-kit generation, and OTIO handoff. Next up: installers
+(Windows/NVIDIA, Ubuntu, macOS beta).
 
 ## What it will do
 
@@ -57,7 +60,7 @@ uv run localcut-engine serve --backend local,mock
 OpenAI-compatible server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`,
 `LOCALCUT_LLM_MODEL`); `comfy` drives a headless ComfyUI on `:8188` via
 workflow-JSON templates (packaged defaults for SDXL keyframes/thumbnails,
-LTX-Video clips, and ACE-Step music; override per-file in
+LTX-Video clips, Wan 2.2 I2V, and ACE-Step music; override per-file in
 `~/.localcut/comfy-templates/`); `kokoro` synthesizes narration on CPU
 (`localcut-engine download kokoro-82m`); `align` turns narration into
 word-timed captions (`localcut-engine download faster-whisper-base-en`, CPU);
@@ -67,9 +70,21 @@ default (set the export node's `captions` param to `sidecar` to keep the
 timeline node's `order`/`trims`/`transitions` params drive re-cuts without
 re-rendering scenes. Kinds ComfyUI serves are gated by `LOCALCUT_COMFY_KINDS`
 (default `keyframe,thumbnail,clip,music`); "Finalize" re-renders at higher
-steps/resolution via the same graph's `quality` parameter. Point ComfyUI at
-the shared weights dir with an `extra_model_paths.yaml` whose `base_path` is
-`~/.localcut/models`.
+steps/resolution via the same graph's `quality` parameter — and can switch
+the clip model entirely (`LOCALCUT_FINAL_CLIP_MODEL=local:wan2.2-i2v-14b-fp8`
+renders finals through the Wan 2.2 14B workflow on 16 GB+ GPUs). Point
+ComfyUI at the shared weights dir with an `extra_model_paths.yaml` whose
+`base_path` is `~/.localcut/models`.
+
+Scene timing follows the narration: a scene whose narration outruns the clip
+ceiling splits into sequential takes of the same keyframe; at assembly a
+short clip may be slowed at most 15% before it loops with a crossfaded seam.
+Downloads are also available through the API (`GET /models`,
+`POST /models/{id}/download` with progress over `/ws`) — the desktop app's
+first-run screen and Settings → model library use exactly that. Per project,
+`POST /projects/{id}/package` generates a thumbnail plus an LLM
+title/description/hashtags kit, and `GET /projects/{id}/export/otio` hands
+the current timeline to pro NLEs as OpenTimelineIO.
 
 **Cloud (BYOK).** Nodes whose `model` is `cloud:*` route to provider adapters
 instead of the local chain — `cloud:claude-*` (Anthropic), `cloud:gpt-*`
