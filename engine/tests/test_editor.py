@@ -196,3 +196,24 @@ def test_parse_strips_fences_and_rejects_garbage():
         parse_edit_plan("I made the edits you asked for!")
     with pytest.raises(ValueError):
         parse_edit_plan('{"edits": [{"action": "drop_table"}]}')
+
+
+def test_audio_direction_params_sanitize():
+    graph = make_graph()
+    ops, warnings = compile_edits(
+        graph,
+        plan(
+            {"action": "update", "node_id": "s1.narration", "params": {"speed": 3.0}},
+            {
+                "action": "update",
+                "node_id": "timeline",
+                "params": {"ducking": "false", "beat_align": True, "order": "everything"},
+            },
+        ),
+    )
+    by_node = {op.node_id: op.params for op in ops}
+    assert by_node["s1.narration"]["speed"] == 1.5  # clamped to the audible range
+    assert by_node["timeline"]["ducking"] is False  # string form coerced
+    assert by_node["timeline"]["beat_align"] is True
+    assert "order" not in by_node["timeline"]  # not a list → dropped
+    assert any("not a list" in w for w in warnings)

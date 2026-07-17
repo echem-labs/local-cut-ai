@@ -15,6 +15,7 @@ export function Inspector() {
   const [model, setModel] = useState("");
   const [motion, setMotion] = useState("");
   const [voice, setVoice] = useState("");
+  const [speed, setSpeed] = useState("");
   const [duration, setDuration] = useState("");
   const [trimIn, setTrimIn] = useState("");
   const [trimOut, setTrimOut] = useState("");
@@ -62,6 +63,7 @@ export function Inspector() {
     setModel(node?.model ?? "");
     setMotion(String(node?.params.motion ?? ""));
     setVoice(String(node?.params.voice ?? ""));
+    setSpeed(node?.params.speed != null ? String(node.params.speed) : "1.0");
     setDuration(node?.params.duration_s != null ? String(node.params.duration_s) : "");
     const trims = (timelineParams?.trims ?? {}) as Record<
       string,
@@ -115,6 +117,10 @@ export function Inspector() {
       if (Number.isFinite(value) && value !== node.params.duration_s) params.duration_s = value;
     }
     if (isNarration && voice !== String(node.params.voice ?? "")) params.voice = voice;
+    if (isNarration) {
+      const rate = Number.parseFloat(speed);
+      if (Number.isFinite(rate) && rate !== (node.params.speed ?? 1.0)) params.speed = rate;
+    }
     const seedValue = Number.parseInt(seed, 10);
     const modelValue = model.trim() || null;
     void applyNode(node.node_id, {
@@ -189,6 +195,22 @@ export function Inspector() {
             disabled={node.pinned}
             onChange={(event) => setVoice(event.target.value)}
           />
+        </div>
+      )}
+      {isNarration && (
+        <div>
+          <label htmlFor="inspector-speed">Speech rate</label>
+          <input
+            id="inspector-speed"
+            type="number"
+            min={0.5}
+            max={1.5}
+            step={0.05}
+            value={speed}
+            disabled={node.pinned}
+            onChange={(event) => setSpeed(event.target.value)}
+          />
+          <div className="hint">1.0 = normal; the scene re-times to the new length.</div>
         </div>
       )}
       <div>

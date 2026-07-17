@@ -81,6 +81,11 @@ ComfyUI at the shared weights dir with an `extra_model_paths.yaml` whose
 Scene timing follows the narration: a scene whose narration outruns the clip
 ceiling splits into sequential takes of the same keyframe; at assembly a
 short clip may be slowed at most 15% before it loops with a crossfaded seam.
+The music bed sidechain-ducks under narration by default (timeline param
+`ducking: false` restores a constant-level bed), `beat_align: true` snaps
+scene cuts onto the music's detected beat grid by flexing only the pad
+after each line — speech is never cut — and narration nodes take a `speed`
+param (0.5–1.5) for per-line pacing.
 Downloads are also available through the API (`GET /models`,
 `POST /models/{id}/download` with progress over `/ws`) — the desktop app's
 first-run screen and Settings → model library use exactly that. Per project,

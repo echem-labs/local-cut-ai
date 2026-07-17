@@ -33,10 +33,12 @@ from .patch import PatchOp
 EDITABLE_PARAMS: dict[NodeKind, frozenset[str]] = {
     NodeKind.KEYFRAME: frozenset({"prompt"}),
     NodeKind.CLIP: frozenset({"prompt", "motion", "duration_s"}),
-    NodeKind.NARRATION: frozenset({"text", "voice"}),
+    NodeKind.NARRATION: frozenset({"text", "voice", "speed"}),
     NodeKind.MUSIC: frozenset({"brief"}),
     NodeKind.THUMBNAIL: frozenset({"prompt"}),
-    NodeKind.TIMELINE: frozenset({"order", "trims", "transitions", "overlays"}),
+    NodeKind.TIMELINE: frozenset(
+        {"order", "trims", "transitions", "overlays", "ducking", "beat_align"}
+    ),
     NodeKind.EXPORT: frozenset({"captions"}),
 }
 
@@ -45,6 +47,7 @@ _CAPTION_MODES = {"burn", "sidecar"}
 _MAX_TEXT = 2000
 _MAX_OVERLAY = 200
 _CLIP_MIN_S, _CLIP_MAX_S = 1.0, 15.0
+_SPEED_MIN, _SPEED_MAX = 0.5, 1.5
 
 EDIT_SYSTEM_PROMPT = """You are a video project editor operating on a scene graph. You receive a \
 JSON view of a project's editable nodes and an instruction. Respond with JSON only (no markdown \
@@ -59,11 +62,13 @@ Rules:
 - keyframe/clip "prompt" values are image/video generation prompts; keep the established \
 visual style unless asked to change it. "motion" is a short camera direction.
 - narration "text" is spoken aloud. The video's length follows narration length, so to make \
-the video shorter, shorten narration text or remove scenes.
+the video shorter, shorten narration text or remove scenes. narration "speed" is the speech \
+rate (1.0 normal, 0.5-1.5).
 - on-screen text lives in the timeline node's "overlays" (scene id -> text), not on clips.
 - the timeline's "order" lists scene ids in play order; "transitions" maps a scene id to the \
 transition out of that scene: one of cut, crossfade, dip; "trims" maps a scene id to \
-{"in": seconds, "out": seconds} of the source clip.
+{"in": seconds, "out": seconds} of the source clip; "ducking" (bool, default true) dips the \
+music under narration; "beat_align" (bool) snaps scene cuts to the music's beat.
 - never edit nodes marked "pinned": true — the user locked them.
 - remove_scene only when the instruction clearly asks for removal or shortening.
 - If nothing applies, return {"summary": "why", "edits": []}."""
@@ -166,6 +171,19 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
         except (TypeError, ValueError):
             warnings.append(f"{label}: not a number")
             return _DROP
+    if kind is NodeKind.NARRATION and key == "speed":
+        try:
+            return min(_SPEED_MAX, max(_SPEED_MIN, float(value)))
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: not a number")
+            return _DROP
+    if kind is NodeKind.TIMELINE and key in ("ducking", "beat_align"):
+        if isinstance(value, bool):
+            return value
+        if value in ("true", "false"):
+            return value == "true"
+        warnings.append(f"{label}: must be true or false")
+        return _DROP
     if kind is NodeKind.EXPORT and key == "captions":
         if value in _CAPTION_MODES:
             return value

@@ -3,9 +3,11 @@ mix, concat, export.
 
 Timing authority: narration duration *drives* scene duration — each clip is
 trimmed (or looped) to its narration plus padding, never the other way
-around. Music is a constant-level bed under the narration, looped/trimmed to
-the final cut (ducking and fades land with the audio-v2 pass). Prefers
-hardware/openh264 encoders per the licensing policy; mpeg4 is the
+around. With `beat_align` on the timeline node, scene boundaries snap to the
+music's beat grid by flexing only the breathing pad — speech is never cut.
+The music bed loops under the program and, by default, sidechain-ducks
+beneath the narration (`ducking: false` restores the constant-level bed).
+Prefers hardware/openh264 encoders per the licensing policy; mpeg4 is the
 everything-else fallback — never GPL x264.
 """
 
@@ -19,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, resolution_for
+from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat
 from ..captions import srt_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
@@ -35,6 +38,10 @@ _KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT}
 
 NARRATION_PAD_S = 0.35  # breathing room after each narration line
 MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
+# Beat alignment flexes only the pad: a boundary may shrink it to this floor
+# (speech is never cut) or stretch at most this far to reach the next beat.
+BEAT_MIN_PAD_S = 0.15
+BEAT_SNAP_MAX_S = 0.35
 CROSSFADE_S = 0.4  # video+audio overlap for the crossfade transition
 DIP_S = 0.25  # fade-to-black halves of the dip transition
 # A clip may be slowed at most this much to fill its narration window —
@@ -107,6 +114,16 @@ class FFmpegBackend(ExecutionBackend):
         transitions: dict = spec.params.get("transitions") or {}
         overlays: dict = spec.params.get("overlays") or {}
 
+        music_path = ctx.input_artifacts.get(MUSIC_PORT)
+        music_duration = await self._probe_duration(Path(music_path)) if music_path else None
+        beats: list[float] = []
+        if spec.params.get("beat_align") and music_path and music_duration:
+            # The bed starts at output 0 and loops, so its beat grid maps
+            # straight onto output time (modulo the track length).
+            pcm = await self._decode_pcm(Path(music_path))
+            if pcm is not None:
+                beats = estimate_beats(pcm)
+
         segments = []
         start = 0.0
         for port in scenes:
@@ -146,6 +163,21 @@ class FFmpegBackend(ExecutionBackend):
                 and duration > 2 * CROSSFADE_S
             ):
                 start -= CROSSFADE_S
+            if beats:
+                # Snap this boundary to the nearest beat by flexing the pad:
+                # never below the speech floor, never far past the window.
+                floor = (
+                    narration_duration + BEAT_MIN_PAD_S if narration_duration is not None else 0.1
+                )
+                snapped = nearest_beat(
+                    start + duration,
+                    beats,
+                    music_duration,
+                    lo=start + floor,
+                    hi=start + duration + BEAT_SNAP_MAX_S,
+                )
+                if snapped is not None:
+                    duration = round(snapped - start, 3)
             segments.append(
                 {
                     "scene": port,
@@ -164,15 +196,14 @@ class FFmpegBackend(ExecutionBackend):
                 }
             )
             start += duration
-        music_path = ctx.input_artifacts.get(MUSIC_PORT)
-        music_duration = await self._probe_duration(Path(music_path)) if music_path else None
         timeline = {
             "aspect": spec.params.get("aspect", DEFAULT_ASPECT),
             "video": segments,
             "duration": round(start, 3),
-            "music": rel(music_path) or "",
+            "music": rel(Path(music_path)) if music_path else "",
             "music_duration": round(music_duration, 3) if music_duration else None,
             "music_volume": MUSIC_BED_VOLUME,
+            "ducking": bool(spec.params.get("ducking", True)),
         }
         out = ctx.output_path(spec.output_hash, ".timeline.json")
         out.write_text(json.dumps(timeline, indent=2))
@@ -250,6 +281,23 @@ class FFmpegBackend(ExecutionBackend):
             music = resolve(timeline.get("music", ""))
             if music is not None and await self._probe_duration(music) is not None:
                 volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
+                if timeline.get("ducking", True):
+                    # Sidechain ducking: the program audio (narration) keys a
+                    # compressor on the bed, so music dives under speech and
+                    # swells back in the gaps instead of sitting at one level.
+                    mix = (
+                        f"[1:a]volume={volume}[m];"
+                        "[0:a]asplit=2[voice][key];"
+                        "[m][key]sidechaincompress="
+                        "threshold=0.02:ratio=8:attack=150:release=500[duck];"
+                        "[voice][duck]amix=inputs=2:duration=first"
+                        ":dropout_transition=3:normalize=0[a]"
+                    )
+                else:
+                    mix = (
+                        f"[1:a]volume={volume}[m];"
+                        "[0:a][m]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[a]"
+                    )
                 await self._run(
                     "-i",
                     str(cut),
@@ -258,8 +306,7 @@ class FFmpegBackend(ExecutionBackend):
                     "-i",
                     str(music),
                     "-filter_complex",
-                    f"[1:a]volume={volume}[m];"
-                    "[0:a][m]amix=inputs=2:duration=first:dropout_transition=3:normalize=0[a]",
+                    mix,
                     "-map",
                     "0:v",
                     "-map",
@@ -594,6 +641,36 @@ class FFmpegBackend(ExecutionBackend):
         _, stderr = await process.communicate()
         if process.returncode != 0:
             raise GenerationError(f"ffmpeg failed: {stderr.decode()[-600:]}")
+
+    async def _decode_pcm(self, path: Path):
+        """Mono float32 PCM at the analysis rate, or None for undecodable
+        media (mock placeholders) — beat alignment then just skips."""
+        import numpy as np
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.ffmpeg_bin,
+                "-hide_banner",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-f",
+                "f32le",
+                "-ac",
+                "1",
+                "-ar",
+                str(ANALYSIS_RATE),
+                "pipe:1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError as exc:
+            raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
+        stdout, _ = await process.communicate()
+        if process.returncode != 0 or not stdout:
+            return None
+        return np.frombuffer(stdout, dtype=np.float32)
 
     async def _probe_duration(self, path: Path) -> float | None:
         if not path.exists():

@@ -44,6 +44,8 @@ export function TimelineStrip() {
   ];
   const transitions = (timeline?.params.transitions ?? {}) as Record<string, string>;
   const captions = String(exportNode?.params.captions ?? "burn");
+  const ducking = timeline?.params.ducking !== false; // engine default: on
+  const beatAlign = timeline?.params.beat_align === true;
   const allReady = board.scenes.every((scene) =>
     ["draft", "final", "pinned"].includes(scene.clip.status),
   );
@@ -136,6 +138,26 @@ export function TimelineStrip() {
       })}
 
       <div className="tl-export">
+        {timeline && (
+          <div className="seg-toggle" role="group" aria-label="Audio">
+            <button
+              className={ducking ? "active" : ""}
+              title="Dip the music under narration"
+              aria-pressed={ducking}
+              onClick={() => applyTimeline({ ducking: !ducking })}
+            >
+              Duck music
+            </button>
+            <button
+              className={beatAlign ? "active" : ""}
+              title="Snap scene cuts to the music's beat"
+              aria-pressed={beatAlign}
+              onClick={() => applyTimeline({ beat_align: !beatAlign })}
+            >
+              On-beat cuts
+            </button>
+          </div>
+        )}
         {exportNode && (
           <>
             <div className="seg-toggle" role="group" aria-label="Captions">

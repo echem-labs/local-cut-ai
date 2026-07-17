@@ -168,6 +168,9 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             s: v for s, v in (old_timeline.get(edits_key) or {}).items() if s in scene_ids
         }:
             timeline_params[edits_key] = edits
+    for flag in ("ducking", "beat_align"):  # audio choices are user state too
+        if flag in old_timeline:
+            timeline_params[flag] = old_timeline[flag]
     _ensure_node(graph, "timeline", NodeKind.TIMELINE, params=timeline_params)
 
     for scene in screenplay.scenes:

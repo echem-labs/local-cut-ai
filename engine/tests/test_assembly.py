@@ -451,3 +451,92 @@ async def test_edl_paths_survive_project_relocation(tmp_path, media):
         ),
     )
     assert (await backend._probe_duration(out)) is not None
+
+
+async def test_beat_align_snaps_boundaries_without_cutting_speech(tmp_path, media):
+    """A click-track bed with beat_align pulls the scene boundary onto the
+    beat grid by flexing only the pad after narration."""
+    import numpy as np
+    import soundfile as sf
+
+    from localcut_engine.audio import ANALYSIS_RATE, estimate_beats
+
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    # Clicks exactly every 0.5s from t=0 — a grid the 0.55s snap window
+    # (pad flex + stretch) can never miss.
+    rng = np.random.default_rng(3)
+    pcm = np.zeros(ANALYSIS_RATE * 4, dtype=np.float32)
+    for k in range(8):
+        i = int(k * 0.5 * ANALYSIS_RATE)
+        pcm[i : i + 256] = rng.uniform(-0.9, 0.9, 256).astype(np.float32)
+    click = tmp_path / "click.wav"
+    sf.write(click, pcm, ANALYSIS_RATE)
+
+    ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={"s1": media["clip1"], "s1.audio": media["narr18"], "music": click},
+    )
+    plain = json.loads(
+        (await backend.execute(make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}), ctx)).read_text()
+    )
+    aligned = json.loads(
+        (
+            await backend.execute(
+                make_spec(
+                    NodeKind.TIMELINE,
+                    {"aspect": "9:16", "beat_align": True},
+                    output_hash="b" * 64,
+                ),
+                ctx,
+            )
+        ).read_text()
+    )
+    base, seg = plain["video"][0], aligned["video"][0]
+    assert base["duration"] == pytest.approx(1.8 + 0.35, abs=0.05)  # unaligned window
+    # Snapped onto a beat: never below the speech floor, never far past.
+    assert seg["duration"] >= 1.8 + 0.15 - 0.001
+    assert seg["duration"] <= base["duration"] + 0.35 + 0.001
+    beats = estimate_beats(pcm)
+    assert beats, "click track must yield a beat grid"
+    end = seg["start"] + seg["duration"]
+    assert min(abs(end - b) for b in beats) < 0.06
+    assert aligned["duration"] == pytest.approx(end, abs=0.001)
+
+
+async def test_ducking_flag_flows_into_the_edl_and_both_mixes_export(tmp_path, media):
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={"s1": media["clip1"], "s1.audio": media["narr2"], "music": media["music"]},
+    )
+    ducked_edl = await backend.execute(make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}), ctx)
+    assert json.loads(ducked_edl.read_text())["ducking"] is True  # the default
+    flat_edl = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16", "ducking": False}, output_hash="b" * 64),
+        ctx,
+    )
+    assert json.loads(flat_edl.read_text())["ducking"] is False
+
+    for tag, edl in (("d", ducked_edl), ("f", flat_edl)):
+        out = await backend.execute(
+            make_spec(NodeKind.EXPORT, {}, output_hash=tag * 64),
+            ExecutionContext(output_dir=out_dir, input_artifacts={"default": edl}),
+        )
+        probe = subprocess.run(
+            [
+                backend.ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "audio" in probe.stdout  # both mix graphs are valid end to end
