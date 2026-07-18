@@ -1,8 +1,9 @@
 import { Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
-import { inspectorTitle } from "../help/terms";
+import { inspectorTitle, sceneNumber } from "../help/terms";
 import { EditPrompt } from "./EditPrompt";
+import { Monitor } from "./Monitor";
 import { useApp } from "../store";
 
 /** Right drawer, exists only when something is selected. The advanced fold
@@ -173,6 +174,7 @@ export function Inspector() {
 
   return (
     <aside className="inspector" aria-label="Inspector">
+      {sceneNumber(node.node_id) && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <h2 style={{ flex: 1 }}>{inspectorTitle(node.node_id)}</h2>
         <button

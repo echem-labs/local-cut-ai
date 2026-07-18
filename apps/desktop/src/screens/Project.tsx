@@ -1,5 +1,5 @@
-import { Download, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Download, MoreHorizontal, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
 import { EditPrompt } from "../components/EditPrompt";
@@ -7,7 +7,9 @@ import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
 import { TimelineStrip } from "../components/TimelineStrip";
 import { ToolSession } from "../components/ToolSession";
+import { TIPS } from "../help/terms";
 import { movedOrder, orderedScenes } from "../lib/order";
+import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 
 const READY = ["draft", "final", "pinned"];
@@ -27,6 +29,107 @@ function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" |
 
 const STAGE_GLYPH = { done: "✓", work: "●", fail: "!", off: "—" } as const;
 
+/** Header overflow menu (⋯): the settings the old strip hid past its
+ * scroll fold — audio behavior, caption mode, pro-editor handoff. */
+function BoardMenu() {
+  const { board, client, currentProject, applyTimeline, applyExport } = useApp();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  if (!board || !currentProject) return null;
+  const timeline = board.aux.timeline;
+  const exportNode = board.aux.export;
+  const ducking = timeline?.params.ducking !== false;
+  const beatAlign = timeline?.params.beat_align === true;
+  const captions = String(exportNode?.params.captions ?? "burn");
+
+  return (
+    <div className="board-menu" ref={ref}>
+      <button
+        className="icon-btn"
+        aria-label="Project options"
+        aria-expanded={open}
+        title="Audio, captions & pro-editor handoff"
+        onClick={() => setOpen(!open)}
+      >
+        <MoreHorizontal size={15} strokeWidth={1.8} />
+      </button>
+      {open && (
+        <div className="menu-pop" role="menu">
+          {timeline && (
+            <>
+              <div className="menu-label">Audio</div>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={ducking}
+                title={TIPS.duck}
+                onClick={() => applyTimeline({ ducking: !ducking })}
+              >
+                <span className="check">{ducking ? "✓" : ""}</span>
+                Lower music under voice
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={beatAlign}
+                title={TIPS.beat}
+                onClick={() => applyTimeline({ beat_align: !beatAlign })}
+              >
+                <span className="check">{beatAlign ? "✓" : ""}</span>
+                Cut on the beat
+              </button>
+            </>
+          )}
+          {exportNode && (
+            <>
+              <div className="menu-label">Captions</div>
+              <button
+                role="menuitemradio"
+                aria-checked={captions === "burn"}
+                title={TIPS.captionsBurn}
+                onClick={() => applyExport({ captions: "burn" })}
+              >
+                <span className="check">{captions === "burn" ? "✓" : ""}</span>
+                On the video
+              </button>
+              <button
+                role="menuitemradio"
+                aria-checked={captions === "sidecar"}
+                title={TIPS.captionsSidecar}
+                onClick={() => applyExport({ captions: "sidecar" })}
+              >
+                <span className="check">{captions === "sidecar" ? "✓" : ""}</span>
+                Separate file (.srt)
+              </button>
+            </>
+          )}
+          {exportNode?.artifact_hash && client && (
+            <>
+              <div className="menu-label">Open in a pro editor</div>
+              <a role="menuitem" href={client.exportUrl(currentProject.id, "otio")} download>
+                <span className="check" />
+                Premiere / Resolve <small>.otio</small>
+              </a>
+              <a role="menuitem" href={client.exportUrl(currentProject.id, "fcpxml")} download>
+                <span className="check" />
+                Final Cut Pro <small>.fcpxml</small>
+              </a>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Project window: scene board over a timeline strip; all modes land
  * here after generation. Tool sessions get a focused single panel. */
 export function Project() {
@@ -40,6 +143,42 @@ export function Project() {
   useEffect(() => {
     void refreshBoard();
   }, [refreshBoard]);
+
+  // Space = draft preview from the selected scene (or the top), anywhere a
+  // form control doesn't own the key. Playback stops when the project closes.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "Space") return;
+      const target = event.target as HTMLElement;
+      if (
+        ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName) ||
+        target.isContentEditable
+      )
+        return;
+      event.preventDefault();
+      const playback = usePlayback.getState();
+      if (playback.playing) {
+        playback.pause();
+        return;
+      }
+      const state = useApp.getState();
+      if (!state.board || state.board.scenes.length === 0) return;
+      const ids = orderedScenes(state.board).map((scene) => scene.scene_id);
+      const selectedScene = state.selectedNode?.includes(".")
+        ? state.selectedNode.split(".")[0]
+        : null;
+      const start =
+        playback.sceneId ??
+        (selectedScene && ids.includes(selectedScene) ? selectedScene : ids[0]);
+      state.select(`${start}.clip`);
+      playback.play(start, true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      usePlayback.getState().stop();
+    };
+  }, []);
 
   if (!currentProject || !board) return null;
   const script = board.aux.script;
@@ -170,6 +309,7 @@ export function Project() {
             ))}
           </div>
         )}
+        <BoardMenu />
         {!checkpointPending &&
           (exported && client ? (
             <a

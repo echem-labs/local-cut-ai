@@ -1,6 +1,7 @@
-import { Pencil, Pin, RotateCw, SlidersHorizontal } from "lucide-react";
-import { useState } from "react";
+import { Pencil, Pin, Play, RotateCw, SlidersHorizontal } from "lucide-react";
+import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
+import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
 import { Tip } from "./Tooltip";
@@ -46,8 +47,12 @@ export function SceneCard({
   onDropSide?: (after: boolean) => void;
 }) {
   const { client, currentProject, selectedNode, select, regenerate, togglePin } = useApp();
+  const playScene = usePlayback((state) => state.play);
   const [dark, setDark] = useState(false);
   const [dropSide, setDropSide] = useState<"before" | "after" | null>(null);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubBroken, setScrubBroken] = useState(false);
+  const scrubRef = useRef<HTMLVideoElement>(null);
   const clip = scene.clip;
   const keyframe = scene.keyframe;
   const primary = keyframe ?? clip;
@@ -59,6 +64,10 @@ export function SceneCard({
   const sceneNo = scene.scene_id.replace(/^s/, "");
   const duration = Number(clip.params.duration_s);
   const hasThumb = keyframeHash && client && currentProject;
+  const clipUrl =
+    clip.artifact_hash && client && currentProject
+      ? client.artifactUrl(currentProject.id, clip.artifact_hash)
+      : null;
 
   return (
     <div
@@ -105,7 +114,19 @@ export function SceneCard({
         setDropSide(null);
       }}
     >
-      <div className="thumb">
+      <div
+        className="thumb"
+        onMouseEnter={() => setScrubbing(true)}
+        onMouseLeave={() => setScrubbing(false)}
+        onMouseMove={(event) => {
+          // Hover-scrub: mouse-X seeks a muted preview of the clip.
+          const video = scrubRef.current;
+          if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          const frac = Math.max(0, Math.min(0.999, (event.clientX - rect.left) / rect.width));
+          video.currentTime = frac * video.duration;
+        }}
+      >
         {hasThumb ? (
           <img
             src={client.artifactUrl(currentProject.id, keyframeHash)}
@@ -121,6 +142,17 @@ export function SceneCard({
           <div className="thumb-slate" aria-hidden="true">
             <span className="num">{sceneNo}</span>
           </div>
+        )}
+        {clipUrl && !scrubBroken && scrubbing && !failed && (
+          <video
+            ref={scrubRef}
+            className="scrub-video"
+            src={clipUrl}
+            muted
+            preload="metadata"
+            aria-hidden="true"
+            onError={() => setScrubBroken(true)}
+          />
         )}
         {/* near-black artifact: keep the frame but overlay a soft number
             slate so the card still reads as content */}
@@ -143,6 +175,18 @@ export function SceneCard({
         )}
         {!failed && (
           <div className="acts">
+            <Tip label="Play" hint="in the monitor" shortcut="Space">
+              <button
+                aria-label="Play this scene"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  select(primary.node_id);
+                  playScene(scene.scene_id, false);
+                }}
+              >
+                <Play size={11} strokeWidth={2} />
+              </button>
+            </Tip>
             <Tip label="Regenerate" hint="new take" shortcut="R">
               <button
                 aria-label="Regenerate"
