@@ -141,7 +141,14 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                   </>
                 ) : showActions ? (
                   <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
-                    {error ? "Retry" : "Download"}
+                    {error
+                      ? "Retry"
+                      : row.partial_bytes > 0 && row.size_bytes > 0
+                        ? `Resume · ${Math.min(
+                            99,
+                            Math.round((row.partial_bytes / row.size_bytes) * 100),
+                          )}%`
+                        : "Download"}
                   </button>
                 ) : null}
               </div>

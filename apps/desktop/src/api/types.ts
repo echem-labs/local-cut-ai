@@ -131,6 +131,9 @@ export interface ModelRow extends ModelEntry {
   downloaded: boolean;
   downloading: boolean;
   progress: { done: number; total: number } | null;
+  /** Resumable bytes on disk for an interrupted, not-currently-running
+   * download (completed files + .part remnants); 0 otherwise. */
+  partial_bytes: number;
 }
 
 export type ProviderId = "anthropic" | "openai" | "google" | "fal";

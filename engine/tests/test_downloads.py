@@ -15,6 +15,7 @@ from localcut_engine.manifest.downloads import (
     DownloadError,
     download_file,
     is_downloaded,
+    partial_bytes,
 )
 from localcut_engine.manifest.model import LicenseInfo, ModelEntry, ModelFile, Requirements
 
@@ -143,6 +144,27 @@ def test_is_downloaded(tmp_path):
     (tmp_path / "checkpoints").mkdir(parents=True)
     (tmp_path / "checkpoints/y.bin").write_bytes(b"x")
     assert is_downloaded(entry, tmp_path)
+
+
+def test_partial_bytes_reports_resumable_state(tmp_path):
+    """An interrupted download must be visible as partial bytes — the UI's
+    Resume label (vs a fresh Download) has no other signal."""
+    entry = ModelEntry(
+        id="m1",
+        task="video.i2v",
+        family="test",
+        requirements=Requirements(vram_gb=1, disk_gb=1),
+        license=LicenseInfo(id="mit", commercial=True),
+        files=[
+            ModelFile(url="http://x/a", dest="checkpoints/a.bin", size=100),
+            ModelFile(url="http://x/b", dest="checkpoints/b.bin", size=100),
+        ],
+    )
+    assert partial_bytes(entry, tmp_path) == 0  # fresh: nothing on disk
+    (tmp_path / "checkpoints").mkdir(parents=True)
+    (tmp_path / "checkpoints/a.bin").write_bytes(b"x" * 100)  # one file complete
+    (tmp_path / "checkpoints/b.bin.part").write_bytes(b"x" * 40)  # one interrupted
+    assert partial_bytes(entry, tmp_path) == 140
 
 
 async def test_manager_publishes_terminal_events(server, tmp_path):

@@ -14,7 +14,7 @@ import time
 
 from ..config import EngineConfig
 from ..events import EventBus
-from .downloads import download_model, is_downloaded
+from .downloads import download_model, is_downloaded, partial_bytes
 from .loader import load_manifest
 from .model import ModelEntry
 
@@ -56,6 +56,11 @@ class DownloadManager:
             row["downloaded"] = is_downloaded(entry, models_dir)
             row["downloading"] = downloading
             row["progress"] = self._progress.get(entry.id) if downloading else None
+            # Resumable bytes on disk for an interrupted download — only
+            # meaningful in the idle-incomplete state the Resume label needs.
+            row["partial_bytes"] = (
+                0 if row["downloaded"] or downloading else partial_bytes(entry, models_dir)
+            )
             rows.append(row)
         return rows
 

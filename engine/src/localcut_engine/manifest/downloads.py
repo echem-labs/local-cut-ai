@@ -94,18 +94,25 @@ async def download_file(
                 limit = file.size + _SIZE_SLACK if file.size else _MAX_UNSIZED_BYTES
                 mode = "ab" if offset else "wb"
                 done = offset
+                oversized = False
                 with part.open(mode) as out:
                     async for chunk in response.aiter_bytes(_CHUNK):
                         out.write(chunk)
                         done += len(chunk)
                         if done > limit:
-                            part.unlink(missing_ok=True)
-                            raise DownloadError(
-                                f"{file.dest}: stream exceeded the expected "
-                                f"size ({done} > {limit} bytes) — aborted"
-                            )
+                            oversized = True
+                            break
                         if progress is not None:
                             await progress(file.dest, done, total or file.size)
+                if oversized:
+                    # Unlink only after the handle is closed — Windows refuses
+                    # to delete an open file. Poisoned bytes must not be kept
+                    # for a later resume.
+                    part.unlink(missing_ok=True)
+                    raise DownloadError(
+                        f"{file.dest}: stream exceeded the expected "
+                        f"size ({done} > {limit} bytes) — aborted"
+                    )
     finally:
         if owns_client:
             await client.aclose()
@@ -144,3 +151,19 @@ async def download_model(
 
 def is_downloaded(entry: ModelEntry, models_dir: Path) -> bool:
     return bool(entry.files) and all((models_dir / f.dest).exists() for f in entry.files)
+
+
+def partial_bytes(entry: ModelEntry, models_dir: Path) -> int:
+    """Bytes already on disk for an incomplete download: completed files
+    plus resumable `.part` remnants. Lets the UI say "Resume" instead of
+    "Download" after a restart."""
+    done = 0
+    for f in entry.files:
+        dest = models_dir / f.dest
+        if dest.exists():
+            done += f.size or dest.stat().st_size
+            continue
+        part = dest.with_suffix(dest.suffix + ".part")
+        if part.exists():
+            done += part.stat().st_size
+    return done
