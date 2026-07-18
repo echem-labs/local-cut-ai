@@ -167,6 +167,10 @@ export class EngineClient {
     return this.request(`/models/${encodeURIComponent(modelId)}/download`, { method: "DELETE" });
   }
 
+  deleteModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
+    return this.request(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
   // Key writes go through the shell (keychain persistence + PUT from the
   // main process); the renderer only ever reads provider status.
   listProviders(): Promise<Provider[]> {

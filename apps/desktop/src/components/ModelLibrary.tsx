@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ModelLicense, ModelRow } from "../api/types";
 import { useApp } from "../store";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { Tip } from "./Tooltip";
 
 export const TASK_LABELS: Record<string, string> = {
   "text.llm": "Script writing",
@@ -49,10 +52,19 @@ interface ModelLibraryProps {
   filterIds?: Set<string>;
 }
 
+/** A pending destructive/interrupting act awaiting the user's confirmation. */
+type PendingAction =
+  | { kind: "delete"; row: ModelRow }
+  | { kind: "discard"; row: ModelRow }
+  | { kind: "cancel"; row: ModelRow };
+
 /** Grouped model list shared by first-run and settings: license badge,
- * size, install state, live download progress with cancel. */
+ * size, install state, live download progress with cancel, delete for
+ * installed weights (confirmed — multi-GB re-downloads aren't free). */
 export function ModelLibrary({ selected, onToggle, showActions, filterIds }: ModelLibraryProps) {
-  const { models, downloadErrors, refreshModels, startDownload, cancelDownload } = useApp();
+  const { models, downloadErrors, refreshModels, startDownload, cancelDownload, deleteModel } =
+    useApp();
+  const [pending, setPending] = useState<PendingAction | null>(null);
 
   const anyDownloading = models.some((row) => row.downloading);
   useEffect(() => {
@@ -131,31 +143,98 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                     external
                   </span>
                 ) : row.downloaded ? (
-                  <span className="badge ok">installed</span>
+                  <>
+                    <span className="badge ok">installed</span>
+                    {showActions && (
+                      <Tip label="Delete from disk" hint={`frees ${formatSize(row.size_bytes)}`}>
+                        <button
+                          className="btn-ghost"
+                          onClick={() => setPending({ kind: "delete", row })}
+                          aria-label={`Delete ${row.id} from disk`}
+                        >
+                          <Trash2 size={13} strokeWidth={1.8} />
+                        </button>
+                      </Tip>
+                    )}
+                  </>
                 ) : row.downloading ? (
                   <>
                     <span className="badge">{Math.round(fraction * 100)}%</span>
-                    <button className="btn-ghost" onClick={() => void cancelDownload(row.id)}>
+                    <button className="btn-ghost" onClick={() => setPending({ kind: "cancel", row })}>
                       Cancel
                     </button>
                   </>
                 ) : showActions ? (
-                  <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
-                    {error
-                      ? "Retry"
-                      : row.partial_bytes > 0 && row.size_bytes > 0
-                        ? `Resume · ${Math.min(
-                            99,
-                            Math.round((row.partial_bytes / row.size_bytes) * 100),
-                          )}%`
-                        : "Download"}
-                  </button>
+                  <>
+                    <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
+                      {error
+                        ? "Retry"
+                        : row.partial_bytes > 0 && row.size_bytes > 0
+                          ? `Resume · ${Math.min(
+                              99,
+                              Math.round((row.partial_bytes / row.size_bytes) * 100),
+                            )}%`
+                          : "Download"}
+                    </button>
+                    {row.partial_bytes > 0 && (
+                      <Tip
+                        label="Discard partial download"
+                        hint={`throws away ${formatSize(row.partial_bytes)}`}
+                      >
+                        <button
+                          className="btn-ghost"
+                          onClick={() => setPending({ kind: "discard", row })}
+                          aria-label={`Discard partial download of ${row.id}`}
+                        >
+                          <Trash2 size={13} strokeWidth={1.8} />
+                        </button>
+                      </Tip>
+                    )}
+                  </>
                 ) : null}
               </div>
             );
           })}
         </div>
       ))}
+      {pending?.kind === "delete" && (
+        <ConfirmDialog
+          title={`Delete ${pending.row.id}?`}
+          message={`Removes ${formatSize(pending.row.size_bytes)} from disk. Jobs that need it will fail until it's downloaded again — the download is always available here.`}
+          confirmLabel={`Delete (${formatSize(pending.row.size_bytes)})`}
+          danger
+          onConfirm={() => {
+            void deleteModel(pending.row.id);
+            setPending(null);
+          }}
+          onCancel={() => setPending(null)}
+        />
+      )}
+      {pending?.kind === "discard" && (
+        <ConfirmDialog
+          title={`Discard partial download of ${pending.row.id}?`}
+          message={`Throws away the ${formatSize(pending.row.partial_bytes)} downloaded so far. A later download starts from zero instead of resuming.`}
+          confirmLabel="Discard"
+          danger
+          onConfirm={() => {
+            void deleteModel(pending.row.id);
+            setPending(null);
+          }}
+          onCancel={() => setPending(null)}
+        />
+      )}
+      {pending?.kind === "cancel" && (
+        <ConfirmDialog
+          title={`Pause downloading ${pending.row.id}?`}
+          message="Nothing is lost — the downloaded part stays on disk and Resume picks up exactly where it stopped."
+          confirmLabel="Pause download"
+          onConfirm={() => {
+            void cancelDownload(pending.row.id);
+            setPending(null);
+          }}
+          onCancel={() => setPending(null)}
+        />
+      )}
     </div>
   );
 }

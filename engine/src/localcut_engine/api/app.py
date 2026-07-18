@@ -243,6 +243,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="model is not downloading")
         return {"ok": True}
 
+    @app.delete("/models/{model_id}", dependencies=[Authed])
+    async def delete_model(model_id: ModelId) -> dict:
+        """Remove downloaded weights (and .part remnants) from disk."""
+        try:
+            freed = await asyncio.to_thread(downloads.delete, model_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown model id") from None
+        except ManifestError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "freed_bytes": freed}
+
     @app.get("/providers", dependencies=[Authed])
     async def providers() -> list[dict]:
         # Which BYOK providers exist and whether a key is present — the

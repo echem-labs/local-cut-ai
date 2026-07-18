@@ -93,6 +93,28 @@ class DownloadManager:
         task.cancel()
         return True
 
+    def delete(self, model_id: str) -> int:
+        """Remove a model's downloaded files and any resumable `.part`
+        remnants; returns bytes freed. Refuses while a download runs —
+        cancel first, so the dying task can't recreate what we removed."""
+        entry = self._entry(model_id)
+        if entry is None:
+            raise KeyError(model_id)
+        task = self._tasks.get(model_id)
+        if task is not None and not task.done():
+            raise RuntimeError("model is downloading — cancel the download first")
+        models_dir = self.config.resolved_models_dir
+        freed = 0
+        for file in entry.files:
+            dest = models_dir / file.dest
+            for path in (dest, dest.with_suffix(dest.suffix + ".part")):
+                try:
+                    freed += path.stat().st_size
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+        return freed
+
     async def shutdown(self) -> None:
         for task in self._tasks.values():
             task.cancel()

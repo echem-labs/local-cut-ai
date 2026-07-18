@@ -1250,6 +1250,63 @@ textarea {
   color: #c9c6d6;
 }
 
+/* ---- confirm modal ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, 0.6);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: var(--z-modal);
+}
+
+.modal {
+  background: var(--surface-1);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-6);
+  max-width: 400px;
+  width: calc(100% - var(--space-8));
+}
+
+.modal h2 {
+  font-size: var(--text-m);
+  font-weight: 650;
+  margin-bottom: var(--space-2);
+}
+
+.modal p {
+  color: var(--text-secondary);
+  font-size: var(--text-s);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--status-failed);
+  color: #fff;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-s);
+  font-weight: 600;
+  min-height: 32px;
+  transition: filter var(--motion-fast);
+}
+
+.btn-danger:hover {
+  filter: brightness(1.1);
+}
+
 /* ---- banners ---- */
 .banner {
   background: var(--surface-2);

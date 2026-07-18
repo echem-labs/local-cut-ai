@@ -117,6 +117,7 @@ interface AppState {
   refreshModels: () => Promise<void>;
   startDownload: (modelId: string) => Promise<void>;
   cancelDownload: (modelId: string) => Promise<void>;
+  deleteModel: (modelId: string) => Promise<void>;
   pairRemote: (code: string) => Promise<string | null>;
   unpairRemote: () => Promise<string | null>;
   finishFirstRun: () => void;
@@ -787,6 +788,19 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         // 409 = already finished; the refresh below shows the truth.
         console.warn(`cancel ${modelId} failed:`, err);
+      }
+      await get().refreshModels();
+    },
+
+    deleteModel: async (modelId) => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        await client.deleteModel(modelId);
+      } catch (err) {
+        set({
+          downloadErrors: { ...get().downloadErrors, [modelId]: messageOf(err) },
+        });
       }
       await get().refreshModels();
     },

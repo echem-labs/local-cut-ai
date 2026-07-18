@@ -167,6 +167,55 @@ def test_partial_bytes_reports_resumable_state(tmp_path):
     assert partial_bytes(entry, tmp_path) == 140
 
 
+async def test_manager_delete_removes_files_and_partials(tmp_path):
+    """Delete frees downloaded weights AND resume remnants; a live download
+    must be cancelled first so its dying task can't resurrect the files."""
+    import json
+
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.events import EventBus
+    from localcut_engine.manifest.manager import DownloadManager
+
+    manifest = {
+        "models": [
+            {
+                "id": "m1",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [
+                    {"url": "http://x/a", "dest": "checkpoints/a.bin", "size": 100},
+                    {"url": "http://x/b", "dest": "checkpoints/b.bin", "size": 100},
+                ],
+            }
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest))
+    config = EngineConfig(data_dir=tmp_path)
+    manager = DownloadManager(config, EventBus())
+    models_dir = config.resolved_models_dir
+    (models_dir / "checkpoints").mkdir(parents=True)
+    (models_dir / "checkpoints/a.bin").write_bytes(b"x" * 100)
+    (models_dir / "checkpoints/b.bin.part").write_bytes(b"x" * 40)
+
+    with pytest.raises(KeyError):
+        manager.delete("no-such-model")
+
+    # A pending task blocks deletion.
+    blocker = asyncio.get_running_loop().create_task(asyncio.sleep(60))
+    manager._tasks["m1"] = blocker
+    with pytest.raises(RuntimeError, match="cancel"):
+        manager.delete("m1")
+    blocker.cancel()
+    manager._tasks.pop("m1")
+
+    assert manager.delete("m1") == 140
+    assert not (models_dir / "checkpoints/a.bin").exists()
+    assert not (models_dir / "checkpoints/b.bin.part").exists()
+    assert manager.delete("m1") == 0  # idempotent
+
+
 async def test_manager_publishes_terminal_events(server, tmp_path):
     """The background manager mirrors download outcomes onto the event bus —
     the UI's progress bars have no other signal."""
