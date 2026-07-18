@@ -947,24 +947,9 @@ textarea {
   color: var(--text-primary);
 }
 
-/* aspect-ratio preview glyphs inside segmented buttons */
-.ratio {
-  width: 9px;
-  height: 15px;
-  border: 1.5px solid currentColor;
-  border-radius: 2px;
-  opacity: 0.75;
+.seg-toggle button svg {
+  opacity: 0.8;
   flex-shrink: 0;
-}
-
-.ratio.wide {
-  width: 17px;
-  height: 10px;
-}
-
-.ratio.square {
-  width: 12px;
-  height: 12px;
 }
 
 /* ---- status ring ---- */

@@ -18,17 +18,27 @@ function resolve(pref: ThemePref): "dark" | "light" {
   return pref;
 }
 
+/** Anything showing the current theme (the rail toggle) listens for this. */
+export const THEME_EVENT = "localcut-themechange";
+
+function stamp(resolved: "dark" | "light"): void {
+  document.documentElement.dataset.theme = resolved;
+  window.dispatchEvent(new Event(THEME_EVENT));
+}
+
+export function resolvedTheme(): "dark" | "light" {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
 export function applyTheme(pref: ThemePref): void {
   localStorage.setItem(KEY, pref);
-  document.documentElement.dataset.theme = resolve(pref);
+  stamp(resolve(pref));
 }
 
 /** Stamp the initial theme and follow OS changes while pref is "system". */
 export function initTheme(): void {
-  document.documentElement.dataset.theme = resolve(loadThemePref());
+  stamp(resolve(loadThemePref()));
   media().addEventListener("change", () => {
-    if (loadThemePref() === "system") {
-      document.documentElement.dataset.theme = resolve("system");
-    }
+    if (loadThemePref() === "system") stamp(resolve("system"));
   });
 }

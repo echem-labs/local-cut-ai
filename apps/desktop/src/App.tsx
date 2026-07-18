@@ -4,10 +4,13 @@ import {
   FolderOpen,
   Home as HomeIcon,
   LayoutGrid,
+  Moon,
   Settings as SettingsIcon,
+  Sun,
   Upload,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -36,6 +39,14 @@ export default function App() {
   useEffect(() => {
     void connect();
   }, [connect]);
+
+  // Mirrors the resolved theme (Settings toggle and OS changes included).
+  const [theme, setTheme] = useState<"dark" | "light">(resolvedTheme);
+  useEffect(() => {
+    const onChange = () => setTheme(resolvedTheme());
+    window.addEventListener(THEME_EVENT, onChange);
+    return () => window.removeEventListener(THEME_EVENT, onChange);
+  }, []);
 
   // First run gates everything; after that, an open project wins over
   // settings, and Home is the fallback.
@@ -107,6 +118,14 @@ export default function App() {
         >
           <SettingsIcon {...ICON} />
           Settings
+        </button>
+        <button
+          onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
+          title="Toggle theme — the follow-system option lives in Settings"
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
+          {theme === "dark" ? "Light mode" : "Dark mode"}
         </button>
         <Tip label="Engine status" hint="click for engine settings" side="top">
           <button

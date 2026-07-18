@@ -4,8 +4,11 @@ import {
   Film,
   Image as ImageIcon,
   Mic,
+  Monitor,
   Music,
+  Smartphone,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -67,9 +70,9 @@ const TOOLS: {
 ];
 
 const ASPECTS = [
-  { value: "9:16", label: "Shorts", glyph: "" },
-  { value: "16:9", label: "YouTube", glyph: "wide" },
-  { value: "1:1", label: "Square", glyph: "square" },
+  { value: "9:16", label: "Shorts", icon: Smartphone },
+  { value: "16:9", label: "YouTube", icon: Monitor },
+  { value: "1:1", label: "Square", icon: Square },
 ];
 
 const DURATIONS = [
@@ -153,17 +156,20 @@ export function Home() {
           />
           <div className="row">
             <div className="seg-toggle" role="group" aria-label="Aspect ratio">
-              {ASPECTS.map((entry) => (
-                <button
-                  key={entry.value}
-                  className={aspect === entry.value ? "active" : ""}
-                  onClick={() => setAspect(entry.value)}
-                  title={`${entry.value} · ${entry.label}`}
-                >
-                  <span className={`ratio ${entry.glyph}`} aria-hidden="true" />
-                  {entry.label}
-                </button>
-              ))}
+              {ASPECTS.map((entry) => {
+                const Icon = entry.icon;
+                return (
+                  <button
+                    key={entry.value}
+                    className={aspect === entry.value ? "active" : ""}
+                    onClick={() => setAspect(entry.value)}
+                    title={`${entry.value} · ${entry.label}`}
+                  >
+                    <Icon size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {entry.label}
+                  </button>
+                );
+              })}
             </div>
             <div className="seg-toggle" role="group" aria-label="Duration">
               {DURATIONS.map((entry) => (
