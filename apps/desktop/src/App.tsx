@@ -1,6 +1,5 @@
 import {
   AudioLines,
-  Clapperboard,
   FolderOpen,
   Home as HomeIcon,
   LayoutGrid,
@@ -11,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
+import { BrandMark } from "./components/BrandMark";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -61,22 +61,25 @@ export default function App() {
     <Home />
   );
 
-  const gpu = system?.hardware.gpus[0]?.name ?? null;
+  // "NVIDIA GeForce RTX 3080" → "RTX 3080": the chip is narrow and the
+  // vendor prefix says nothing the model number doesn't.
+  const gpu = system?.hardware.gpus[0]?.name.replace(/^(NVIDIA|AMD|Intel)\s+(GeForce|Radeon|Arc)?\s*/i, "") ?? null;
   const engineDetail = system
-    ? `${gpu ?? "No GPU"} · Tier ${system.hardware.tier} · ${system.backend_mode}`
+    ? `${gpu || "No GPU"} · Tier ${system.hardware.tier} · ${system.backend_mode}`
     : engineError
       ? "not connected"
       : "connecting…";
 
   return (
     <div className="app">
+      {/* Frameless window: this slim bar is the drag region; the native
+          min/max/close buttons overlay its right edge (same background). */}
+      <header className="titlebar">
+        <BrandMark size={18} />
+        <span className="tb-name">LocalCut AI</span>
+        {currentProject && <span className="tb-project">{currentProject.title}</span>}
+      </header>
       <nav className="rail" aria-label="Navigation">
-        <div className="brand">
-          <span className="logo">
-            <Clapperboard size={13} strokeWidth={2.2} />
-          </span>
-          LocalCut AI
-        </div>
         <button
           className={firstRunDone && !currentProject && !settingsOpen ? "active" : ""}
           disabled={!firstRunDone}

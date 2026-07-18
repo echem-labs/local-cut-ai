@@ -19,6 +19,8 @@ extraResources:
 asar: true
 npmRebuild: false
 win:
+  # Cut-Play mark — generated from branding/logo.svg by scripts/make-icon.mjs
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:

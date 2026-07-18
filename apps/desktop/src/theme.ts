@@ -23,6 +23,9 @@ export const THEME_EVENT = "localcut-themechange";
 
 function stamp(resolved: "dark" | "light"): void {
   document.documentElement.dataset.theme = resolved;
+  // Keep the native window-control overlay in step with the CSS theme.
+  // Optional: absent outside Electron (e.g. vite serving a plain browser).
+  void window.localcut?.setTitleBarTheme?.(resolved);
   window.dispatchEvent(new Event(THEME_EVENT));
 }
 

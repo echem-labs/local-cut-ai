@@ -23,12 +23,12 @@
   --text-secondary: #a9adb8;
   --text-tertiary: #767b88;
 
-  /* the one accent (violet family) */
-  --accent: #8b7cf6;
-  --accent-hover: #9d90f8;
-  --accent-muted: rgba(139, 124, 246, 0.16);
-  --accent-glow: 0 0 0 3px rgba(139, 124, 246, 0.16);
-  --accent-shadow: 0 2px 10px rgba(139, 124, 246, 0.35);
+  /* the one accent — "electric iris" (design review 2, palette B) */
+  --accent: #7c6cf8;
+  --accent-hover: #948af9;
+  --accent-muted: rgba(124, 108, 248, 0.17);
+  --accent-glow: 0 0 0 3px rgba(124, 108, 248, 0.16);
+  --accent-shadow: 0 2px 10px rgba(124, 108, 248, 0.35);
 
   /* reserved status colors — never decorative */
   --status-generating: var(--accent);
@@ -62,12 +62,12 @@
   --text-secondary: #5d5b6b;
   --text-tertiary: #8c8a9a;
 
-  /* deeper violet for contrast on light grounds */
-  --accent: #6d5ce0;
-  --accent-hover: #5b49d6;
-  --accent-muted: rgba(109, 92, 224, 0.12);
-  --accent-glow: 0 0 0 3px rgba(109, 92, 224, 0.14);
-  --accent-shadow: 0 2px 10px rgba(109, 92, 224, 0.25);
+  /* deeper iris for contrast on light grounds */
+  --accent: #5b49d6;
+  --accent-hover: #4e3bc9;
+  --accent-muted: rgba(91, 73, 214, 0.12);
+  --accent-glow: 0 0 0 3px rgba(91, 73, 214, 0.14);
+  --accent-shadow: 0 2px 10px rgba(91, 73, 214, 0.25);
 
   --status-generating: var(--accent);
   --status-draft: #9a6d10;
@@ -81,6 +81,11 @@
 }
 
 :root {
+  /* brand gradient — reserved for exactly two places: the logo mark and
+     the primary CTA. Everything else stays flat accent; that restraint is
+     what keeps the gradient special. Same in both themes. */
+  --brand-gradient: linear-gradient(135deg, #a395ff, #5f4fd8);
+
   /* spacing on a 4px grid */
   --space-1: 4px;
   --space-2: 8px;
@@ -100,6 +105,9 @@
   --text-m: 16px;
   --text-l: 20px;
   --text-display: 28px;
+
+  /* frameless-window chrome — must match titleBarOverlay height in main.ts */
+  --titlebar-h: 38px;
 
   /* named z-layers */
   --z-base: 0;

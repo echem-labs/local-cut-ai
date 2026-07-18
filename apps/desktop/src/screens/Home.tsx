@@ -1,6 +1,9 @@
 import {
   Aperture,
+  ArrowUp,
   Boxes,
+  Clapperboard,
+  Clock,
   FileText,
   Film,
   Image as ImageIcon,
@@ -13,7 +16,7 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Dropdown } from "../components/Dropdown";
 import { Tip } from "../components/Tooltip";
 import type { ToolKind } from "../api/types";
@@ -79,10 +82,13 @@ const ASPECTS = [
 ];
 
 const DURATIONS = [
-  { value: 30, label: "30s" },
-  { value: 60, label: "60s" },
-  { value: 120, label: "2min" },
+  { value: 30, label: "30s", icon: Clock },
+  { value: 60, label: "60s", icon: Clock },
+  { value: 120, label: "2min", icon: Clock },
 ];
+
+/** One-click teaching prompt for the empty state — fills, never generates. */
+const SAMPLE_PROMPT = "Why octopuses have three hearts — fast-paced, for Shorts";
 
 /** Deterministic stand-in art per project until real keyframe thumbs. */
 const thumbClass = (id: string): string => {
@@ -106,6 +112,7 @@ export function Home() {
   const [toolInput, setToolInput] = useState("");
   const [voice, setVoice] = useState("");
   const [motion, setMotion] = useState("");
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
 
@@ -150,6 +157,7 @@ export function Home() {
       {!activeTool && (
         <div className="prompt-box">
           <textarea
+            ref={promptRef}
             placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -173,7 +181,11 @@ export function Home() {
               value={duration}
               onChange={setDuration}
               ariaLabel="Duration"
-              options={DURATIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+              options={DURATIONS.map((entry) => ({
+                value: entry.value,
+                label: entry.label,
+                icon: entry.icon,
+              }))}
             />
             <div className="seg-toggle" role="group" aria-label="Generation mode">
               <button
@@ -319,6 +331,27 @@ export function Home() {
           );
         })}
       </div>
+
+      {ordered.length === 0 && (
+        <div className="empty-state">
+          <Clapperboard size={22} strokeWidth={1.5} aria-hidden="true" />
+          <b>Your videos land here</b>
+          <p>Describe an idea above and Generate — or warm up with a sample:</p>
+          <button
+            className="btn-ghost"
+            onClick={() => {
+              setTool(null);
+              setPrompt(SAMPLE_PROMPT);
+              // The prompt box may be replaced by a tool panel right now —
+              // focus after the re-render has mounted the textarea.
+              requestAnimationFrame(() => promptRef.current?.focus());
+            }}
+          >
+            “Why octopuses have three hearts”
+            <ArrowUp size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {ordered.length > 0 && (
         <div className="recent">

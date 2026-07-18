@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld("localcut", {
     ipcRenderer.invoke("providers:set-keys", keys),
   getProviderKeyPresence: () => ipcRenderer.invoke("providers:key-presence"),
   clearProviderKey: (id: string) => ipcRenderer.invoke("providers:clear-key", id),
+  setTitleBarTheme: (theme: "dark" | "light") =>
+    ipcRenderer.invoke("window:set-titlebar-theme", theme),
 });

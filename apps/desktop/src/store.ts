@@ -45,6 +45,7 @@ declare global {
       clearProviderKey: (
         id: ProviderKeyId,
       ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
+      setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
     };
   }
 }

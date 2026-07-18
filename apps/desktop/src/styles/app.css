@@ -30,6 +30,50 @@ textarea {
 .app {
   display: flex;
   height: 100vh;
+  padding-top: var(--titlebar-h);
+}
+
+/* ---- custom title bar (frameless window) ---- */
+/* The whole bar is a drag region; Windows overlays its native min/max/close
+ * buttons on the right edge, colored to match via titleBarOverlay. */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--titlebar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 150px 0 var(--space-3);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  z-index: var(--z-tray);
+}
+
+.titlebar svg {
+  flex-shrink: 0;
+}
+
+.titlebar .tb-name {
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.titlebar .tb-project {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar .tb-project::before {
+  content: "·";
+  margin-right: var(--space-2);
 }
 
 /* ---- left rail ---- */
@@ -42,27 +86,6 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-.rail .brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-s);
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  padding: var(--space-1) var(--space-2) var(--space-4);
-}
-
-.rail .brand .logo {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), #5f4fd8);
-  box-shadow: var(--accent-shadow);
 }
 
 .rail .group-label {
@@ -210,7 +233,7 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  background: var(--brand-gradient);
   color: #fff;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-s);
@@ -224,7 +247,7 @@ textarea {
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(139, 124, 246, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 16px rgba(124, 108, 248, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -562,6 +585,37 @@ textarea {
   border-color: var(--accent);
 }
 
+/* first-session teaching card — replaced by Recent projects once one exists */
+.empty-state {
+  margin-top: var(--space-8);
+  border: 1px dashed var(--border-hi);
+  border-radius: var(--radius-m);
+  padding: var(--space-8) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.empty-state b {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.empty-state p {
+  font-size: var(--text-xs);
+}
+
+.empty-state .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  color: var(--text-primary);
+}
+
 .recent {
   margin-top: var(--space-8);
 }
@@ -739,7 +793,7 @@ textarea {
 .scene-card .thumb {
   aspect-ratio: 16 / 9;
   background:
-    linear-gradient(150deg, rgba(139, 124, 246, 0.06), transparent 60%),
+    linear-gradient(150deg, rgba(124, 108, 248, 0.06), transparent 60%),
     var(--surface-2);
   display: flex;
   align-items: center;
@@ -764,7 +818,7 @@ textarea {
   background: linear-gradient(
     100deg,
     transparent 30%,
-    rgba(139, 124, 246, 0.1) 50%,
+    rgba(124, 108, 248, 0.1) 50%,
     transparent 70%
   );
   animation: shimmer 1.8s infinite;
@@ -1088,7 +1142,7 @@ textarea {
 /* ---- inspector drawer ---- */
 .inspector {
   position: fixed;
-  top: 0;
+  top: var(--titlebar-h);
   right: 0;
   bottom: 0;
   width: 320px;

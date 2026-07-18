@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import path from "node:path";
 import { EngineManager } from "./engine";
 import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
@@ -28,6 +28,13 @@ const authorityOf = (url: string): string | null => {
   }
 };
 
+/** Native-controls overlay colors per theme — backgrounds match the
+ * renderer's .titlebar (surface-1), heights must match --titlebar-h. */
+const TITLEBAR = {
+  dark: { color: "#16181d", symbolColor: "#a9adb8", height: 38 },
+  light: { color: "#ffffff", symbolColor: "#5d5b6b", height: 38 },
+} as const;
+
 async function createWindow(): Promise<void> {
   const window = new BrowserWindow({
     width: 1440,
@@ -36,6 +43,10 @@ async function createWindow(): Promise<void> {
     minHeight: 640,
     backgroundColor: "#0E0F12",
     title: "LocalCut AI",
+    // Frameless: the renderer draws a slim branded title bar; the OS
+    // min/max/close buttons float on top via the overlay.
+    titleBarStyle: "hidden",
+    titleBarOverlay: TITLEBAR.dark,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -232,7 +243,19 @@ ipcMain.handle("providers:clear-key", (_event, id: unknown) => {
   return applyKeyUpdates({ [id]: "" });
 });
 
+// Retint the native window-control overlay when the renderer's theme
+// resolves or changes (setTitleBarOverlay is Windows-only).
+ipcMain.handle("window:set-titlebar-theme", (event, theme: unknown) => {
+  if (theme !== "dark" && theme !== "light") return;
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (process.platform === "win32") window?.setTitleBarOverlay(TITLEBAR[theme]);
+});
+
 app.whenReady().then(async () => {
+  // The frameless window hides the stock File/Edit/View bar; null the menu
+  // in packaged builds so Alt can't summon it either. Dev keeps it for the
+  // reload/devtools accelerators.
+  if (app.isPackaged) Menu.setApplicationMenu(null);
   try {
     await connectEngine();
     await armStoredKeys();
