@@ -94,6 +94,7 @@ export function Settings() {
   );
   const [confirmCache, setConfirmCache] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showLicenses, setShowLicenses] = useState(false);
   const locale = useLocale((state) => state.locale);
   const setLocale = useLocale((state) => state.setLocale);
   const { settingsTab, setSettingsTab } = useApp();
@@ -124,11 +125,17 @@ export function Settings() {
     if (tab === "storage") void refreshStorage();
   }, [tab, refreshStorage]);
 
-  // Esc closes the overlay — unless a field or a confirm dialog owns it.
-  const dialogOpen = confirmProject !== null || confirmCache;
+  // Esc closes the overlay — unless a field or a confirm/licenses dialog owns it.
+  const dialogOpen = confirmProject !== null || confirmCache || showLicenses;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || dialogOpen) return;
+      if (event.key !== "Escape") return;
+      // A layered dialog swallows Esc: close it, keep Settings open.
+      if (showLicenses) {
+        setShowLicenses(false);
+        return;
+      }
+      if (dialogOpen) return;
       const target = event.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
         target.blur();
@@ -138,7 +145,7 @@ export function Settings() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialogOpen, closeSettings]);
+  }, [dialogOpen, showLicenses, closeSettings]);
 
   const saveKey = async (providerId: string) => {
     const value = (drafts[providerId] ?? "").trim();
@@ -691,9 +698,12 @@ export function Settings() {
               <div className="setting-row">
                 <div className="st">{t("settings.about.diagnosticsHeading")}</div>
                 <div className="sd">{t("settings.about.diagnosticsHint")}</div>
-                <div className="sc">
+                <div className="sc" style={{ display: "flex", gap: 8 }}>
                   <button className="btn-ghost" onClick={copyDiagnostics}>
                     {copied ? t("settings.about.copied") : t("settings.about.copy")}
+                  </button>
+                  <button className="btn-ghost" onClick={() => setShowLicenses(true)}>
+                    {t("settings.about.licenses")}
                   </button>
                 </div>
               </div>
@@ -727,6 +737,41 @@ export function Settings() {
           }}
           onCancel={() => setConfirmCache(false)}
         />
+      )}
+      {showLicenses && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => setShowLicenses(false)}
+          role="presentation"
+        >
+          <div
+            className="modal licenses-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("settings.about.licensesTitle")}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2>{t("settings.about.licensesTitle")}</h2>
+            <p>{t("settings.about.licensesIntro")}</p>
+            <ul className="licenses-list">
+              {__OSS_LICENSES__.map((dep) => (
+                <li key={dep.name}>
+                  <div className="lic-head">
+                    <span className="lic-name">{dep.name}</span>
+                    <span className="lic-version mono-id">{dep.version}</span>
+                    <span className="badge">{dep.license}</span>
+                  </div>
+                  {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
+                </li>
+              ))}
+            </ul>
+            <div className="modal-actions">
+              <button className="btn-primary" onClick={() => setShowLicenses(false)}>
+                {t("settings.about.licensesClose")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

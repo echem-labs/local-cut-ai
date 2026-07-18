@@ -110,6 +110,10 @@
     "diagnosticsHeading": "Diagnostics",
     "diagnosticsHint": "Copies versions, tier, GPU and memory as plain text for bug reports.",
     "copy": "Copy diagnostics",
-    "copied": "Copied"
+    "copied": "Copied",
+    "licenses": "Open-source licenses",
+    "licensesTitle": "Open-source licenses",
+    "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors.",
+    "licensesClose": "Close"
   }
 }

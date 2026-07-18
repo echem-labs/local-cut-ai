@@ -2986,6 +2986,57 @@ button.link:hover {
   margin-top: var(--space-6);
 }
 
+/* Open-source licenses (Settings → About): a scrollable attribution list —
+   name + version + SPDX badge, repository below (review 4 §S6). */
+.licenses-modal {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+}
+
+.licenses-list {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.licenses-list li {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-lo);
+}
+
+.licenses-list li:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.lic-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lic-name {
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+.lic-version {
+  color: var(--text-tertiary);
+}
+
+.lic-repo {
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
 .btn-danger {
   display: inline-flex;
   align-items: center;
