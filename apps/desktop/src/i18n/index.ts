@@ -25,6 +25,7 @@ import queue from "./en/queue.json";
 import checkpoint from "./en/checkpoint.json";
 import toolSession from "./en/toolSession.json";
 import eta from "./en/eta.json";
+import palette from "./en/palette.json";
 
 /** LocalCut AI internationalization.
  *
@@ -68,6 +69,7 @@ const en = {
   checkpoint,
   toolSession,
   eta,
+  palette,
 };
 
 export type Catalog = typeof en;

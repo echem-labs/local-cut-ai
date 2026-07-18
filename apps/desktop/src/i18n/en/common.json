@@ -12,5 +12,10 @@
   "retry": "Retry",
   "continue": "Continue",
   "generate": "Generate",
-  "starting": "Starting…"
+  "starting": "Starting…",
+  "justNow": "just now",
+  "delete": "Delete…",
+  "rename": "Rename",
+  "duplicate": "Duplicate",
+  "open": "Open"
 }

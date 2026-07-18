@@ -52,6 +52,10 @@ class ModelEntry(BaseModel):
     sources: list[dict[str, str]] = Field(default_factory=list)
     files: list[ModelFile] = Field(default_factory=list)
     comfy_graph_template: str = ""
+    # User-added entry (custom-models.json) — outside the curated catalog,
+    # so the UI shows a neutral "custom" tag and a license self-ack badge
+    # instead of the curated verdicts.
+    custom: bool = False
 
 
 class ModelManifest(BaseModel):

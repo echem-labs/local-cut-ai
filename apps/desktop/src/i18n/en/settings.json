@@ -2,11 +2,15 @@
   "title": "Settings",
   "closeAria": "Close settings",
   "tablistAria": "Settings sections",
+  "generalHint": "Appearance and app behavior.",
   "tabs": {
     "general": "General",
+    "defaults": "Defaults",
     "providers": "Providers",
     "models": "Models",
-    "engine": "Engine"
+    "storage": "Storage",
+    "engine": "Engine",
+    "about": "About"
   },
   "theme": {
     "system": "System",
@@ -14,13 +18,23 @@
     "light": "Light"
   },
   "appearance": {
-    "heading": "Appearance",
+    "heading": "Theme",
     "hint": "Dark is the design target for video work; light is fully supported.",
     "aria": "Theme"
   },
   "language": {
     "heading": "Language",
     "hint": "The language of the app's interface."
+  },
+  "defaults": {
+    "hint": "Starting values for new videos — every field can still be changed per video.",
+    "formatHeading": "New video defaults",
+    "formatHint": "The same controls as Home's prompt row; live changes on Home overwrite this baseline.",
+    "voiceHeading": "Default voice",
+    "voiceHint": "Narrator used when a video doesn't specify one.",
+    "modelHeading": "Final video model",
+    "modelHint": "Used when you create the final video. \"Auto\" follows the hardware recommendation; custom models appear here once added.",
+    "autoModel": "Auto (recommended)"
   },
   "providers": {
     "heading": "Cloud providers",
@@ -32,9 +46,28 @@
     "keyPlaceholder": "Paste API key…",
     "keyAria": "{provider} API key"
   },
-  "modelLibrary": {
+  "models": {
     "heading": "Model library",
     "hint": "Download more local models any time — jobs pick them up immediately."
+  },
+  "storage": {
+    "hint": "Everything LocalCut AI keeps on this machine. Projects and models can be removed here.",
+    "models": "Models {size}",
+    "projects": "Projects {size}",
+    "cache": "Cache {size}",
+    "diskFree": "Disk free {size}",
+    "bySize": "Projects by size",
+    "noProjects": "No projects yet.",
+    "deleteAria": "Delete {title}",
+    "cacheHeading": "Cache",
+    "cacheHint": "Safe to clear — anything needed is regenerated on demand.",
+    "clearCache": "Clear cache ({size})",
+    "clearCacheTitle": "Clear the cache?",
+    "clearCacheMessage": "Removes regenerable intermediate files from every project. Nothing you made is lost — the next render rebuilds what it needs.",
+    "clearCacheConfirm": "Clear cache",
+    "modelsHeading": "Models",
+    "modelsHint": "Downloaded model weights are managed in the model library.",
+    "loading": "Measuring disk usage…"
   },
   "remote": {
     "heading": "Remote engine",
@@ -43,8 +76,8 @@
     "pairedWith": "Paired with {url}",
     "pairedFallback": "remote engine",
     "pairedUnreachable": "Paired with a remote engine (currently unreachable)",
-    "pairedMeta": "All generation runs on the remote engine.",
-    "unreachableMeta": "Disconnect to fall back to the local engine.",
+    "allRemote": "All generation runs on the remote engine.",
+    "disconnectHint": "Disconnect to fall back to the local engine.",
     "disconnect": "Disconnect",
     "disconnecting": "Disconnecting…",
     "pair": "Pair",
@@ -53,11 +86,11 @@
     "pairAria": "Pairing code"
   },
   "engine": {
-    "heading": "Engine",
-    "urlLabel": "Engine URL",
+    "heading": "This engine",
+    "url": "Engine URL",
     "notConnected": "not connected",
-    "backendLabel": "Backend mode",
-    "hardwareLabel": "Hardware",
+    "backend": "Backend mode",
+    "hardware": "Hardware",
     "hardwareValue": "Tier {tier} · {detail}",
     "gpuDetail": "{gpu} ({vram} GB VRAM)",
     "noGpu": "no GPU detected",
@@ -65,6 +98,18 @@
   },
   "setup": {
     "heading": "Setup",
-    "showAgain": "Show setup screen again"
+    "hint": "Run the first-launch hardware check and recommended model picks again.",
+    "action": "Show setup screen again"
+  },
+  "about": {
+    "hint": "The \"what version are you on?\" answer, one copy away.",
+    "versionHeading": "Version",
+    "app": "App",
+    "engine": "Engine",
+    "api": "API",
+    "diagnosticsHeading": "Diagnostics",
+    "diagnosticsHint": "Copies versions, tier, GPU and memory as plain text for bug reports.",
+    "copy": "Copy diagnostics",
+    "copied": "Copied"
   }
 }

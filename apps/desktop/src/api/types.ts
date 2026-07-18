@@ -11,6 +11,12 @@ export interface Project {
   created_at: number;
   mode: string;
   approvals: string[];
+  // Home-grid read model (review 4) — denormalized engine-side; all
+  // optional so old metas stay valid.
+  updated_at?: number | null;
+  thumb_hash?: string | null;
+  aspect?: string | null;
+  duration_s?: number | null;
 }
 
 export type ToolKind = "script" | "thumbnail" | "voiceover" | "image" | "music" | "clip";
@@ -123,6 +129,9 @@ export interface ModelEntry {
   // Empty = nothing to download; the model is served externally (e.g. Ollama).
   files: ModelFile[];
   comfy_graph_template: string;
+  /** User-added entry (outside the curated catalog): neutral "custom" tag
+   * and a license self-ack badge instead of curated verdicts. */
+  custom: boolean;
 }
 
 /** A /models row: manifest entry plus live install state. */
@@ -162,6 +171,15 @@ export interface Job {
   spec: { node_id: string; kind: string };
 }
 
+/** GET /storage — Settings → Storage. */
+export interface StorageInfo {
+  projects: { id: string; title: string; bytes: number }[];
+  models_bytes: number;
+  cache_bytes: number;
+  disk_free_bytes: number;
+  disk_total_bytes: number;
+}
+
 export type EngineEvent =
   // job.* events carry project_id so a subscriber (the WS is a global stream)
   // can drop events for a project it isn't viewing — node ids like "timeline"
@@ -181,6 +199,7 @@ export type EngineEvent =
   | { type: "project.compiled"; project_id: string; enqueued: number }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
+  | { type: "project.renamed"; project_id: string; title: string }
   // done/total are bytes across the whole model, throttled to ~0.5s.
   | { type: "model.download.progress"; model: string; file: string; done: number; total: number }
   | { type: "model.download.done"; model: string }

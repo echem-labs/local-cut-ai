@@ -53,17 +53,8 @@ export function Composer() {
     setError(null);
   }, [projectId]);
 
-  // Ctrl+K focuses the composer from anywhere in the project.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        inputRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  // Ctrl+K belongs to the global command palette now (review 4 §SH4);
+  // the composer takes focus via click or the palette's own entries.
 
   // Close the scope menu on outside click.
   useEffect(() => {

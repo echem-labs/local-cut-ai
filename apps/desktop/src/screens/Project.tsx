@@ -387,7 +387,7 @@ export function Project() {
   };
 
   return (
-    <div className="project-shell">
+    <div className="project-shell screen-enter">
       <div className="board-header">
         <h1>{currentProject.title}</h1>
         <div className="pipeline" role="status" aria-label={t("project.progressAria")}>

@@ -500,3 +500,133 @@ async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypat
     response = await client.post(f"/projects/{pid}/edit", json={"instruction": "change it"})
     assert response.status_code == 409
     assert "changed" in response.json()["detail"]
+
+
+# -- review 4: project lifecycle + read model + storage + custom models -------
+
+
+async def _wait_for(check, attempts=400, delay=0.02):
+    for _ in range(attempts):
+        result = await check()
+        if result:
+            return result
+        await asyncio.sleep(delay)
+    raise AssertionError("condition never became true")
+
+
+async def test_rename_project(client):
+    pid = (await client.post("/projects", json={"prompt": "rename me"})).json()["id"]
+
+    renamed = await client.patch(f"/projects/{pid}", json={"title": "A better name"})
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "A better name"
+    assert renamed.json()["updated_at"] is not None
+
+    listed = {p["id"]: p for p in (await client.get("/projects")).json()}
+    assert listed[pid]["title"] == "A better name"
+
+    assert (await client.patch(f"/projects/{pid}", json={"title": "   "})).status_code == 422
+    assert (
+        await client.patch("/projects/aaaaaaaaaa", json={"title": "x"})
+    ).status_code == 404
+
+
+async def test_list_carries_home_read_model(client):
+    pid = (
+        await client.post(
+            "/projects", json={"prompt": "read model", "aspect": "16:9", "target_duration_s": 30}
+        )
+    ).json()["id"]
+
+    async def thumb_ready():
+        listed = {p["id"]: p for p in (await client.get("/projects")).json()}
+        return listed[pid] if listed[pid].get("thumb_hash") else None
+
+    row = await _wait_for(thumb_ready)
+    assert row["aspect"] == "16:9"
+    assert row["duration_s"] and row["duration_s"] > 0
+    assert row["updated_at"] >= row["created_at"]
+    # The denormalized thumb must be a real, servable artifact.
+    artifact = await client.get(f"/projects/{pid}/artifacts/{row['thumb_hash']}")
+    assert artifact.status_code == 200
+
+
+async def test_duplicate_project(client):
+    pid = (await client.post("/projects", json={"prompt": "twin study"})).json()["id"]
+
+    async def scenes_done():
+        board = (await client.get(f"/projects/{pid}")).json()["board"]
+        scenes = board["scenes"]
+        return scenes if scenes and all(s["clip"]["artifact_hash"] for s in scenes) else None
+
+    original = await _wait_for(scenes_done)
+
+    copy = await client.post(f"/projects/{pid}/duplicate")
+    assert copy.status_code == 200
+    body = copy.json()
+    assert body["id"] != pid
+    assert body["title"].endswith("copy")
+
+    # Content-addressed artifacts travel: the copy's board is fully cached
+    # with the same hashes, no re-render enqueued for existing outputs.
+    twin = (await client.get(f"/projects/{body['id']}")).json()["board"]
+    assert [s["clip"]["artifact_hash"] for s in twin["scenes"]] == [
+        s["clip"]["artifact_hash"] for s in original
+    ]
+
+    assert (await client.post("/projects/aaaaaaaaaa/duplicate")).status_code == 404
+
+
+async def test_storage_overview_and_cleanup(client):
+    pid = (await client.post("/projects", json={"prompt": "disk eater"})).json()["id"]
+
+    storage = (await client.get("/storage")).json()
+    assert any(row["id"] == pid for row in storage["projects"])
+    assert storage["disk_free_bytes"] > 0
+    for key in ("models_bytes", "cache_bytes", "disk_total_bytes"):
+        assert key in storage
+
+    cleaned = await client.post("/storage/cleanup")
+    assert cleaned.status_code == 200
+    assert cleaned.json()["ok"] and cleaned.json()["freed_bytes"] >= 0
+
+
+async def test_custom_model_lifecycle(client, tmp_path):
+    weight = tmp_path / "my-finetune.safetensors"
+    weight.write_bytes(b"w" * 2048)
+
+    added = await client.post(
+        "/models/custom",
+        json={
+            "name": "My Wan finetune",
+            "task": "video.i2v",
+            "source": "file",
+            "ref": str(weight),
+            "vram_gb": 16,
+        },
+    )
+    assert added.status_code == 200
+    entry = added.json()
+    assert entry["custom"] is True
+    assert entry["license"]["verdict"] == "conditions"
+
+    rows = {r["id"]: r for r in (await client.get("/models")).json()}
+    row = rows[entry["id"]]
+    # A local-file source is installed at add time — copied into models dir.
+    assert row["custom"] and row["downloaded"]
+    assert (tmp_path / "models" / "checkpoints" / "my-finetune.safetensors").exists()
+
+    # Validation: bad url / missing file / path-shaped template are 422s.
+    bad = {"name": "x", "task": "image.gen", "source": "url", "ref": "ftp://nope"}
+    assert (await client.post("/models/custom", json=bad)).status_code == 422
+    missing = {"name": "x", "task": "image.gen", "source": "file", "ref": str(tmp_path / "no")}
+    assert (await client.post("/models/custom", json=missing)).status_code == 422
+
+    removed = await client.delete(f"/models/custom/{entry['id']}")
+    assert removed.status_code == 200
+    assert removed.json()["freed_bytes"] > 0
+    rows = {r["id"]: r for r in (await client.get("/models")).json()}
+    assert entry["id"] not in rows
+    # Deleting a curated entry through the custom route must refuse.
+    curated = next(iter(rows))
+    assert (await client.delete(f"/models/custom/{curated}")).status_code == 404

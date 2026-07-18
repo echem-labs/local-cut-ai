@@ -50,6 +50,7 @@ from ..hardware.probe import probe_hardware
 from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
+from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
@@ -57,6 +58,7 @@ from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore
 from ..service import ConflictError, ProjectService
+from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +258,80 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "freed_bytes": freed}
 
+    class CustomModelBody(BaseModel):
+        """Review 4's "Add custom model": registers a user model outside the
+        curated catalog. `ref` is a direct weight-file URL (downloads through
+        the normal manager) or an absolute local path (copied into the models
+        dir). License is recorded unverified — the UI's self-acknowledgment
+        is the doc-04 notice."""
+
+        name: str = Field(min_length=1, max_length=80)
+        task: Literal[
+            "video.i2v", "video.t2v", "image.gen", "text.llm",
+            "speech.tts", "music.gen", "transcribe",
+        ]
+        source: Literal["url", "file"]
+        ref: str = Field(min_length=1, max_length=2000)
+        vram_gb: float = Field(default=8, ge=0, le=512)
+        workflow_template: str = Field(default="", max_length=128)
+
+    @app.post("/models/custom", dependencies=[Authed])
+    async def create_custom_model(body: CustomModelBody) -> dict:
+        assert body.task in TASK_DESTS  # Literal and TASK_DESTS must agree
+        try:
+            entry = await asyncio.to_thread(
+                add_custom_model,
+                config,
+                name=body.name,
+                task=body.task,
+                source=body.source,
+                ref=body.ref,
+                vram_gb=body.vram_gb,
+                workflow_template=body.workflow_template,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"could not add model: {exc}") from exc
+        return entry.model_dump()
+
+    @app.delete("/models/custom/{model_id}", dependencies=[Authed])
+    async def delete_custom_model(model_id: ModelId) -> dict:
+        entry = next(
+            (m for m in load_manifest(config).models if m.id == model_id and m.custom), None
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="unknown custom model")
+        try:
+            # Files first (the manager refuses mid-download), then the entry.
+            freed = await asyncio.to_thread(downloads.delete, model_id)
+            await asyncio.to_thread(remove_custom_model, config, model_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError:
+            raise HTTPException(status_code=404, detail="unknown custom model") from None
+        return {"ok": True, "freed_bytes": freed}
+
+    # -- storage (Settings → Storage, review 4) -------------------------------
+
+    _STORAGE_TTL_S = 30.0
+
+    @app.get("/storage", dependencies=[Authed])
+    async def storage() -> dict:
+        # Walking many multi-GB projects isn't free — cache briefly.
+        cached = getattr(app.state, "storage_cache", None)
+        if cached is not None and asyncio.get_running_loop().time() - cached[0] < _STORAGE_TTL_S:
+            return cached[1]
+        data = await asyncio.to_thread(compute_storage, config, store)
+        app.state.storage_cache = (asyncio.get_running_loop().time(), data)
+        return data
+
+    @app.post("/storage/cleanup", dependencies=[Authed])
+    async def storage_cleanup() -> dict:
+        freed = await asyncio.to_thread(clear_caches, store)
+        app.state.storage_cache = None
+        return {"ok": True, "freed_bytes": freed}
+
     @app.get("/providers", dependencies=[Authed])
     async def providers() -> list[dict]:
         # Which BYOK providers exist and whether a key is present — the
@@ -363,6 +439,28 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if project is None:
             raise HTTPException(status_code=404, detail="project not found")
         return project
+
+    class RenameProject(BaseModel):
+        title: str = Field(min_length=1, max_length=120)
+
+    @app.patch("/projects/{project_id}", dependencies=[Authed])
+    async def rename_project(project_id: ProjectId, body: RenameProject) -> dict:
+        title = body.title.strip()
+        if not title:
+            raise HTTPException(status_code=422, detail="title cannot be empty")
+        try:
+            project = await asyncio.to_thread(service.rename, project_id, title)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="project not found") from None
+        return project.model_dump()
+
+    @app.post("/projects/{project_id}/duplicate", dependencies=[Authed])
+    async def duplicate_project(project_id: ProjectId) -> dict:
+        try:
+            project = await asyncio.to_thread(service.duplicate, project_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="project not found") from None
+        return project.model_dump()
 
     @app.get("/projects/{project_id}", dependencies=[Authed])
     async def get_project(project_id: ProjectId) -> dict:
@@ -495,14 +593,16 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown node: {exc}") from exc
         return {"ok": True}
 
+    class FinalizeBody(BaseModel):
+        # The shell's Settings → Defaults video model; absent/None falls back
+        # to the engine-configured final_clip_model.
+        clip_model: str | None = None
+
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
-    async def finalize(project_id: ProjectId) -> dict:
+    async def finalize(project_id: ProjectId, body: FinalizeBody | None = None) -> dict:
         _get_project(project_id)
-        return {
-            "enqueued": await asyncio.to_thread(
-                service.finalize, project_id, config.final_clip_model
-            )
-        }
+        clip_model = (body.clip_model if body else None) or config.final_clip_model
+        return {"enqueued": await asyncio.to_thread(service.finalize, project_id, clip_model)}
 
     @app.post("/projects/{project_id}/package", dependencies=[Authed])
     async def package(project_id: ProjectId) -> dict:

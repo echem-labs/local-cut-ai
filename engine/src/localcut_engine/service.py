@@ -11,6 +11,7 @@ import json
 import logging
 import shutil
 import threading
+import time
 from pathlib import Path
 
 from .backends.base import BackendRegistry, GenerationError
@@ -70,7 +71,13 @@ class ProjectService:
             style_preset=style_preset,
         )
         with self._lock:
-            project = self.store.create(title=prompt, graph=graph, mode=mode)
+            project = self.store.create(
+                title=prompt,
+                graph=graph,
+                mode=mode,
+                aspect=aspect,
+                duration_s=float(target_duration_s),
+            )
             self._enqueue_dirty(project.id, graph)
         return project
 
@@ -80,9 +87,34 @@ class ProjectService:
         graph = tool_graph(tool, params)
         title = str(params.get("prompt") or params.get("text") or tool)
         with self._lock:
-            project = self.store.create(title=title, graph=graph, mode=f"tool:{tool}")
+            project = self.store.create(
+                title=title,
+                graph=graph,
+                mode=f"tool:{tool}",
+                aspect=str(params.get("aspect")) if params.get("aspect") else None,
+            )
             self._enqueue_dirty(project.id, graph)
         return project
+
+    def rename(self, project_id: str, title: str) -> Project:
+        """Title is meta-only display state — the graph and every node id
+        are untouched, so nothing re-renders."""
+        with self._lock:
+            project = self.store.get(project_id)
+            if project is None:
+                raise KeyError(project_id)
+            project.title = title[:120]
+            project.updated_at = time.time()
+            self.store.save_meta(project)
+        self.events.publish("project.renamed", project_id=project_id, title=project.title)
+        return project
+
+    def duplicate(self, project_id: str) -> Project:
+        with self._lock:
+            copy = self.store.duplicate(project_id)
+            if copy is None:
+                raise KeyError(project_id)
+        return copy
 
     def promote_tool(self, project_id: str) -> Project:
         """Script tool session → full prompt-mode project seeded with the
@@ -126,7 +158,10 @@ class ProjectService:
             new_graph.nodes["script"].seed = script.seed
             expand_screenplay(new_graph, screenplay)
             project = self.store.create(
-                title=screenplay.title or str(params.get("prompt", "")), graph=new_graph
+                title=screenplay.title or str(params.get("prompt", "")),
+                graph=new_graph,
+                aspect=str(params.get("aspect", "9:16")),
+                duration_s=float(params.get("target_duration_s", 60)),
             )
             # Seed the artifact under the new script node's hash: cached, so
             # the pipeline starts at keyframes instead of re-running the LLM.
@@ -148,6 +183,7 @@ class ProjectService:
                 raise KeyError(project_id)
             if checkpoint not in project.approvals:
                 project.approvals.append(checkpoint)
+                project.updated_at = time.time()
                 self.store.save_meta(project)
             self.events.publish("project.approved", project_id=project_id, checkpoint=checkpoint)
             return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
@@ -161,6 +197,7 @@ class ProjectService:
             self.store.save_graph(project_id, graph)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
+            self._refresh_meta_locked(project_id, graph)
         return dirty
 
     def add_asset(self, project_id: str, filename: str, data: bytes, voice: bool = False) -> dict:
@@ -189,6 +226,7 @@ class ProjectService:
             path = dest / f"{out_hash}{suffix}"
             if not path.exists():
                 path.write_bytes(data)
+            self._refresh_meta_locked(project_id, graph)
         self.events.publish("project.asset", project_id=project_id, node_id=node_id)
         return {"node_id": node_id, "hash": out_hash, "name": filename}
 
@@ -219,6 +257,8 @@ class ProjectService:
                 self.store.save_graph(project_id, graph)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
+            if ops:
+                self._refresh_meta_locked(project_id, graph)
         self.events.publish(
             "project.edited", project_id=project_id, ops=len(ops), summary=plan.summary
         )
@@ -231,6 +271,7 @@ class ProjectService:
             node.seed = seed if seed is not None else node.seed + 1
             self.store.save_graph(project_id, graph)
             self._enqueue_dirty(project_id, graph)
+            self._refresh_meta_locked(project_id, graph)
 
     def finalize(self, project_id: str, clip_model: str | None = None) -> int:
         """Draft → final ladder: re-render at target quality. When a final
@@ -246,7 +287,9 @@ class ProjectService:
                         changed = True
                 if changed:
                     self.store.save_graph(project_id, graph)
-            return self._enqueue_dirty(project_id, graph, quality="final")
+            enqueued = self._enqueue_dirty(project_id, graph, quality="final")
+            self._refresh_meta_locked(project_id, graph)
+            return enqueued
 
     def delete(self, project_id: str) -> bool:
         """Remove the project and stop its in-flight work — otherwise the
@@ -471,9 +514,13 @@ class ProjectService:
                     scenes=[s.id for s in screenplay.scenes],
                 )
                 self._enqueue_dirty(job.project_id, graph)
+                self._refresh_meta_locked(job.project_id, graph)
             return
         with self._lock:
             self._heal_optional_consumers(job)
+            # A finished keyframe may be the tile thumbnail Home is waiting
+            # on; any completion moves updated_at.
+            self._refresh_meta_locked(job.project_id)
 
     def _heal_optional_consumers(self, job: Job) -> None:
         """A consumer that ran while this node's artifact was missing (only
@@ -508,6 +555,50 @@ class ProjectService:
             self._enqueue_dirty(job.project_id, graph)
 
     # -- read model for the UI ------------------------------------------------
+
+    def _refresh_meta_locked(self, project_id: str, graph: StoryGraph | None = None) -> None:
+        """Denormalize the Home-grid read model into meta.json (review 4):
+        updated_at now, thumb = the cut's first rendered keyframe, duration =
+        current cut length. Meta-only — graph and wire contract untouched.
+        Callers hold self._lock."""
+        project = self.store.get(project_id)
+        if project is None:
+            return
+        if graph is None:
+            try:
+                graph = self.store.load_graph(project_id)
+            except (OSError, ValueError):
+                graph = None
+        project.updated_at = time.time()
+        if graph is not None:
+            cached = self.store.cached_hashes(project_id)
+            history = self.queue.list(project_id, 1000)
+            memo = dict(self._frozen_pins(graph, history, cached))
+            scene_ids = sorted(
+                {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")},
+                key=scene_sort_key,
+            )
+            timeline = graph.nodes.get("timeline")
+            order = timeline.params.get("order") if timeline is not None else None
+            if isinstance(order, list):
+                ordered = [str(s) for s in order if str(s) in scene_ids]
+                scene_ids = ordered + [s for s in scene_ids if s not in ordered]
+            thumb: str | None = None
+            duration = 0.0
+            for sid in scene_ids:
+                clip = graph.nodes.get(f"{sid}.clip")
+                if clip is not None:
+                    value = clip.params.get("duration_s")
+                    if isinstance(value, (int, float)) and value > 0:
+                        duration += float(value)
+                if thumb is None and f"{sid}.keyframe" in graph.nodes:
+                    key_hash = graph.output_hash(f"{sid}.keyframe", memo)
+                    if key_hash in cached:
+                        thumb = key_hash
+            project.thumb_hash = thumb
+            if duration > 0:
+                project.duration_s = round(duration, 1)
+        self.store.save_meta(project)
 
     def scene_board(self, project_id: str) -> dict:
         """Scene cards + statuses, derived from graph × jobs × artifacts."""

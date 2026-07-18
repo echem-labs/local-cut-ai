@@ -10,6 +10,7 @@ import type {
   ModelRow,
   NodeState,
   Project,
+  StorageInfo,
   SystemInfo,
   ToolKind,
 } from "./api/types";
@@ -58,6 +59,27 @@ export interface ActionError {
   message: string;
 }
 
+/** Baseline for new videos (Settings → Defaults). Home's live changes
+ * overwrite it — Premiere's remember-last behavior. */
+export interface HomeDefaults {
+  aspect: string;
+  duration: number;
+  mode: "prompt" | "beginner";
+  voice: string;
+  /** Applied at Create-final-video time (finalize clip model). */
+  videoModel: string | null;
+}
+
+/** The Home composer's unsent draft — survives Settings round-trips and
+ * restarts; cleared on a successful generate. */
+export interface HomeDraft {
+  prompt: string;
+  tool: ToolKind | null;
+  toolInput: string;
+  voice: string;
+  motion: string;
+}
+
 interface AppState {
   client: EngineClient | null;
   engineError: string | null;
@@ -67,6 +89,12 @@ interface AppState {
   currentProject: Project | null;
   board: Board | null;
   jobs: Job[];
+  /** Unfiltered queue across all projects — Home tile status dots. */
+  allJobs: Job[];
+  storage: StorageInfo | null;
+  engineVersions: { engine_version: string; api_version: number } | null;
+  defaults: HomeDefaults;
+  homeDraft: HomeDraft;
   selectedNode: string | null;
   models: ModelRow[];
   // model id → last download failure, cleared on retry/success.
@@ -128,12 +156,52 @@ interface AppState {
   openSettings: (tab?: string) => void;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
+  /** Lifecycle actions return the error message to show, or null on success. */
+  deleteProject: (id: string) => Promise<string | null>;
+  renameProject: (id: string, title: string) => Promise<string | null>;
+  duplicateProject: (id: string) => Promise<string | null>;
+  refreshStorage: () => Promise<void>;
+  cleanupStorage: () => Promise<number | null>;
+  addCustomModel: (body: {
+    name: string;
+    task: string;
+    source: "url" | "file";
+    ref: string;
+    vram_gb?: number;
+    workflow_template?: string;
+  }) => Promise<string | null>;
+  deleteCustomModel: (modelId: string) => Promise<void>;
+  setDefaults: (patch: Partial<HomeDefaults>) => void;
+  setHomeDraft: (patch: Partial<HomeDraft>) => void;
 }
 
 const FIRST_RUN_KEY = "localcut.firstRunDone";
+const DEFAULTS_KEY = "localcut.defaults.v1";
+const DRAFT_KEY = "localcut.home.draft";
 const REFRESH_DEBOUNCE_MS = 150;
+const HOME_REFRESH_DEBOUNCE_MS = 600;
 const RECONNECT_DELAY_MS = 3000;
 const PATCH_DEBOUNCE_MS = 300;
+
+const FALLBACK_DEFAULTS: HomeDefaults = {
+  aspect: "9:16",
+  duration: 60,
+  mode: "prompt",
+  voice: "",
+  videoModel: null,
+};
+
+const EMPTY_DRAFT: HomeDraft = { prompt: "", tool: null, toolInput: "", voice: "", motion: "" };
+
+function loadPersisted<T extends object>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return { ...fallback, ...(JSON.parse(raw) as Partial<T>) };
+  } catch {
+    return fallback;
+  }
+}
 // A stale /models snapshot can lag a terminal download event — refetch
 // once more after the engine has settled.
 const DOWNLOAD_SETTLE_MS = 1500;
@@ -180,6 +248,19 @@ const resetEngineScopedState = () => {
 };
 
 export const useApp = create<AppState>((set, get) => {
+  // Home's tiles show live status for EVERY project (dots + fresh thumbs),
+  // so off-project job events refresh the light home read model, debounced.
+  let homeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleHomeRefresh = () => {
+    if (homeRefreshTimer) return;
+    homeRefreshTimer = setTimeout(() => {
+      homeRefreshTimer = null;
+      get()
+        .refreshHome()
+        .catch((err) => console.warn("home refresh failed:", err));
+    }, HOME_REFRESH_DEBOUNCE_MS);
+  };
+
   const scheduleReconnect = () => {
     if (reconnectTimer) return; // one pending attempt, no matter how many drops
     reconnectTimer = setTimeout(() => {
@@ -375,7 +456,12 @@ export const useApp = create<AppState>((set, get) => {
         // patch this board with another project's progress. Download events
         // carry no project_id and always pass through.
         const scoped = (event as { project_id?: string }).project_id;
-        if (scoped !== undefined && scoped !== get().currentProject?.id) return;
+        if (scoped !== undefined && scoped !== get().currentProject?.id) {
+          // Not this board's event — but tile status/thumbs on Home still
+          // move on job lifecycle edges (progress ticks are noise there).
+          if (event.type !== "job.progress") scheduleHomeRefresh();
+          return;
+        }
         if (event.type === "job.progress") {
           applyProgress(event);
         } else if (event.type === "model.download.progress") {
@@ -439,6 +525,20 @@ export const useApp = create<AppState>((set, get) => {
     } catch {
       /* system info is cosmetic at this stage */
     }
+    try {
+      // Version handshake for Settings → About.
+      const health = await client.health();
+      if (gen === establishGen) {
+        set({
+          engineVersions: {
+            engine_version: health.engine_version,
+            api_version: health.api_version,
+          },
+        });
+      }
+    } catch {
+      /* about-card data only */
+    }
   };
 
   // Concurrent callers share the same attempt; a second establish while one
@@ -489,6 +589,11 @@ export const useApp = create<AppState>((set, get) => {
     currentProject: null,
     board: null,
     jobs: [],
+    allJobs: [],
+    storage: null,
+    engineVersions: null,
+    defaults: loadPersisted(DEFAULTS_KEY, FALLBACK_DEFAULTS),
+    homeDraft: loadPersisted(DRAFT_KEY, EMPTY_DRAFT),
     selectedNode: null,
     models: [],
     downloadErrors: {},
@@ -516,7 +621,13 @@ export const useApp = create<AppState>((set, get) => {
     refreshHome: async () => {
       const { client } = get();
       if (!client) return;
-      set({ projects: await client.listProjects() });
+      // Jobs ride along for the tile status dots; a jobs failure must not
+      // take the project list down with it.
+      const [projects, allJobs] = await Promise.all([
+        client.listProjects(),
+        client.listJobs().catch(() => get().allJobs),
+      ]);
+      set({ projects, allJobs });
     },
 
     openProject: async (id: string) => {
@@ -760,11 +871,13 @@ export const useApp = create<AppState>((set, get) => {
     applyExport: (params) => applyAuxParams("export", params),
 
     finalize: async () => {
-      const { client, currentProject } = get();
+      const { client, currentProject, defaults } = get();
       if (!client || !currentProject) return;
       // The engine must compile with the flushed params, not race them.
       await flushPatches();
-      await client.finalize(currentProject.id);
+      // Settings → Defaults' video model rides along (engine config wins
+      // engine-side when this is null).
+      await client.finalize(currentProject.id, defaults.videoModel);
       await get().refreshBoard();
     },
 
@@ -850,5 +963,123 @@ export const useApp = create<AppState>((set, get) => {
     setSettingsTab: (tab) => set({ settingsTab: tab }),
 
     closeSettings: () => set({ settingsOpen: false }),
+
+    // -- project lifecycle (review 4) — optimistic, with rollback ----------
+
+    deleteProject: async (id) => {
+      const { client, projects } = get();
+      if (!client) return t("errors.engineUnavailable");
+      set({ projects: projects.filter((project) => project.id !== id) });
+      if (get().currentProject?.id === id) get().closeProject();
+      try {
+        await client.deleteProject(id);
+        return null;
+      } catch (err) {
+        console.warn("delete project failed:", err);
+        set({ projects });
+        return messageOf(err);
+      }
+    },
+
+    renameProject: async (id, title) => {
+      const { client, projects } = get();
+      if (!client) return t("errors.engineUnavailable");
+      set({
+        projects: projects.map((project) =>
+          project.id === id ? { ...project, title } : project,
+        ),
+      });
+      const current = get().currentProject;
+      if (current?.id === id) set({ currentProject: { ...current, title } });
+      try {
+        await client.renameProject(id, title);
+        return null;
+      } catch (err) {
+        console.warn("rename project failed:", err);
+        set({ projects });
+        return messageOf(err);
+      }
+    },
+
+    duplicateProject: async (id) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        const copy = await client.duplicateProject(id);
+        set({ projects: [copy, ...get().projects] });
+        return null;
+      } catch (err) {
+        console.warn("duplicate project failed:", err);
+        return messageOf(err);
+      }
+    },
+
+    refreshStorage: async () => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        set({ storage: await client.storage() });
+      } catch (err) {
+        console.warn("storage overview failed:", err);
+      }
+    },
+
+    cleanupStorage: async () => {
+      const { client } = get();
+      if (!client) return null;
+      try {
+        const { freed_bytes } = await client.storageCleanup();
+        await get().refreshStorage();
+        return freed_bytes;
+      } catch (err) {
+        console.warn("cache cleanup failed:", err);
+        return null;
+      }
+    },
+
+    addCustomModel: async (body) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.addCustomModel(body);
+      } catch (err) {
+        return messageOf(err);
+      }
+      await get().refreshModels();
+      return null;
+    },
+
+    deleteCustomModel: async (modelId) => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        await client.deleteCustomModel(modelId);
+      } catch (err) {
+        set({
+          downloadErrors: { ...get().downloadErrors, [modelId]: messageOf(err) },
+        });
+      }
+      await get().refreshModels();
+    },
+
+    setDefaults: (patch) => {
+      const next = { ...get().defaults, ...patch };
+      set({ defaults: next });
+      try {
+        localStorage.setItem(DEFAULTS_KEY, JSON.stringify(next));
+      } catch {
+        /* storage full — the baseline just won't persist */
+      }
+    },
+
+    setHomeDraft: (patch) => {
+      const next = { ...get().homeDraft, ...patch };
+      set({ homeDraft: next });
+      try {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      } catch {
+        /* storage full — the draft just won't persist */
+      }
+    },
   };
 });

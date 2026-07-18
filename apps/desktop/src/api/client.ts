@@ -13,6 +13,7 @@ import type {
   ModelRow,
   Project,
   Provider,
+  StorageInfo,
   SystemInfo,
   ToolKind,
 } from "./types";
@@ -91,6 +92,21 @@ export class EngineClient {
     return this.request(`/projects/${id}`);
   }
 
+  deleteProject(id: string): Promise<{ ok: boolean }> {
+    return this.request(`/projects/${id}`, { method: "DELETE" });
+  }
+
+  renameProject(id: string, title: string): Promise<Project> {
+    return this.request(`/projects/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+  }
+
+  duplicateProject(id: string): Promise<Project> {
+    return this.request(`/projects/${id}/duplicate`, { method: "POST" });
+  }
+
   regenerate(projectId: string, nodeId: string, seed?: number): Promise<void> {
     return this.request(`/projects/${projectId}/nodes/${nodeId}/regenerate`, {
       method: "POST",
@@ -143,8 +159,11 @@ export class EngineClient {
     });
   }
 
-  finalize(projectId: string): Promise<{ enqueued: number }> {
-    return this.request(`/projects/${projectId}/finalize`, { method: "POST" });
+  finalize(projectId: string, clipModel?: string | null): Promise<{ enqueued: number }> {
+    return this.request(`/projects/${projectId}/finalize`, {
+      method: "POST",
+      body: JSON.stringify({ clip_model: clipModel ?? null }),
+    });
   }
 
   listJobs(projectId?: string): Promise<Job[]> {
@@ -174,6 +193,33 @@ export class EngineClient {
 
   deleteModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
     return this.request(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
+  addCustomModel(body: {
+    name: string;
+    task: string;
+    source: "url" | "file";
+    ref: string;
+    vram_gb?: number;
+    workflow_template?: string;
+  }): Promise<ModelRow> {
+    return this.request("/models/custom", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  deleteCustomModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
+    return this.request(`/models/custom/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
+  health(): Promise<{ ok: boolean; engine_version: string; api_version: number }> {
+    return this.request("/health");
+  }
+
+  storage(): Promise<StorageInfo> {
+    return this.request("/storage");
+  }
+
+  storageCleanup(): Promise<{ ok: boolean; freed_bytes: number }> {
+    return this.request("/storage/cleanup", { method: "POST" });
   }
 
   // Key writes go through the shell (keychain persistence + PUT from the

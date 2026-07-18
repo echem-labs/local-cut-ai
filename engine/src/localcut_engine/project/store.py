@@ -49,12 +49,34 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
+def _read_text_retry(path: Path, attempts: int = 6) -> str:
+    """Windows can transiently deny an open() that races os.replace() on the
+    same file (meta/graph rewrites are frequent now that job completions
+    refresh the read model). Retry briefly — the replace itself is atomic,
+    so a later read always sees a complete file."""
+    for attempt in range(attempts):
+        try:
+            return path.read_text()
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.01 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
 class Project(BaseModel):
     id: str
     title: str
     created_at: float
+    # Denormalized read model for the Home grid (review 4): kept in
+    # meta.json so listing stays one glob, never a per-project board build.
+    # All optional — metas written by older builds validate unchanged.
+    updated_at: float | None = None
     mode: str = "prompt"  # prompt | beginner | advanced | flowchart | tool:<name>
     approvals: list[str] = []  # beginner checkpoints passed: script, storyboard
+    thumb_hash: str | None = None  # first rendered keyframe, for tiles
+    aspect: str | None = None
+    duration_s: float | None = None  # current cut length
 
 
 class ProjectStore:
@@ -68,12 +90,23 @@ class ProjectStore:
     def generated_dir(self, project_id: str) -> Path:
         return self._dir(project_id) / "generated"
 
-    def create(self, title: str, graph: StoryGraph, mode: str = "prompt") -> Project:
+    def create(
+        self,
+        title: str,
+        graph: StoryGraph,
+        mode: str = "prompt",
+        aspect: str | None = None,
+        duration_s: float | None = None,
+    ) -> Project:
+        now = time.time()
         project = Project(
             id=uuid.uuid4().hex[:_PROJECT_ID_LEN],
             title=title[:120],
-            created_at=time.time(),
+            created_at=now,
+            updated_at=now,
             mode=mode,
+            aspect=aspect,
+            duration_s=duration_s,
         )
         project_dir = self._dir(project.id)
         for sub in ("assets", "generated", "cache"):
@@ -90,7 +123,7 @@ class ProjectStore:
         meta = self._dir(project_id) / "meta.json"
         if not meta.exists():
             return None
-        return Project.model_validate_json(meta.read_text())
+        return Project.model_validate_json(_read_text_retry(meta))
 
     def save_meta(self, project: Project) -> None:
         _write_atomic(self._dir(project.id) / "meta.json", project.model_dump_json(indent=2))
@@ -99,7 +132,7 @@ class ProjectStore:
         projects = []
         for meta in self.root.glob("*.lcut/meta.json"):
             try:
-                projects.append(Project.model_validate_json(meta.read_text()))
+                projects.append(Project.model_validate_json(_read_text_retry(meta)))
             except (ValidationError, OSError):
                 # One damaged project must not take the listing down with it.
                 logger.warning("skipping unreadable project meta: %s", meta)
@@ -112,11 +145,36 @@ class ProjectStore:
         shutil.rmtree(project_dir)
         return True
 
+    def duplicate(self, project_id: str) -> Project | None:
+        """Copy a project under a fresh id. generated/ travels — artifacts
+        are content-addressed with no project id in the hash payload, so
+        copies stay valid; cache/ is regenerable and stays behind."""
+        source = self.get(project_id)
+        if source is None:
+            return None
+        new_id = uuid.uuid4().hex[:_PROJECT_ID_LEN]
+        dst = self._dir(new_id)
+        shutil.copytree(self._dir(project_id), dst, ignore=shutil.ignore_patterns("cache"))
+        (dst / "cache").mkdir(exist_ok=True)
+        now = time.time()
+        copy = source.model_copy(
+            update={
+                "id": new_id,
+                "title": f"{source.title} copy"[:120],
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        _write_atomic(dst / "meta.json", copy.model_dump_json(indent=2))
+        return copy
+
     def save_graph(self, project_id: str, graph: StoryGraph) -> None:
         _write_atomic(self._dir(project_id) / "project.json", graph.model_dump_json(indent=2))
 
     def load_graph(self, project_id: str) -> StoryGraph:
-        graph = StoryGraph.model_validate_json((self._dir(project_id) / "project.json").read_text())
+        graph = StoryGraph.model_validate_json(
+            _read_text_retry(self._dir(project_id) / "project.json")
+        )
         # EDL schema migration: stamping the current version changes the
         # timeline's hash, which is exactly what invalidates cached EDLs
         # written by older builds (absent or stale edl_version).

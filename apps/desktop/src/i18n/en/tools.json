@@ -2,31 +2,37 @@
   "script": {
     "label": "Script",
     "tip": "Topic → structured script",
-    "placeholder": "e.g. A 60-second script on why octopuses have three hearts"
+    "placeholder": "e.g. A 60-second script on why octopuses have three hearts",
+    "output": "Markdown script"
   },
   "thumbnail": {
     "label": "Thumbnail",
     "tip": "Prompt → platform-ready thumbnail",
-    "placeholder": "e.g. A diver face-to-face with a giant octopus, dramatic light"
+    "placeholder": "e.g. A diver face-to-face with a giant octopus, dramatic light",
+    "output": "16:9 PNG"
   },
   "voiceover": {
     "label": "Voiceover",
     "tip": "Text → narration audio",
-    "placeholder": "Paste the text to narrate…"
+    "placeholder": "Paste the text to narrate…",
+    "output": "MP3 voice"
   },
   "image": {
     "label": "Image",
     "tip": "Prompt → single image",
-    "placeholder": "e.g. Bioluminescent waves on a black-sand beach at night"
+    "placeholder": "e.g. Bioluminescent waves on a black-sand beach at night",
+    "output": "PNG image"
   },
   "music": {
     "label": "Music",
     "tip": "Brief → music track",
-    "placeholder": "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds"
+    "placeholder": "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds",
+    "output": "MP3 track"
   },
   "clip": {
     "label": "Clip",
     "tip": "Prompt → single video clip",
-    "placeholder": "e.g. A hummingbird hovering at a red flower, macro detail"
+    "placeholder": "e.g. A hummingbird hovering at a red flower, macro detail",
+    "output": "MP4 clip"
   }
 }

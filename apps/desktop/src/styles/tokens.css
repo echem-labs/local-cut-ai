@@ -113,6 +113,11 @@
   /* one control height for every button, chip, input and trigger */
   --control-h: 32px;
 
+  /* one page column for Home / Settings / first-run (review 4): 840px =
+     the settings grid (176 nav + 24 gap + 640 pane) and exactly four
+     200px recent tiles at 12px gaps. */
+  --content-col: 840px;
+
   /* type: 5-step scale + one display size.
      Weight roles: 400 body · 500 item/tile labels · 600 headings, buttons,
      eyebrows · 650 display + screen titles only. */

@@ -34,5 +34,28 @@
   "discardConfirm": "Discard",
   "pauseTitle": "Pause downloading {id}?",
   "pauseMessage": "Nothing is lost — the downloaded part stays on disk and Resume picks up exactly where it stopped.",
-  "pauseConfirm": "Pause download"
+  "pauseConfirm": "Pause download",
+  "custom": {
+    "tag": "custom",
+    "yourLicense": "your license",
+    "addEntry": "Add custom model",
+    "removeEntry": "Remove custom model",
+    "deleteMessage": "Removes this model from your library and deletes its weights from disk. The curated catalog is unaffected.",
+    "source": "Source",
+    "sourceUrl": "Download URL",
+    "sourceFile": "Local file",
+    "urlPlaceholder": "https://huggingface.co/…/resolve/main/model.safetensors",
+    "filePlaceholder": "C:\\models\\my-finetune.safetensors",
+    "task": "Task",
+    "name": "Name",
+    "namePlaceholder": "My Wan finetune",
+    "vram": "VRAM (GB)",
+    "workflow": "Workflow template (optional)",
+    "workflowPlaceholder": "Default for this task",
+    "workflowHint": "How ComfyUI runs it. The task's default template fits most checkpoints; power users can name a custom workflow JSON from the templates folder.",
+    "licenseNote": "⚠ Not from the curated catalog — check this model's license yourself. Outputs are your responsibility.",
+    "licenseAck": "I've checked this model's license and accept responsibility for how outputs are used",
+    "add": "Add model",
+    "adding": "Adding…"
+  }
 }

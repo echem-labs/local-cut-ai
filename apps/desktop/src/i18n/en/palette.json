@@ -1,0 +1,17 @@
+{
+  "aria": "Command palette",
+  "placeholder": "Search projects and commands…",
+  "hint": "↑↓ navigate · ↵ open · esc close",
+  "empty": "Nothing matches.",
+  "groups": {
+    "projects": "Projects",
+    "create": "Create",
+    "goto": "Go to",
+    "appearance": "Appearance"
+  },
+  "newVideo": "New video",
+  "newTool": "New {tool}",
+  "home": "Home",
+  "settingsTab": "Settings · {tab}",
+  "toggleTheme": "Toggle theme"
+}

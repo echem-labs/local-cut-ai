@@ -12,6 +12,7 @@ import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { t } from "./i18n";
 import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
+import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -50,17 +51,10 @@ export default function App() {
     return () => window.removeEventListener(THEME_EVENT, onChange);
   }, []);
 
-  // First run gates everything; after that, an open project wins over
-  // settings, and Home is the fallback.
-  const screen = !firstRunDone ? (
-    <FirstRun />
-  ) : currentProject ? (
-    <Project />
-  ) : settingsOpen ? (
-    <Settings />
-  ) : (
-    <Home />
-  );
+  // First run gates everything; after that the project or Home shows, and
+  // Settings renders as an OVERLAY LAYER above either — opening it never
+  // unmounts the project (review 4 §SH1).
+  const screen = !firstRunDone ? <FirstRun /> : currentProject ? <Project /> : <Home />;
 
   // "NVIDIA GeForce RTX 3080" → "RTX 3080": the chip is narrow and the
   // vendor prefix says nothing the model number doesn't.
@@ -75,14 +69,15 @@ export default function App() {
       ? t("nav.engineNotConnected")
       : t("nav.engineConnecting");
 
-  // Inside a project the rail collapses to a 48px icon activity bar —
-  // chrome recedes; the workspace owns the width. Full rail on Home. A
-  // chevron re-expands it in a project, and the choice persists.
+  // ONE activity bar on every screen (review 4 §SH2): the 48px compact
+  // rail is the default everywhere; expanding to the labeled 200px rail is
+  // a persisted choice that also holds on every screen. VS Code never
+  // resizes its activity bar — shell stability is the point.
   const inProject = Boolean(currentProject);
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_KEY) === "1",
   );
-  const compact = inProject && !railExpanded;
+  const compact = !railExpanded;
   const toggleRail = () => {
     const next = !railExpanded;
     localStorage.setItem(RAIL_KEY, next ? "1" : "0");
@@ -103,7 +98,7 @@ export default function App() {
         {compact ? (
           <Tip label={t("nav.home")} hint={t("nav.homeCloseHint")} side="top">
             <button
-              className="rail-mark"
+              className={`rail-mark${!currentProject && !settingsOpen ? " active" : ""}`}
               onClick={() => {
                 closeProject();
                 closeSettings();
@@ -165,35 +160,36 @@ export default function App() {
             <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
           </button>
           <button
-            className={settingsOpen && !currentProject ? "active" : ""}
+            className={settingsOpen ? "active" : ""}
             disabled={!firstRunDone}
             title={t("nav.settings")}
-            onClick={() => {
-              closeProject();
-              openSettings("general");
-            }}
+            onClick={() => openSettings("general")}
           >
             <SettingsIcon {...ICON} />
             <span className="rail-label">{t("nav.settings")}</span>
           </button>
           <HelpMenu compact={compact} />
-          {inProject && (
-            <button
-              onClick={toggleRail}
-              title={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
-              aria-label={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
-            >
-              {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
-              <span className="rail-label">{t("nav.collapse")}</span>
-            </button>
-          )}
+          <button
+            onClick={toggleRail}
+            title={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
+            aria-label={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
+          >
+            {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
+            <span className="rail-label">{t("nav.collapse")}</span>
+          </button>
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
         {screen}
+        {firstRunDone && settingsOpen && (
+          <div className="settings-layer screen-enter">
+            <Settings />
+          </div>
+        )}
       </main>
       <QueueTray />
+      <Palette />
     </div>
   );
 }
