@@ -415,6 +415,11 @@ export const useApp = create<AppState>((set, get) => {
     unsubscribe = sub;
 
     await get().refreshHome();
+    // Models too: the queue tray must be able to say "downloads paused"
+    // right on Home after a relaunch, not only once Settings mounts.
+    void get()
+      .refreshModels()
+      .catch((err) => console.warn("models refresh failed:", err));
     if (get().currentProject) await get().refreshBoard();
     try {
       // Guard the set: `client` here is this establish's own closure, so a

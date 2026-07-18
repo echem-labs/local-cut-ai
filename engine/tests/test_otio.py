@@ -9,7 +9,9 @@ import pytest
 
 from localcut_engine.otio import edl_to_otio, timeline_seconds
 
-RESOLVE = lambda src: Path("/tmp/generated") / src  # noqa: E731
+# .absolute(): a bare "/tmp" is drive-relative on Windows, and
+# Path.as_uri() refuses relative paths.
+RESOLVE = lambda src: Path("/tmp/generated").absolute() / src  # noqa: E731
 
 
 def seg(

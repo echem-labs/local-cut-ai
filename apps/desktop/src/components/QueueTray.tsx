@@ -11,13 +11,18 @@ const POLL_MS = 4000;
  * money. Background model downloads join the pill (click → Settings) so
  * Home is honest about work the engine is doing off-screen. */
 export function QueueTray() {
-  const { jobs, models, refreshModels, openSettings, firstRunDone } = useApp();
+  const { jobs, models, refreshModels, openSettings, startDownload, firstRunDone } = useApp();
   const active = jobs.find((job) => job.status === "rendering");
   const queued = jobs.filter((job) => job.status === "queued").length;
 
   // During first-run the setup screen already shows per-model bars —
   // and Settings isn't reachable yet, so the tray link would dead-end.
   const downloads = firstRunDone ? models.filter((row) => row.downloading) : [];
+  // Interrupted downloads (e.g. the app was closed mid-download): partial
+  // bytes on disk, nothing running. Resume picks up where they stopped.
+  const paused = firstRunDone
+    ? models.filter((row) => !row.downloaded && !row.downloading && row.partial_bytes > 0)
+    : [];
 
   const anyDownloading = downloads.length > 0;
   useEffect(() => {
@@ -29,7 +34,7 @@ export function QueueTray() {
   }, [anyDownloading, refreshModels]);
 
   const hasJobs = active !== undefined || queued > 0;
-  if (!hasJobs && downloads.length === 0) return null;
+  if (!hasJobs && downloads.length === 0 && paused.length === 0) return null;
 
   // A row's byte total falls back to its manifest size until the first
   // progress event lands, so the aggregate never jumps from 0.
@@ -70,6 +75,19 @@ export function QueueTray() {
         >
           ⬇ {downloads.length} model{downloads.length === 1 ? "" : "s"} · {pct}% ·{" "}
           {formatSize(Math.max(0, total - done))} left
+        </button>
+      )}
+      {paused.length > 0 && (
+        <button
+          className="tray-downloads"
+          onClick={() => {
+            for (const row of paused) void startDownload(row.id);
+          }}
+          title="Interrupted model downloads — resumes from where they stopped"
+        >
+          ⏸ {paused.length} download{paused.length === 1 ? "" : "s"} paused · Resume (
+          {formatSize(paused.reduce((sum, row) => sum + Math.max(0, row.size_bytes - row.partial_bytes), 0))}{" "}
+          left)
         </button>
       )}
     </div>

@@ -3,6 +3,7 @@ pairing-code payload the frontend consumes."""
 
 import base64
 import json
+import os
 
 from localcut_engine.tls import ensure_certificate
 
@@ -11,7 +12,8 @@ def test_certificate_is_generated_once_and_pin_is_stable(tmp_path):
     cert1, key1, fp1 = ensure_certificate(tmp_path / "tls", ["192.168.1.20"])
     assert cert1.exists() and key1.exists()
     assert len(fp1) == 64  # sha-256 hex
-    assert (key1.stat().st_mode & 0o777) == 0o600  # private key stays private
+    if os.name != "nt":  # Windows ignores chmod bits — ACLs govern access there
+        assert (key1.stat().st_mode & 0o777) == 0o600  # private key stays private
 
     # Same dir → same certificate → same pin (paired frontends keep working).
     cert2, _, fp2 = ensure_certificate(tmp_path / "tls", ["10.0.0.9"])
