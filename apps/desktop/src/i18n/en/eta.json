@@ -1,0 +1,6 @@
+{
+  "etaMin": "~{n} min",
+  "etaSec": "~{n}s",
+  "leftMin": "about {n} min left",
+  "leftSec": "about {n}s left"
+}

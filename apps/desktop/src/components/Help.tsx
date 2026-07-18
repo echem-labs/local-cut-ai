@@ -1,54 +1,13 @@
 import { BookOpen, HelpCircle, Keyboard, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { GLOSSARY } from "../help/terms";
+import { m, t } from "../i18n";
 import { useOutsideClick } from "../lib/useOutsideClick";
-
-const SHORTCUTS: { keys: string; what: string }[] = [
-  { keys: "Space", what: "Play / pause the draft preview" },
-  { keys: "Ctrl K", what: "Focus the composer — commands or a described edit" },
-  { keys: "Enter", what: "Open the focused scene's details" },
-  { keys: "R", what: "Regenerate the focused scene (new take)" },
-  { keys: "P", what: "Pin / unpin the focused scene" },
-  { keys: "Esc", what: "Close the inspector" },
-  { keys: "Ctrl ↵", what: "Generate (Home prompt)" },
-  { keys: "?", what: "This overlay" },
-];
 
 type Panel = "shortcuts" | "glossary" | null;
 
 /** Panel-level "?" popovers dispatch this to open the glossary that
  * HelpMenu hosts — one modal, many entry points. */
 export const OPEN_GLOSSARY_EVENT = "localcut:open-glossary";
-
-const PANEL_COPY: Record<
-  "board" | "timeline" | "inspector",
-  { title: string; bullets: string[] }
-> = {
-  board: {
-    title: "The storyboard",
-    bullets: [
-      "Each card is one scene — the still image it starts from, a few seconds of video, and its narration.",
-      "The pill shows where it is: Draft (fast, for deciding) · Rendering · Final · Failed.",
-      "Click a card to open its details; drag cards to change the order of the cut.",
-    ],
-  },
-  timeline: {
-    title: "The timeline",
-    bullets: [
-      "Your scenes in play order — a wider block runs longer.",
-      "The diamonds between blocks set the transition: cut, crossfade, or dip to black.",
-      "▶ plays a quick draft preview of the whole cut, scene by scene.",
-    ],
-  },
-  inspector: {
-    title: "Scene details",
-    bullets: [
-      "Everything about the selected scene — its Image, Motion and Voice.",
-      "Apply & regenerate re-renders only this scene with your changes.",
-      "Pin keeps the scene exactly as it is; New take tries again with fresh randomness.",
-    ],
-  },
-};
 
 const POP_WIDTH = 264;
 
@@ -60,7 +19,7 @@ export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector"
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
-  const copy = PANEL_COPY[panel];
+  const copy = m().help.panels[panel];
 
   useOutsideClick(ref, open, () => setOpen(false));
 
@@ -99,9 +58,9 @@ export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector"
       <button
         ref={btnRef}
         className="icon-btn-sm"
-        aria-label="What am I looking at?"
+        aria-label={t("help.panelHelp.whatLooking")}
         aria-expanded={open}
-        title="What am I looking at?"
+        title={t("help.panelHelp.whatLooking")}
         onClick={toggle}
       >
         <HelpCircle size={13} strokeWidth={1.8} />
@@ -127,7 +86,7 @@ export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector"
             }}
           >
             <BookOpen size={12} strokeWidth={1.8} />
-            Open glossary
+            {t("help.panelHelp.openGlossary")}
           </button>
         </div>
       )}
@@ -171,7 +130,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
     return () => window.removeEventListener(OPEN_GLOSSARY_EVENT, onOpen);
   }, []);
 
-  const glossary = GLOSSARY.filter(
+  const glossary = m().terms.glossary.filter(
     (entry) =>
       !search.trim() ||
       entry.term.toLowerCase().includes(search.trim().toLowerCase()) ||
@@ -182,13 +141,13 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
     <>
       <div className="help-menu" ref={ref}>
         <button
-          aria-label="Help"
+          aria-label={t("help.menu.help")}
           aria-expanded={open}
-          title="Shortcuts & glossary"
+          title={t("help.menu.title")}
           onClick={() => setOpen(!open)}
         >
           <HelpCircle size={15} strokeWidth={1.8} />
-          {!compact && "Help"}
+          {!compact && t("help.menu.help")}
         </button>
         {open && (
           <div className="menu-pop help-pop" role="menu">
@@ -200,8 +159,8 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
               }}
             >
               <Keyboard size={13} strokeWidth={1.8} />
-              Keyboard shortcuts
-              <small>?</small>
+              {t("help.menu.shortcuts")}
+              <small>{t("help.menu.shortcutsKey")}</small>
             </button>
             <button
               role="menuitem"
@@ -211,8 +170,8 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
               }}
             >
               <BookOpen size={13} strokeWidth={1.8} />
-              Glossary
-              <small>what's a scene?</small>
+              {t("help.menu.glossary")}
+              <small>{t("help.menu.glossaryHint")}</small>
             </button>
           </div>
         )}
@@ -228,17 +187,23 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
           <div
             className="modal help-modal"
             role="dialog"
-            aria-label={panel === "shortcuts" ? "Keyboard shortcuts" : "Glossary"}
+            aria-label={
+              panel === "shortcuts" ? t("help.modal.shortcutsTitle") : t("help.modal.glossaryTitle")
+            }
             onKeyDown={(event) => {
               if (event.key === "Escape") setPanel(null);
             }}
           >
             <div className="help-modal-head">
-              <h2>{panel === "shortcuts" ? "Keyboard shortcuts" : "Glossary"}</h2>
+              <h2>
+                {panel === "shortcuts"
+                  ? t("help.modal.shortcutsTitle")
+                  : t("help.modal.glossaryTitle")}
+              </h2>
               <button
                 className="icon-btn-sm"
                 onClick={() => setPanel(null)}
-                aria-label="Close"
+                aria-label={t("common.close")}
                 autoFocus
               >
                 <X size={13} strokeWidth={2} />
@@ -246,7 +211,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
             </div>
             {panel === "shortcuts" ? (
               <div className="shortcut-list">
-                {SHORTCUTS.map((entry) => (
+                {m().help.shortcuts.map((entry) => (
                   <div key={entry.keys}>
                     <kbd>{entry.keys}</kbd>
                     <span>{entry.what}</span>
@@ -257,9 +222,9 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
               <>
                 <input
                   className="glossary-search"
-                  placeholder="Search terms…"
+                  placeholder={t("help.modal.searchPlaceholder")}
                   value={search}
-                  aria-label="Search the glossary"
+                  aria-label={t("help.modal.searchAria")}
                   onChange={(event) => setSearch(event.target.value)}
                 />
                 <div className="glossary-list">
@@ -269,7 +234,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
                       <p>{entry.def}</p>
                     </div>
                   ))}
-                  {glossary.length === 0 && <p className="hint">Nothing matches.</p>}
+                  {glossary.length === 0 && <p className="hint">{t("help.modal.nothingMatches")}</p>}
                 </div>
               </>
             )}

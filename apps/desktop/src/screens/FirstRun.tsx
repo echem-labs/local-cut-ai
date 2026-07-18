@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { formatSize, LicenseBadge, ModelLibrary, TASK_LABELS } from "../components/ModelLibrary";
+import { formatSize, LicenseBadge, ModelLibrary } from "../components/ModelLibrary";
+import { m, plural, t } from "../i18n";
 import { useApp } from "../store";
 
 /** First launch: hardware verdict plus a pre-picked model slate. One
@@ -56,14 +57,12 @@ export function FirstRun() {
   if (started) {
     return (
       <div className="setup">
-        <h1>Downloading models…</h1>
-        <p className="sub">
-          Downloads keep running in the background — you can start creating right away.
-        </p>
+        <h1>{t("firstRun.downloadingTitle")}</h1>
+        <p className="sub">{t("firstRun.downloadingSub")}</p>
         <ModelLibrary showActions filterIds={new Set(downloadable.map((row) => row.id))} />
         <div className="setup-actions">
           <button className="btn-primary" onClick={finishFirstRun}>
-            Continue to app
+            {t("firstRun.continueToApp")}
           </button>
         </div>
       </div>
@@ -74,16 +73,22 @@ export function FirstRun() {
     <div className="setup">
       {system ? (
         <>
-          <h1>Your machine: Tier {system.hardware.tier}</h1>
+          <h1>{t("firstRun.machineTitle", { tier: system.hardware.tier })}</h1>
           <p className="sub">
-            {gpu ? `${gpu.name} · ${gpu.vram_gb} GB VRAM` : "No GPU detected"} ·{" "}
-            {system.hardware.ram_gb} GB RAM · {system.hardware.disk_free_gb} GB free disk
+            {gpu
+              ? t("firstRun.gpuLine", { gpu: gpu.name, vram: gpu.vram_gb })
+              : t("firstRun.noGpu")}{" "}
+            ·{" "}
+            {t("firstRun.specLine", {
+              ram: system.hardware.ram_gb,
+              disk: system.hardware.disk_free_gb,
+            })}
           </p>
         </>
       ) : (
         <>
-          <h1>Checking your machine…</h1>
-          <p className="sub">Probing hardware and picking the best local models.</p>
+          <h1>{t("firstRun.checkingTitle")}</h1>
+          <p className="sub">{t("firstRun.checkingSub")}</p>
         </>
       )}
 
@@ -93,7 +98,7 @@ export function FirstRun() {
         ) : (
           <div className="model-groups">
             <div className="model-group">
-              <h3>Recommended for your hardware</h3>
+              <h3>{t("firstRun.recommended")}</h3>
               {system.recommendations.map((rec) => {
                 const row = rec.model ? rowById.get(rec.model.id) : undefined;
                 const external = rec.model ? (row ?? rec.model).files.length === 0 : false;
@@ -103,7 +108,7 @@ export function FirstRun() {
                   <div className="model-row" key={rec.task}>
                     <div className="grow">
                       <div className="name">
-                        {TASK_LABELS[rec.task] ?? rec.task}
+                        {(m().models.taskLabels as Record<string, string>)[rec.task] ?? rec.task}
                         {rec.model && ` — ${rec.model.id}`}
                       </div>
                       <div className="meta">
@@ -113,14 +118,11 @@ export function FirstRun() {
                     </div>
                     {rec.model && <LicenseBadge license={rec.model.license} />}
                     {external && (
-                      <span
-                        className="badge"
-                        title="Served outside the engine (e.g. Ollama) — nothing to download"
-                      >
-                        external
+                      <span className="badge" title={t("firstRun.externalTitle")}>
+                        {t("firstRun.external")}
                       </span>
                     )}
-                    {row?.downloaded && <span className="badge ok">installed</span>}
+                    {row?.downloaded && <span className="badge ok">{t("firstRun.installed")}</span>}
                   </div>
                 );
               })}
@@ -130,8 +132,7 @@ export function FirstRun() {
 
       {system && pending.length > 0 && (
         <p className="hint" style={{ marginTop: "var(--space-3)" }}>
-          {pending.length} download{pending.length === 1 ? "" : "s"} ·{" "}
-          {formatSize(totalBytes)} total
+          {plural("firstRun.pending", pending.length, { size: formatSize(totalBytes) })}
         </p>
       )}
 
@@ -141,16 +142,18 @@ export function FirstRun() {
           onClick={beginDownloads}
           disabled={!system || models.length === 0}
         >
-          {pending.length > 0 ? `Download & continue (${formatSize(totalBytes)})` : "Continue"}
+          {pending.length > 0
+            ? t("firstRun.downloadContinue", { size: formatSize(totalBytes) })
+            : t("common.continue")}
         </button>
         <button
           className={`btn-ghost${customize ? " active" : ""}`}
           onClick={() => setCustomize(!customize)}
         >
-          Customize
+          {t("firstRun.customize")}
         </button>
         <button className="btn-ghost" onClick={finishFirstRun}>
-          Skip for now
+          {t("firstRun.skip")}
         </button>
       </div>
     </div>

@@ -1,7 +1,8 @@
 import { ChevronRight, Info, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
-import { inspectorTitle, TIPS } from "../help/terms";
+import { inspectorTitle } from "../help/terms";
+import { t } from "../i18n";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
@@ -200,13 +201,21 @@ export function Inspector() {
   const pinned = activeNode?.pinned ?? false;
 
   const tabs: { id: SceneTab; label: string; present: boolean }[] = [
-    { id: "image", label: "Image", present: Boolean(scene?.keyframe) },
-    { id: "motion", label: "Motion", present: Boolean(scene?.clip) },
-    { id: "voice", label: "Voice", present: Boolean(scene?.narration) },
+    { id: "image", label: t("inspector.tabs.image"), present: Boolean(scene?.keyframe) },
+    { id: "motion", label: t("inspector.tabs.motion"), present: Boolean(scene?.clip) },
+    { id: "voice", label: t("inspector.tabs.voice"), present: Boolean(scene?.narration) },
   ];
 
+  // Tab word for the "no {tab} part" notice — a literal-keyed map keeps t()
+  // typed and avoids branching on a translated string.
+  const partWord: Record<SceneTab, string> = {
+    image: t("inspector.partWords.image"),
+    motion: t("inspector.partWords.motion"),
+    voice: t("inspector.partWords.voice"),
+  };
+
   return (
-    <aside className="inspector" aria-label="Inspector">
+    <aside className="inspector" aria-label={t("inspector.aria")}>
       {/* one-monitor rule: the Player view's big monitor owns playback */}
       {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -219,9 +228,9 @@ export function Inspector() {
           <button
             className={`icon-btn-sm${pinned ? " active" : ""}`}
             onClick={() => void togglePin(activeNode.node_id, !pinned)}
-            aria-label={pinned ? "Unpin" : "Pin"}
+            aria-label={pinned ? t("inspector.unpin") : t("inspector.pin")}
             aria-pressed={pinned}
-            title={pinned ? "Unpin — allow changes again" : TIPS.pin}
+            title={pinned ? t("inspector.unpinTitle") : t("terms.tips.pin")}
           >
             <Pin size={13} strokeWidth={1.8} />
           </button>
@@ -229,15 +238,15 @@ export function Inspector() {
         <button
           className="icon-btn-sm"
           onClick={() => select(null)}
-          aria-label="Close inspector"
-          title="Close (Esc)"
+          aria-label={t("inspector.closeAria")}
+          title={t("inspector.closeTitle")}
         >
           <X size={13} strokeWidth={2} />
         </button>
       </div>
 
       {scene && (
-        <div className="tabs inspector-tabs" role="tablist" aria-label="Scene parts">
+        <div className="tabs inspector-tabs" role="tablist" aria-label={t("inspector.tablistAria")}>
           {tabs.map(
             (entry) =>
               entry.present && (
@@ -256,11 +265,11 @@ export function Inspector() {
       )}
 
       {pinned && (
-        <div className="hint">Pinned — this keeps its current result until you unpin it.</div>
+        <div className="hint">{t("inspector.pinnedNotice")}</div>
       )}
 
       {!activeNode && scene && (
-        <div className="hint">This scene has no {tab} part.</div>
+        <div className="hint">{t("inspector.noPart", { tab: partWord[tab] })}</div>
       )}
 
       {activeNode && (
@@ -268,10 +277,10 @@ export function Inspector() {
           <div>
             <label htmlFor="inspector-prompt">
               {tab === "voice" || contentKey === "text"
-                ? "What the narrator says"
+                ? t("inspector.narratorLabel")
                 : contentKey === "brief"
-                  ? "Music brief"
-                  : "Prompt"}
+                  ? t("inspector.musicBrief")
+                  : t("inspector.promptLabel")}
             </label>
             <textarea
               id="inspector-prompt"
@@ -280,26 +289,26 @@ export function Inspector() {
               disabled={pinned}
               onChange={(event) => setPrompt(event.target.value)}
             />
-            {tab === "voice" && <div className="hint">The narration's length sets how long the scene runs.</div>}
+            {tab === "voice" && <div className="hint">{t("inspector.narrationLengthHint")}</div>}
           </div>
 
           {tab === "motion" && (
             <>
               <div>
                 <label htmlFor="inspector-motion" className="with-info">
-                  Camera movement
-                  <InfoDot label="How the camera moves" hint={TIPS.motion} />
+                  {t("inspector.cameraMovement")}
+                  <InfoDot label={t("inspector.cameraInfoLabel")} hint={t("terms.tips.motion")} />
                 </label>
                 <input
                   id="inspector-motion"
                   value={motion}
                   disabled={pinned}
-                  placeholder="e.g. slow push in · static"
+                  placeholder={t("inspector.motionPlaceholder")}
                   onChange={(event) => setMotion(event.target.value)}
                 />
               </div>
               <div>
-                <label htmlFor="inspector-duration">Length (seconds)</label>
+                <label htmlFor="inspector-duration">{t("inspector.lengthLabel")}</label>
                 <input
                   id="inspector-duration"
                   type="number"
@@ -310,7 +319,7 @@ export function Inspector() {
                   disabled={pinned}
                   onChange={(event) => setDuration(event.target.value)}
                 />
-                <div className="hint">{TIPS.length}</div>
+                <div className="hint">{t("terms.tips.length")}</div>
               </div>
             </>
           )}
@@ -318,14 +327,14 @@ export function Inspector() {
           {tab === "voice" && (
             <div>
               <label htmlFor="inspector-voice" className="with-info">
-                Voice
-                <InfoDot label="Which narrator speaks" hint={TIPS.voice} />
+                {t("inspector.voiceLabel")}
+                <InfoDot label={t("inspector.voiceInfoLabel")} hint={t("terms.tips.voice")} />
               </label>
               <input
                 id="inspector-voice"
                 value={voice}
                 disabled={pinned}
-                placeholder="default"
+                placeholder={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
             </div>
@@ -333,7 +342,7 @@ export function Inspector() {
 
           {tab === "image" && sceneId && (
             <div>
-              <label htmlFor="inspector-asset">Use my photo instead</label>
+              <label htmlFor="inspector-asset">{t("inspector.useMyPhoto")}</label>
               <input
                 id="inspector-asset"
                 type="file"
@@ -348,7 +357,7 @@ export function Inspector() {
                   }
                 }}
               />
-              <div className="hint">{TIPS.ownImage}</div>
+              <div className="hint">{t("terms.tips.ownImage")}</div>
             </div>
           )}
 
@@ -366,10 +375,10 @@ export function Inspector() {
                   transition: "transform var(--motion-fast)",
                 }}
               />
-              Advanced
+              {t("inspector.advanced")}
               {!advanced && (
                 <small>
-                  {scene ? "seed · model · trim · on-screen text" : "seed · model"}
+                  {scene ? t("inspector.advancedSummary") : t("inspector.advancedSummaryAux")}
                 </small>
               )}
             </button>
@@ -377,8 +386,8 @@ export function Inspector() {
               <div className="adv-body">
                 <div>
                   <label htmlFor="inspector-seed" className="with-info">
-                    Seed
-                    <InfoDot label="Controls the randomness" hint={TIPS.seed} />
+                    {t("inspector.seedLabel")}
+                    <InfoDot label={t("inspector.seedInfoLabel")} hint={t("terms.tips.seed")} />
                   </label>
                   <input
                     id="inspector-seed"
@@ -391,25 +400,22 @@ export function Inspector() {
                 {modelEditable && (
                   <div>
                     <label htmlFor="inspector-model" className="with-info">
-                      Model
-                      <InfoDot label="One-shot model override" hint={TIPS.model} />
+                      {t("inspector.modelLabel")}
+                      <InfoDot label={t("inspector.modelInfoLabel")} hint={t("terms.tips.model")} />
                     </label>
                     <input
                       id="inspector-model"
                       value={model}
-                      placeholder="Auto"
+                      placeholder={t("inspector.modelPlaceholder")}
                       disabled={pinned}
                       onChange={(event) => setModel(event.target.value)}
                     />
-                    <div className="hint">
-                      e.g. cloud:kling-2.5 to render this shot with a cloud model — uses your own
-                      API key, billed per clip.
-                    </div>
+                    <div className="hint">{t("inspector.cloudModelHint")}</div>
                   </div>
                 )}
                 {tab === "voice" && (
                   <div>
-                    <label htmlFor="inspector-speed">Speaking speed</label>
+                    <label htmlFor="inspector-speed">{t("inspector.speakingSpeed")}</label>
                     <input
                       id="inspector-speed"
                       type="number"
@@ -420,12 +426,12 @@ export function Inspector() {
                       disabled={pinned}
                       onChange={(event) => setSpeed(event.target.value)}
                     />
-                    <div className="hint">{TIPS.speed}</div>
+                    <div className="hint">{t("terms.tips.speed")}</div>
                   </div>
                 )}
                 {tab === "voice" && (
                   <div>
-                    <label>Voice cloning</label>
+                    <label>{t("inspector.voiceCloning")}</label>
                     <label
                       className="hint"
                       style={{ display: "flex", gap: "6px", alignItems: "center" }}
@@ -435,13 +441,13 @@ export function Inspector() {
                         checked={cloneConsent}
                         onChange={(event) => setCloneConsent(event.target.checked)}
                       />
-                      I have this speaker's permission to clone their voice
+                      {t("inspector.cloneConsent")}
                     </label>
                     <input
                       type="file"
                       accept=".wav,.mp3,.flac,.m4a"
                       disabled={!cloneConsent}
-                      aria-label="Voice sample"
+                      aria-label={t("inspector.voiceSampleAria")}
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         event.target.value = "";
@@ -452,25 +458,23 @@ export function Inspector() {
                         }
                       }}
                     />
-                    <div className="hint">
-                      Uses this voice for every scene's narration. Runs entirely on your machine.
-                    </div>
+                    <div className="hint">{t("inspector.cloneHint")}</div>
                   </div>
                 )}
                 {sceneId && (
                   <>
                     <div>
                       <label className="with-info">
-                        Trim
-                        <InfoDot label="Shorten this clip" hint={TIPS.trim} />
+                        {t("inspector.trimLabel")}
+                        <InfoDot label={t("inspector.trimInfoLabel")} hint={t("terms.tips.trim")} />
                       </label>
                       <div className="trim-row">
                         <input
                           type="number"
                           min={0}
                           step={0.1}
-                          placeholder="start"
-                          aria-label="Trim start (seconds)"
+                          placeholder={t("inspector.trimStartPlaceholder")}
+                          aria-label={t("inspector.trimStartAria")}
                           value={trimIn}
                           onChange={(event) => {
                             setTrimIn(event.target.value);
@@ -481,8 +485,8 @@ export function Inspector() {
                           type="number"
                           min={0}
                           step={0.1}
-                          placeholder="end"
-                          aria-label="Trim end (seconds)"
+                          placeholder={t("inspector.trimEndPlaceholder")}
+                          aria-label={t("inspector.trimEndAria")}
                           value={trimOut}
                           onChange={(event) => {
                             setTrimOut(event.target.value);
@@ -490,12 +494,12 @@ export function Inspector() {
                           }}
                         />
                       </div>
-                      <div className="hint">Narration length still drives scene timing.</div>
+                      <div className="hint">{t("inspector.trimHint")}</div>
                     </div>
                     <div>
                       <label htmlFor="inspector-overlay" className="with-info">
-                        On-screen text
-                        <InfoDot label="Text drawn on the video" hint={TIPS.overlay} />
+                        {t("inspector.onScreenText")}
+                        <InfoDot label={t("inspector.onScreenInfoLabel")} hint={t("terms.tips.overlay")} />
                       </label>
                       <input
                         id="inspector-overlay"
@@ -514,7 +518,7 @@ export function Inspector() {
 
           {/* commits sit below Advanced (review 3 §3C order) */}
           <button className="btn-outline" onClick={apply} disabled={pinned}>
-            Apply &amp; regenerate
+            {t("inspector.applyRegenerate")}
           </button>
           <button
             className="btn-ghost"
@@ -526,10 +530,10 @@ export function Inspector() {
             }}
             onClick={() => void regenerate(activeNode.node_id)}
             disabled={pinned}
-            title={TIPS.newTake}
+            title={t("terms.tips.newTake")}
           >
             <RotateCw size={12} strokeWidth={1.8} />
-            New take
+            {t("inspector.newTake")}
           </button>
 
           {activeNode.error && <div className="banner error">{activeNode.error}</div>}

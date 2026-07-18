@@ -1,0 +1,38 @@
+{
+  "taskLabels": {
+    "text.llm": "Script writing",
+    "image.gen": "Keyframes",
+    "video.i2v": "Video clips",
+    "video.t2v": "Video clips (text-to-video)",
+    "speech.tts": "Narration",
+    "music.gen": "Music",
+    "transcribe": "Captions"
+  },
+  "verdicts": {
+    "commercial": "commercial-safe",
+    "conditions": "conditions",
+    "personalOnly": "personal only"
+  },
+  "empty": "No models in the manifest yet.",
+  "external": "external",
+  "externalTitle": "Served outside the engine (e.g. Ollama) — nothing to download",
+  "installed": "installed",
+  "needsVram": "needs {vram} GB VRAM",
+  "resumePct": "Resume · {pct}%",
+  "selectAria": "Select {id}",
+  "deleteFromDisk": "Delete from disk",
+  "deleteFromDiskHint": "frees {size}",
+  "deleteAria": "Delete {id} from disk",
+  "discardPartial": "Discard partial download",
+  "discardPartialHint": "throws away {size}",
+  "discardAria": "Discard partial download of {id}",
+  "deleteTitle": "Delete {id}?",
+  "deleteMessage": "Removes {size} from disk. Jobs that need it will fail until it's downloaded again — the download is always available here.",
+  "deleteConfirm": "Delete ({size})",
+  "discardTitle": "Discard partial download of {id}?",
+  "discardMessage": "Throws away the {size} downloaded so far. A later download starts from zero instead of resuming.",
+  "discardConfirm": "Discard",
+  "pauseTitle": "Pause downloading {id}?",
+  "pauseMessage": "Nothing is lost — the downloaded part stays on disk and Resume picks up exactly where it stopped.",
+  "pauseConfirm": "Pause download"
+}

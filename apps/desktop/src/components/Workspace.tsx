@@ -7,6 +7,7 @@ import type {
 } from "dockview-react";
 import "dockview-core/dist/styles/dockview.css";
 import { useEffect, useRef, useState } from "react";
+import { t, type MessageKey } from "../i18n";
 import { movedOrder, orderedScenes } from "../lib/order";
 import { useWorkspace, type WorkspaceView } from "../lib/workspace";
 import { useApp } from "../store";
@@ -140,13 +141,17 @@ function PanelTab(props: IDockviewPanelHeaderProps) {
   return <DockviewDefaultTab {...props} hideClose={props.api.id !== "inspector"} />;
 }
 
-const PANEL_TITLES: Record<string, string> = {
-  board: "Storyboard",
-  monitor: "Monitor",
-  inspector: "Details",
-  timeline: "Timeline",
-  composer: "Prompt",
-};
+/** Stable panel id → catalog key. The keys stay module-level; the display
+ * title is resolved through t() at each call site (never at module load). */
+const PANEL_TITLE_KEYS = {
+  board: "workspace.panels.board",
+  monitor: "workspace.panels.monitor",
+  inspector: "workspace.panels.inspector",
+  timeline: "workspace.panels.timeline",
+  composer: "workspace.panels.composer",
+} as const satisfies Record<keyof typeof PANEL_COMPONENTS, MessageKey>;
+
+const panelTitle = (id: keyof typeof PANEL_TITLE_KEYS): string => t(PANEL_TITLE_KEYS[id]);
 
 /* ---------- workspace ---------- */
 
@@ -169,7 +174,7 @@ export function Workspace() {
     api.addPanel({
       id: "composer",
       component: "composer",
-      title: PANEL_TITLES.composer,
+      title: panelTitle("composer"),
       position: { referencePanel: "board", direction: "below" },
     });
     // A reference-panel split divides the group evenly, and setSize during
@@ -184,13 +189,13 @@ export function Workspace() {
     busyRef.current = true;
     try {
       api.clear();
-      const board = api.addPanel({ id: "board", component: "board", title: PANEL_TITLES.board });
+      const board = api.addPanel({ id: "board", component: "board", title: panelTitle("board") });
       board.group.locked = true; // the center document never docks away
       if (target === "player") {
         api.addPanel({
           id: "monitor",
           component: "monitor",
-          title: PANEL_TITLES.monitor,
+          title: panelTitle("monitor"),
           position: { referencePanel: "board", direction: "left" },
         });
       }
@@ -200,7 +205,7 @@ export function Workspace() {
       api.addPanel({
         id: "timeline",
         component: "timeline",
-        title: PANEL_TITLES.timeline,
+        title: panelTitle("timeline"),
         position: { direction: "below" },
         initialHeight: 150,
       });
@@ -264,7 +269,7 @@ export function Workspace() {
         api.addPanel({
           id: "inspector",
           component: "inspector",
-          title: PANEL_TITLES.inspector,
+          title: panelTitle("inspector"),
           position: { referencePanel: "board", direction: "right" },
           initialWidth: 340,
         });

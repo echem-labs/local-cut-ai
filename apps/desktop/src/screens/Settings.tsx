@@ -2,6 +2,7 @@ import {
   Boxes,
   Cpu,
   KeyRound,
+  Languages,
   RotateCcw,
   Server,
   SunMoon,
@@ -9,25 +10,27 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { Provider } from "../api/types";
+import { Dropdown } from "../components/Dropdown";
 import { ModelLibrary } from "../components/ModelLibrary";
+import { SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
 import { applyTheme, loadThemePref, type ThemePref } from "../theme";
 
 const SECTION_ICON = { size: 14, strokeWidth: 1.8 } as const;
 
-const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
-  { value: "system", label: "System" },
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
+const THEME_OPTIONS: { value: ThemePref }[] = [
+  { value: "system" },
+  { value: "dark" },
+  { value: "light" },
 ];
 
 type SettingsTab = "general" | "providers" | "models" | "engine";
 
-const TABS: { id: SettingsTab; label: string; icon: typeof SunMoon }[] = [
-  { id: "general", label: "General", icon: SunMoon },
-  { id: "providers", label: "Providers", icon: KeyRound },
-  { id: "models", label: "Models", icon: Boxes },
-  { id: "engine", label: "Engine", icon: Server },
+const TABS: { id: SettingsTab; icon: typeof SunMoon }[] = [
+  { id: "general", icon: SunMoon },
+  { id: "providers", icon: KeyRound },
+  { id: "models", icon: Boxes },
+  { id: "engine", icon: Server },
 ];
 
 /** Engine provider ids → shell key ids (google's key is a Gemini key). */
@@ -62,6 +65,8 @@ export function Settings() {
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePref>(loadThemePref);
+  const locale = useLocale((state) => state.locale);
+  const setLocale = useLocale((state) => state.setLocale);
   const { settingsTab, setSettingsTab } = useApp();
   const tab = (TABS.some((entry) => entry.id === settingsTab) ? settingsTab : "general") as SettingsTab;
 
@@ -134,13 +139,13 @@ export function Settings() {
   return (
     <div className="settings">
       <div className="settings-head">
-        <h1>Settings</h1>
-        <button className="icon-btn" onClick={closeSettings} aria-label="Close settings">
+        <h1>{t("settings.title")}</h1>
+        <button className="icon-btn" onClick={closeSettings} aria-label={t("settings.closeAria")}>
           <X size={16} strokeWidth={2} />
         </button>
       </div>
 
-      <div className="tabs" role="tablist" aria-label="Settings sections">
+      <div className="tabs" role="tablist" aria-label={t("settings.tablistAria")}>
         {TABS.map((entry) => {
           const Icon = entry.icon;
           return (
@@ -152,7 +157,7 @@ export function Settings() {
               onClick={() => setSettingsTab(entry.id)}
             >
               <Icon size={13} strokeWidth={1.8} />
-              {entry.label}
+              {t(`settings.tabs.${entry.id}`)}
             </button>
           );
         })}
@@ -162,10 +167,15 @@ export function Settings() {
       <section>
         <h2>
           <SunMoon {...SECTION_ICON} />
-          Appearance
+          {t("settings.appearance.heading")}
         </h2>
-        <p className="hint">Dark is the design target for video work; light is fully supported.</p>
-        <div className="seg-toggle" role="group" aria-label="Theme" style={{ display: "inline-flex" }}>
+        <p className="hint">{t("settings.appearance.hint")}</p>
+        <div
+          className="seg-toggle"
+          role="group"
+          aria-label={t("settings.appearance.aria")}
+          style={{ display: "inline-flex" }}
+        >
           {THEME_OPTIONS.map((option) => (
             <button
               key={option.value}
@@ -175,10 +185,27 @@ export function Settings() {
                 applyTheme(option.value);
               }}
             >
-              {option.label}
+              {t(`settings.theme.${option.value}`)}
             </button>
           ))}
         </div>
+        {/* The language picker earns its slot only once there's a real
+            choice — a lone option would be a dead control (doc 09 budget). */}
+        {SUPPORTED_LOCALES.length > 1 && (
+          <div className="settings-sub">
+            <h3>
+              <Languages {...SECTION_ICON} />
+              {t("settings.language.heading")}
+            </h3>
+            <p className="hint">{t("settings.language.hint")}</p>
+            <Dropdown
+              value={locale}
+              ariaLabel={t("settings.language.heading")}
+              options={SUPPORTED_LOCALES.map((entry) => ({ value: entry.id, label: entry.label }))}
+              onChange={setLocale}
+            />
+          </div>
+        )}
       </section>
       )}
 
@@ -186,20 +213,15 @@ export function Settings() {
       <section>
         <h2>
           <KeyRound {...SECTION_ICON} />
-          Cloud providers
+          {t("settings.providers.heading")}
         </h2>
-        <p className="hint">
-          Bring your own keys: they live in your OS keychain, go only to your engine, and are
-          never sent to us.
-        </p>
+        <p className="hint">{t("settings.providers.hint")}</p>
         {presence && !presence.encrypted && (
-          <div className="banner warning">
-            No OS keychain available — keys are stored obfuscated only.
-          </div>
+          <div className="banner warning">{t("settings.providers.noKeychain")}</div>
         )}
         {keyError && <div className="banner error">{keyError}</div>}
         {providers.length === 0 && (
-          <p className="hint">Engine unavailable — provider status unknown.</p>
+          <p className="hint">{t("settings.providers.engineUnavailable")}</p>
         )}
         {providers.map((provider) => (
           <div className="provider-row" key={provider.id}>
@@ -208,11 +230,13 @@ export function Settings() {
               <div className="meta">{provider.capabilities.join(", ")}</div>
             </div>
             <span className={`badge${provider.configured ? " ok" : ""}`}>
-              {provider.configured ? "configured" : "no key"}
+              {provider.configured
+                ? t("settings.providers.configured")
+                : t("settings.providers.noKey")}
             </span>
             <input
               type="password"
-              placeholder="Paste API key…"
+              placeholder={t("settings.providers.keyPlaceholder")}
               value={drafts[provider.id] ?? ""}
               onChange={(event) =>
                 setDrafts((prev) => ({ ...prev, [provider.id]: event.target.value }))
@@ -220,21 +244,21 @@ export function Settings() {
               onKeyDown={(event) => {
                 if (event.key === "Enter") void saveKey(provider.id);
               }}
-              aria-label={`${provider.label} API key`}
+              aria-label={t("settings.providers.keyAria", { provider: provider.label })}
             />
             <button
               className="btn-primary"
               onClick={() => void saveKey(provider.id)}
               disabled={busy !== null || !(drafts[provider.id] ?? "").trim()}
             >
-              {busy === provider.id ? "Saving…" : "Save"}
+              {busy === provider.id ? t("common.saving") : t("common.save")}
             </button>
             <button
               className="btn-ghost"
               onClick={() => void clearKey(provider.id)}
               disabled={busy !== null || !(provider.configured || presence?.[KEY_IDS[provider.id]])}
             >
-              Clear
+              {t("common.clear")}
             </button>
           </div>
         ))}
@@ -245,9 +269,9 @@ export function Settings() {
       <section>
         <h2>
           <Boxes {...SECTION_ICON} />
-          Model library
+          {t("settings.modelLibrary.heading")}
         </h2>
-        <p className="hint">Download more local models any time — jobs pick them up immediately.</p>
+        <p className="hint">{t("settings.modelLibrary.hint")}</p>
         <ModelLibrary showActions />
       </section>
       )}
@@ -257,25 +281,27 @@ export function Settings() {
       <section>
         <h2>
           <Server {...SECTION_ICON} />
-          Remote engine
+          {t("settings.remote.heading")}
         </h2>
         <p className="hint">
-          Run <code>localcut-engine serve --host 0.0.0.0 --token …</code> on a GPU box, then
-          paste its pairing code here — this laptop becomes the remote control. Projects and
-          renders live with the engine.
+          {t("settings.remote.hintBefore")}
+          <code>localcut-engine serve --host 0.0.0.0 --token …</code>
+          {t("settings.remote.hintAfter")}
         </p>
         {remotePaired ? (
           <div className="provider-row">
             <div className="grow">
               <div className="name">
                 {remoteEngine
-                  ? `Paired with ${client?.baseUrl ?? "remote engine"}`
-                  : "Paired with a remote engine (currently unreachable)"}
+                  ? t("settings.remote.pairedWith", {
+                      url: client?.baseUrl ?? t("settings.remote.pairedFallback"),
+                    })
+                  : t("settings.remote.pairedUnreachable")}
               </div>
               <div className="meta">
                 {remoteEngine
-                  ? "All generation runs on the remote engine."
-                  : "Disconnect to fall back to the local engine."}
+                  ? t("settings.remote.pairedMeta")
+                  : t("settings.remote.unreachableMeta")}
               </div>
             </div>
             <button
@@ -289,26 +315,26 @@ export function Settings() {
                   .finally(() => setPairBusy(false));
               }}
             >
-              {pairBusy ? "Disconnecting…" : "Disconnect"}
+              {pairBusy ? t("settings.remote.disconnecting") : t("settings.remote.disconnect")}
             </button>
           </div>
         ) : (
           <div className="provider-row">
             <input
-              placeholder="Paste pairing code…"
+              placeholder={t("settings.remote.pairPlaceholder")}
               value={pairingCode}
               onChange={(event) => setPairingCode(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") submitPairing();
               }}
-              aria-label="Pairing code"
+              aria-label={t("settings.remote.pairAria")}
             />
             <button
               className="btn-primary"
               disabled={pairBusy || !pairingCode.trim()}
               onClick={submitPairing}
             >
-              {pairBusy ? "Pairing…" : "Pair"}
+              {pairBusy ? t("settings.remote.pairing") : t("settings.remote.pair")}
             </button>
           </div>
         )}
@@ -318,20 +344,23 @@ export function Settings() {
       <section>
         <h2>
           <Cpu {...SECTION_ICON} />
-          Engine
+          {t("settings.engine.heading")}
         </h2>
         <dl className="kv">
-          <dt>Engine URL</dt>
-          <dd>{client?.baseUrl ?? "not connected"}</dd>
-          <dt>Backend mode</dt>
-          <dd>{system?.backend_mode ?? "—"}</dd>
-          <dt>Hardware</dt>
+          <dt>{t("settings.engine.urlLabel")}</dt>
+          <dd>{client?.baseUrl ?? t("settings.engine.notConnected")}</dd>
+          <dt>{t("settings.engine.backendLabel")}</dt>
+          <dd>{system?.backend_mode ?? t("settings.engine.dash")}</dd>
+          <dt>{t("settings.engine.hardwareLabel")}</dt>
           <dd>
             {system
-              ? `Tier ${system.hardware.tier} · ${
-                  gpu ? `${gpu.name} (${gpu.vram_gb} GB VRAM)` : "no GPU detected"
-                }`
-              : "—"}
+              ? t("settings.engine.hardwareValue", {
+                  tier: system.hardware.tier,
+                  detail: gpu
+                    ? t("settings.engine.gpuDetail", { gpu: gpu.name, vram: gpu.vram_gb })
+                    : t("settings.engine.noGpu"),
+                })
+              : t("settings.engine.dash")}
           </dd>
         </dl>
       </section>
@@ -342,10 +371,10 @@ export function Settings() {
       <section>
         <h2>
           <RotateCcw {...SECTION_ICON} />
-          Setup
+          {t("settings.setup.heading")}
         </h2>
         <button className="btn-ghost" onClick={resetFirstRun}>
-          Show setup screen again
+          {t("settings.setup.showAgain")}
         </button>
       </section>
       )}

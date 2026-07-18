@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
+import { t } from "./i18n";
 import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { QueueTray } from "./components/QueueTray";
@@ -65,10 +66,14 @@ export default function App() {
   // vendor prefix says nothing the model number doesn't.
   const gpu = system?.hardware.gpus[0]?.name.replace(/^(NVIDIA|AMD|Intel)\s+(GeForce|Radeon|Arc)?\s*/i, "") ?? null;
   const engineDetail = system
-    ? `${gpu || "No GPU"} · Tier ${system.hardware.tier} · ${system.backend_mode}`
+    ? t("nav.engineDetail", {
+        gpu: gpu || t("nav.noGpu"),
+        tier: system.hardware.tier,
+        backend: system.backend_mode,
+      })
     : engineError
-      ? "not connected"
-      : "connecting…";
+      ? t("nav.engineNotConnected")
+      : t("nav.engineConnecting");
 
   // Inside a project the rail collapses to a 48px icon activity bar —
   // chrome recedes; the workspace owns the width. Full rail on Home. A
@@ -91,19 +96,19 @@ export default function App() {
           min/max/close buttons overlay its right edge (same background). */}
       <header className="titlebar">
         <BrandMark size={18} />
-        <span className="tb-name">LocalCut AI</span>
+        <span className="tb-name">{t("titlebar.appName")}</span>
         {currentProject && <span className="tb-project">{currentProject.title}</span>}
       </header>
-      <nav className={`rail${compact ? " compact" : ""}`} aria-label="Navigation">
+      <nav className={`rail${compact ? " compact" : ""}`} aria-label={t("nav.navigationAria")}>
         {compact ? (
-          <Tip label="Home" hint="close the project" side="top">
+          <Tip label={t("nav.home")} hint={t("nav.homeCloseHint")} side="top">
             <button
               className="rail-mark"
               onClick={() => {
                 closeProject();
                 closeSettings();
               }}
-              aria-label="Home"
+              aria-label={t("nav.home")}
             >
               <BrandMark size={20} />
             </button>
@@ -118,19 +123,23 @@ export default function App() {
             }}
           >
             <HomeIcon {...ICON} />
-            <span className="rail-label">Home</span>
+            <span className="rail-label">{t("nav.home")}</span>
           </button>
         )}
         {inProject && (
-          <button className="active" title="Scenes" aria-label="Scenes">
+          <button className="active" title={t("nav.scenes")} aria-label={t("nav.scenes")}>
             <LayoutGrid {...ICON} />
-            <span className="rail-label">Scenes</span>
+            <span className="rail-label">{t("nav.scenes")}</span>
           </button>
         )}
         <div className="rail-bottom">
           <Tip
-            label={remoteEngine ? "Remote engine" : "Local engine"}
-            hint={compact ? `${engineDetail} — click for engine settings` : "click for engine settings"}
+            label={remoteEngine ? t("nav.remoteEngine") : t("nav.localEngine")}
+            hint={
+              compact
+                ? t("nav.engineSettingsHintCompact", { detail: engineDetail })
+                : t("nav.engineSettingsHint")
+            }
             side="top"
           >
             <button
@@ -138,44 +147,44 @@ export default function App() {
               style={{ width: "100%" }}
               disabled={!firstRunDone}
               onClick={() => openSettings("engine")}
-              aria-label="Engine status — open engine settings"
+              aria-label={t("nav.engineStatusAria")}
             >
               <span className={`pulse${engineError ? " err" : ""}`} />
               <span className="engine-detail" style={{ minWidth: 0 }}>
-                <b>{remoteEngine ? "Remote engine" : "Local engine"}</b>
+                <b>{remoteEngine ? t("nav.remoteEngine") : t("nav.localEngine")}</b>
                 <small>{engineDetail}</small>
               </span>
             </button>
           </Tip>
           <button
             onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
-            title="Toggle theme — the follow-system option lives in Settings"
-            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={t("nav.toggleThemeTitle")}
+            aria-label={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
           >
             {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-            <span className="rail-label">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
           </button>
           <button
             className={settingsOpen && !currentProject ? "active" : ""}
             disabled={!firstRunDone}
-            title="Settings"
+            title={t("nav.settings")}
             onClick={() => {
               closeProject();
               openSettings("general");
             }}
           >
             <SettingsIcon {...ICON} />
-            <span className="rail-label">Settings</span>
+            <span className="rail-label">{t("nav.settings")}</span>
           </button>
           <HelpMenu compact={compact} />
           {inProject && (
             <button
               onClick={toggleRail}
-              title={compact ? "Expand the sidebar" : "Collapse the sidebar"}
-              aria-label={compact ? "Expand the sidebar" : "Collapse the sidebar"}
+              title={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
+              aria-label={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
             >
               {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
-              <span className="rail-label">Collapse</span>
+              <span className="rail-label">{t("nav.collapse")}</span>
             </button>
           )}
         </div>

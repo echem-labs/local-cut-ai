@@ -1,0 +1,21 @@
+{
+  "title": "How your video is made",
+  "steps": {
+    "script": {
+      "label": "Script",
+      "teach": "your idea becomes narration, split into scenes"
+    },
+    "storyboard": {
+      "label": "Storyboard",
+      "teach": "each scene gets a still image — review these first"
+    },
+    "videos": {
+      "label": "Videos",
+      "teach": "stills become clips; drafts render fast at lower quality"
+    },
+    "finalCut": {
+      "label": "Final cut",
+      "teach": "everything re-renders at full quality into your MP4"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { t } from "../i18n";
 
 /** Modal confirmation — reserved for genuinely destructive acts (doc 09).
  * Escape cancels, the safe action holds initial focus, clicking the
@@ -42,7 +43,7 @@ export function ConfirmDialog({
         <p>{message}</p>
         <div className="modal-actions">
           <button className="btn-ghost" ref={cancelRef} onClick={onCancel}>
-            Keep it
+            {t("common.keepIt")}
           </button>
           <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>
             {confirmLabel}

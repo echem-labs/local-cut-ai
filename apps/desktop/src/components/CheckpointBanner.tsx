@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Checkpoint } from "../api/types";
+import { t } from "../i18n";
 import { useApp } from "../store";
 import { ScriptTable, useScreenplay } from "./ToolSession";
 
@@ -51,21 +52,21 @@ export function CheckpointBanner() {
       <div className="row">
         <span>
           {stage === "script"
-            ? "Review the script, then approve to generate the storyboard."
-            : "Review the keyframes, then approve to render video."}
+            ? t("checkpoint.reviewScript")
+            : t("checkpoint.reviewStoryboard")}
         </span>
         <div className="spacer" />
         {stage === "script" && (
           <button className="btn-ghost" onClick={() => setShowScript(!showScript)}>
-            {showScript ? "Hide script" : "View script"}
+            {showScript ? t("checkpoint.hideScript") : t("checkpoint.viewScript")}
           </button>
         )}
         <button className="btn-primary" disabled={busy} onClick={() => void run(stage)}>
           {busy
-            ? "Approving…"
+            ? t("checkpoint.approving")
             : stage === "script"
-              ? "Approve script"
-              : "Approve storyboard"}
+              ? t("checkpoint.approveScript")
+              : t("checkpoint.approveStoryboard")}
         </button>
       </div>
       {actionError?.scope === "approve" && (
@@ -78,7 +79,7 @@ export function CheckpointBanner() {
         (screenplay ? (
           <ScriptTable screenplay={screenplay} />
         ) : (
-          <div className="hint">Loading script…</div>
+          <div className="hint">{t("checkpoint.loadingScript")}</div>
         ))}
     </div>
   );

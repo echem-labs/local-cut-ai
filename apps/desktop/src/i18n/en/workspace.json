@@ -1,0 +1,9 @@
+{
+  "panels": {
+    "board": "Storyboard",
+    "monitor": "Monitor",
+    "inspector": "Details",
+    "timeline": "Timeline",
+    "composer": "Prompt"
+  }
+}

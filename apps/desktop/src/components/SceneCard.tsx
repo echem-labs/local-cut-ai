@@ -1,6 +1,7 @@
 import { Pencil, Pin, Play, RotateCw, SlidersHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
+import { t } from "../i18n";
 import { remainingLabel } from "../lib/eta";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
@@ -115,7 +116,7 @@ export function SceneCard({
       onClick={() => select(primary.node_id)}
       role="button"
       tabIndex={0}
-      aria-label={`Scene ${sceneNo}, ${clip.status}`}
+      aria-label={t("scene.cardAria", { n: sceneNo, status: t(`status.${clip.status}`) })}
       onKeyDown={(event) => {
         if (event.key === "Enter") select(primary.node_id);
         if (event.key.toLowerCase() === "r" && !clip.pinned) void regenerate(clip.node_id);
@@ -162,7 +163,7 @@ export function SceneCard({
         {hasThumb ? (
           <img
             src={client.artifactUrl(currentProject.id, keyframeHash)}
-            alt={`Scene ${sceneNo} still image`}
+            alt={t("scene.stillAlt", { n: sceneNo })}
             className={failed ? "dim" : ""}
             crossOrigin="anonymous"
             onLoad={(event) => {
@@ -198,12 +199,12 @@ export function SceneCard({
           <span className="thumb-progress">{Math.round(clip.progress * 100)}%</span>
         )}
         {clip.pinned && (
-          <span className="pin-badge" title="Pinned — kept exactly as it is">
+          <span className="pin-badge" title={t("scene.pinnedTitle")}>
             <Pin size={11} strokeWidth={1.8} />
           </span>
         )}
         {!rendering && Number.isFinite(duration) && (
-          <span className="dur-badge">{duration}s</span>
+          <span className="dur-badge">{t("scene.durValue", { d: duration })}</span>
         )}
         {/* failure ladder lives ON the dimmed frame (design mock): the
             thumb stays the stage, the choices sit at its foot */}
@@ -217,9 +218,9 @@ export function SceneCard({
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <RotateCw size={11} strokeWidth={2} />
-                Try again
+                {t("scene.failed.tryAgain")}
               </span>
-              <small>new take</small>
+              <small>{t("scene.failed.newTake")}</small>
             </button>
             <button
               onClick={(event) => {
@@ -229,17 +230,21 @@ export function SceneCard({
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                 <SlidersHorizontal size={11} strokeWidth={2} />
-                Adjust the scene
+                {t("scene.failed.adjust")}
               </span>
-              <small>prompt · settings</small>
+              <small>{t("scene.failed.adjustSub")}</small>
             </button>
           </div>
         )}
         {!failed && (
           <div className="acts">
-            <Tip label="Play" hint="in the monitor" shortcut="Space">
+            <Tip
+              label={t("scene.actions.play.label")}
+              hint={t("scene.actions.play.hint")}
+              shortcut="Space"
+            >
               <button
-                aria-label="Play this scene"
+                aria-label={t("scene.actions.play.aria")}
                 onClick={(event) => {
                   event.stopPropagation();
                   select(primary.node_id);
@@ -249,9 +254,13 @@ export function SceneCard({
                 <Play size={11} strokeWidth={2} />
               </button>
             </Tip>
-            <Tip label="Regenerate" hint="new take" shortcut="R">
+            <Tip
+              label={t("scene.actions.regenerate.label")}
+              hint={t("scene.actions.regenerate.hint")}
+              shortcut="R"
+            >
               <button
-                aria-label="Regenerate"
+                aria-label={t("scene.actions.regenerate.aria")}
                 disabled={clip.pinned}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -261,9 +270,13 @@ export function SceneCard({
                 <RotateCw size={12} strokeWidth={2} />
               </button>
             </Tip>
-            <Tip label={clip.pinned ? "Unpin" : "Pin"} hint="keep as is" shortcut="P">
+            <Tip
+              label={clip.pinned ? t("scene.actions.pin.unpinLabel") : t("scene.actions.pin.label")}
+              hint={t("scene.actions.pin.hint")}
+              shortcut="P"
+            >
               <button
-                aria-label={clip.pinned ? "Unpin scene" : "Pin scene"}
+                aria-label={clip.pinned ? t("scene.actions.pin.unpinAria") : t("scene.actions.pin.aria")}
                 aria-pressed={clip.pinned}
                 className={clip.pinned ? "on" : ""}
                 onClick={(event) => {
@@ -274,9 +287,9 @@ export function SceneCard({
                 <Pin size={11} strokeWidth={2} />
               </button>
             </Tip>
-            <Tip label="Edit scene" hint="opens details">
+            <Tip label={t("scene.actions.edit.label")} hint={t("scene.actions.edit.hint")}>
               <button
-                aria-label="Edit scene"
+                aria-label={t("scene.actions.edit.aria")}
                 onClick={(event) => {
                   event.stopPropagation();
                   select(primary.node_id);
@@ -290,16 +303,16 @@ export function SceneCard({
       </div>
       <div className="body">
         <div className="scene-line">
-          <span className="scene-name">Scene {sceneNo}</span>
+          <span className="scene-name">{t("scene.sceneName", { n: sceneNo })}</span>
           {/* design mock: — while rendering/failed, ~4s while queued */}
           <span className="scene-dur">
             {rendering || failed
-              ? "—"
+              ? t("scene.dash")
               : clip.status === "queued" && Number.isFinite(duration)
-                ? `~${duration}s`
+                ? t("scene.durQueued", { d: duration })
                 : Number.isFinite(duration)
-                  ? `${duration}s`
-                  : "—"}
+                  ? t("scene.durValue", { d: duration })
+                  : t("scene.dash")}
           </span>
         </div>
         {editingWords ? (
@@ -308,7 +321,7 @@ export function SceneCard({
             value={wordsDraft}
             rows={2}
             autoFocus
-            aria-label={`Scene ${sceneNo} narration`}
+            aria-label={t("scene.narrationAria", { n: sceneNo })}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => setWordsDraft(event.target.value)}
             onKeyDown={(event) => {
@@ -334,9 +347,7 @@ export function SceneCard({
         ) : (
           <div
             className={`narration${canEditWords ? " editable" : ""}`}
-            title={
-              canEditWords ? "Click to change the words — the narration re-renders" : undefined
-            }
+            title={canEditWords ? t("scene.narrationEditTitle") : undefined}
             onClick={
               canEditWords
                 ? (event) => {
@@ -353,19 +364,19 @@ export function SceneCard({
             }
           >
             {rendering
-              ? `Rendering video${clip.progress > 0 ? ` · ${Math.round(clip.progress * 100)}%` : "…"}${timeLeft ? ` · ${timeLeft}` : ""}`
+              ? `${t("scene.rendering")}${clip.progress > 0 ? t("scene.renderingPct", { pct: Math.round(clip.progress * 100) }) : t("scene.ellipsis")}${timeLeft ? t("scene.renderingTime", { timeLeft }) : ""}`
               : failed
-                ? "This scene didn't render."
-                : narrationText || "…"}
+                ? t("scene.notRendered")
+                : narrationText || t("scene.ellipsis")}
           </div>
         )}
       </div>
       {teachDraft && (
         <div className="draft-teach" role="note">
-          <span>Drafts render fast at lower quality — they're for deciding, not shipping.</span>
+          <span>{t("scene.draftTeach")}</span>
           <button
-            aria-label="Got it"
-            title="Got it"
+            aria-label={t("common.gotIt")}
+            title={t("common.gotItTitle")}
             onClick={(event) => {
               event.stopPropagation();
               onTeachDismiss?.();

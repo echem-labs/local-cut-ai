@@ -1,0 +1,17 @@
+{
+  "preparing": "Preparing the tool session…",
+  "generating": "Generating {stage}…",
+  "loadingScript": "Loading script…",
+  "table": {
+    "scene": "Scene",
+    "narration": "Narration",
+    "visual": "Visual",
+    "length": "Length"
+  },
+  "lengthCell": "~{d}s",
+  "generatedAlt": "Generated {tool}",
+  "audioAria": "{tool} preview",
+  "clipPreview": "Clip preview",
+  "creatingProject": "Creating project…",
+  "turnIntoVideo": "Turn into a video"
+}

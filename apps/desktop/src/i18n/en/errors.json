@@ -1,0 +1,4 @@
+{
+  "somethingWrong": "Something went wrong: {message}",
+  "engineLost": "connection to engine lost — reconnecting…"
+}

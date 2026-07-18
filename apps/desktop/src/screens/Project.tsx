@@ -14,7 +14,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { Dropdown } from "../components/Dropdown";
 import { ToolSession } from "../components/ToolSession";
 import { Workspace } from "../components/Workspace";
-import { TIPS } from "../help/terms";
+import { t } from "../i18n";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
@@ -51,35 +51,36 @@ const INTRO_KEY = "localcut.pipelineTaught";
 function PipelineIntro({
   stages,
 }: {
-  stages: { label: string; state: "done" | "work" | "fail" | "off" }[];
+  stages: { id: string; state: "done" | "work" | "fail" | "off" }[];
 }) {
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(INTRO_KEY) === "1");
   if (dismissed) return null;
-  const steps = [
-    { label: "Script", teach: "your idea becomes narration, split into scenes" },
-    { label: "Storyboard", teach: "each scene gets a still image — review these first" },
-    { label: "Videos", teach: "stills become clips; drafts render fast at lower quality" },
-    { label: "Final cut", teach: "everything re-renders at full quality into your MP4" },
+  // Stable ids drive both the displayed label and the stage match — the final
+  // step lands on the "export" stage. Never compare on translated text.
+  const steps: { id: "script" | "storyboard" | "videos" | "finalCut"; stageId: string }[] = [
+    { id: "script", stageId: "script" },
+    { id: "storyboard", stageId: "storyboard" },
+    { id: "videos", stageId: "videos" },
+    { id: "finalCut", stageId: "export" },
   ];
-  const stageState = (label: string) =>
-    stages.find((stage) => stage.label === (label === "Final cut" ? "Export" : label))?.state ??
-    "off";
+  const stageState = (stageId: string) =>
+    stages.find((stage) => stage.id === stageId)?.state ?? "off";
   return (
-    <div className="pipeline-intro" role="note" aria-label="How your video is made">
-      <span className="intro-title">How your video is made</span>
+    <div className="pipeline-intro" role="note" aria-label={t("pipeline.title")}>
+      <span className="intro-title">{t("pipeline.title")}</span>
       {steps.map((step, index) => (
-        <span key={step.label} className={`intro-step ${stageState(step.label)}`}>
+        <span key={step.id} className={`intro-step ${stageState(step.stageId)}`}>
           <i>{index + 1}</i>
           <span>
-            <b>{step.label}</b>
-            <small>{step.teach}</small>
+            <b>{t(`pipeline.steps.${step.id}.label`)}</b>
+            <small>{t(`pipeline.steps.${step.id}.teach`)}</small>
           </span>
         </span>
       ))}
       <button
         className="icon-btn-sm"
-        aria-label="Dismiss"
-        title="Got it — don't show again"
+        aria-label={t("common.dismiss")}
+        title={t("common.gotItTitle")}
         onClick={() => {
           localStorage.setItem(INTRO_KEY, "1");
           setDismissed(true);
@@ -119,9 +120,9 @@ function BoardMenu() {
     <div className="board-menu" ref={ref}>
       <button
         className="icon-btn"
-        aria-label="Project options"
+        aria-label={t("project.menu.aria")}
         aria-expanded={open}
-        title="Audio, captions, handoff & layout"
+        title={t("project.menu.title")}
         onClick={() => setOpen(!open)}
       >
         <MoreHorizontal size={15} strokeWidth={1.8} />
@@ -130,74 +131,74 @@ function BoardMenu() {
         <div className="menu-pop" role="menu">
           {timeline && (
             <>
-              <div className="menu-label">Audio</div>
+              <div className="menu-label">{t("project.menu.audio")}</div>
               <button
                 role="menuitemcheckbox"
                 aria-checked={ducking}
-                title={TIPS.duck}
+                title={t("terms.tips.duck")}
                 onClick={() => applyTimeline({ ducking: !ducking })}
               >
                 <span className="check">{ducking ? "✓" : ""}</span>
-                Lower music under voice
+                {t("project.menu.duck")}
               </button>
               <button
                 role="menuitemcheckbox"
                 aria-checked={beatAlign}
-                title={TIPS.beat}
+                title={t("terms.tips.beat")}
                 onClick={() => applyTimeline({ beat_align: !beatAlign })}
               >
                 <span className="check">{beatAlign ? "✓" : ""}</span>
-                Cut on the beat
+                {t("project.menu.beat")}
               </button>
             </>
           )}
           {exportNode && (
             <>
-              <div className="menu-label">Captions</div>
+              <div className="menu-label">{t("project.menu.captions")}</div>
               <button
                 role="menuitemradio"
                 aria-checked={captions === "burn"}
-                title={TIPS.captionsBurn}
+                title={t("terms.tips.captionsBurn")}
                 onClick={() => applyExport({ captions: "burn" })}
               >
                 <span className="check">{captions === "burn" ? "✓" : ""}</span>
-                On the video
+                {t("project.menu.captionsOnVideo")}
               </button>
               <button
                 role="menuitemradio"
                 aria-checked={captions === "sidecar"}
-                title={TIPS.captionsSidecar}
+                title={t("terms.tips.captionsSidecar")}
                 onClick={() => applyExport({ captions: "sidecar" })}
               >
                 <span className="check">{captions === "sidecar" ? "✓" : ""}</span>
-                Separate file (.srt)
+                {t("project.menu.captionsSidecar")}
               </button>
             </>
           )}
           {exportNode?.artifact_hash && client && (
             <>
-              <div className="menu-label">Open in a pro editor</div>
+              <div className="menu-label">{t("project.menu.proEditor")}</div>
               <a role="menuitem" href={client.exportUrl(currentProject.id, "otio")} download>
                 <span className="check" />
-                Premiere / Resolve <small>.otio</small>
+                {t("project.menu.premiereResolve")} <small>.otio</small>
               </a>
               <a role="menuitem" href={client.exportUrl(currentProject.id, "fcpxml")} download>
                 <span className="check" />
-                Final Cut Pro <small>.fcpxml</small>
+                {t("project.menu.finalCutPro")} <small>.fcpxml</small>
               </a>
             </>
           )}
-          <div className="menu-label">Workspace</div>
+          <div className="menu-label">{t("project.menu.workspace")}</div>
           <button
             role="menuitem"
-            title="Restore this view's default panel layout"
+            title={t("project.menu.resetLayoutTitle")}
             onClick={() => {
               resetLayout();
               setOpen(false);
             }}
           >
             <span className="check" />
-            Reset layout
+            {t("project.menu.resetLayout")}
           </button>
         </div>
       )}
@@ -316,20 +317,22 @@ export function Project() {
           : ("work" as const);
   const exportNode = board.aux.export;
   const stages: {
-    label: string;
+    // Stable id: matched on for logic AND resolves the displayed label via
+    // t("project.stages.<id>"). Never compare on the translated label.
+    id: "script" | "storyboard" | "videos" | "audio" | "export";
     state: "done" | "work" | "fail" | "off";
     detail?: string;
     // A stage with a landing surface renders as a button (review 3 §3A).
     onClick?: () => void;
     hint?: string;
   }[] = [
-    { label: "Script", state: stageOf(script) },
+    { id: "script", state: stageOf(script) },
     {
-      label: "Storyboard",
+      id: "storyboard",
       state: scenes.length === 0 ? "off" : keyframesAllReady ? "done" : "work",
     },
     {
-      label: "Videos",
+      id: "videos",
       state:
         clipFailed > 0
           ? "fail"
@@ -340,7 +343,8 @@ export function Project() {
               : "off",
       detail:
         scenes.length > 0
-          ? `${clipDone}/${scenes.length}${clipFailed > 0 ? ` · ${clipFailed} failed` : ""}`
+          ? t("project.stages.videosDetail", { done: clipDone, total: scenes.length }) +
+            (clipFailed > 0 ? t("project.stages.videosFailed", { failed: clipFailed }) : "")
           : undefined,
       onClick:
         scenes.length > 0
@@ -350,10 +354,10 @@ export function Project() {
               scrollToScene(target.scene_id, { behavior: "smooth", block: "center" });
             }
           : undefined,
-      hint: "Show these scenes on the board",
+      hint: t("project.stages.videosHint"),
     },
-    { label: "Audio", state: audioStage },
-    { label: "Export", state: stageOf(exportNode) },
+    { id: "audio", state: audioStage },
+    { id: "export", state: stageOf(exportNode) },
   ];
 
   // The screen's ONE primary action, staged per doc 09 (Review → Create
@@ -386,18 +390,18 @@ export function Project() {
     <div className="project-shell">
       <div className="board-header">
         <h1>{currentProject.title}</h1>
-        <div className="pipeline" role="status" aria-label="Project progress">
+        <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
           {stages.map((stage) => {
             const inner = (
               <>
                 <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
-                {stage.label}
+                {t(`project.stages.${stage.id}`)}
                 {stage.detail ? <small>{stage.detail}</small> : null}
               </>
             );
             return stage.onClick ? (
               <button
-                key={stage.label}
+                key={stage.id}
                 className={`st ${stage.state}`}
                 title={stage.hint}
                 onClick={stage.onClick}
@@ -405,7 +409,7 @@ export function Project() {
                 {inner}
               </button>
             ) : (
-              <span key={stage.label} className={`st ${stage.state}`}>
+              <span key={stage.id} className={`st ${stage.state}`}>
                 {inner}
               </span>
             );
@@ -413,31 +417,31 @@ export function Project() {
         </div>
         {board.scenes.length > 0 && (
           <>
-            <div className="seg-toggle view-switch" role="group" aria-label="Workspace view">
+            <div className="seg-toggle view-switch" role="group" aria-label={t("project.viewAria")}>
               <button
                 className={view === "storyboard" ? "active" : ""}
                 onClick={() => setView("storyboard")}
-                title="Storyboard view — the board leads, monitor in the details panel"
+                title={t("project.view.storyboardTitle")}
               >
                 <LayoutGrid size={12} strokeWidth={1.8} />
-                Storyboard
+                {t("project.view.storyboard")}
               </button>
               <button
                 className={view === "player" ? "active" : ""}
                 onClick={() => setView("player")}
-                title="Player view — big monitor beside the board"
+                title={t("project.view.playerTitle")}
               >
                 <MonitorPlay size={12} strokeWidth={1.8} />
-                Player
+                {t("project.view.player")}
               </button>
             </div>
             <Dropdown
               value={density}
-              ariaLabel="Scene tile size"
+              ariaLabel={t("project.tileSize.aria")}
               options={[
-                { value: "s", label: "Small", icon: Grid3x3 },
-                { value: "m", label: "Medium", icon: Grid2x2 },
-                { value: "l", label: "Large", icon: Square },
+                { value: "s", label: t("project.tileSize.small"), icon: Grid3x3 },
+                { value: "m", label: t("project.tileSize.medium"), icon: Grid2x2 },
+                { value: "l", label: t("project.tileSize.large"), icon: Square },
               ]}
               onChange={setDensity}
             />
@@ -453,19 +457,21 @@ export function Project() {
               download
             >
               <Download size={14} strokeWidth={2} />
-              Download MP4
+              {t("project.cta.download")}
             </a>
           ) : allReady ? (
             <button
               className="btn-primary"
               disabled={finalizing}
               onClick={() => void runFinalize()}
-              title={TIPS.createFinal}
+              title={t("terms.tips.createFinal")}
             >
               <Sparkles size={14} strokeWidth={2} />
               {finalizing
-                ? "Creating final video…"
-                : `Create final video${eta ? ` · ${eta}` : ""}`}
+                ? t("project.cta.creating")
+                : eta
+                  ? t("project.cta.createWithEta", { eta })
+                  : t("project.cta.create")}
             </button>
           ) : null)}
       </div>
@@ -475,8 +481,8 @@ export function Project() {
       {board.scenes.length === 0 ? (
         <div className="banner">
           {script?.status === "failed"
-            ? `Script generation failed: ${script.error}`
-            : "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders."}
+            ? t("project.scriptFailed", { error: script.error ?? "" })
+            : t("project.writingScript")}
         </div>
       ) : (
         <>

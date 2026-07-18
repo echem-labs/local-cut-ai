@@ -1,6 +1,7 @@
 import { Download, Pause, X } from "lucide-react";
 import { useEffect } from "react";
 import { nodeLabel } from "../help/terms";
+import { plural, t } from "../i18n";
 import { useApp } from "../store";
 import { formatSize } from "./ModelLibrary";
 
@@ -75,18 +76,18 @@ export function QueueTray() {
               </span>
               <button
                 className="tray-cancel"
-                aria-label="Stop this render"
-                title="Stop this render"
+                aria-label={t("queue.stopRender")}
+                title={t("queue.stopRender")}
                 onClick={() => void cancelJob(active.id)}
               >
                 <X size={11} strokeWidth={2} />
               </button>
             </>
           ) : (
-            <span>idle</span>
+            <span>{t("queue.idle")}</span>
           )}
-          {queued > 0 && <span>+{queued} queued</span>}
-          <span className="cost-badge">free · local</span>
+          {queued > 0 && <span>{t("queue.queued", { n: queued })}</span>}
+          <span className="cost-badge">{t("queue.costBadge")}</span>
         </>
       )}
       {hasJobs && (downloads.length > 0 || paused.length > 0) && <span className="divider" />}
@@ -94,11 +95,13 @@ export function QueueTray() {
         <button
           className="tray-downloads"
           onClick={() => openSettings("models")}
-          title="Downloading models — click for details in Settings"
+          title={t("queue.downloadsTitle")}
         >
           <Download size={12} strokeWidth={2} />
-          {downloads.length} model{downloads.length === 1 ? "" : "s"} · {pct}% ·{" "}
-          {formatSize(Math.max(0, total - done))} left
+          {plural("queue.downloads", downloads.length, {
+            pct,
+            size: formatSize(Math.max(0, total - done)),
+          })}
         </button>
       )}
       {paused.length > 0 && (
@@ -107,12 +110,14 @@ export function QueueTray() {
           onClick={() => {
             for (const row of paused) void startDownload(row.id);
           }}
-          title="Interrupted model downloads — resumes from where they stopped"
+          title={t("queue.pausedTitle")}
         >
           <Pause size={12} strokeWidth={2} />
-          {paused.length} download{paused.length === 1 ? "" : "s"} paused · Resume (
-          {formatSize(paused.reduce((sum, row) => sum + Math.max(0, row.size_bytes - row.partial_bytes), 0))}{" "}
-          left)
+          {plural("queue.paused", paused.length, {
+            size: formatSize(
+              paused.reduce((sum, row) => sum + Math.max(0, row.size_bytes - row.partial_bytes), 0),
+            ),
+          })}
         </button>
       )}
     </div>

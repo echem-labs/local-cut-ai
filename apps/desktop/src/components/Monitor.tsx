@@ -1,6 +1,7 @@
 import { Pause, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { t } from "../i18n";
 import { orderedScenes } from "../lib/order";
 import { formatTime, usePlayback } from "../lib/playback";
 import { useApp } from "../store";
@@ -145,7 +146,7 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
   };
 
   return (
-    <div className={`monitor${variant === "panel" ? " in-panel" : ""}`} aria-label="Preview monitor">
+    <div className={`monitor${variant === "panel" ? " in-panel" : ""}`} aria-label={t("monitor.aria")}>
       <div className="monitor-screen" onClick={toggle} role="button" tabIndex={-1}>
         {clipUrl && !videoBroken ? (
           <video
@@ -160,7 +161,7 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
             onEnded={advance}
           />
         ) : stillUrl ? (
-          <img src={stillUrl} alt={`Scene ${shown.scene_id.replace(/^s/, "")} still image`} />
+          <img src={stillUrl} alt={t("monitor.stillAlt", { n: shown.scene_id.replace(/^s/, "") })} />
         ) : (
           <div className="monitor-slate">
             <span>{shown.scene_id.replace(/^s/, "")}</span>
@@ -168,7 +169,7 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
         )}
         <button
           className={`monitor-play${playing ? " playing" : ""}`}
-          aria-label={playing ? "Pause" : "Play"}
+          aria-label={playing ? t("monitor.pause") : t("monitor.play")}
           onClick={(event) => {
             event.stopPropagation();
             toggle();
@@ -179,8 +180,8 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
         {(!clipUrl || videoBroken) && (
           <span className="monitor-note">
             {shown.clip.status === "rendering"
-              ? "rendering — showing the still"
-              : "draft preview · still image"}
+              ? t("monitor.renderingNote")
+              : t("monitor.draftNote")}
           </span>
         )}
       </div>
@@ -189,7 +190,7 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
           className="monitor-scrub"
           role="slider"
           tabIndex={0}
-          aria-label="Playback position"
+          aria-label={t("monitor.scrubAria")}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(progress * 100)}

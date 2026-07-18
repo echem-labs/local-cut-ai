@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Screenplay } from "../api/types";
+import { m, t } from "../i18n";
 import { useApp } from "../store";
 import { StatusRing } from "./StatusRing";
 
@@ -34,10 +35,10 @@ export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
       <table className="script-table">
         <thead>
           <tr>
-            <th>Scene</th>
-            <th>Narration</th>
-            <th>Visual</th>
-            <th>Length</th>
+            <th>{t("toolSession.table.scene")}</th>
+            <th>{t("toolSession.table.narration")}</th>
+            <th>{t("toolSession.table.visual")}</th>
+            <th>{t("toolSession.table.length")}</th>
           </tr>
         </thead>
         <tbody>
@@ -46,7 +47,7 @@ export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
               <td>{scene.id}</td>
               <td>{scene.narration}</td>
               <td>{scene.visual}</td>
-              <td>~{scene.duration_s}s</td>
+              <td>{t("toolSession.lengthCell", { d: scene.duration_s })}</td>
             </tr>
           ))}
         </tbody>
@@ -79,7 +80,7 @@ export function ToolSession() {
       : null;
   const screenplay = useScreenplay(tool === "script" && done ? artifactUrl : null);
 
-  if (!tool || !node) return <div className="banner">Preparing the tool session…</div>;
+  if (!tool || !node) return <div className="banner">{t("toolSession.preparing")}</div>;
 
   const turnIntoVideo = async () => {
     if (promoting) return;
@@ -100,33 +101,44 @@ export function ToolSession() {
     <div className="tool-session">
       <div className="tool-status">
         <StatusRing status={shown.status} progress={shown.progress} />
-        <span style={{ textTransform: "capitalize" }}>{shown.status}</span>
+        <span style={{ textTransform: "capitalize" }}>{m().status[shown.status]}</span>
         {shown.status === "rendering" && <span>{Math.round(shown.progress * 100)}%</span>}
       </div>
 
       {shown.error && <div className="banner error">{shown.error}</div>}
-      {!done && !shown.error && <div className="banner">Generating {stageLabel}…</div>}
+      {!done && !shown.error && (
+        <div className="banner">{t("toolSession.generating", { stage: stageLabel })}</div>
+      )}
 
       {done && artifactUrl && (
         <>
           {(tool === "thumbnail" || tool === "image") && (
-            <img className="tool-preview" src={artifactUrl} alt={`Generated ${tool}`} />
+            <img
+              className="tool-preview"
+              src={artifactUrl}
+              alt={t("toolSession.generatedAlt", { tool })}
+            />
           )}
           {(tool === "voiceover" || tool === "music") && (
-            <audio controls src={artifactUrl} aria-label={`${tool} preview`} />
+            <audio controls src={artifactUrl} aria-label={t("toolSession.audioAria", { tool })} />
           )}
           {tool === "clip" && (
-            <video className="tool-preview" controls src={artifactUrl} aria-label="Clip preview" />
+            <video
+              className="tool-preview"
+              controls
+              src={artifactUrl}
+              aria-label={t("toolSession.clipPreview")}
+            />
           )}
           {tool === "script" &&
             (screenplay ? (
               <ScriptTable screenplay={screenplay} />
             ) : (
-              <div className="banner">Loading script…</div>
+              <div className="banner">{t("toolSession.loadingScript")}</div>
             ))}
           <div className="tool-actions">
             <a className="btn-ghost" href={artifactUrl} download>
-              Download
+              {t("common.download")}
             </a>
             {tool === "script" && (
               <button
@@ -134,7 +146,7 @@ export function ToolSession() {
                 onClick={() => void turnIntoVideo()}
                 disabled={promoting}
               >
-                {promoting ? "Creating project…" : "Turn into a video"}
+                {promoting ? t("toolSession.creatingProject") : t("toolSession.turnIntoVideo")}
               </button>
             )}
           </div>

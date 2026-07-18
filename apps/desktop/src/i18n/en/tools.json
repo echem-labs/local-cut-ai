@@ -1,0 +1,32 @@
+{
+  "script": {
+    "label": "Script",
+    "tip": "Topic → structured script",
+    "placeholder": "e.g. A 60-second script on why octopuses have three hearts"
+  },
+  "thumbnail": {
+    "label": "Thumbnail",
+    "tip": "Prompt → platform-ready thumbnail",
+    "placeholder": "e.g. A diver face-to-face with a giant octopus, dramatic light"
+  },
+  "voiceover": {
+    "label": "Voiceover",
+    "tip": "Text → narration audio",
+    "placeholder": "Paste the text to narrate…"
+  },
+  "image": {
+    "label": "Image",
+    "tip": "Prompt → single image",
+    "placeholder": "e.g. Bioluminescent waves on a black-sand beach at night"
+  },
+  "music": {
+    "label": "Music",
+    "tip": "Brief → music track",
+    "placeholder": "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds"
+  },
+  "clip": {
+    "label": "Clip",
+    "tip": "Prompt → single video clip",
+    "placeholder": "e.g. A hummingbird hovering at a red flower, macro detail"
+  }
+}

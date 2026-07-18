@@ -1,0 +1,70 @@
+{
+  "title": "Settings",
+  "closeAria": "Close settings",
+  "tablistAria": "Settings sections",
+  "tabs": {
+    "general": "General",
+    "providers": "Providers",
+    "models": "Models",
+    "engine": "Engine"
+  },
+  "theme": {
+    "system": "System",
+    "dark": "Dark",
+    "light": "Light"
+  },
+  "appearance": {
+    "heading": "Appearance",
+    "hint": "Dark is the design target for video work; light is fully supported.",
+    "aria": "Theme"
+  },
+  "language": {
+    "heading": "Language",
+    "hint": "The language of the app's interface."
+  },
+  "providers": {
+    "heading": "Cloud providers",
+    "hint": "Bring your own keys: they live in your OS keychain, go only to your engine, and are never sent to us.",
+    "noKeychain": "No OS keychain available — keys are stored obfuscated only.",
+    "engineUnavailable": "Engine unavailable — provider status unknown.",
+    "configured": "configured",
+    "noKey": "no key",
+    "keyPlaceholder": "Paste API key…",
+    "keyAria": "{provider} API key"
+  },
+  "modelLibrary": {
+    "heading": "Model library",
+    "hint": "Download more local models any time — jobs pick them up immediately."
+  },
+  "remote": {
+    "heading": "Remote engine",
+    "hintBefore": "Run ",
+    "hintAfter": " on a GPU box, then paste its pairing code here — this laptop becomes the remote control. Projects and renders live with the engine.",
+    "pairedWith": "Paired with {url}",
+    "pairedFallback": "remote engine",
+    "pairedUnreachable": "Paired with a remote engine (currently unreachable)",
+    "pairedMeta": "All generation runs on the remote engine.",
+    "unreachableMeta": "Disconnect to fall back to the local engine.",
+    "disconnect": "Disconnect",
+    "disconnecting": "Disconnecting…",
+    "pair": "Pair",
+    "pairing": "Pairing…",
+    "pairPlaceholder": "Paste pairing code…",
+    "pairAria": "Pairing code"
+  },
+  "engine": {
+    "heading": "Engine",
+    "urlLabel": "Engine URL",
+    "notConnected": "not connected",
+    "backendLabel": "Backend mode",
+    "hardwareLabel": "Hardware",
+    "hardwareValue": "Tier {tier} · {detail}",
+    "gpuDetail": "{gpu} ({vram} GB VRAM)",
+    "noGpu": "no GPU detected",
+    "dash": "—"
+  },
+  "setup": {
+    "heading": "Setup",
+    "showAgain": "Show setup screen again"
+  }
+}

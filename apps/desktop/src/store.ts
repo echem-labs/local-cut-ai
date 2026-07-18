@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { EngineClient } from "./api/client";
+import { t } from "./i18n";
 import type {
   Board,
   Checkpoint,
@@ -409,7 +410,7 @@ export const useApp = create<AppState>((set, get) => {
         }
       },
       () => {
-        set({ engineError: "connection to engine lost — reconnecting…" });
+        set({ engineError: t("errors.engineLost") });
         scheduleReconnect();
       },
     );

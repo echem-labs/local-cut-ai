@@ -1,19 +1,10 @@
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModelLicense, ModelRow } from "../api/types";
+import { m, t } from "../i18n";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Tip } from "./Tooltip";
-
-export const TASK_LABELS: Record<string, string> = {
-  "text.llm": "Script writing",
-  "image.gen": "Keyframes",
-  "video.i2v": "Video clips",
-  "video.t2v": "Video clips (text-to-video)",
-  "speech.tts": "Narration",
-  "music.gen": "Music",
-  transcribe: "Captions",
-};
 
 // Safety net when the WS is down or a terminal event was missed; WS
 // progress events (~0.5s) drive the bars in between.
@@ -27,17 +18,20 @@ export function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 2 ** 20))} MB`;
 }
 
-const VERDICTS: Record<ModelLicense["verdict"], { glyph: string; label: string; cls: string }> = {
-  commercial: { glyph: "✓", label: "commercial-safe", cls: "ok" },
-  conditions: { glyph: "⚠", label: "conditions", cls: "warn" },
-  "personal-only": { glyph: "✗", label: "personal only", cls: "bad" },
+const VERDICTS: Record<
+  ModelLicense["verdict"],
+  { glyph: string; labelKey: "commercial" | "conditions" | "personalOnly"; cls: string }
+> = {
+  commercial: { glyph: "✓", labelKey: "commercial", cls: "ok" },
+  conditions: { glyph: "⚠", labelKey: "conditions", cls: "warn" },
+  "personal-only": { glyph: "✗", labelKey: "personalOnly", cls: "bad" },
 };
 
 export function LicenseBadge({ license }: { license: ModelLicense }) {
   const verdict = VERDICTS[license.verdict] ?? VERDICTS.conditions;
   return (
     <span className={`badge ${verdict.cls}`} title={license.notes || license.id}>
-      {verdict.glyph} {verdict.label}
+      {verdict.glyph} {t(`models.verdicts.${verdict.labelKey}`)}
     </span>
   );
 }
@@ -76,7 +70,7 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
   }, [anyDownloading, refreshModels]);
 
   const rows = filterIds ? models.filter((row) => filterIds.has(row.id)) : models;
-  if (rows.length === 0) return <p className="hint">No models in the manifest yet.</p>;
+  if (rows.length === 0) return <p className="hint">{t("models.empty")}</p>;
 
   // Group by task, preserving manifest order.
   const groups: [string, ModelRow[]][] = [];
@@ -90,7 +84,7 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
     <div className="model-groups">
       {groups.map(([task, taskRows]) => (
         <div className="model-group" key={task}>
-          <h3>{TASK_LABELS[task] ?? task}</h3>
+          <h3>{(m().models.taskLabels as Record<string, string>)[task] ?? task}</h3>
           {taskRows.map((row) => {
             const external = row.files.length === 0;
             const fraction =
@@ -106,7 +100,7 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                     checked={row.downloaded || (selected?.has(row.id) ?? false)}
                     disabled={row.downloaded || row.downloading}
                     onChange={() => onToggle(row.id)}
-                    aria-label={`Select ${row.id}`}
+                    aria-label={t("models.selectAria", { id: row.id })}
                   />
                 )}
                 <div className="grow">
@@ -115,8 +109,8 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                     {[
                       `${row.family}${row.version ? ` ${row.version}` : ""}`,
                       row.quant,
-                      external ? "external" : formatSize(row.size_bytes),
-                      `needs ${row.requirements.vram_gb} GB VRAM`,
+                      external ? t("models.external") : formatSize(row.size_bytes),
+                      t("models.needsVram", { vram: row.requirements.vram_gb }),
                     ]
                       .filter(Boolean)
                       .join(" · ")}
@@ -136,21 +130,21 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                 </div>
                 <LicenseBadge license={row.license} />
                 {external ? (
-                  <span
-                    className="badge"
-                    title="Served outside the engine (e.g. Ollama) — nothing to download"
-                  >
-                    external
+                  <span className="badge" title={t("models.externalTitle")}>
+                    {t("models.external")}
                   </span>
                 ) : row.downloaded ? (
                   <>
-                    <span className="badge ok">installed</span>
+                    <span className="badge ok">{t("models.installed")}</span>
                     {showActions && (
-                      <Tip label="Delete from disk" hint={`frees ${formatSize(row.size_bytes)}`}>
+                      <Tip
+                        label={t("models.deleteFromDisk")}
+                        hint={t("models.deleteFromDiskHint", { size: formatSize(row.size_bytes) })}
+                      >
                         <button
                           className="btn-ghost"
                           onClick={() => setPending({ kind: "delete", row })}
-                          aria-label={`Delete ${row.id} from disk`}
+                          aria-label={t("models.deleteAria", { id: row.id })}
                         >
                           <Trash2 size={13} strokeWidth={1.8} />
                         </button>
@@ -161,30 +155,32 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
                   <>
                     <span className="badge">{Math.round(fraction * 100)}%</span>
                     <button className="btn-ghost" onClick={() => setPending({ kind: "cancel", row })}>
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </>
                 ) : showActions ? (
                   <>
                     <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
                       {error
-                        ? "Retry"
+                        ? t("common.retry")
                         : row.partial_bytes > 0 && row.size_bytes > 0
-                          ? `Resume · ${Math.min(
-                              99,
-                              Math.round((row.partial_bytes / row.size_bytes) * 100),
-                            )}%`
-                          : "Download"}
+                          ? t("models.resumePct", {
+                              pct: Math.min(
+                                99,
+                                Math.round((row.partial_bytes / row.size_bytes) * 100),
+                              ),
+                            })
+                          : t("common.download")}
                     </button>
                     {row.partial_bytes > 0 && (
                       <Tip
-                        label="Discard partial download"
-                        hint={`throws away ${formatSize(row.partial_bytes)}`}
+                        label={t("models.discardPartial")}
+                        hint={t("models.discardPartialHint", { size: formatSize(row.partial_bytes) })}
                       >
                         <button
                           className="btn-ghost"
                           onClick={() => setPending({ kind: "discard", row })}
-                          aria-label={`Discard partial download of ${row.id}`}
+                          aria-label={t("models.discardAria", { id: row.id })}
                         >
                           <Trash2 size={13} strokeWidth={1.8} />
                         </button>
@@ -199,9 +195,9 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
       ))}
       {pending?.kind === "delete" && (
         <ConfirmDialog
-          title={`Delete ${pending.row.id}?`}
-          message={`Removes ${formatSize(pending.row.size_bytes)} from disk. Jobs that need it will fail until it's downloaded again — the download is always available here.`}
-          confirmLabel={`Delete (${formatSize(pending.row.size_bytes)})`}
+          title={t("models.deleteTitle", { id: pending.row.id })}
+          message={t("models.deleteMessage", { size: formatSize(pending.row.size_bytes) })}
+          confirmLabel={t("models.deleteConfirm", { size: formatSize(pending.row.size_bytes) })}
           danger
           onConfirm={() => {
             void deleteModel(pending.row.id);
@@ -212,9 +208,9 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
       )}
       {pending?.kind === "discard" && (
         <ConfirmDialog
-          title={`Discard partial download of ${pending.row.id}?`}
-          message={`Throws away the ${formatSize(pending.row.partial_bytes)} downloaded so far. A later download starts from zero instead of resuming.`}
-          confirmLabel="Discard"
+          title={t("models.discardTitle", { id: pending.row.id })}
+          message={t("models.discardMessage", { size: formatSize(pending.row.partial_bytes) })}
+          confirmLabel={t("models.discardConfirm")}
           danger
           onConfirm={() => {
             void deleteModel(pending.row.id);
@@ -225,9 +221,9 @@ export function ModelLibrary({ selected, onToggle, showActions, filterIds }: Mod
       )}
       {pending?.kind === "cancel" && (
         <ConfirmDialog
-          title={`Pause downloading ${pending.row.id}?`}
-          message="Nothing is lost — the downloaded part stays on disk and Resume picks up exactly where it stopped."
-          confirmLabel="Pause download"
+          title={t("models.pauseTitle", { id: pending.row.id })}
+          message={t("models.pauseMessage")}
+          confirmLabel={t("models.pauseConfirm")}
           onConfirm={() => {
             void cancelDownload(pending.row.id);
             setPending(null);

@@ -1,6 +1,7 @@
 import { ChevronDown, History, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditResult } from "../api/types";
+import { plural, t } from "../i18n";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
@@ -77,7 +78,10 @@ export function Composer() {
   const selectedScene = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
   // Scope: explicit override wins; else it follows the selection.
   const scope = scopeOverride ?? selectedScene ?? "project";
-  const scopeLabel = scope === "project" ? "Whole video" : `Scene ${scope.replace(/^s/, "")}`;
+  const scopeLabel =
+    scope === "project"
+      ? t("composer.wholeVideo")
+      : t("composer.scene", { n: scope.replace(/^s/, "") });
 
   // Quick commands the palette matches before falling through to NL edit.
   const commands = useMemo(() => {
@@ -86,8 +90,8 @@ export function Composer() {
     const playback = usePlayback.getState();
     const scenes = orderedScenes(board);
     list.push({
-      label: "Play the draft preview",
-      hint: "Space",
+      label: t("composer.cmdPlay"),
+      hint: t("composer.cmdPlayHint"),
       run: () => {
         if (scenes.length === 0) return;
         const start = selectedScene ?? scenes[0].scene_id;
@@ -98,14 +102,17 @@ export function Composer() {
     if (selectedScene) {
       const scene = scenes.find((s) => s.scene_id === selectedScene);
       if (scene) {
+        const sceneNo = selectedScene.replace(/^s/, "");
         list.push({
-          label: `Regenerate scene ${selectedScene.replace(/^s/, "")}`,
-          hint: "new take · R",
+          label: t("composer.cmdRegen", { n: sceneNo }),
+          hint: t("composer.cmdRegenHint"),
           run: () => void regenerate(scene.clip.node_id),
         });
         list.push({
-          label: `${scene.clip.pinned ? "Unpin" : "Pin"} scene ${selectedScene.replace(/^s/, "")}`,
-          hint: "P",
+          label: scene.clip.pinned
+            ? t("composer.cmdUnpin", { n: sceneNo })
+            : t("composer.cmdPin", { n: sceneNo }),
+          hint: t("composer.cmdPinHint"),
           run: () => void togglePin(scene.clip.node_id, !scene.clip.pinned),
         });
       }
@@ -141,15 +148,20 @@ export function Composer() {
       if (result) {
         const summary =
           result.ops === 0
-            ? `No changes made${result.summary ? ` — ${result.summary}` : ""}`
-            : `${result.summary || "Edit applied"} — re-rendering ${result.dirty.length} part(s)`;
+            ? t("composer.noChanges") +
+              (result.summary ? t("composer.summarySuffix", { summary: result.summary }) : "")
+            : plural("composer.rerendering", result.dirty.length, {
+                summary: result.summary || t("composer.editApplied"),
+              });
         const skipped =
-          result.warnings.length > 0 ? ` (${result.warnings.length} part(s) didn't apply)` : "";
+          result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
         setFeedback(summary + skipped);
         pushLog({
           at: Date.now(),
           instruction,
-          summary: result.summary || (result.ops === 0 ? "No changes" : "Edit applied"),
+          summary:
+            result.summary ||
+            (result.ops === 0 ? t("composer.noChangesLog") : t("composer.editApplied")),
           dirty: result.dirty,
           warnings: result.warnings,
         });
@@ -166,7 +178,7 @@ export function Composer() {
   return (
     <div className="composer-wrap" ref={rootRef}>
       {logOpen && log.length > 0 && (
-        <div className="edit-log" aria-label="Edit history">
+        <div className="edit-log" aria-label={t("composer.historyAria")}>
           {[...log].reverse().map((entry) => (
             <div key={entry.at} className="edit-log-entry">
               <div className="you">{entry.instruction}</div>
@@ -178,9 +190,11 @@ export function Composer() {
                       <button
                         key={id}
                         onClick={() => select(id)}
-                        title="Show what changed"
+                        title={t("composer.showChanged")}
                       >
-                        {id.includes(".") ? `Scene ${id.split(".")[0].replace(/^s/, "")}` : id}
+                        {id.includes(".")
+                          ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
+                          : id}
                       </button>
                     ))}
                   </span>
@@ -198,13 +212,13 @@ export function Composer() {
             aria-haspopup="listbox"
             aria-expanded={scopeOpen}
             onClick={() => setScopeOpen(!scopeOpen)}
-            title="What the edit applies to — follows your selection"
+            title={t("composer.scopeTitle")}
           >
             {scopeLabel}
             <ChevronDown size={11} strokeWidth={2} />
           </button>
           {scopeOpen && (
-            <div className="dropdown-menu" role="listbox" aria-label="Edit scope">
+            <div className="dropdown-menu" role="listbox" aria-label={t("composer.scopeMenuAria")}>
               <button
                 role="option"
                 aria-selected={scope === "project"}
@@ -214,7 +228,7 @@ export function Composer() {
                   setScopeOpen(false);
                 }}
               >
-                <span className="grow">Whole video</span>
+                <span className="grow">{t("composer.wholeVideo")}</span>
               </button>
               {sceneOptions.map((id) => (
                 <button
@@ -227,7 +241,7 @@ export function Composer() {
                     setScopeOpen(false);
                   }}
                 >
-                  <span className="grow">Scene {id.replace(/^s/, "")}</span>
+                  <span className="grow">{t("composer.scene", { n: id.replace(/^s/, "") })}</span>
                 </button>
               ))}
             </div>
@@ -236,7 +250,7 @@ export function Composer() {
 
         <div className="composer-input">
           {matches.length > 0 && (
-            <div className="palette" role="listbox" aria-label="Commands">
+            <div className="palette" role="listbox" aria-label={t("composer.commandsAria")}>
               {matches.map((command, index) => (
                 <button
                   key={command.label}
@@ -253,15 +267,15 @@ export function Composer() {
                   <small>{command.hint}</small>
                 </button>
               ))}
-              <div className="palette-hint">↹ Enter runs · keep typing to describe an edit instead</div>
+              <div className="palette-hint">{t("composer.paletteHint")}</div>
             </div>
           )}
           <textarea
             ref={inputRef}
             value={text}
             rows={2}
-            placeholder='Describe a change — "make it punchier", "remove scene 3" — or type a command'
-            aria-label="Describe a change or type a command"
+            placeholder={t("composer.inputPlaceholder")}
+            aria-label={t("composer.inputAria")}
             disabled={editBusy}
             onChange={(event) => setText(event.target.value)}
             onKeyDown={(event) => {
@@ -294,9 +308,9 @@ export function Composer() {
         {log.length > 0 && (
           <button
             className={`icon-btn-sm${logOpen ? " active" : ""}`}
-            aria-label="Edit history"
+            aria-label={t("composer.historyAria")}
             aria-pressed={logOpen}
-            title="What you've asked for this session"
+            title={t("composer.historyTitle")}
             onClick={() => setLogOpen(!logOpen)}
           >
             <History size={13} strokeWidth={1.8} />
@@ -304,15 +318,15 @@ export function Composer() {
         )}
         <button
           className="composer-send"
-          aria-label="Apply the edit"
+          aria-label={t("composer.sendAria")}
           disabled={editBusy || !text.trim() || matches.length > 0}
           onClick={() => void submit()}
-          title="Apply (Enter)"
+          title={t("composer.sendTitle")}
         >
           <SendHorizontal size={13} strokeWidth={2} />
         </button>
       </div>
-      {editBusy && <div className="hint composer-hint">Thinking…</div>}
+      {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}
       {feedback && !editBusy && <div className="hint composer-hint">{feedback}</div>}
       {error && <div className="banner error" style={{ marginTop: 8 }}>{error}</div>}
     </div>

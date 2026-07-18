@@ -1,0 +1,57 @@
+{
+  "shortcuts": [
+    { "keys": "Space", "what": "Play / pause the draft preview" },
+    { "keys": "Ctrl K", "what": "Focus the composer — commands or a described edit" },
+    { "keys": "Enter", "what": "Open the focused scene's details" },
+    { "keys": "R", "what": "Regenerate the focused scene (new take)" },
+    { "keys": "P", "what": "Pin / unpin the focused scene" },
+    { "keys": "Esc", "what": "Close the inspector" },
+    { "keys": "Ctrl ↵", "what": "Generate (Home prompt)" },
+    { "keys": "?", "what": "This overlay" }
+  ],
+  "panels": {
+    "board": {
+      "title": "The storyboard",
+      "bullets": [
+        "Each card is one scene — the still image it starts from, a few seconds of video, and its narration.",
+        "The pill shows where it is: Draft (fast, for deciding) · Rendering · Final · Failed.",
+        "Click a card to open its details; drag cards to change the order of the cut."
+      ]
+    },
+    "timeline": {
+      "title": "The timeline",
+      "bullets": [
+        "Your scenes in play order — a wider block runs longer.",
+        "The diamonds between blocks set the transition: cut, crossfade, or dip to black.",
+        "▶ plays a quick draft preview of the whole cut, scene by scene."
+      ]
+    },
+    "inspector": {
+      "title": "Scene details",
+      "bullets": [
+        "Everything about the selected scene — its Image, Motion and Voice.",
+        "Apply & regenerate re-renders only this scene with your changes.",
+        "Pin keeps the scene exactly as it is; New take tries again with fresh randomness."
+      ]
+    }
+  },
+  "panelHelp": {
+    "whatLooking": "What am I looking at?",
+    "openGlossary": "Open glossary"
+  },
+  "menu": {
+    "help": "Help",
+    "title": "Shortcuts & glossary",
+    "shortcuts": "Keyboard shortcuts",
+    "shortcutsKey": "?",
+    "glossary": "Glossary",
+    "glossaryHint": "what's a scene?"
+  },
+  "modal": {
+    "shortcutsTitle": "Keyboard shortcuts",
+    "glossaryTitle": "Glossary",
+    "searchPlaceholder": "Search terms…",
+    "searchAria": "Search the glossary",
+    "nothingMatches": "Nothing matches."
+  }
+}

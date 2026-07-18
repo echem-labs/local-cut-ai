@@ -1,0 +1,47 @@
+{
+  "cardAria": "Scene {n}, {status}",
+  "stillAlt": "Scene {n} still image",
+  "pinnedTitle": "Pinned — kept exactly as it is",
+  "sceneName": "Scene {n}",
+  "dash": "—",
+  "ellipsis": "…",
+  "durQueued": "~{d}s",
+  "durValue": "{d}s",
+  "narrationAria": "Scene {n} narration",
+  "narrationEditTitle": "Click to change the words — the narration re-renders",
+  "rendering": "Rendering video",
+  "renderingPct": " · {pct}%",
+  "renderingTime": " · {timeLeft}",
+  "notRendered": "This scene didn't render.",
+  "draftTeach": "Drafts render fast at lower quality — they're for deciding, not shipping.",
+  "failed": {
+    "tryAgain": "Try again",
+    "newTake": "new take",
+    "adjust": "Adjust the scene",
+    "adjustSub": "prompt · settings"
+  },
+  "actions": {
+    "play": {
+      "label": "Play",
+      "hint": "in the monitor",
+      "aria": "Play this scene"
+    },
+    "regenerate": {
+      "label": "Regenerate",
+      "hint": "new take",
+      "aria": "Regenerate"
+    },
+    "pin": {
+      "label": "Pin",
+      "unpinLabel": "Unpin",
+      "hint": "keep as is",
+      "aria": "Pin scene",
+      "unpinAria": "Unpin scene"
+    },
+    "edit": {
+      "label": "Edit scene",
+      "hint": "opens details",
+      "aria": "Edit scene"
+    }
+  }
+}

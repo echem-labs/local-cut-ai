@@ -20,75 +20,37 @@ import { useRef, useState } from "react";
 import { Dropdown } from "../components/Dropdown";
 import { Tip } from "../components/Tooltip";
 import type { ToolKind } from "../api/types";
+import { t, m } from "../i18n";
 import { useApp } from "../store";
 
 const TOOL_ICON = { size: 17, strokeWidth: 1.8 } as const;
 
-const TOOLS: {
-  kind: ToolKind;
-  label: string;
-  icon: typeof FileText;
-  tip: string;
-  placeholder: string;
-}[] = [
-  {
-    kind: "script",
-    label: "Script",
-    icon: FileText,
-    tip: "Topic → structured script",
-    placeholder: "e.g. A 60-second script on why octopuses have three hearts",
-  },
-  {
-    kind: "thumbnail",
-    label: "Thumbnail",
-    icon: ImageIcon,
-    tip: "Prompt → platform-ready thumbnail",
-    placeholder: "e.g. A diver face-to-face with a giant octopus, dramatic light",
-  },
-  {
-    kind: "voiceover",
-    label: "Voiceover",
-    icon: Mic,
-    tip: "Text → narration audio",
-    placeholder: "Paste the text to narrate…",
-  },
-  {
-    kind: "image",
-    label: "Image",
-    icon: Aperture,
-    tip: "Prompt → single image",
-    placeholder: "e.g. Bioluminescent waves on a black-sand beach at night",
-  },
-  {
-    kind: "music",
-    label: "Music",
-    icon: Music,
-    tip: "Brief → music track",
-    placeholder: "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds",
-  },
-  {
-    kind: "clip",
-    label: "Clip",
-    icon: Film,
-    tip: "Prompt → single video clip",
-    placeholder: "e.g. A hummingbird hovering at a red flower, macro detail",
-  },
+/** Stable tool identity — display strings (label/tip/placeholder) live in
+ * tools.json keyed by kind and are resolved at render time. */
+const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = [
+  { kind: "script", icon: FileText },
+  { kind: "thumbnail", icon: ImageIcon },
+  { kind: "voiceover", icon: Mic },
+  { kind: "image", icon: Aperture },
+  { kind: "music", icon: Music },
+  { kind: "clip", icon: Film },
 ];
 
-const ASPECTS = [
-  { value: "9:16", label: "Shorts", icon: Smartphone },
-  { value: "16:9", label: "YouTube", icon: Monitor },
-  { value: "1:1", label: "Square", icon: Square },
+/** Stable aspect identity — value drives logic, key resolves the label in
+ * aspects.json, both at render time. */
+const ASPECTS: { value: string; key: "shorts" | "youtube" | "square"; icon: typeof Smartphone }[] = [
+  { value: "9:16", key: "shorts", icon: Smartphone },
+  { value: "16:9", key: "youtube", icon: Monitor },
+  { value: "1:1", key: "square", icon: Square },
 ];
 
-const DURATIONS = [
-  { value: 30, label: "30s", icon: Clock },
-  { value: 60, label: "60s", icon: Clock },
-  { value: 120, label: "2min", icon: Clock },
+/** Stable duration identity — value drives logic, key resolves the label in
+ * durations.json, both at render time. */
+const DURATIONS: { value: number; key: "d30" | "d60" | "d120"; icon: typeof Clock }[] = [
+  { value: 30, key: "d30", icon: Clock },
+  { value: 60, key: "d60", icon: Clock },
+  { value: 120, key: "d120", icon: Clock },
 ];
-
-/** One-click teaching prompt for the empty state — fills, never generates. */
-const SAMPLE_PROMPT = "Why octopuses have three hearts — fast-paced, for Shorts";
 
 /** Deterministic stand-in art per project until real keyframe thumbs. */
 const thumbClass = (id: string): string => {
@@ -148,74 +110,72 @@ export function Home() {
   return (
     <div className="home">
       <div className="home-header">
-        <h1>What are we making today?</h1>
+        <h1>{t("home.title")}</h1>
       </div>
-      <p className="sub">
-        Describe it — script, storyboard, clips, narration and music are generated on this machine.
-      </p>
+      <p className="sub">{t("home.subtitle")}</p>
 
       {!activeTool && (
         <div className="prompt-box">
           <textarea
             ref={promptRef}
-            placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"
+            placeholder={t("home.promptPlaceholder")}
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void generate();
             }}
-            aria-label="Video prompt"
+            aria-label={t("home.promptAria")}
           />
           <div className="row">
             <Dropdown
               value={aspect}
               onChange={setAspect}
-              ariaLabel="Aspect ratio"
+              ariaLabel={t("home.aspectAria")}
               options={ASPECTS.map((entry) => ({
                 value: entry.value,
-                label: `${entry.value} · ${entry.label}`,
+                label: `${entry.value} · ${m().aspects[entry.key]}`,
                 icon: entry.icon,
               }))}
             />
             <Dropdown
               value={duration}
               onChange={setDuration}
-              ariaLabel="Duration"
+              ariaLabel={t("home.durationAria")}
               options={DURATIONS.map((entry) => ({
                 value: entry.value,
-                label: entry.label,
+                label: m().durations[entry.key],
                 icon: entry.icon,
               }))}
             />
-            <div className="seg-toggle" role="group" aria-label="Generation mode">
+            <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
               <button
                 className={mode === "prompt" ? "active" : ""}
                 onClick={() => setMode("prompt")}
-                title="Generate end-to-end without stopping"
+                title={t("home.modeAutoTitle")}
               >
-                Auto
+                {t("home.modeAuto")}
               </button>
               <button
                 className={mode === "beginner" ? "active" : ""}
                 onClick={() => setMode("beginner")}
-                title="Pause to review the script and storyboard before rendering"
+                title={t("home.modeReviewTitle")}
               >
-                Review steps
+                {t("home.modeReview")}
               </button>
             </div>
             <div className="spacer" />
-            <Tip label="Models" hint="downloads, status & library" side="bottom">
+            <Tip label={t("home.modelsLabel")} hint={t("home.modelsHint")} side="bottom">
               <button
                 className="icon-btn"
                 onClick={() => openSettings("models")}
-                aria-label="Model library"
+                aria-label={t("home.modelsAria")}
               >
                 <Boxes size={15} strokeWidth={1.8} />
               </button>
             </Tip>
             <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
               <Sparkles size={14} strokeWidth={2} />
-              {busy ? "Starting…" : "Generate"}
+              {busy ? t("common.starting") : t("common.generate")}
               <kbd>Ctrl ↵</kbd>
             </button>
           </div>
@@ -231,43 +191,43 @@ export function Home() {
         <div className="prompt-box tool-panel">
           <div className="tool-head">
             <activeTool.icon size={15} strokeWidth={1.8} />
-            <b>{activeTool.label}</b>
+            <b>{m().tools[activeTool.kind].label}</b>
             <small>
-              {activeTool.tip} · no project needed — export directly, or turn it into a video later
+              {m().tools[activeTool.kind].tip} {t("home.toolHeadSuffix")}
             </small>
             <button
               className="icon-btn"
               onClick={() => setTool(null)}
-              aria-label="Close tool, back to video prompt"
+              aria-label={t("home.closeToolAria")}
             >
               <X size={14} strokeWidth={2} />
             </button>
           </div>
           <textarea
-            placeholder={activeTool.placeholder}
+            placeholder={m().tools[activeTool.kind].placeholder}
             value={toolInput}
             onChange={(event) => setToolInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void runTool();
             }}
-            aria-label={activeTool.kind === "voiceover" ? "Voiceover text" : `${activeTool.label} prompt`}
+            aria-label={
+              activeTool.kind === "voiceover"
+                ? t("home.voiceoverTextAria")
+                : t("home.toolPromptAria", { label: m().tools[activeTool.kind].label })
+            }
             autoFocus
           />
           <div className="row">
             {activeTool.kind === "voiceover" && (
               <>
                 <input
-                  placeholder='Voice — e.g. "energetic female" or af_bella'
+                  placeholder={t("home.voicePlaceholder")}
                   value={voice}
                   onChange={(event) => setVoice(event.target.value)}
-                  aria-label="Voice"
+                  aria-label={t("home.voiceAria")}
                 />
-                <Tip
-                  label="Which narrator speaks"
-                  hint='a style like "deep male" or a Kokoro id · empty = default'
-                  side="top"
-                >
-                  <span className="info-dot" tabIndex={0} aria-label="About the voice field">
+                <Tip label={t("home.voiceInfoLabel")} hint={t("home.voiceInfoHint")} side="top">
+                  <span className="info-dot" tabIndex={0} aria-label={t("home.voiceInfoAria")}>
                     <Info size={13} strokeWidth={1.8} />
                   </span>
                 </Tip>
@@ -276,17 +236,13 @@ export function Home() {
             {activeTool.kind === "clip" && (
               <>
                 <input
-                  placeholder="Camera motion — e.g. slow push-in, orbit left"
+                  placeholder={t("home.motionPlaceholder")}
                   value={motion}
                   onChange={(event) => setMotion(event.target.value)}
-                  aria-label="Camera motion"
+                  aria-label={t("home.motionAria")}
                 />
-                <Tip
-                  label="How the camera moves"
-                  hint="push-in, pan, orbit, handheld, static · empty = model decides"
-                  side="top"
-                >
-                  <span className="info-dot" tabIndex={0} aria-label="About the camera motion field">
+                <Tip label={t("home.motionInfoLabel")} hint={t("home.motionInfoHint")} side="top">
+                  <span className="info-dot" tabIndex={0} aria-label={t("home.motionInfoAria")}>
                     <Info size={13} strokeWidth={1.8} />
                   </span>
                 </Tip>
@@ -295,7 +251,9 @@ export function Home() {
             <div className="spacer" />
             <button className="btn-primary" onClick={() => void runTool()} disabled={busy}>
               <Sparkles size={14} strokeWidth={2} />
-              {busy ? "Starting…" : `Generate ${activeTool.label.toLowerCase()}`}
+              {busy
+                ? t("common.starting")
+                : t("home.generateTool", { tool: m().tools[activeTool.kind].label.toLowerCase() })}
               <kbd>Ctrl ↵</kbd>
             </button>
           </div>
@@ -308,24 +266,25 @@ export function Home() {
       )}
 
       <div className="tools-head">
-        <h3>Quick tools</h3>
-        <span className="hint">one artifact, no project — script, thumbnail, voice and more</span>
+        <h3>{t("home.quickToolsHeading")}</h3>
+        <span className="hint">{t("home.quickToolsHint")}</span>
       </div>
-      <div className="quick-tools" role="group" aria-label="Quick tools">
+      <div className="quick-tools" role="group" aria-label={t("home.quickToolsAria")}>
         {TOOLS.map((entry) => {
           const Icon = entry.icon;
+          const copy = m().tools[entry.kind];
           return (
-            <Tip key={entry.kind} label={entry.tip} hint="no project needed" side="bottom">
+            <Tip key={entry.kind} label={copy.tip} hint={t("home.noProjectHint")} side="bottom">
               <button
                 className={tool === entry.kind ? "active" : ""}
                 onClick={() => {
                   setTool(tool === entry.kind ? null : entry.kind);
                   setToolInput("");
                 }}
-                aria-label={`${entry.label} — ${entry.tip}`}
+                aria-label={t("home.toolButtonAria", { label: copy.label, tip: copy.tip })}
               >
                 <Icon {...TOOL_ICON} />
-                {entry.label}
+                {copy.label}
               </button>
             </Tip>
           );
@@ -335,19 +294,19 @@ export function Home() {
       {ordered.length === 0 && (
         <div className="empty-state">
           <Clapperboard size={22} strokeWidth={1.5} aria-hidden="true" />
-          <b>Your videos land here</b>
-          <p>Describe an idea above and Generate — or warm up with a sample:</p>
+          <b>{t("home.emptyTitle")}</b>
+          <p>{t("home.emptyBody")}</p>
           <button
             className="btn-ghost"
             onClick={() => {
               setTool(null);
-              setPrompt(SAMPLE_PROMPT);
+              setPrompt(t("home.samplePrompt"));
               // The prompt box may be replaced by a tool panel right now —
               // focus after the re-render has mounted the textarea.
               requestAnimationFrame(() => promptRef.current?.focus());
             }}
           >
-            “Why octopuses have three hearts”
+            {t("home.sampleQuote")}
             <ArrowUp size={13} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
@@ -355,7 +314,7 @@ export function Home() {
 
       {ordered.length > 0 && (
         <div className="recent">
-          <h2>Recent projects</h2>
+          <h2>{t("home.recent")}</h2>
           <div className="grid">
             {ordered.map((project) => (
               <button

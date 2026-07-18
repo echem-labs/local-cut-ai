@@ -1,4 +1,5 @@
 import type { NodeStatus } from "../api/types";
+import { t } from "../i18n";
 
 const COLORS: Record<NodeStatus, string> = {
   queued: "var(--text-tertiary)",
@@ -10,11 +11,16 @@ const COLORS: Record<NodeStatus, string> = {
   pinned: "var(--status-pinned)",
 };
 
+/** The status word in the reserved colors, translated. */
+function statusLabel(status: NodeStatus): string {
+  return t(`status.${status}`);
+}
+
 export function StatusRing({ status, progress }: { status: NodeStatus; progress: number }) {
   const label =
     status === "rendering"
-      ? `rendering, ${Math.round(progress * 100)}%`
-      : status;
+      ? t("status.renderingLong", { pct: Math.round(progress * 100) })
+      : statusLabel(status);
   return (
     <span
       className={`status-ring ${status}`}
@@ -39,8 +45,8 @@ export function StatusPill({
 }) {
   const text =
     status === "rendering" && progress > 0
-      ? `rendering · ${Math.round(progress * 100)}%`
-      : status;
+      ? t("status.renderingPct", { pct: Math.round(progress * 100) })
+      : statusLabel(status);
   return (
     <span
       className={`status-pill${onThumb ? " on-thumb" : ""}`}
@@ -57,7 +63,7 @@ export function StatusPill({
 export function StatusChip({ status }: { status: NodeStatus }) {
   return (
     <span className="status-chip" style={{ color: COLORS[status], background: "var(--surface-2)" }}>
-      {status}
+      {statusLabel(status)}
     </span>
   );
 }

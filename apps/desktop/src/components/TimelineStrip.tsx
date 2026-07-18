@@ -1,17 +1,16 @@
 import { ChevronFirst, ChevronLast, Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
+import { m, t } from "../i18n";
 import { movedOrder, orderedScenes } from "../lib/order";
 import { formatTime, parseTime, usePlayback } from "../lib/playback";
 import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
 import { PanelHelp } from "./Help";
 
-const TRANSITIONS = [
-  { id: "cut", label: "Cut", hint: "instant switch" },
-  { id: "crossfade", label: "Crossfade", hint: "one fades into the next" },
-  { id: "dip", label: "Dip", hint: "fades to black between" },
-] as const;
+// Stable transition ids only — engine wire contract. Display label/hint
+// live in timeline.json and resolve when the popover renders.
+const TRANSITIONS = [{ id: "cut" }, { id: "crossfade" }, { id: "dip" }] as const;
 
 /** A real scene timeline (review 3): transport that plays the assembled
  * draft, blocks whose width is proportional to duration, diamond
@@ -178,29 +177,29 @@ export function TimelineStrip() {
   };
 
   return (
-    <div className="timeline-dock" ref={rootRef} aria-label="Timeline">
+    <div className="timeline-dock" ref={rootRef} aria-label={t("workspace.panels.timeline")}>
       <div className="tl-bar">
         <div className="tl-transport">
-          <button aria-label="Go to start" title="Go to start" onClick={() => seekGlobal(0)}>
+          <button aria-label={t("timeline.goToStart")} title={t("timeline.goToStart")} onClick={() => seekGlobal(0)}>
             <ChevronFirst size={14} strokeWidth={2} />
           </button>
-          <button aria-label="Previous scene" onClick={() => step(-1)}>
+          <button aria-label={t("timeline.prevScene")} onClick={() => step(-1)}>
             <SkipBack size={13} strokeWidth={2} />
           </button>
           <button
             className="tl-play"
-            aria-label={playing ? "Pause" : "Play the draft preview"}
-            title={playing ? "Pause (Space)" : "Play the draft preview (Space)"}
+            aria-label={playing ? t("timeline.pause") : t("timeline.play")}
+            title={playing ? t("timeline.pauseTitle") : t("timeline.playTitle")}
             onClick={toggle}
           >
             {playing ? <Pause size={15} strokeWidth={2} /> : <Play size={15} strokeWidth={2} />}
           </button>
-          <button aria-label="Next scene" onClick={() => step(1)}>
+          <button aria-label={t("timeline.nextScene")} onClick={() => step(1)}>
             <SkipForward size={13} strokeWidth={2} />
           </button>
           <button
-            aria-label="Go to end"
-            title="Go to end"
+            aria-label={t("timeline.goToEnd")}
+            title={t("timeline.goToEnd")}
             onClick={() => seekGlobal(totalDuration)}
           >
             <ChevronLast size={14} strokeWidth={2} />
@@ -208,8 +207,8 @@ export function TimelineStrip() {
           <span className="tl-time">
             <input
               value={timeDraft ?? formatTime(elapsed)}
-              aria-label="Current time — type a timestamp to jump"
-              title="Type a time (e.g. 1:23) and press Enter to jump"
+              aria-label={t("timeline.timeAria")}
+              title={t("timeline.timeTitle")}
               onFocus={(event) => {
                 setDraft(formatTime(elapsed));
                 event.currentTarget.select();
@@ -227,16 +226,16 @@ export function TimelineStrip() {
             />
             <span aria-hidden="true">/ {formatTime(totalDuration)}</span>
           </span>
-          <span className="hint">draft preview · hard cuts</span>
+          <span className="hint">{t("timeline.draftHint")}</span>
         </div>
         <label className="tl-zoom">
-          zoom
+          {t("timeline.zoom")}
           <input
             type="range"
             min={10}
             max={36}
             value={pxPerSec}
-            aria-label="Timeline zoom"
+            aria-label={t("timeline.zoomAria")}
             onChange={(event) => setPxPerSec(Number(event.target.value))}
           />
         </label>
@@ -250,11 +249,11 @@ export function TimelineStrip() {
           style={{ width: totalWidth }}
           role="slider"
           tabIndex={0}
-          aria-label="Seek"
+          aria-label={t("timeline.seekAria")}
           aria-valuemin={0}
           aria-valuemax={Math.round(totalDuration)}
           aria-valuenow={Math.round(elapsed)}
-          title="Click or drag to jump"
+          title={t("timeline.seekTitle")}
           onPointerDown={(event) => {
             try {
               event.currentTarget.setPointerCapture(event.pointerId);
@@ -299,8 +298,12 @@ export function TimelineStrip() {
                   <span className="tl-joint">
                     <button
                       className={`tl-diamond${boundaryKind !== "cut" ? " on" : ""}`}
-                      title={`Scene ${boundary.replace(/^s/, "")} → ${sceneNo}: ${boundaryKind}. Click to change.`}
-                      aria-label={`Transition into scene ${sceneNo}: ${boundaryKind}`}
+                      title={t("timeline.diamondTitle", {
+                        a: boundary.replace(/^s/, ""),
+                        b: sceneNo,
+                        kind: boundaryKind,
+                      })}
+                      aria-label={t("timeline.diamondAria", { n: sceneNo, kind: boundaryKind })}
                       onClick={(event) => {
                         if (openTransition?.boundary === boundary) {
                           setOpenTransition(null);
@@ -329,29 +332,32 @@ export function TimelineStrip() {
                         role="menu"
                         style={{ left: openTransition.left, bottom: openTransition.bottom }}
                       >
-                        {TRANSITIONS.map((option) => (
-                          <button
-                            key={option.id}
-                            role="menuitemradio"
-                            aria-checked={boundaryKind === option.id}
-                            className={boundaryKind === option.id ? "selected" : ""}
-                            onClick={() => {
-                              applyTimeline({
-                                transitions: { ...transitions, [boundary]: option.id },
-                              });
-                              setOpenTransition(null);
-                            }}
-                          >
-                            <span className={`tp-demo tp-${option.id}`} aria-hidden="true">
-                              <i />
-                              <i />
-                            </span>
-                            <span className="grow">
-                              {option.label}
-                              <small>{option.hint}</small>
-                            </span>
-                          </button>
-                        ))}
+                        {TRANSITIONS.map((option) => {
+                          const info = m().timeline.transitions[option.id];
+                          return (
+                            <button
+                              key={option.id}
+                              role="menuitemradio"
+                              aria-checked={boundaryKind === option.id}
+                              className={boundaryKind === option.id ? "selected" : ""}
+                              onClick={() => {
+                                applyTimeline({
+                                  transitions: { ...transitions, [boundary]: option.id },
+                                });
+                                setOpenTransition(null);
+                              }}
+                            >
+                              <span className={`tp-demo tp-${option.id}`} aria-hidden="true">
+                                <i />
+                                <i />
+                              </span>
+                              <span className="grow">
+                                {info.label}
+                                <small>{info.hint}</small>
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </span>
@@ -366,7 +372,11 @@ export function TimelineStrip() {
                   }}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Scene ${sceneNo}, ${durations[index]}s, ${clip.status}`}
+                  aria-label={t("timeline.blockAria", {
+                    n: sceneNo,
+                    d: durations[index],
+                    status: clip.status,
+                  })}
                   onClick={() => {
                     select(clip.node_id);
                     if (playing) play(scene.scene_id, true); // seek while playing

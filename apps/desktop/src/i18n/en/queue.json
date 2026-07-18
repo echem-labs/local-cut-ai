@@ -1,0 +1,12 @@
+{
+  "idle": "idle",
+  "queued": "+{n} queued",
+  "costBadge": "free · local",
+  "stopRender": "Stop this render",
+  "downloads_one": "{count} model · {pct}% · {size} left",
+  "downloads_other": "{count} models · {pct}% · {size} left",
+  "downloadsTitle": "Downloading models — click for details in Settings",
+  "paused_one": "{count} download paused · Resume ({size} left)",
+  "paused_other": "{count} downloads paused · Resume ({size} left)",
+  "pausedTitle": "Interrupted model downloads — resumes from where they stopped"
+}

@@ -1,0 +1,50 @@
+{
+  "progressAria": "Project progress",
+  "viewAria": "Workspace view",
+  "stages": {
+    "script": "Script",
+    "storyboard": "Storyboard",
+    "videos": "Videos",
+    "audio": "Audio",
+    "export": "Export",
+    "videosDetail": "{done}/{total}",
+    "videosFailed": " · {failed} failed",
+    "videosHint": "Show these scenes on the board"
+  },
+  "view": {
+    "storyboard": "Storyboard",
+    "storyboardTitle": "Storyboard view — the board leads, monitor in the details panel",
+    "player": "Player",
+    "playerTitle": "Player view — big monitor beside the board"
+  },
+  "tileSize": {
+    "aria": "Scene tile size",
+    "small": "Small",
+    "medium": "Medium",
+    "large": "Large"
+  },
+  "menu": {
+    "aria": "Project options",
+    "title": "Audio, captions, handoff & layout",
+    "audio": "Audio",
+    "duck": "Lower music under voice",
+    "beat": "Cut on the beat",
+    "captions": "Captions",
+    "captionsOnVideo": "On the video",
+    "captionsSidecar": "Separate file (.srt)",
+    "proEditor": "Open in a pro editor",
+    "premiereResolve": "Premiere / Resolve",
+    "finalCutPro": "Final Cut Pro",
+    "workspace": "Workspace",
+    "resetLayout": "Reset layout",
+    "resetLayoutTitle": "Restore this view's default panel layout"
+  },
+  "cta": {
+    "create": "Create final video",
+    "createWithEta": "Create final video · {eta}",
+    "creating": "Creating final video…",
+    "download": "Download MP4"
+  },
+  "scriptFailed": "Script generation failed: {error}",
+  "writingScript": "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders."
+}

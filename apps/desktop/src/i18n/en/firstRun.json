@@ -1,0 +1,20 @@
+{
+  "downloadingTitle": "Downloading models…",
+  "downloadingSub": "Downloads keep running in the background — you can start creating right away.",
+  "continueToApp": "Continue to app",
+  "machineTitle": "Your machine: Tier {tier}",
+  "gpuLine": "{gpu} · {vram} GB VRAM",
+  "noGpu": "No GPU detected",
+  "specLine": "{ram} GB RAM · {disk} GB free disk",
+  "checkingTitle": "Checking your machine…",
+  "checkingSub": "Probing hardware and picking the best local models.",
+  "recommended": "Recommended for your hardware",
+  "external": "external",
+  "externalTitle": "Served outside the engine (e.g. Ollama) — nothing to download",
+  "installed": "installed",
+  "pending_one": "{count} download · {size} total",
+  "pending_other": "{count} downloads · {size} total",
+  "downloadContinue": "Download & continue ({size})",
+  "customize": "Customize",
+  "skip": "Skip for now"
+}

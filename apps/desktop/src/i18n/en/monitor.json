@@ -1,0 +1,9 @@
+{
+  "aria": "Preview monitor",
+  "play": "Play",
+  "pause": "Pause",
+  "renderingNote": "rendering — showing the still",
+  "draftNote": "draft preview · still image",
+  "stillAlt": "Scene {n} still image",
+  "scrubAria": "Playback position"
+}

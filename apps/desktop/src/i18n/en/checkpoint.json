@@ -1,0 +1,10 @@
+{
+  "reviewScript": "Review the script, then approve to generate the storyboard.",
+  "reviewStoryboard": "Review the keyframes, then approve to render video.",
+  "hideScript": "Hide script",
+  "viewScript": "View script",
+  "approving": "Approving…",
+  "approveScript": "Approve script",
+  "approveStoryboard": "Approve storyboard",
+  "loadingScript": "Loading script…"
+}

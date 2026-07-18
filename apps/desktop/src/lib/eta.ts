@@ -1,4 +1,5 @@
 import type { Board, NodeState } from "../api/types";
+import { t } from "../i18n";
 
 /** Session-observed render timing (review 3: the "honest ETA"). Estimates
  * come only from renders actually watched this session — no invented
@@ -90,7 +91,9 @@ export function recordBoard(projectId: string, board: Board): void {
 }
 
 const formatEta = (secs: number): string =>
-  secs >= 90 ? `~${Math.ceil(secs / 60)} min` : `~${Math.max(10, Math.round(secs / 10) * 10)}s`;
+  secs >= 90
+    ? t("eta.etaMin", { n: Math.ceil(secs / 60) })
+    : t("eta.etaSec", { n: Math.max(10, Math.round(secs / 10) * 10) });
 
 /** "~9 min" for the Create-final-video CTA, or null before any clip render
  * has been observed this session. */
@@ -119,6 +122,6 @@ export function remainingLabel(
   if (elapsed < 3) return null;
   const left = (elapsed * (1 - progress)) / observed;
   return left >= 90
-    ? `about ${Math.round(left / 60)} min left`
-    : `about ${Math.max(5, Math.round(left / 5) * 5)}s left`;
+    ? t("eta.leftMin", { n: Math.round(left / 60) })
+    : t("eta.leftSec", { n: Math.max(5, Math.round(left / 5) * 5) });
 }

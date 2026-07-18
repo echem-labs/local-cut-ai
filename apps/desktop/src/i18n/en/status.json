@@ -1,0 +1,11 @@
+{
+  "queued": "queued",
+  "rendering": "rendering",
+  "draft": "draft",
+  "final": "final",
+  "failed": "failed",
+  "cancelled": "cancelled",
+  "pinned": "pinned",
+  "renderingPct": "rendering · {pct}%",
+  "renderingLong": "rendering, {pct}%"
+}

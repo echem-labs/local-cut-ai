@@ -1,0 +1,25 @@
+{
+  "transitions": {
+    "cut": { "label": "Cut", "hint": "instant switch" },
+    "crossfade": { "label": "Crossfade", "hint": "one fades into the next" },
+    "dip": { "label": "Dip", "hint": "fades to black between" }
+  },
+  "goToStart": "Go to start",
+  "prevScene": "Previous scene",
+  "play": "Play the draft preview",
+  "pause": "Pause",
+  "playTitle": "Play the draft preview (Space)",
+  "pauseTitle": "Pause (Space)",
+  "nextScene": "Next scene",
+  "goToEnd": "Go to end",
+  "timeAria": "Current time — type a timestamp to jump",
+  "timeTitle": "Type a time (e.g. 1:23) and press Enter to jump",
+  "draftHint": "draft preview · hard cuts",
+  "zoom": "zoom",
+  "zoomAria": "Timeline zoom",
+  "seekAria": "Seek",
+  "seekTitle": "Click or drag to jump",
+  "diamondTitle": "Scene {a} → {b}: {kind}. Click to change.",
+  "diamondAria": "Transition into scene {n}: {kind}",
+  "blockAria": "Scene {n}, {d}s, {status}"
+}
