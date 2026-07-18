@@ -6,7 +6,7 @@ out/
 *.tsbuildinfo
 
 # Packaging output
-apps/desktop/release/
+apps/desktop/release*/
 engine/build/
 
 # Python

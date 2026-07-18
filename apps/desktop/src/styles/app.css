@@ -625,6 +625,19 @@ textarea {
   font-weight: 600;
 }
 
+.tray-downloads {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.tray-downloads:hover {
+  text-decoration: underline;
+}
+
 /* ---- banners ---- */
 .banner {
   background: var(--surface-2);
