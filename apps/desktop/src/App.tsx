@@ -32,6 +32,7 @@ export default function App() {
     engineError,
     firstRunDone,
     settingsOpen,
+    selectedNode,
     system,
     remoteEngine,
   } = useApp();
@@ -144,7 +145,11 @@ export default function App() {
           </button>
         </div>
       </nav>
-      <main className="content">
+      {/* The inspector drawer is fixed; the content yields its width so
+          nothing (including the scrollbar) hides behind it. */}
+      <main
+        className={`content${currentProject && selectedNode ? " with-inspector" : ""}`}
+      >
         {engineError && <div className="banner error">{engineError}</div>}
         {screen}
       </main>

@@ -195,6 +195,13 @@ textarea {
   overflow-y: auto;
   padding: var(--space-8);
   position: relative;
+  transition: margin-right var(--motion-slow);
+}
+
+/* inspector open: the content column ends where the drawer begins, so
+ * its scrollbar and last card column stay visible */
+.content.with-inspector {
+  margin-right: 320px;
 }
 
 /* ---- buttons ---- */
