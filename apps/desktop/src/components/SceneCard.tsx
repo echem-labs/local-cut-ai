@@ -376,7 +376,7 @@ export function SceneCard({
           <span>{t("scene.draftTeach")}</span>
           <button
             aria-label={t("common.gotIt")}
-            title={t("common.gotItTitle")}
+            title={t("common.gotIt")}
             onClick={(event) => {
               event.stopPropagation();
               onTeachDismiss?.();

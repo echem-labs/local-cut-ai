@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { t } from "../i18n";
 
 /** Last-resort catch: a render crash shows an error message instead of a
  * blank window. */
@@ -13,7 +14,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
     if (this.state.error) {
       return (
         <div className="banner error" role="alert">
-          Something went wrong: {this.state.error.message}
+          {t("errors.somethingWrong", { message: this.state.error.message })}
         </div>
       );
     }

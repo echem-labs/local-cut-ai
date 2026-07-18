@@ -1,4 +1,5 @@
 {
+  "ctrlEnter": "Ctrl ↵",
   "title": "What are we making today?",
   "subtitle": "Describe it — script, storyboard, clips, narration and music are generated on this machine.",
   "promptPlaceholder": "e.g. Why octopuses have three hearts — fast-paced, for Shorts",

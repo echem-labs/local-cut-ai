@@ -176,7 +176,7 @@ export function Home() {
             <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
               <Sparkles size={14} strokeWidth={2} />
               {busy ? t("common.starting") : t("common.generate")}
-              <kbd>Ctrl ↵</kbd>
+              <kbd>{t("home.ctrlEnter")}</kbd>
             </button>
           </div>
           {actionError?.scope === "create" && (
@@ -254,7 +254,7 @@ export function Home() {
               {busy
                 ? t("common.starting")
                 : t("home.generateTool", { tool: m().tools[activeTool.kind].label.toLowerCase() })}
-              <kbd>Ctrl ↵</kbd>
+              <kbd>{t("home.ctrlEnter")}</kbd>
             </button>
           </div>
           {actionError?.scope === "tool" && (

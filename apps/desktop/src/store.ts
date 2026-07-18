@@ -353,7 +353,7 @@ export const useApp = create<AppState>((set, get) => {
     if (!connection) {
       set({
         client: null,
-        engineError: error ?? "engine unavailable",
+        engineError: error ?? t("errors.engineUnavailable"),
         remoteEngine: false,
         remotePaired: remotePaired === true,
       });
@@ -823,7 +823,7 @@ export const useApp = create<AppState>((set, get) => {
 
     pairRemote: async (code) => {
       const { ok, error } = await window.localcut.pairEngine(code);
-      if (!ok) return error ?? "pairing failed";
+      if (!ok) return error ?? t("errors.pairingFailed");
       await switchEngine(); // the engine changed under us — reset and reconnect
       return null;
     },
@@ -831,7 +831,7 @@ export const useApp = create<AppState>((set, get) => {
     unpairRemote: async () => {
       const { ok, error } = await window.localcut.unpairEngine();
       await switchEngine();
-      return ok ? null : (error ?? "disconnect failed");
+      return ok ? null : (error ?? t("errors.disconnectFailed"));
     },
 
     finishFirstRun: () => {

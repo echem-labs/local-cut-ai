@@ -1,4 +1,7 @@
 {
   "somethingWrong": "Something went wrong: {message}",
-  "engineLost": "connection to engine lost — reconnecting…"
+  "engineLost": "connection to engine lost — reconnecting…",
+  "engineUnavailable": "engine unavailable",
+  "pairingFailed": "pairing failed",
+  "disconnectFailed": "disconnect failed"
 }
