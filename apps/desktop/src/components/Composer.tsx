@@ -41,7 +41,7 @@ export function Composer() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const projectId = currentProject?.id ?? null;
@@ -256,9 +256,10 @@ export function Composer() {
               <div className="palette-hint">↹ Enter runs · keep typing to describe an edit instead</div>
             </div>
           )}
-          <input
+          <textarea
             ref={inputRef}
             value={text}
+            rows={2}
             placeholder='Describe a change — "make it punchier", "remove scene 3" — or type a command'
             aria-label="Describe a change or type a command"
             disabled={editBusy}
@@ -280,7 +281,11 @@ export function Composer() {
                   return;
                 }
               }
-              if (event.key === "Enter") void submit();
+              // Enter applies; Shift+Enter makes a new line.
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void submit();
+              }
               if (event.key === "Escape") setText("");
             }}
           />

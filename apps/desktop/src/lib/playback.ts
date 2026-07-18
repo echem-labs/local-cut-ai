@@ -47,3 +47,15 @@ export function formatTime(seconds: number): string {
   const s = safe - m * 60;
   return `${String(m).padStart(2, "0")}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
 }
+
+/** Inverse of formatTime, forgiving: "90", "1:30", "01:23.4", ":45". */
+export function parseTime(text: string): number | null {
+  const parts = text.trim().split(":");
+  if (parts.length === 0 || parts.length > 3) return null;
+  let seconds = 0;
+  for (const part of parts) {
+    if (part !== "" && !/^\d+(\.\d+)?$/.test(part)) return null;
+    seconds = seconds * 60 + (part === "" ? 0 : Number.parseFloat(part));
+  }
+  return Number.isFinite(seconds) ? seconds : null;
+}

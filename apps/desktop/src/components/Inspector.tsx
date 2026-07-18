@@ -286,7 +286,7 @@ export function Inspector() {
           {tab === "motion" && (
             <>
               <div>
-                <label htmlFor="inspector-motion" style={{ display: "inline-flex", gap: 4 }}>
+                <label htmlFor="inspector-motion" className="with-info">
                   Camera movement
                   <InfoDot label="How the camera moves" hint={TIPS.motion} />
                 </label>
@@ -317,7 +317,7 @@ export function Inspector() {
 
           {tab === "voice" && (
             <div>
-              <label htmlFor="inspector-voice" style={{ display: "inline-flex", gap: 4 }}>
+              <label htmlFor="inspector-voice" className="with-info">
                 Voice
                 <InfoDot label="Which narrator speaks" hint={TIPS.voice} />
               </label>
@@ -376,7 +376,7 @@ export function Inspector() {
             {advanced && (
               <div className="adv-body">
                 <div>
-                  <label htmlFor="inspector-seed" style={{ display: "inline-flex", gap: 4 }}>
+                  <label htmlFor="inspector-seed" className="with-info">
                     Seed
                     <InfoDot label="Controls the randomness" hint={TIPS.seed} />
                   </label>
@@ -390,7 +390,7 @@ export function Inspector() {
                 </div>
                 {modelEditable && (
                   <div>
-                    <label htmlFor="inspector-model" style={{ display: "inline-flex", gap: 4 }}>
+                    <label htmlFor="inspector-model" className="with-info">
                       Model
                       <InfoDot label="One-shot model override" hint={TIPS.model} />
                     </label>
@@ -460,7 +460,7 @@ export function Inspector() {
                 {sceneId && (
                   <>
                     <div>
-                      <label style={{ display: "inline-flex", gap: 4 }}>
+                      <label className="with-info">
                         Trim
                         <InfoDot label="Shorten this clip" hint={TIPS.trim} />
                       </label>
@@ -493,7 +493,7 @@ export function Inspector() {
                       <div className="hint">Narration length still drives scene timing.</div>
                     </div>
                     <div>
-                      <label htmlFor="inspector-overlay" style={{ display: "inline-flex", gap: 4 }}>
+                      <label htmlFor="inspector-overlay" className="with-info">
                         On-screen text
                         <InfoDot label="Text drawn on the video" hint={TIPS.overlay} />
                       </label>

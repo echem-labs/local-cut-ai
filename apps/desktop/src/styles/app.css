@@ -347,16 +347,21 @@ textarea {
   padding: var(--space-3);
 }
 
-.board-composer {
-  flex-shrink: 0;
+/* the composer as its own panel: the textarea soaks up whatever height
+ * the sash gives it — drag the panel's top edge taller for more lines */
+.composer-panel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   padding: var(--space-2) var(--space-3) var(--space-3);
-  border-top: 1px solid var(--border);
   background: var(--surface-0);
 }
 
-.board-composer .composer-wrap {
-  margin-top: 0;
-  max-width: none;
+.composer-panel .composer {
+  flex: 1;
+  min-height: 0;
 }
 
 .monitor-panel {
@@ -410,6 +415,16 @@ textarea {
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tab-close-icon-color: var(--text-tertiary);
   --dv-floating-box-shadow: var(--shadow-2);
+}
+
+/* the tab's close ✕ ships oversized next to 12px tab text — shrink it */
+.dockview-theme-localcut .dv-default-tab .dv-default-tab-action {
+  padding: 3px;
+}
+
+.dockview-theme-localcut .dv-default-tab .dv-default-tab-action svg {
+  width: 9px;
+  height: 9px;
 }
 
 /* ---- buttons ---- */
@@ -772,16 +787,21 @@ textarea {
   outline: none;
 }
 
-/* small ⓘ affordance for optional fields — hover/focus explains */
+/* small ⓘ affordance for optional fields — hover/focus explains. Sized to
+ * the label's own line so it sits flush with the text. */
 .info-dot {
   display: inline-grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   color: var(--text-tertiary);
   cursor: help;
   outline: none;
+}
+
+.info-dot svg {
+  display: block;
 }
 
 .info-dot:hover,
@@ -1560,11 +1580,38 @@ textarea {
 }
 
 .tl-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--text-tertiary);
   margin: 0 var(--space-2);
   white-space: nowrap;
+}
+
+/* the elapsed readout doubles as a jump box: type a time, Enter seeks */
+.tl-time input {
+  width: 8.5ch;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 1px 3px;
+  font: inherit;
+  color: var(--text-secondary);
+  text-align: right;
+  outline: none;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+
+.tl-time input:hover {
+  border-color: var(--border);
+}
+
+.tl-time input:focus {
+  border-color: var(--accent);
+  background: var(--surface-1);
+  color: var(--text-primary);
 }
 
 .tl-zoom {
@@ -1861,19 +1908,29 @@ textarea {
 
 /* ---- the composer: one voice ---- */
 .composer-wrap {
-  margin-top: var(--space-4);
-  max-width: 1440px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .composer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
   background: var(--surface-1);
   border: 1px solid var(--border-hi);
-  border-radius: 999px;
+  border-radius: var(--radius-m);
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+
+/* chip and buttons anchor to the foot; the prompt fills the rest */
+.composer .composer-scope,
+.composer .icon-btn-sm,
+.composer .composer-send {
+  margin-bottom: 1px;
 }
 
 .composer:focus-within {
@@ -1915,19 +1972,27 @@ textarea {
   position: relative;
   flex: 1;
   min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
 }
 
-.composer-input input {
+.composer-input textarea {
+  flex: 1;
   width: 100%;
+  min-height: 44px;
   background: transparent;
   border: none;
   outline: none;
+  resize: none;
   color: var(--text-primary);
+  font-family: inherit;
   font-size: var(--text-s);
-  min-height: 28px;
+  line-height: 1.5;
+  padding: 4px 0;
 }
 
-.composer-input input::placeholder {
+.composer-input textarea::placeholder {
   color: var(--text-tertiary);
 }
 
@@ -2433,6 +2498,13 @@ textarea {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   margin-bottom: var(--space-1);
+}
+
+/* labels that carry an ⓘ — the dot centers on the text line */
+.inspector label.with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .inspector textarea,

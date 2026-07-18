@@ -2,7 +2,7 @@ import { ChevronFirst, ChevronLast, Pause, Play, SkipBack, SkipForward } from "l
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { movedOrder, orderedScenes } from "../lib/order";
-import { formatTime, usePlayback } from "../lib/playback";
+import { formatTime, parseTime, usePlayback } from "../lib/playback";
 import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
 import { PanelHelp } from "./Help";
@@ -31,6 +31,15 @@ export function TimelineStrip() {
     bottom: number;
   } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Typed timestamp in the time box (null = showing live elapsed). The ref
+  // mirrors the state so commit-on-Enter followed by the blur it triggers
+  // can't seek twice.
+  const [timeDraft, setTimeDraft] = useState<string | null>(null);
+  const timeDraftRef = useRef<string | null>(null);
+  const setDraft = (value: string | null) => {
+    timeDraftRef.current = value;
+    setTimeDraft(value);
+  };
 
   useOutsideClick(rootRef, openTransition !== null, () => setOpenTransition(null));
 
@@ -131,6 +140,15 @@ export function TimelineStrip() {
     seekGlobal(pxToTime(event.clientX - rect.left));
   };
 
+  // Commit whatever's typed in the time box; unparseable input just reverts.
+  const commitTime = () => {
+    const draft = timeDraftRef.current;
+    setDraft(null);
+    if (draft === null) return;
+    const parsed = parseTime(draft);
+    if (parsed !== null) seekGlobal(parsed);
+  };
+
   const shownIndex = sceneId ? order.indexOf(sceneId) : -1;
 
   const move = (from: number, to: number) => {
@@ -188,7 +206,26 @@ export function TimelineStrip() {
             <ChevronLast size={14} strokeWidth={2} />
           </button>
           <span className="tl-time">
-            {formatTime(elapsed)} / {formatTime(totalDuration)}
+            <input
+              value={timeDraft ?? formatTime(elapsed)}
+              aria-label="Current time — type a timestamp to jump"
+              title="Type a time (e.g. 1:23) and press Enter to jump"
+              onFocus={(event) => {
+                setDraft(formatTime(elapsed));
+                event.currentTarget.select();
+              }}
+              onChange={(event) => setDraft(event.target.value)}
+              onBlur={commitTime}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") event.currentTarget.blur(); // blur commits
+                if (event.key === "Escape") {
+                  setDraft(null);
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+            <span aria-hidden="true">/ {formatTime(totalDuration)}</span>
           </span>
           <span className="hint">draft preview · hard cuts</span>
         </div>

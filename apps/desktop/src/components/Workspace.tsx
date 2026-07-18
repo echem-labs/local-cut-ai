@@ -92,10 +92,16 @@ function BoardPanel(_props: IDockviewPanelProps) {
           ))}
         </div>
       </div>
-      {/* the composer is fixed chrome of the board — every view keeps it */}
-      <div className="board-composer">
-        <Composer />
-      </div>
+    </div>
+  );
+}
+
+/** The composer as its own dockable panel — drag its top sash to give the
+ * prompt more lines, or dock it anywhere like the other panels. */
+function ComposerPanel(_props: IDockviewPanelProps) {
+  return (
+    <div className="composer-panel">
+      <Composer />
     </div>
   );
 }
@@ -125,6 +131,7 @@ const PANEL_COMPONENTS = {
   monitor: MonitorPanel,
   inspector: InspectorPanel,
   timeline: TimelinePanel,
+  composer: ComposerPanel,
 };
 
 /** Only the Details panel is closable — the structural panels (board,
@@ -138,6 +145,7 @@ const PANEL_TITLES: Record<string, string> = {
   monitor: "Monitor",
   inspector: "Details",
   timeline: "Timeline",
+  composer: "Prompt",
 };
 
 /* ---------- workspace ---------- */
@@ -157,6 +165,21 @@ export function Workspace() {
   const viewRef = useRef(view);
   viewRef.current = view;
 
+  const addComposer = (api: DockviewApi) => {
+    api.addPanel({
+      id: "composer",
+      component: "composer",
+      title: PANEL_TITLES.composer,
+      position: { referencePanel: "board", direction: "below" },
+    });
+    // A reference-panel split divides the group evenly, and setSize during
+    // construction is ignored — size the row to a two-line prompt once
+    // dockview has done its initial layout pass.
+    requestAnimationFrame(() => {
+      api.getPanel("composer")?.api.setSize({ height: 112 });
+    });
+  };
+
   const buildDefault = (api: DockviewApi, target: WorkspaceView) => {
     busyRef.current = true;
     try {
@@ -171,6 +194,7 @@ export function Workspace() {
           position: { referencePanel: "board", direction: "left" },
         });
       }
+      addComposer(api);
       // No reference panel: dock against the root edge so the timeline
       // spans the full workspace width in every view.
       api.addPanel({
@@ -209,6 +233,15 @@ export function Workspace() {
             busyRef.current = true;
             try {
               api.removePanel(inspector);
+            } finally {
+              busyRef.current = false;
+            }
+          }
+          // Layouts saved before the composer became a panel lack it.
+          if (!api.getPanel("composer")) {
+            busyRef.current = true;
+            try {
+              addComposer(api);
             } finally {
               busyRef.current = false;
             }
