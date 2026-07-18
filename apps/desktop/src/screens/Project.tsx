@@ -3,7 +3,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { EditPrompt } from "../components/EditPrompt";
 import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
-import { StatusChip } from "../components/StatusRing";
+import { StatusChip, StatusPill } from "../components/StatusRing";
 import { TimelineStrip } from "../components/TimelineStrip";
 import { ToolSession } from "../components/ToolSession";
 import { useApp } from "../store";
@@ -31,10 +31,27 @@ export function Project() {
     );
   }
 
+  // Status roll-up: the header answers "how far along is this video"
+  // without reading every card.
+  const counts = new Map<string, number>();
+  for (const scene of board.scenes) {
+    counts.set(scene.clip.status, (counts.get(scene.clip.status) ?? 0) + 1);
+  }
+
   return (
     <div>
       <div className="board-header">
         <h1>{currentProject.title}</h1>
+        {(["rendering", "draft", "final", "failed"] as const).map((status) => {
+          const count = counts.get(status);
+          if (!count) return null;
+          return (
+            <span key={status} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+              <StatusPill status={status} />
+              <span className="hint">{count}</span>
+            </span>
+          );
+        })}
       </div>
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}

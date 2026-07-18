@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { NodeState } from "../api/types";
 import { useApp } from "../store";
@@ -131,7 +132,7 @@ export function TimelineStrip() {
                   move(index, index - 1);
                 }}
               >
-                ◀
+                <ChevronLeft size={12} strokeWidth={2} />
               </button>
               <StatusRing status={clip.status} progress={clip.progress} />
               <span className="id">{sceneId}</span>
@@ -145,7 +146,7 @@ export function TimelineStrip() {
                   move(index, index + 1);
                 }}
               >
-                ▶
+                <ChevronRight size={12} strokeWidth={2} />
               </button>
             </div>
           </Fragment>
@@ -200,7 +201,7 @@ export function TimelineStrip() {
                   href={client.artifactUrl(currentProject.id, exportNode.artifact_hash)}
                   download
                 >
-                  ⬇
+                  <Download size={13} strokeWidth={2} />
                 </a>
                 <a
                   className="btn-ghost"

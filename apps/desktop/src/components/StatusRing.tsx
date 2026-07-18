@@ -26,6 +26,34 @@ export function StatusRing({ status, progress }: { status: NodeStatus; progress:
   );
 }
 
+/** Status pill: dot + word in the reserved colors — the board reads as a
+ * status map. Rendering shows live percent. */
+export function StatusPill({
+  status,
+  progress = 0,
+  onThumb = false,
+}: {
+  status: NodeStatus;
+  progress?: number;
+  onThumb?: boolean;
+}) {
+  const text =
+    status === "rendering" && progress > 0
+      ? `rendering · ${Math.round(progress * 100)}%`
+      : status;
+  return (
+    <span
+      className={`status-pill${onThumb ? " on-thumb" : ""}`}
+      style={{ color: COLORS[status], ...(onThumb ? {} : { background: "var(--surface-2)" }) }}
+      role="img"
+      aria-label={text}
+    >
+      <span className="dot" aria-hidden="true" />
+      {text}
+    </span>
+  );
+}
+
 export function StatusChip({ status }: { status: NodeStatus }) {
   return (
     <span className="status-chip" style={{ color: COLORS[status], background: "var(--surface-2)" }}>

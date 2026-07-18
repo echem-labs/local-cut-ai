@@ -1,45 +1,77 @@
+import {
+  Aperture,
+  FileText,
+  Film,
+  Image as ImageIcon,
+  Mic,
+  Music,
+  Settings as SettingsIcon,
+  Sparkles,
+} from "lucide-react";
 import { useState } from "react";
+import { Tip } from "../components/Tooltip";
 import type { ToolKind } from "../api/types";
 import { useApp } from "../store";
 
-const TOOLS: { kind: ToolKind; label: string; glyph: string; placeholder: string }[] = [
+const TOOL_ICON = { size: 17, strokeWidth: 1.8 } as const;
+
+const TOOLS: {
+  kind: ToolKind;
+  label: string;
+  icon: typeof FileText;
+  tip: string;
+  placeholder: string;
+}[] = [
   {
     kind: "script",
     label: "Script",
-    glyph: "📝",
+    icon: FileText,
+    tip: "Topic → structured script",
     placeholder: "e.g. A 60-second script on why octopuses have three hearts",
   },
   {
     kind: "thumbnail",
     label: "Thumbnail",
-    glyph: "🖼",
+    icon: ImageIcon,
+    tip: "Prompt → platform-ready thumbnail",
     placeholder: "e.g. A diver face-to-face with a giant octopus, dramatic light",
   },
   {
     kind: "voiceover",
     label: "Voiceover",
-    glyph: "🎙",
+    icon: Mic,
+    tip: "Text → narration audio",
     placeholder: "Paste the text to narrate…",
   },
   {
     kind: "image",
     label: "Image",
-    glyph: "🎨",
+    icon: Aperture,
+    tip: "Prompt → single image",
     placeholder: "e.g. Bioluminescent waves on a black-sand beach at night",
   },
   {
     kind: "music",
     label: "Music",
-    glyph: "🎵",
+    icon: Music,
+    tip: "Brief → music track",
     placeholder: "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds",
   },
   {
     kind: "clip",
     label: "Clip",
-    glyph: "🎬",
+    icon: Film,
+    tip: "Prompt → single video clip",
     placeholder: "e.g. A hummingbird hovering at a red flower, macro detail",
   },
 ];
+
+/** Deterministic stand-in art per project until real keyframe thumbs. */
+const thumbClass = (id: string): string => {
+  let hash = 0;
+  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+  return `g${Math.abs(hash) % 4}`;
+};
 
 /** Home: one prompt box — the entire prompt-only mode — plus a
  * Quick Tools row and recent projects. Control budget: ≤6 elements. */
@@ -50,7 +82,6 @@ export function Home() {
     createTool,
     openProject,
     openSettings,
-    system,
     actionError,
   } = useApp();
   const [prompt, setPrompt] = useState("");
@@ -97,11 +128,16 @@ export function Home() {
   return (
     <div className="home">
       <div className="home-header">
-        <h1>Describe your video…</h1>
-        <button className="icon-btn" onClick={openSettings} title="Settings" aria-label="Settings">
-          ⚙
-        </button>
+        <h1>What are we making today?</h1>
+        <Tip label="Settings" hint="engine, models, API keys" side="bottom">
+          <button className="icon-btn" onClick={openSettings} aria-label="Settings">
+            <SettingsIcon size={17} strokeWidth={1.8} />
+          </button>
+        </Tip>
       </div>
+      <p className="sub">
+        Describe it — script, storyboard, clips, narration and music are generated on this machine.
+      </p>
       <div className="prompt-box">
         <textarea
           placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"
@@ -135,19 +171,23 @@ export function Home() {
             <button
               className={mode === "prompt" ? "active" : ""}
               onClick={() => setMode("prompt")}
+              title="Generate end-to-end without stopping"
             >
               Auto
             </button>
             <button
               className={mode === "beginner" ? "active" : ""}
               onClick={() => setMode("beginner")}
+              title="Pause to review the script and storyboard before rendering"
             >
               Review steps
             </button>
           </div>
           <div className="spacer" />
           <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
+            <Sparkles size={14} strokeWidth={2} />
             {busy ? "Starting…" : "Generate"}
+            <kbd>Ctrl ↵</kbd>
           </button>
         </div>
         {actionError?.scope === "create" && (
@@ -158,15 +198,21 @@ export function Home() {
       </div>
 
       <div className="quick-tools" role="group" aria-label="Quick tools">
-        {TOOLS.map((entry) => (
-          <button
-            key={entry.kind}
-            className={tool === entry.kind ? "active" : ""}
-            onClick={() => setTool(tool === entry.kind ? null : entry.kind)}
-          >
-            {entry.glyph} {entry.label}
-          </button>
-        ))}
+        {TOOLS.map((entry) => {
+          const Icon = entry.icon;
+          return (
+            <Tip key={entry.kind} label={entry.tip} hint="no project needed" side="bottom">
+              <button
+                className={tool === entry.kind ? "active" : ""}
+                onClick={() => setTool(tool === entry.kind ? null : entry.kind)}
+                aria-label={`${entry.label} — ${entry.tip}`}
+              >
+                <Icon {...TOOL_ICON} />
+                {entry.label}
+              </button>
+            </Tip>
+          );
+        })}
       </div>
 
       {activeTool && (
@@ -199,6 +245,7 @@ export function Home() {
             )}
             <div className="spacer" />
             <button className="btn-primary" onClick={() => void runTool()} disabled={busy}>
+              <Sparkles size={14} strokeWidth={2} />
               {busy ? "Starting…" : `Generate ${activeTool.label.toLowerCase()}`}
             </button>
           </div>
@@ -208,13 +255,6 @@ export function Home() {
             </p>
           )}
         </div>
-      )}
-
-      {system && (
-        <p style={{ color: "var(--text-tertiary)", marginTop: "var(--space-4)" }}>
-          {system.hardware.gpus[0]?.name ?? "No GPU detected"} · Tier {system.hardware.tier} ·
-          engine: {system.backend_mode}
-        </p>
       )}
 
       {ordered.length > 0 && (
@@ -227,12 +267,19 @@ export function Home() {
                 className="project-tile"
                 onClick={() => void openProject(project.id)}
               >
-                <div className="title">{project.title}</div>
-                <div className="meta">
-                  {new Date(project.created_at * 1000).toLocaleDateString()}
+                <div className={`tile-thumb ${thumbClass(project.id)}`}>
                   {project.mode.startsWith("tool:") && (
-                    <span className="tile-badge">{project.mode.slice("tool:".length)}</span>
+                    <Film size={18} strokeWidth={1.5} aria-hidden="true" />
                   )}
+                </div>
+                <div className="tile-body">
+                  <div className="title">{project.title}</div>
+                  <div className="meta">
+                    {new Date(project.created_at * 1000).toLocaleDateString()}
+                    {project.mode.startsWith("tool:") && (
+                      <span className="tile-badge">{project.mode.slice("tool:".length)}</span>
+                    )}
+                  </div>
                 </div>
               </button>
             ))}

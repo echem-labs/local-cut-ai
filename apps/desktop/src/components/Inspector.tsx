@@ -1,3 +1,4 @@
+import { Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { EditPrompt } from "./EditPrompt";
@@ -165,14 +166,16 @@ export function Inspector() {
         <h2 style={{ flex: 1 }}>{node.node_id}</h2>
         <button
           className="btn-ghost"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           onClick={() => void togglePin(node.node_id, !node.pinned)}
           aria-label={node.pinned ? "Unpin node" : "Pin node"}
           title={node.pinned ? "Unpin — allow regeneration" : "Pin — lock from regeneration"}
         >
-          {node.pinned ? "📌 Unpin" : "📌 Pin"}
+          <Pin size={12} strokeWidth={1.8} />
+          {node.pinned ? "Unpin" : "Pin"}
         </button>
         <button className="btn-ghost" onClick={() => select(null)} aria-label="Close inspector">
-          ✕
+          <X size={13} strokeWidth={2} />
         </button>
       </div>
       {node.pinned && (
@@ -346,10 +349,12 @@ export function Inspector() {
       </button>
       <button
         className="btn-ghost"
+        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
         onClick={() => void regenerate(node.node_id)}
         disabled={node.pinned}
       >
-        New seed 🔄
+        <RotateCw size={12} strokeWidth={1.8} />
+        New seed
       </button>
       {editSceneId && (
         <div>
