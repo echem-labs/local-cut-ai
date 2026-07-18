@@ -83,7 +83,7 @@ export function QueueTray() {
       {downloads.length > 0 && (
         <button
           className="tray-downloads"
-          onClick={openSettings}
+          onClick={() => openSettings("models")}
           title="Downloading models — click for details in Settings"
         >
           <Download size={12} strokeWidth={2} />
