@@ -530,8 +530,25 @@ textarea {
   border-radius: var(--radius-s);
   padding: var(--space-1) var(--space-2);
   min-height: 32px;
-  width: 200px;
+  width: 280px;
   outline: none;
+}
+
+/* small ⓘ affordance for optional fields — hover/focus explains */
+.info-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  cursor: help;
+  outline: none;
+}
+
+.info-dot:hover,
+.info-dot:focus-visible {
+  color: var(--accent);
 }
 
 .tool-panel input:focus {

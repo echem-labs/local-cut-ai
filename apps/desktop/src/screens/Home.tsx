@@ -4,6 +4,7 @@ import {
   FileText,
   Film,
   Image as ImageIcon,
+  Info,
   Mic,
   Monitor,
   Music,
@@ -174,15 +175,6 @@ export function Home() {
               ariaLabel="Duration"
               options={DURATIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
             />
-            <Tip label="Models" hint="downloads, status & library" side="bottom">
-              <button
-                className="icon-btn"
-                onClick={() => openSettings("models")}
-                aria-label="Model library"
-              >
-                <Boxes size={15} strokeWidth={1.8} />
-              </button>
-            </Tip>
             <div className="seg-toggle" role="group" aria-label="Generation mode">
               <button
                 className={mode === "prompt" ? "active" : ""}
@@ -200,6 +192,15 @@ export function Home() {
               </button>
             </div>
             <div className="spacer" />
+            <Tip label="Models" hint="downloads, status & library" side="bottom">
+              <button
+                className="icon-btn"
+                onClick={() => openSettings("models")}
+                aria-label="Model library"
+              >
+                <Boxes size={15} strokeWidth={1.8} />
+              </button>
+            </Tip>
             <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
               <Sparkles size={14} strokeWidth={2} />
               {busy ? "Starting…" : "Generate"}
@@ -242,20 +243,42 @@ export function Home() {
           />
           <div className="row">
             {activeTool.kind === "voiceover" && (
-              <input
-                placeholder="Voice (optional)"
-                value={voice}
-                onChange={(event) => setVoice(event.target.value)}
-                aria-label="Voice"
-              />
+              <>
+                <input
+                  placeholder='Voice — e.g. "energetic female" or af_bella'
+                  value={voice}
+                  onChange={(event) => setVoice(event.target.value)}
+                  aria-label="Voice"
+                />
+                <Tip
+                  label="Which narrator speaks"
+                  hint='a style like "deep male" or a Kokoro id · empty = default'
+                  side="top"
+                >
+                  <span className="info-dot" tabIndex={0} aria-label="About the voice field">
+                    <Info size={13} strokeWidth={1.8} />
+                  </span>
+                </Tip>
+              </>
             )}
             {activeTool.kind === "clip" && (
-              <input
-                placeholder="Camera motion (optional)"
-                value={motion}
-                onChange={(event) => setMotion(event.target.value)}
-                aria-label="Camera motion"
-              />
+              <>
+                <input
+                  placeholder="Camera motion — e.g. slow push-in, orbit left"
+                  value={motion}
+                  onChange={(event) => setMotion(event.target.value)}
+                  aria-label="Camera motion"
+                />
+                <Tip
+                  label="How the camera moves"
+                  hint="push-in, pan, orbit, handheld, static · empty = model decides"
+                  side="top"
+                >
+                  <span className="info-dot" tabIndex={0} aria-label="About the camera motion field">
+                    <Info size={13} strokeWidth={1.8} />
+                  </span>
+                </Tip>
+              </>
             )}
             <div className="spacer" />
             <button className="btn-primary" onClick={() => void runTool()} disabled={busy}>
