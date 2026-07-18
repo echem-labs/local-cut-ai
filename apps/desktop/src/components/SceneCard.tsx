@@ -84,12 +84,18 @@ export function SceneCard({
 
   // Inline narration editing (review 3 / Descript's insight): change the
   // words where you read them — the narration node re-renders on commit.
+  // The ref makes close idempotent: Enter commits then blur re-fires on
+  // unmount, and Escape must discard even though blur still commits.
+  const editorLiveRef = useRef(false);
+  const editorOpenedAtRef = useRef(0);
   const canEditWords =
     Boolean(scene.narration) && !rendering && !failed && !scene.narration?.pinned;
-  const commitWords = () => {
+  const closeEditor = (commit: boolean) => {
+    if (!editorLiveRef.current) return;
+    editorLiveRef.current = false;
     setEditingWords(false);
     const next = wordsDraft.trim();
-    if (scene.narration && next && next !== narrationText) {
+    if (commit && scene.narration && next && next !== narrationText) {
       void applyNode(scene.narration.node_id, { params: { text: next } });
     }
   };
@@ -270,11 +276,21 @@ export function SceneCard({
               event.stopPropagation(); // the card's R/P/Enter keys must not fire
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                commitWords();
+                closeEditor(true);
               }
-              if (event.key === "Escape") setEditingWords(false);
+              if (event.key === "Escape") closeEditor(false);
             }}
-            onBlur={commitWords}
+            onBlur={(event) => {
+              // Selecting the scene can ADD the Details panel, and dockview
+              // re-parents the board DOM — blurring this textarea with focus
+              // going nowhere right as it opens. Refocus instead of treating
+              // that as a commit-and-close.
+              if (Date.now() - editorOpenedAtRef.current < 800 && !event.relatedTarget) {
+                event.currentTarget.focus();
+                return;
+              }
+              closeEditor(true);
+            }}
           />
         ) : (
           <div
@@ -286,7 +302,12 @@ export function SceneCard({
               canEditWords
                 ? (event) => {
                     event.stopPropagation();
+                    // a narration click still selects the scene, exactly as
+                    // it did when the click bubbled to the card root
+                    select(primary.node_id);
                     setWordsDraft(narrationText);
+                    editorLiveRef.current = true;
+                    editorOpenedAtRef.current = Date.now();
                     setEditingWords(true);
                   }
                 : undefined

@@ -25,6 +25,14 @@ function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" |
 
 const STAGE_GLYPH = { done: "✓", work: "●", fail: "!", off: "—" } as const;
 
+/** Scene id from a node id ("s3.clip" → "s3"), null for aux nodes. */
+const sceneIdOf = (nodeId: string | null | undefined): string | null =>
+  nodeId?.includes(".") ? nodeId.split(".")[0] : null;
+
+/** Bring a scene's board card into view (keyboard nav + pipeline jump). */
+const scrollToScene = (sceneId: string, options: ScrollIntoViewOptions = { block: "nearest" }) =>
+  document.querySelector(`.scene-grid [data-scene="${sceneId}"]`)?.scrollIntoView(options);
+
 const INTRO_KEY = "localcut.pipelineTaught";
 
 /** One-time teaching strip on the user's first project: how the pipeline
@@ -226,9 +234,7 @@ export function Project() {
         const state = useApp.getState();
         if (!state.board || state.board.scenes.length === 0) return;
         const ids = orderedScenes(state.board).map((scene) => scene.scene_id);
-        const selectedScene = state.selectedNode?.includes(".")
-          ? state.selectedNode.split(".")[0]
-          : null;
+        const selectedScene = sceneIdOf(state.selectedNode);
         const start =
           playback.sceneId ??
           (selectedScene && ids.includes(selectedScene) ? selectedScene : ids[0]);
@@ -237,13 +243,12 @@ export function Project() {
         return;
       }
       if (event.code === "ArrowRight" || event.code === "ArrowLeft") {
-        if (formOwned) return;
+        // Same exclusions as Space: a focused button keeps its keyboard.
+        if (formOwned || target.tagName === "BUTTON") return;
         const state = useApp.getState();
         if (!state.board || state.board.scenes.length === 0) return;
         const scenes = orderedScenes(state.board);
-        const current = state.selectedNode?.includes(".")
-          ? state.selectedNode.split(".")[0]
-          : null;
+        const current = sceneIdOf(state.selectedNode);
         const index = current ? scenes.findIndex((s) => s.scene_id === current) : -1;
         const next =
           event.code === "ArrowRight"
@@ -253,11 +258,7 @@ export function Project() {
         event.preventDefault();
         const scene = scenes[next];
         state.select(scene.keyframe ? scene.keyframe.node_id : scene.clip.node_id);
-        requestAnimationFrame(() => {
-          document
-            .querySelector(`.scene-grid [data-scene="${scene.scene_id}"]`)
-            ?.scrollIntoView({ block: "nearest" });
-        });
+        requestAnimationFrame(() => scrollToScene(scene.scene_id));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -304,7 +305,14 @@ export function Project() {
           ? ("fail" as const)
           : ("work" as const);
   const exportNode = board.aux.export;
-  const stages: { label: string; state: "done" | "work" | "fail" | "off"; detail?: string }[] = [
+  const stages: {
+    label: string;
+    state: "done" | "work" | "fail" | "off";
+    detail?: string;
+    // A stage with a landing surface renders as a button (review 3 §3A).
+    onClick?: () => void;
+    hint?: string;
+  }[] = [
     { label: "Script", state: stageOf(script) },
     {
       label: "Storyboard",
@@ -324,6 +332,15 @@ export function Project() {
         scenes.length > 0
           ? `${clipDone}/${scenes.length}${clipFailed > 0 ? ` · ${clipFailed} failed` : ""}`
           : undefined,
+      onClick:
+        scenes.length > 0
+          ? () => {
+              const target =
+                scenes.find((scene) => !READY.includes(scene.clip.status)) ?? scenes[0];
+              scrollToScene(target.scene_id, { behavior: "smooth", block: "center" });
+            }
+          : undefined,
+      hint: "Show these scenes on the board",
     },
     { label: "Audio", state: audioStage },
     { label: "Export", state: stageOf(exportNode) },
@@ -360,34 +377,29 @@ export function Project() {
       <div className="board-header">
         <h1>{currentProject.title}</h1>
         <div className="pipeline" role="status" aria-label="Project progress">
-          {stages.map((stage) =>
-            // "Videos" jumps the board to the scene that needs attention
-            // (review 3 §3A); the other stages have no landing surface yet.
-            stage.label === "Videos" && scenes.length > 0 ? (
+          {stages.map((stage) => {
+            const inner = (
+              <>
+                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
+                {stage.label}
+                {stage.detail ? <small>{stage.detail}</small> : null}
+              </>
+            );
+            return stage.onClick ? (
               <button
                 key={stage.label}
                 className={`st ${stage.state}`}
-                title="Show these scenes on the board"
-                onClick={() => {
-                  const target =
-                    scenes.find((scene) => !READY.includes(scene.clip.status)) ?? scenes[0];
-                  document
-                    .querySelector(`.scene-grid [data-scene="${target.scene_id}"]`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" });
-                }}
+                title={stage.hint}
+                onClick={stage.onClick}
               >
-                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
-                {stage.label}
-                {stage.detail ? <small>{stage.detail}</small> : null}
+                {inner}
               </button>
             ) : (
               <span key={stage.label} className={`st ${stage.state}`}>
-                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
-                {stage.label}
-                {stage.detail ? <small>{stage.detail}</small> : null}
+                {inner}
               </span>
-            ),
-          )}
+            );
+          })}
         </div>
         {board.scenes.length > 0 && (
           <>

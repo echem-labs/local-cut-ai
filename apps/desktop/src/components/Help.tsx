@@ -1,6 +1,7 @@
 import { BookOpen, HelpCircle, Keyboard, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { GLOSSARY } from "../help/terms";
+import { useOutsideClick } from "../lib/useOutsideClick";
 
 const SHORTCUTS: { keys: string; what: string }[] = [
   { keys: "Space", what: "Play / pause the draft preview" },
@@ -61,13 +62,19 @@ export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector"
   const btnRef = useRef<HTMLButtonElement>(null);
   const copy = PANEL_COPY[panel];
 
+  useOutsideClick(ref, open, () => setOpen(false));
+
+  // The coords were measured at open — anything that moves the anchor
+  // (window resize, panel scroll) would strand the popover, so close it.
   useEffect(() => {
     if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    const close = () => setOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
   const toggle = () => {
@@ -137,14 +144,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  useOutsideClick(ref, open, () => setOpen(false));
 
   // "?" opens the shortcut overlay when no field owns the keyboard.
   useEffect(() => {

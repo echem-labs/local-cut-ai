@@ -35,12 +35,19 @@ function BoardPanel(_props: IDockviewPanelProps) {
     () => localStorage.getItem(DRAFT_TEACH_KEY) === "1",
   );
   // The one-time draft-quality note rides the FIRST rendering card and
-  // retires when that render completes (or on dismiss) — "once" means once.
+  // retires when THAT scene's render completes (or on dismiss) — it must
+  // neither hop to the next rendering card nor retire early on a poll that
+  // lands in a gap between renders.
   const scenes = board ? orderedScenes(board) : [];
+  const teachShownRef = useRef<string | null>(null);
+  const shownScene = teachShownRef.current;
   const teachId = draftTaught
     ? null
-    : (scenes.find((scene) => scene.clip.status === "rendering")?.scene_id ?? null);
-  const teachShownRef = useRef<string | null>(null);
+    : shownScene
+      ? (scenes.find(
+          (scene) => scene.scene_id === shownScene && scene.clip.status === "rendering",
+        )?.scene_id ?? null)
+      : (scenes.find((scene) => scene.clip.status === "rendering")?.scene_id ?? null);
   const markTaught = () => {
     localStorage.setItem(DRAFT_TEACH_KEY, "1");
     setDraftTaught(true);

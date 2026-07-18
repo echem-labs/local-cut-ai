@@ -4,16 +4,28 @@ import type { Board, NodeState } from "../api/types";
  * come only from renders actually watched this session — no invented
  * numbers. No observations yet → no estimate shown. */
 
-const DONE = new Set(["draft", "final", "pinned"]);
-// Finals render at full quality — slower than the draft renders we observed.
+// Finals render at full quality — slower than the draft renders we sample.
 const FINAL_QUALITY_FACTOR = 1.5;
 // Timeline assembly + MP4 export tail, added once.
 const ASSEMBLY_TAIL_S = 30;
+// A render first observed beyond this progress was joined too late for its
+// duration to be a trustworthy sample.
+const FRESH_P0 = 0.25;
 
-// `${projectId}:${nodeId}` → when we first saw it rendering. Keyed by
-// project because node ids (s1.clip) repeat across projects.
-const startedAt = new Map<string, number>();
-// Completed clip render durations (seconds), newest last.
+interface RenderStart {
+  t0: number;
+  /** Progress when first observed — a render can already be mid-flight
+   * when the project opens, and elapsed-since-observation only covers the
+   * (p − p0) slice of the work. */
+  p0: number;
+}
+
+// `${projectId}:${nodeId}` → observation start. Keyed by project because
+// node ids (s1.clip) repeat across projects.
+const startedAt = new Map<string, RenderStart>();
+// Completed DRAFT clip render durations (seconds), newest last. Finals are
+// excluded: finalizeEta multiplies by FINAL_QUALITY_FACTOR, so a
+// final-speed sample would be double-counted.
 const clipSeconds: number[] = [];
 
 const isClip = (nodeId: string) => /\.clip\d*$/.test(nodeId);
@@ -33,15 +45,21 @@ export function recordBoard(projectId: string, board: Board): void {
     const key = `${projectId}:${node.node_id}`;
     present.add(key);
     if (node.status === "rendering") {
-      if (!startedAt.has(key)) startedAt.set(key, Date.now());
+      if (!startedAt.has(key)) {
+        startedAt.set(key, { t0: Date.now(), p0: Math.min(node.progress ?? 0, 0.99) });
+      }
     } else if (startedAt.has(key)) {
-      const secs = (Date.now() - startedAt.get(key)!) / 1000;
+      const { t0, p0 } = startedAt.get(key)!;
       startedAt.delete(key);
-      // Only completed clip renders feed the finalize estimate — they are
-      // the dominant cost. (Failures teach nothing about duration.)
-      if (DONE.has(node.status) && isClip(node.node_id) && secs > 0.5) {
-        clipSeconds.push(secs);
-        if (clipSeconds.length > 20) clipSeconds.shift();
+      // Only draft clip completions observed from (near) the start feed the
+      // finalize estimate — they are the dominant cost, and the p0 scaling
+      // projects the observed slice onto the full render.
+      if (node.status === "draft" && isClip(node.node_id) && p0 <= FRESH_P0) {
+        const secs = (Date.now() - t0) / 1000 / (1 - p0);
+        if (secs > 0.5) {
+          clipSeconds.push(secs);
+          if (clipSeconds.length > 20) clipSeconds.shift();
+        }
       }
     }
   }
@@ -65,18 +83,21 @@ export function finalizeEta(board: Board): string | null {
   return formatEta(toRender * avg * FINAL_QUALITY_FACTOR + ASSEMBLY_TAIL_S);
 }
 
-/** "about 40s left" for a node mid-render, projected from its own progress
- * so far — needs a few seconds of movement before it dares to speak. */
+/** "about 40s left" for a node mid-render, projected from the progress
+ * observed since we started watching (elapsed covers only the p − p0
+ * slice) — needs a few seconds of movement before it dares to speak. */
 export function remainingLabel(
   projectId: string,
   nodeId: string,
   progress: number,
 ): string | null {
-  const t0 = startedAt.get(`${projectId}:${nodeId}`);
-  if (t0 === undefined || progress <= 0.05 || progress >= 1) return null;
-  const elapsed = (Date.now() - t0) / 1000;
+  const start = startedAt.get(`${projectId}:${nodeId}`);
+  if (start === undefined || progress >= 1) return null;
+  const observed = progress - start.p0;
+  if (observed <= 0.05) return null;
+  const elapsed = (Date.now() - start.t0) / 1000;
   if (elapsed < 3) return null;
-  const left = (elapsed * (1 - progress)) / progress;
+  const left = (elapsed * (1 - progress)) / observed;
   return left >= 90
     ? `about ${Math.round(left / 60)} min left`
     : `about ${Math.max(5, Math.round(left / 5) * 5)}s left`;
