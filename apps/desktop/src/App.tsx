@@ -107,41 +107,42 @@ export default function App() {
           Export
           <span className="soon">soon</span>
         </button>
-        <div className="group-label">App</div>
-        <button
-          className={settingsOpen && !currentProject ? "active" : ""}
-          disabled={!firstRunDone}
-          onClick={() => {
-            closeProject();
-            openSettings();
-          }}
-        >
-          <SettingsIcon {...ICON} />
-          Settings
-        </button>
-        <button
-          onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
-          title="Toggle theme — the follow-system option lives in Settings"
-          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-        >
-          {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-          {theme === "dark" ? "Light mode" : "Dark mode"}
-        </button>
-        <Tip label="Engine status" hint="click for engine settings" side="top">
+        <div className="rail-bottom">
+          <Tip label="Engine status" hint="click for engine settings" side="top">
+            <button
+              className="engine-chip"
+              style={{ width: "100%" }}
+              disabled={!firstRunDone}
+              onClick={openSettings}
+              aria-label="Engine status — open settings"
+            >
+              <span className={`pulse${engineError ? " err" : ""}`} />
+              <span style={{ minWidth: 0 }}>
+                <b>{remoteEngine ? "Remote engine" : "Local engine"}</b>
+                <small>{engineDetail}</small>
+              </span>
+            </button>
+          </Tip>
           <button
-            className="engine-chip"
-            style={{ width: "100%" }}
+            className={settingsOpen && !currentProject ? "active" : ""}
             disabled={!firstRunDone}
-            onClick={openSettings}
-            aria-label="Engine status — open settings"
+            onClick={() => {
+              closeProject();
+              openSettings();
+            }}
           >
-            <span className={`pulse${engineError ? " err" : ""}`} />
-            <span style={{ minWidth: 0 }}>
-              <b>{remoteEngine ? "Remote engine" : "Local engine"}</b>
-              <small>{engineDetail}</small>
-            </span>
+            <SettingsIcon {...ICON} />
+            Settings
           </button>
-        </Tip>
+          <button
+            onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
+            title="Toggle theme — the follow-system option lives in Settings"
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
+            {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+        </div>
       </nav>
       <main className="content">
         {engineError && <div className="banner error">{engineError}</div>}

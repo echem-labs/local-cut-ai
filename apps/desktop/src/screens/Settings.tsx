@@ -21,6 +21,15 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "light", label: "Light" },
 ];
 
+type SettingsTab = "general" | "providers" | "models" | "engine";
+
+const TABS: { id: SettingsTab; label: string; icon: typeof SunMoon }[] = [
+  { id: "general", label: "General", icon: SunMoon },
+  { id: "providers", label: "Providers", icon: KeyRound },
+  { id: "models", label: "Models", icon: Boxes },
+  { id: "engine", label: "Engine", icon: Server },
+];
+
 /** Engine provider ids → shell key ids (google's key is a Gemini key). */
 const KEY_IDS: Record<string, ProviderKeyId> = {
   anthropic: "anthropic",
@@ -53,6 +62,7 @@ export function Settings() {
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePref>(loadThemePref);
+  const [tab, setTab] = useState<SettingsTab>("general");
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -129,6 +139,25 @@ export function Settings() {
         </button>
       </div>
 
+      <div className="tabs" role="tablist" aria-label="Settings sections">
+        {TABS.map((entry) => {
+          const Icon = entry.icon;
+          return (
+            <button
+              key={entry.id}
+              role="tab"
+              aria-selected={tab === entry.id}
+              className={tab === entry.id ? "active" : ""}
+              onClick={() => setTab(entry.id)}
+            >
+              <Icon size={13} strokeWidth={1.8} />
+              {entry.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "general" && (
       <section>
         <h2>
           <SunMoon {...SECTION_ICON} />
@@ -150,7 +179,9 @@ export function Settings() {
           ))}
         </div>
       </section>
+      )}
 
+      {tab === "providers" && (
       <section>
         <h2>
           <KeyRound {...SECTION_ICON} />
@@ -207,7 +238,9 @@ export function Settings() {
           </div>
         ))}
       </section>
+      )}
 
+      {tab === "models" && (
       <section>
         <h2>
           <Boxes {...SECTION_ICON} />
@@ -216,7 +249,10 @@ export function Settings() {
         <p className="hint">Download more local models any time — jobs pick them up immediately.</p>
         <ModelLibrary showActions />
       </section>
+      )}
 
+      {tab === "engine" && (
+      <>
       <section>
         <h2>
           <Server {...SECTION_ICON} />
@@ -298,7 +334,10 @@ export function Settings() {
           </dd>
         </dl>
       </section>
+      </>
+      )}
 
+      {tab === "general" && (
       <section>
         <h2>
           <RotateCcw {...SECTION_ICON} />
@@ -308,6 +347,7 @@ export function Settings() {
           Show setup screen again
         </button>
       </section>
+      )}
     </div>
   );
 }

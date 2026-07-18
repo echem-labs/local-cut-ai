@@ -104,6 +104,7 @@ export function Home() {
   const [motion, setMotion] = useState("");
 
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
+  const AspectIcon = ASPECTS.find((entry) => entry.value === aspect)?.icon ?? Smartphone;
 
   const generate = async () => {
     if (!prompt.trim() || busy) return;
@@ -155,33 +156,33 @@ export function Home() {
             aria-label="Video prompt"
           />
           <div className="row">
-            <div className="seg-toggle" role="group" aria-label="Aspect ratio">
-              {ASPECTS.map((entry) => {
-                const Icon = entry.icon;
-                return (
-                  <button
-                    key={entry.value}
-                    className={aspect === entry.value ? "active" : ""}
-                    onClick={() => setAspect(entry.value)}
-                    title={`${entry.value} · ${entry.label}`}
-                  >
-                    <Icon size={13} strokeWidth={1.8} aria-hidden="true" />
+            <span className="chip-select">
+              <AspectIcon size={13} strokeWidth={1.8} aria-hidden="true" />
+              <select
+                value={aspect}
+                onChange={(event) => setAspect(event.target.value)}
+                aria-label="Aspect ratio"
+              >
+                {ASPECTS.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
+                    {entry.value} · {entry.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+            <span className="chip-select">
+              <select
+                value={duration}
+                onChange={(event) => setDuration(Number(event.target.value))}
+                aria-label="Duration"
+              >
+                {DURATIONS.map((entry) => (
+                  <option key={entry.value} value={entry.value}>
                     {entry.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="seg-toggle" role="group" aria-label="Duration">
-              {DURATIONS.map((entry) => (
-                <button
-                  key={entry.value}
-                  className={duration === entry.value ? "active" : ""}
-                  onClick={() => setDuration(entry.value)}
-                >
-                  {entry.label}
-                </button>
-              ))}
-            </div>
+                  </option>
+                ))}
+              </select>
+            </span>
             <div className="seg-toggle" role="group" aria-label="Generation mode">
               <button
                 className={mode === "prompt" ? "active" : ""}
