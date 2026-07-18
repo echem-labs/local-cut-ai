@@ -205,6 +205,36 @@ export function SceneCard({
         {!rendering && Number.isFinite(duration) && (
           <span className="dur-badge">{duration}s</span>
         )}
+        {/* failure ladder lives ON the dimmed frame (design mock): the
+            thumb stays the stage, the choices sit at its foot */}
+        {failed && (
+          <div className="fail-acts">
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                void regenerate(clip.node_id);
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <RotateCw size={11} strokeWidth={2} />
+                Try again
+              </span>
+              <small>new take</small>
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                select(clip.node_id);
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <SlidersHorizontal size={11} strokeWidth={2} />
+                Adjust the scene
+              </span>
+              <small>prompt · settings</small>
+            </button>
+          </div>
+        )}
         {!failed && (
           <div className="acts">
             <Tip label="Play" hint="in the monitor" shortcut="Space">
@@ -261,7 +291,16 @@ export function SceneCard({
       <div className="body">
         <div className="scene-line">
           <span className="scene-name">Scene {sceneNo}</span>
-          {Number.isFinite(duration) && <span className="scene-dur">{duration}s</span>}
+          {/* design mock: — while rendering/failed, ~4s while queued */}
+          <span className="scene-dur">
+            {rendering || failed
+              ? "—"
+              : clip.status === "queued" && Number.isFinite(duration)
+                ? `~${duration}s`
+                : Number.isFinite(duration)
+                  ? `${duration}s`
+                  : "—"}
+          </span>
         </div>
         {editingWords ? (
           <textarea
@@ -333,34 +372,6 @@ export function SceneCard({
             }}
           >
             ✕
-          </button>
-        </div>
-      )}
-      {failed && (
-        <div className="fail-acts">
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              void regenerate(clip.node_id);
-            }}
-          >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <RotateCw size={11} strokeWidth={2} />
-              Try again
-            </span>
-            <small>new take</small>
-          </button>
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              select(clip.node_id);
-            }}
-          >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <SlidersHorizontal size={11} strokeWidth={2} />
-              Adjust the scene
-            </span>
-            <small>prompt · settings</small>
           </button>
         </div>
       )}

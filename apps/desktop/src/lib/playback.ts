@@ -13,22 +13,31 @@ interface PlaybackState {
   /** Seconds into the whole cut / total cut length — transport readout. */
   elapsed: number;
   total: number;
+  /** Seconds into the current scene to jump to; the Monitor consumes it
+   * when seekNonce changes (works while paused — the frame updates). */
+  seekOffset: number;
+  seekNonce: number;
   play(sceneId: string, sequence?: boolean): void;
   pause(): void;
   stop(): void;
   tick(elapsed: number, total: number): void;
+  seek(sceneId: string, offset: number): void;
 }
 
-export const usePlayback = create<PlaybackState>((set) => ({
+export const usePlayback = create<PlaybackState>((set, get) => ({
   playing: false,
   sceneId: null,
   sequence: false,
   elapsed: 0,
   total: 0,
+  seekOffset: 0,
+  seekNonce: 0,
   play: (sceneId, sequence = false) => set({ playing: true, sceneId, sequence }),
   pause: () => set({ playing: false }),
   stop: () => set({ playing: false, sceneId: null, sequence: false, elapsed: 0 }),
   tick: (elapsed, total) => set({ elapsed, total }),
+  seek: (sceneId, offset) =>
+    set({ sceneId, seekOffset: Math.max(0, offset), seekNonce: get().seekNonce + 1 }),
 }));
 
 /** mm:ss.d readout, tabular by the mono font. */

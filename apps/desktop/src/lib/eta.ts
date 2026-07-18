@@ -25,8 +25,27 @@ interface RenderStart {
 const startedAt = new Map<string, RenderStart>();
 // Completed DRAFT clip render durations (seconds), newest last. Finals are
 // excluded: finalizeEta multiplies by FINAL_QUALITY_FACTOR, so a
-// final-speed sample would be double-counted.
-const clipSeconds: number[] = [];
+// final-speed sample would be double-counted. Persisted per machine so the
+// CTA estimate is there from the first board of a new session, not only
+// after this session's first render.
+const STATS_KEY = "localcut.renderStats.v1";
+const clipSeconds: number[] = (() => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STATS_KEY) ?? "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((n): n is number => Number.isFinite(n) && n > 0).slice(-20)
+      : [];
+  } catch {
+    return [];
+  }
+})();
+const saveStats = () => {
+  try {
+    localStorage.setItem(STATS_KEY, JSON.stringify(clipSeconds));
+  } catch {
+    /* storage full — the estimate degrades to session-only */
+  }
+};
 
 const isClip = (nodeId: string) => /\.clip\d*$/.test(nodeId);
 
@@ -59,6 +78,7 @@ export function recordBoard(projectId: string, board: Board): void {
         if (secs > 0.5) {
           clipSeconds.push(secs);
           if (clipSeconds.length > 20) clipSeconds.shift();
+          saveStats();
         }
       }
     }

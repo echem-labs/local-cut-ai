@@ -1,7 +1,9 @@
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { ChevronFirst, ChevronLast, Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { movedOrder, orderedScenes } from "../lib/order";
 import { formatTime, usePlayback } from "../lib/playback";
+import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
 import { PanelHelp } from "./Help";
 
@@ -18,20 +20,31 @@ const TRANSITIONS = [
  * header's overflow menu, not here. */
 export function TimelineStrip() {
   const { board, client, currentProject, selectedNode, select, applyTimeline } = useApp();
-  const { playing, sceneId, elapsed, play, pause } = usePlayback();
+  const { playing, sceneId, elapsed, play, pause, seek, tick } = usePlayback();
   const [dragged, setDragged] = useState<string | null>(null);
   const [pxPerSec, setPxPerSec] = useState(18);
-  const [openTransition, setOpenTransition] = useState<string | null>(null);
+  // Transition popover: which boundary is open + its fixed-position coords
+  // (measured from the diamond so panel overflow can never clip it).
+  const [openTransition, setOpenTransition] = useState<{
+    boundary: string;
+    left: number;
+    bottom: number;
+  } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Close the transition popover on outside click.
+  useOutsideClick(rootRef, openTransition !== null, () => setOpenTransition(null));
+
+  // The popover's coords were measured at open — close on anything that
+  // moves its anchor (window resize, timeline scroll).
   useEffect(() => {
     if (!openTransition) return;
-    const onDown = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpenTransition(null);
+    const close = () => setOpenTransition(null);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
     };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
   }, [openTransition]);
 
   if (!board || !currentProject || board.scenes.length === 0) return null;
@@ -66,12 +79,57 @@ export function TimelineStrip() {
     }
     return px;
   };
-  const playheadPx = sceneId !== null ? timeToPx(elapsed) : null;
+  // The playhead always reflects the current position — 0 before anything
+  // has played, live during playback, parked where playback left off.
+  const playheadPx = timeToPx(elapsed);
 
-  // Ruler ticks: 5s steps when zoomed in, 10s otherwise.
+  // Inverse of timeToPx: which moment in the cut a ruler pixel points at
+  // (diamond gaps snap to the boundary they sit on).
+  const pxToTime = (px: number): number => {
+    let acc = 0;
+    let tBefore = 0;
+    for (let i = 0; i < scenes.length; i++) {
+      if (px <= acc + blockWidths[i] || i === scenes.length - 1) {
+        const frac = Math.max(0, Math.min(1, (px - acc) / blockWidths[i]));
+        return tBefore + frac * durations[i];
+      }
+      acc += blockWidths[i] + DIAMOND_W;
+      tBefore += durations[i];
+    }
+    return totalDuration;
+  };
+
+  // Ruler graduation follows the zoom: labels every 10s (5s zoomed in),
+  // minor ticks every second when there's room for them.
   const tickStep = pxPerSec >= 24 ? 5 : 10;
+  const minorStep = pxPerSec >= 16 ? 1 : 5;
   const ticks: number[] = [];
   for (let t = 0; t <= totalDuration; t += tickStep) ticks.push(t);
+  const minorTicks: number[] = [];
+  for (let t = minorStep; t <= totalDuration; t += minorStep) {
+    if (t % tickStep !== 0) minorTicks.push(t);
+  }
+
+  // Jump anywhere in the cut: land in the scene containing t, seeking its
+  // clip to the in-scene offset. Works while paused (the frame updates).
+  const seekGlobal = (t: number) => {
+    const clamped = Math.max(0, Math.min(totalDuration - 0.01, t));
+    let before = 0;
+    for (let i = 0; i < scenes.length; i++) {
+      if (clamped < before + durations[i] || i === scenes.length - 1) {
+        select(scenes[i].clip.node_id);
+        seek(scenes[i].scene_id, clamped - before);
+        tick(clamped, totalDuration);
+        return;
+      }
+      before += durations[i];
+    }
+  };
+
+  const scrubRuler = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    seekGlobal(pxToTime(event.clientX - rect.left));
+  };
 
   const shownIndex = sceneId ? order.indexOf(sceneId) : -1;
 
@@ -105,6 +163,9 @@ export function TimelineStrip() {
     <div className="timeline-dock" ref={rootRef} aria-label="Timeline">
       <div className="tl-bar">
         <div className="tl-transport">
+          <button aria-label="Go to start" title="Go to start" onClick={() => seekGlobal(0)}>
+            <ChevronFirst size={14} strokeWidth={2} />
+          </button>
           <button aria-label="Previous scene" onClick={() => step(-1)}>
             <SkipBack size={13} strokeWidth={2} />
           </button>
@@ -118,6 +179,13 @@ export function TimelineStrip() {
           </button>
           <button aria-label="Next scene" onClick={() => step(1)}>
             <SkipForward size={13} strokeWidth={2} />
+          </button>
+          <button
+            aria-label="Go to end"
+            title="Go to end"
+            onClick={() => seekGlobal(totalDuration)}
+          >
+            <ChevronLast size={14} strokeWidth={2} />
           </button>
           <span className="tl-time">
             {formatTime(elapsed)} / {formatTime(totalDuration)}
@@ -139,7 +207,39 @@ export function TimelineStrip() {
       </div>
 
       <div className="tl-scroll">
-        <div className="tl-ruler" style={{ width: totalWidth }} aria-hidden="true">
+        {/* the ruler is also the seek bar: click or drag to jump the cut */}
+        <div
+          className="tl-ruler"
+          style={{ width: totalWidth }}
+          role="slider"
+          tabIndex={0}
+          aria-label="Seek"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(totalDuration)}
+          aria-valuenow={Math.round(elapsed)}
+          title="Click or drag to jump"
+          onPointerDown={(event) => {
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            } catch {
+              /* inactive pointer (synthetic events) — click-seek still works */
+            }
+            scrubRuler(event);
+          }}
+          onPointerMove={(event) => {
+            if (event.buttons & 1) scrubRuler(event);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              event.stopPropagation();
+              seekGlobal(elapsed + (event.key === "ArrowRight" ? 1 : -1));
+            }
+          }}
+        >
+          {minorTicks.map((t) => (
+            <span key={`m${t}`} className="minor" style={{ left: timeToPx(t) }} />
+          ))}
           {ticks.map((t) => (
             <span key={t} style={{ left: timeToPx(t) }}>
               {t}s
@@ -147,9 +247,7 @@ export function TimelineStrip() {
           ))}
         </div>
         <div className="tl-blocks" style={{ position: "relative" }}>
-          {playheadPx !== null && (
-            <div className="tl-playhead" style={{ left: playheadPx }} aria-hidden="true" />
-          )}
+          <div className="tl-playhead" style={{ left: playheadPx }} aria-hidden="true" />
           {scenes.map((scene, index) => {
             const clip = scene.clip;
             const stillHash = scene.keyframe?.artifact_hash ?? null;
@@ -166,12 +264,34 @@ export function TimelineStrip() {
                       className={`tl-diamond${boundaryKind !== "cut" ? " on" : ""}`}
                       title={`Scene ${boundary.replace(/^s/, "")} → ${sceneNo}: ${boundaryKind}. Click to change.`}
                       aria-label={`Transition into scene ${sceneNo}: ${boundaryKind}`}
-                      onClick={() =>
-                        setOpenTransition(openTransition === boundary ? null : boundary)
-                      }
+                      onClick={(event) => {
+                        if (openTransition?.boundary === boundary) {
+                          setOpenTransition(null);
+                          return;
+                        }
+                        // Fixed-position above the diamond — the timeline
+                        // panel's overflow can never cut it off.
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const left = Math.max(
+                          8,
+                          Math.min(
+                            rect.left + rect.width / 2 - 90,
+                            window.innerWidth - 188,
+                          ),
+                        );
+                        setOpenTransition({
+                          boundary,
+                          left,
+                          bottom: window.innerHeight - rect.top + 8,
+                        });
+                      }}
                     />
-                    {openTransition === boundary && (
-                      <div className="transition-pop" role="menu">
+                    {openTransition?.boundary === boundary && (
+                      <div
+                        className="transition-pop"
+                        role="menu"
+                        style={{ left: openTransition.left, bottom: openTransition.bottom }}
+                      >
                         {TRANSITIONS.map((option) => (
                           <button
                             key={option.id}

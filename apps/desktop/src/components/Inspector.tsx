@@ -352,25 +352,6 @@ export function Inspector() {
             </div>
           )}
 
-          <button className="btn-outline" onClick={apply} disabled={pinned}>
-            Apply &amp; regenerate
-          </button>
-          <button
-            className="btn-ghost"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-            }}
-            onClick={() => void regenerate(activeNode.node_id)}
-            disabled={pinned}
-            title={TIPS.newTake}
-          >
-            <RotateCw size={12} strokeWidth={1.8} />
-            New take
-          </button>
-
           <div>
             <button
               className="adv-toggle"
@@ -530,6 +511,26 @@ export function Inspector() {
               </div>
             )}
           </div>
+
+          {/* commits sit below Advanced (review 3 §3C order) */}
+          <button className="btn-outline" onClick={apply} disabled={pinned}>
+            Apply &amp; regenerate
+          </button>
+          <button
+            className="btn-ghost"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onClick={() => void regenerate(activeNode.node_id)}
+            disabled={pinned}
+            title={TIPS.newTake}
+          >
+            <RotateCw size={12} strokeWidth={1.8} />
+            New take
+          </button>
 
           {activeNode.error && <div className="banner error">{activeNode.error}</div>}
         </>

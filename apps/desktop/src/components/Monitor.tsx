@@ -1,5 +1,6 @@
 import { Pause, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { orderedScenes } from "../lib/order";
 import { formatTime, usePlayback } from "../lib/playback";
 import { useApp } from "../store";
@@ -11,7 +12,8 @@ import { useApp } from "../store";
  * Space is handled at the workspace level, not here. */
 export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }) {
   const { board, client, currentProject, selectedNode } = useApp();
-  const { playing, sceneId, sequence, elapsed, total, play, pause, stop, tick } = usePlayback();
+  const { playing, sceneId, sequence, elapsed, seekOffset, seekNonce, play, pause, stop, tick, seek } =
+    usePlayback();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoBroken, setVideoBroken] = useState(false);
 
@@ -70,16 +72,37 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
     }
   }, [playing, sceneId, shown?.scene_id, videoBroken, clipUrl]);
 
+  // A seek jumps the <video> to the requested in-scene offset — works
+  // while paused too (the displayed frame updates).
+  useEffect(() => {
+    if (seekNonce === 0) return;
+    const video = videoRef.current;
+    if (!video || videoBroken) return;
+    const apply = () => {
+      video.currentTime = Math.min(seekOffset, video.duration || seekOffset);
+    };
+    if (video.readyState >= 1) apply();
+    else video.addEventListener("loadedmetadata", apply, { once: true });
+    return () => video.removeEventListener("loadedmetadata", apply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seekNonce]);
+
   // Fallback playback: no playable video → advance on the scene's duration
-  // so the assembled-draft preview still works against still images.
+  // so the assembled-draft preview still works against still images. The
+  // timer resumes from the store's elapsed, so pause/resume and seeks keep
+  // their place instead of restarting the scene.
   useEffect(() => {
     if (!playing || sceneId === null || shownIndex < 0) return;
     const usingVideo = Boolean(clipUrl) && !videoBroken;
     if (usingVideo) return;
     const duration = durations[shownIndex];
+    // Resume from elapsed only when it falls inside this scene's window —
+    // a card click carries the previous playback's global elapsed.
+    const within = usePlayback.getState().elapsed - offsetBefore;
+    const base = within >= 0 && within < duration ? within : 0;
     const started = performance.now();
     const timer = setInterval(() => {
-      const inScene = (performance.now() - started) / 1000;
+      const inScene = base + (performance.now() - started) / 1000;
       if (inScene >= duration) {
         clearInterval(timer);
         advance();
@@ -89,7 +112,7 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
     }, 120);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, sceneId, shownIndex, videoBroken, clipUrl]);
+  }, [playing, sceneId, shownIndex, videoBroken, clipUrl, seekNonce]);
 
   if (!shown) return null;
 
@@ -98,6 +121,27 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
   const toggle = () => {
     if (playing) pause();
     else if (shown) play(shown.scene_id, sceneId !== null ? sequence : false);
+  };
+
+  // Jump anywhere in the assembled cut: find the scene containing t and
+  // seek its clip to the in-scene offset.
+  const seekGlobal = (t: number) => {
+    const clamped = Math.max(0, Math.min(totalDuration - 0.01, t));
+    let before = 0;
+    for (let i = 0; i < scenes.length; i++) {
+      if (clamped < before + durations[i] || i === scenes.length - 1) {
+        seek(scenes[i].scene_id, clamped - before);
+        tick(clamped, totalDuration);
+        return;
+      }
+      before += durations[i];
+    }
+  };
+
+  const scrubTo = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    seekGlobal(frac * totalDuration);
   };
 
   return (
@@ -143,10 +187,30 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
       <div className="monitor-bar">
         <div
           className="monitor-scrub"
-          role="progressbar"
+          role="slider"
+          tabIndex={0}
+          aria-label="Playback position"
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(progress * 100)}
+          onPointerDown={(event) => {
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId);
+            } catch {
+              /* inactive pointer (synthetic events) — click-seek still works */
+            }
+            scrubTo(event);
+          }}
+          onPointerMove={(event) => {
+            if (event.buttons & 1) scrubTo(event);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+              event.preventDefault();
+              event.stopPropagation();
+              seekGlobal(elapsed + (event.key === "ArrowRight" ? 1 : -1));
+            }
+          }}
         >
           <span style={{ width: `${progress * 100}%` }} />
         </div>

@@ -1,7 +1,17 @@
-import { Download, LayoutGrid, MonitorPlay, MoreHorizontal, Sparkles } from "lucide-react";
+import {
+  Download,
+  Grid2x2,
+  Grid3x3,
+  LayoutGrid,
+  MonitorPlay,
+  MoreHorizontal,
+  Sparkles,
+  Square,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
+import { Dropdown } from "../components/Dropdown";
 import { ToolSession } from "../components/ToolSession";
 import { Workspace } from "../components/Workspace";
 import { TIPS } from "../help/terms";
@@ -421,18 +431,16 @@ export function Project() {
                 Player
               </button>
             </div>
-            <div className="seg-toggle density" role="group" aria-label="Card size">
-              {(["s", "m", "l"] as const).map((value) => (
-                <button
-                  key={value}
-                  className={density === value ? "active" : ""}
-                  onClick={() => setDensity(value)}
-                  title={`${value.toUpperCase()} cards`}
-                >
-                  {value.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            <Dropdown
+              value={density}
+              ariaLabel="Scene tile size"
+              options={[
+                { value: "s", label: "Small", icon: Grid3x3 },
+                { value: "m", label: "Medium", icon: Grid2x2 },
+                { value: "l", label: "Large", icon: Square },
+              ]}
+              onChange={setDensity}
+            />
           </>
         )}
         <BoardMenu />
