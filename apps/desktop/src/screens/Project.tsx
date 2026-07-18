@@ -1,21 +1,16 @@
-import { Download, MoreHorizontal, Sparkles } from "lucide-react";
+import { Download, LayoutGrid, MonitorPlay, MoreHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
-import { Composer } from "../components/Composer";
-import { Inspector } from "../components/Inspector";
-import { SceneCard } from "../components/SceneCard";
-import { TimelineStrip } from "../components/TimelineStrip";
 import { ToolSession } from "../components/ToolSession";
+import { Workspace } from "../components/Workspace";
 import { TIPS } from "../help/terms";
-import { movedOrder, orderedScenes } from "../lib/order";
+import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
+import { useWorkspace } from "../lib/workspace";
 import { useApp } from "../store";
 
 const READY = ["draft", "final", "pinned"];
-
-type Density = "s" | "m" | "l";
-const DENSITY_KEY = "localcut.board.density";
 
 /** One pipeline stage in the header: done ✓ · working ● · failed ! · —. */
 function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" | "off" {
@@ -77,10 +72,11 @@ function PipelineIntro({
   );
 }
 
-/** Header overflow menu (⋯): the settings the old strip hid past its
- * scroll fold — audio behavior, caption mode, pro-editor handoff. */
+/** Header overflow menu (⋯): audio behavior, caption mode, pro-editor
+ * handoff, and layout reset. */
 function BoardMenu() {
   const { board, client, currentProject, applyTimeline, applyExport } = useApp();
+  const resetLayout = useWorkspace((state) => state.resetLayout);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -106,7 +102,7 @@ function BoardMenu() {
         className="icon-btn"
         aria-label="Project options"
         aria-expanded={open}
-        title="Audio, captions & pro-editor handoff"
+        title="Audio, captions, handoff & layout"
         onClick={() => setOpen(!open)}
       >
         <MoreHorizontal size={15} strokeWidth={1.8} />
@@ -172,21 +168,33 @@ function BoardMenu() {
               </a>
             </>
           )}
+          <div className="menu-label">Workspace</div>
+          <button
+            role="menuitem"
+            title="Restore this view's default panel layout"
+            onClick={() => {
+              resetLayout();
+              setOpen(false);
+            }}
+          >
+            <span className="check" />
+            Reset layout
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-/** Project window: scene board over a timeline strip; all modes land
- * here after generation. Tool sessions get a focused single panel. */
+/** Project window: header chrome over the dockable workspace (board,
+ * monitor, details, timeline). Tool sessions get a focused single panel. */
 export function Project() {
-  const { currentProject, board, refreshBoard, finalize, client, applyTimeline } = useApp();
+  const { currentProject, board, refreshBoard, finalize, client } = useApp();
+  const view = useWorkspace((state) => state.view);
+  const setView = useWorkspace((state) => state.setView);
+  const density = useWorkspace((state) => state.density);
+  const setDensity = useWorkspace((state) => state.setDensity);
   const [finalizing, setFinalizing] = useState(false);
-  const [dragged, setDragged] = useState<string | null>(null);
-  const [density, setDensity] = useState<Density>(
-    () => (localStorage.getItem(DENSITY_KEY) as Density) ?? "m",
-  );
 
   useEffect(() => {
     void refreshBoard();
@@ -233,7 +241,7 @@ export function Project() {
 
   if (currentProject.mode.startsWith("tool:")) {
     return (
-      <div>
+      <div className="tool-shell">
         <div className="board-header">
           <h1>{currentProject.title}</h1>
         </div>
@@ -243,10 +251,8 @@ export function Project() {
   }
 
   const scenes = orderedScenes(board);
-  const order = scenes.map((scene) => scene.scene_id);
 
-  // The header's pipeline indicator: the project's story arc at a glance,
-  // replacing both the status-pill roll-up and the raw aux dump.
+  // The header's pipeline indicator: the project's story arc at a glance.
   const clipDone = scenes.filter((scene) => READY.includes(scene.clip.status)).length;
   const clipFailed = scenes.filter((scene) => scene.clip.status === "failed").length;
   const clipsRendering = scenes.some(
@@ -292,11 +298,6 @@ export function Project() {
     { label: "Export", state: stageOf(exportNode) },
   ];
 
-  const setDensityPersisted = (value: Density) => {
-    setDensity(value);
-    localStorage.setItem(DENSITY_KEY, value);
-  };
-
   // The screen's ONE primary action, staged per doc 09 (Review → Create
   // final video → Download). Suppressed while a beginner checkpoint banner
   // owns the accent.
@@ -320,18 +321,8 @@ export function Project() {
     }
   };
 
-  const dropAt = (targetIndex: number, after: boolean) => {
-    if (!dragged) return;
-    const from = order.indexOf(dragged);
-    let to = after ? targetIndex + 1 : targetIndex;
-    if (from < to) to -= 1;
-    const next = movedOrder(order, from, to);
-    if (next) applyTimeline({ order: next });
-    setDragged(null);
-  };
-
   return (
-    <div>
+    <div className="project-shell">
       <div className="board-header">
         <h1>{currentProject.title}</h1>
         <div className="pipeline" role="status" aria-label="Project progress">
@@ -344,18 +335,38 @@ export function Project() {
           ))}
         </div>
         {board.scenes.length > 0 && (
-          <div className="seg-toggle density" role="group" aria-label="Card size">
-            {(["s", "m", "l"] as const).map((value) => (
+          <>
+            <div className="seg-toggle view-switch" role="group" aria-label="Workspace view">
               <button
-                key={value}
-                className={density === value ? "active" : ""}
-                onClick={() => setDensityPersisted(value)}
-                title={`${value.toUpperCase()} cards`}
+                className={view === "storyboard" ? "active" : ""}
+                onClick={() => setView("storyboard")}
+                title="Storyboard view — the board leads, monitor in the details panel"
               >
-                {value.toUpperCase()}
+                <LayoutGrid size={12} strokeWidth={1.8} />
+                Storyboard
               </button>
-            ))}
-          </div>
+              <button
+                className={view === "player" ? "active" : ""}
+                onClick={() => setView("player")}
+                title="Player view — big monitor beside the board"
+              >
+                <MonitorPlay size={12} strokeWidth={1.8} />
+                Player
+              </button>
+            </div>
+            <div className="seg-toggle density" role="group" aria-label="Card size">
+              {(["s", "m", "l"] as const).map((value) => (
+                <button
+                  key={value}
+                  className={density === value ? "active" : ""}
+                  onClick={() => setDensity(value)}
+                  title={`${value.toUpperCase()} cards`}
+                >
+                  {value.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </>
         )}
         <BoardMenu />
         {!checkpointPending &&
@@ -374,7 +385,7 @@ export function Project() {
               className="btn-primary"
               disabled={finalizing}
               onClick={() => void runFinalize()}
-              title="Re-renders any draft scenes at full quality, then builds your MP4"
+              title={TIPS.createFinal}
             >
               <Sparkles size={14} strokeWidth={2} />
               {finalizing ? "Creating final video…" : "Create final video"}
@@ -393,25 +404,9 @@ export function Project() {
       ) : (
         <>
           <PipelineIntro stages={stages} />
-          <div className={`scene-grid density-${density}`}>
-            {scenes.map((scene, index) => (
-              <SceneCard
-                key={scene.scene_id}
-                scene={scene}
-                dragging={dragged === scene.scene_id}
-                onDragStart={() => setDragged(scene.scene_id)}
-                onDragEnd={() => setDragged(null)}
-                onDropSide={(after) => dropAt(index, after)}
-              />
-            ))}
-          </div>
-          <Composer />
+          <Workspace />
         </>
       )}
-
-      <TimelineStrip />
-
-      <Inspector />
     </div>
   );
 }

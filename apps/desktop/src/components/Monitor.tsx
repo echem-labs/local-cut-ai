@@ -9,7 +9,7 @@ import { useApp } from "../store";
  * (draft not rendered yet, or a mock artifact), in which case sequence
  * playback advances on a timer so the draft preview still sweeps the cut.
  * Space is handled at the workspace level, not here. */
-export function Monitor() {
+export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }) {
   const { board, client, currentProject, selectedNode } = useApp();
   const { playing, sceneId, sequence, elapsed, total, play, pause, stop, tick } = usePlayback();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -26,9 +26,11 @@ export function Monitor() {
   );
   const totalDuration = durations.reduce((sum, d) => sum + d, 0);
 
-  // The monitor shows the playback scene, else the selected scene.
+  // The monitor shows the playback scene, else the selected scene; a
+  // standalone panel falls back to the first scene so it's never empty.
   const selectedSceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
-  const shownId = sceneId ?? selectedSceneId;
+  const shownId =
+    sceneId ?? selectedSceneId ?? (variant === "panel" ? (scenes[0]?.scene_id ?? null) : null);
   const shownIndex = scenes.findIndex((scene) => scene.scene_id === shownId);
   const shown = shownIndex >= 0 ? scenes[shownIndex] : null;
   const offsetBefore = durations.slice(0, Math.max(0, shownIndex)).reduce((s, d) => s + d, 0);
@@ -99,7 +101,7 @@ export function Monitor() {
   };
 
   return (
-    <div className="monitor" aria-label="Preview monitor">
+    <div className={`monitor${variant === "panel" ? " in-panel" : ""}`} aria-label="Preview monitor">
       <div className="monitor-screen" onClick={toggle} role="button" tabIndex={-1}>
         {clipUrl && !videoBroken ? (
           <video

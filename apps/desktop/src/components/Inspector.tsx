@@ -2,6 +2,7 @@ import { ChevronRight, Info, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle, TIPS } from "../help/terms";
+import { useWorkspace } from "../lib/workspace";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
 import { Tip } from "./Tooltip";
@@ -37,6 +38,7 @@ export function Inspector() {
     conditionScene,
     applyClonedVoice,
   } = useApp();
+  const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
   const [advanced, setAdvanced] = useState(false);
   const [cloneConsent, setCloneConsent] = useState(false);
@@ -204,7 +206,8 @@ export function Inspector() {
 
   return (
     <aside className="inspector" aria-label="Inspector">
-      {scene && <Monitor />}
+      {/* one-monitor rule: the Player view's big monitor owns playback */}
+      {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <h2 style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
           {inspectorTitle(selectedNode)}

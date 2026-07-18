@@ -16,6 +16,7 @@
     "package:dir": "npm run build && electron-builder --win --dir"
   },
   "dependencies": {
+    "dockview-react": "^7.0.2",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

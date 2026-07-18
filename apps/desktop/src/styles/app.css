@@ -184,6 +184,51 @@ textarea {
   color: var(--text-tertiary);
 }
 
+/* activity bar: inside a project the rail collapses to 48px icons —
+ * VS Code's answer to "where does the navbar go" */
+.rail.compact {
+  width: 48px;
+  padding: var(--space-3) 7px;
+  align-items: stretch;
+}
+
+.rail.compact .rail-label,
+.rail.compact .engine-detail,
+.rail.compact .group-label {
+  display: none;
+}
+
+.rail.compact button {
+  justify-content: center;
+  padding: var(--space-2) 0;
+  gap: 0;
+}
+
+.rail.compact button.active::before {
+  left: -7px;
+}
+
+.rail.compact .rail-mark {
+  padding: var(--space-1) 0 var(--space-3);
+}
+
+.rail.compact .engine-chip {
+  min-height: 32px;
+  justify-content: center;
+  border: none;
+  background: none;
+}
+
+.rail.compact .tip-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.rail-mark {
+  display: flex;
+  justify-content: center;
+}
+
 /* bottom cluster: engine chip, then app-level actions under it */
 .rail-bottom {
   margin-top: auto;
@@ -254,13 +299,117 @@ textarea {
   overflow-y: auto;
   padding: var(--space-8);
   position: relative;
-  transition: margin-right var(--motion-slow);
 }
 
-/* inspector open: the content column ends where the drawer begins, so
- * its scrollbar and last card column stay visible */
-.content.with-inspector {
-  margin-right: 320px;
+/* project workspace: the content stops scrolling — panels scroll inside */
+.content.project-mode {
+  overflow: hidden;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+}
+
+.project-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-shell .board-header {
+  margin-bottom: var(--space-3);
+}
+
+.workspace-root {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
+.workspace-root > * {
+  height: 100%;
+}
+
+/* board panel: grid scrolls, composer is fixed chrome at its foot */
+.board-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.board-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+}
+
+.board-composer {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.board-composer .composer-wrap {
+  margin-top: 0;
+  max-width: none;
+}
+
+.monitor-panel {
+  height: 100%;
+  background: #0a0b0e;
+}
+
+.timeline-panel {
+  height: 100%;
+  overflow: hidden;
+}
+
+.timeline-panel .timeline-dock {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-panel .tl-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+/* dockview: map the library's CSS variables onto our tokens — dark and
+ * light theming falls out of data-theme for free */
+.dockview-theme-localcut {
+  --dv-group-view-background-color: var(--surface-0);
+  --dv-background-color: var(--surface-0);
+  --dv-tabs-and-actions-container-background-color: var(--surface-1);
+  --dv-tabs-and-actions-container-height: 30px;
+  --dv-tabs-and-actions-container-font-size: 12px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface-0);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--surface-1);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface-0);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--surface-1);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-tertiary);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-tertiary);
+  --dv-tab-divider-color: var(--border);
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-drag-over-background-color: var(--accent-muted);
+  --dv-drag-over-border-color: var(--accent);
+  --dv-tabs-container-scrollbar-color: var(--border-hi);
+  --dv-icon-hover-background-color: var(--surface-2);
+  --dv-active-sash-color: var(--accent);
+  --dv-paneview-active-outline-color: var(--accent);
+  --dv-tab-close-icon-color: var(--text-tertiary);
+  --dv-floating-box-shadow: var(--shadow-2);
 }
 
 /* ---- buttons ---- */
@@ -1203,6 +1352,21 @@ textarea {
   margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-4)) 0;
   border-bottom: 1px solid var(--border);
   background: #0a0b0e;
+}
+
+/* standalone monitor panel (Player view): fill the panel, not 16:9-locked */
+.monitor.in-panel {
+  margin: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-bottom: none;
+}
+
+.monitor.in-panel .monitor-screen {
+  flex: 1;
+  aspect-ratio: auto;
+  min-height: 0;
 }
 
 .monitor-screen {
@@ -2162,21 +2326,17 @@ textarea {
   }
 }
 
-/* ---- inspector drawer ---- */
+/* ---- inspector (a dockview panel — in-flow, resizable, no overlay) ---- */
 .inspector {
-  position: fixed;
-  top: var(--titlebar-h);
-  right: 0;
-  bottom: 0;
-  width: 320px;
+  width: 100%;
+  height: 100%;
   background: var(--surface-1);
-  border-left: 1px solid var(--border);
   padding: var(--space-6) var(--space-4);
-  z-index: var(--z-drawer);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .inspector h2 {

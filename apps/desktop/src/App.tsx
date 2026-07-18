@@ -1,12 +1,9 @@
 import {
-  AudioLines,
-  FolderOpen,
   Home as HomeIcon,
   LayoutGrid,
   Moon,
   Settings as SettingsIcon,
   Sun,
-  Upload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
@@ -33,7 +30,6 @@ export default function App() {
     engineError,
     firstRunDone,
     settingsOpen,
-    selectedNode,
     system,
     remoteEngine,
   } = useApp();
@@ -71,6 +67,11 @@ export default function App() {
       ? "not connected"
       : "connecting…";
 
+  // Inside a project the rail collapses to a 48px icon activity bar —
+  // chrome recedes; the workspace owns the width. Full rail on Home.
+  const inProject = Boolean(currentProject);
+  const workspaceMode = currentProject ? !currentProject.mode.startsWith("tool:") : false;
+
   return (
     <div className="app">
       {/* Frameless window: this slim bar is the drag region; the native
@@ -80,38 +81,39 @@ export default function App() {
         <span className="tb-name">LocalCut AI</span>
         {currentProject && <span className="tb-project">{currentProject.title}</span>}
       </header>
-      <nav className="rail" aria-label="Navigation">
-        <button
-          className={firstRunDone && !currentProject && !settingsOpen ? "active" : ""}
-          disabled={!firstRunDone}
-          onClick={() => {
-            closeProject();
-            closeSettings();
-          }}
-        >
-          <HomeIcon {...ICON} />
-          Home
-        </button>
-        <div className="group-label">Project</div>
-        <button className={currentProject ? "active" : ""} disabled={!currentProject}>
-          <LayoutGrid {...ICON} />
-          Scenes
-        </button>
-        <button disabled title="Coming in a later phase">
-          <AudioLines {...ICON} />
-          Audio
-          <span className="soon">soon</span>
-        </button>
-        <button disabled title="Coming in a later phase">
-          <FolderOpen {...ICON} />
-          Assets
-          <span className="soon">soon</span>
-        </button>
-        <button disabled title="Coming in a later phase">
-          <Upload {...ICON} />
-          Export
-          <span className="soon">soon</span>
-        </button>
+      <nav className={`rail${inProject ? " compact" : ""}`} aria-label="Navigation">
+        {inProject ? (
+          <Tip label="Home" hint="close the project" side="top">
+            <button
+              className="rail-mark"
+              onClick={() => {
+                closeProject();
+                closeSettings();
+              }}
+              aria-label="Home"
+            >
+              <BrandMark size={20} />
+            </button>
+          </Tip>
+        ) : (
+          <button
+            className={firstRunDone && !currentProject && !settingsOpen ? "active" : ""}
+            disabled={!firstRunDone}
+            onClick={() => {
+              closeProject();
+              closeSettings();
+            }}
+          >
+            <HomeIcon {...ICON} />
+            <span className="rail-label">Home</span>
+          </button>
+        )}
+        {inProject && (
+          <button className="active" title="Scenes" aria-label="Scenes">
+            <LayoutGrid {...ICON} />
+            <span className="rail-label">Scenes</span>
+          </button>
+        )}
         <div className="rail-bottom">
           <Tip label="Engine status" hint="click for engine settings" side="top">
             <button
@@ -122,7 +124,7 @@ export default function App() {
               aria-label="Engine status — open engine settings"
             >
               <span className={`pulse${engineError ? " err" : ""}`} />
-              <span style={{ minWidth: 0 }}>
+              <span className="engine-detail" style={{ minWidth: 0 }}>
                 <b>{remoteEngine ? "Remote engine" : "Local engine"}</b>
                 <small>{engineDetail}</small>
               </span>
@@ -134,27 +136,24 @@ export default function App() {
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
             {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-            {theme === "dark" ? "Light mode" : "Dark mode"}
+            <span className="rail-label">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
           </button>
           <button
             className={settingsOpen && !currentProject ? "active" : ""}
             disabled={!firstRunDone}
+            title="Settings"
             onClick={() => {
               closeProject();
               openSettings("general");
             }}
           >
             <SettingsIcon {...ICON} />
-            Settings
+            <span className="rail-label">Settings</span>
           </button>
-          <HelpMenu />
+          <HelpMenu compact={inProject} />
         </div>
       </nav>
-      {/* The inspector drawer is fixed; the content yields its width so
-          nothing (including the scrollbar) hides behind it. */}
-      <main
-        className={`content${currentProject && selectedNode ? " with-inspector" : ""}`}
-      >
+      <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
         {screen}
       </main>
