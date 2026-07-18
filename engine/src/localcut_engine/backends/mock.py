@@ -7,7 +7,11 @@ all exercised for real.
 
 from __future__ import annotations
 
+import colorsys
+import hashlib
 import json
+import struct
+import zlib
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT
@@ -28,11 +32,51 @@ _SUFFIX = {
     NodeKind.THUMBNAIL: ".png",
 }
 
-# Minimal valid 1x1 dark PNG so image artifacts open in a viewer.
-_PNG_1PX = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108020000009077"
-    "53de0000000c4944415408d763606060000000040001a3612bf80000000049"
-    "454e44ae426082"
+def _png_chunk(tag: bytes, data: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(data))
+        + tag
+        + data
+        + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    )
+
+
+def _slate_png(node_id: str, seed: int, width: int = 320, height: int = 180) -> bytes:
+    """A deep-hue gradient slate whose color is stable per (node, seed) —
+    the mock board reads as distinct content instead of a black void, and
+    a new take visibly changes the card."""
+    digest = hashlib.sha256(f"{node_id}:{seed}".encode()).digest()
+    hue = digest[0] / 255
+    r, g, b = colorsys.hsv_to_rgb(hue, 0.45, 0.34)
+    rows = bytearray()
+    for y in range(height):
+        shade = 1.0 - 0.55 * y / height
+        rows.append(0)  # scanline filter: none
+        rows += bytes(
+            (round(r * 255 * shade), round(g * 255 * shade), round(b * 255 * shade))
+        ) * width
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(bytes(rows), 6))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+# Distinct per-scene beats — a board of identical filler sentences reads as
+# lorem ipsum and hides real layout problems (design review 3).
+_NARRATION_BEATS = (
+    "It starts with a question most people never think to ask.",
+    "The first clue hides in plain sight, easy to miss.",
+    "Zoom in, and the picture changes completely.",
+    "Here the story takes its first real turn.",
+    "The numbers behind this are stranger than they look.",
+    "Almost nobody expects what happens next.",
+    "One small detail ties everything together.",
+    "Step back, and the whole pattern becomes visible.",
+    "This is the part everyone remembers afterwards.",
+    "And that is why it matters more than you'd think.",
 )
 
 
@@ -42,7 +86,7 @@ def mock_screenplay(prompt: str, target_duration_s: int, aspect: str, seed: int)
         Scene(
             id=f"s{i + 1}",
             duration_s=round(target_duration_s / scene_count, 1),
-            narration=f"Beat {i + 1} of the story about {prompt[:60]}.",
+            narration=_NARRATION_BEATS[i % len(_NARRATION_BEATS)],
             visual=f"scene {i + 1}: {prompt[:60]}, establishing shot, variation {seed}",
             motion="slow push-in" if i % 2 == 0 else "gentle pan",
             onscreen_text=None if i else prompt[:24].upper(),
@@ -93,7 +137,7 @@ class MockBackend(ExecutionBackend):
             )
             out.write_text(screenplay.model_dump_json(indent=2))
         elif spec.kind in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
-            out.write_bytes(_PNG_1PX)
+            out.write_bytes(_slate_png(spec.node_id, spec.seed))
         elif spec.kind in (NodeKind.TIMELINE, NodeKind.CAPTIONS):
             out.write_text(
                 json.dumps({"node": spec.node_id, "inputs": spec.input_hashes}, indent=2)

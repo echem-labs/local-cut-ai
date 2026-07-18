@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { NodeState } from "../api/types";
+import { movedOrder, orderedScenes } from "../lib/order";
 import { useApp } from "../store";
 import { StatusChip, StatusRing } from "./StatusRing";
 
@@ -25,19 +26,7 @@ export function TimelineStrip() {
   const timeline: NodeState | undefined = board.aux.timeline;
   const exportNode: NodeState | undefined = board.aux.export;
 
-  // Timeline order wins; scenes it doesn't know about (or a missing param)
-  // fall back to board order.
-  const orderParam = timeline?.params.order;
-  const known = Array.isArray(orderParam)
-    ? // Dedup: a malformed server order with a repeated id would otherwise
-      // render two chips for one scene (colliding React keys) and indexOf
-      // would always resolve to the first, moving the wrong one.
-      [...new Set((orderParam as string[]).filter((id) => scenes.has(id)))]
-    : [];
-  const order = [
-    ...known,
-    ...board.scenes.map((scene) => scene.scene_id).filter((id) => !known.includes(id)),
-  ];
+  const order = orderedScenes(board).map((scene) => scene.scene_id);
   const transitions = (timeline?.params.transitions ?? {}) as Record<string, string>;
   const captions = String(exportNode?.params.captions ?? "burn");
   const ducking = timeline?.params.ducking !== false; // engine default: on
@@ -47,11 +36,8 @@ export function TimelineStrip() {
   );
 
   const move = (from: number, to: number) => {
-    if (to < 0 || to >= order.length || from === to) return;
-    const next = [...order];
-    const [id] = next.splice(from, 1);
-    next.splice(to, 0, id);
-    applyTimeline({ order: next });
+    const next = movedOrder(order, from, to);
+    if (next) applyTimeline({ order: next });
   };
 
   const cycleTransition = (sceneId: string) => {
