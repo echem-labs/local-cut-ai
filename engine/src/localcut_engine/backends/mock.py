@@ -65,9 +65,10 @@ def _slate_png(node_id: str, seed: int, width: int = 320, height: int = 180) -> 
 
 
 # Distinct per-scene beats — a board of identical filler sentences reads as
-# lorem ipsum and hides real layout problems (design review 3).
+# lorem ipsum and hides real layout problems (design review 3). The first
+# beat is the hook and carries the prompt, so a script re-run with a new
+# prompt visibly (and testably) lands in the scene nodes.
 _NARRATION_BEATS = (
-    "It starts with a question most people never think to ask.",
     "The first clue hides in plain sight, easy to miss.",
     "Zoom in, and the picture changes completely.",
     "Here the story takes its first real turn.",
@@ -86,7 +87,11 @@ def mock_screenplay(prompt: str, target_duration_s: int, aspect: str, seed: int)
         Scene(
             id=f"s{i + 1}",
             duration_s=round(target_duration_s / scene_count, 1),
-            narration=_NARRATION_BEATS[i % len(_NARRATION_BEATS)],
+            narration=(
+                f"{prompt[:60]} — it starts with a question most people never ask."
+                if i == 0
+                else _NARRATION_BEATS[(i - 1) % len(_NARRATION_BEATS)]
+            ),
             visual=f"scene {i + 1}: {prompt[:60]}, establishing shot, variation {seed}",
             motion="slow push-in" if i % 2 == 0 else "gentle pan",
             onscreen_text=None if i else prompt[:24].upper(),
