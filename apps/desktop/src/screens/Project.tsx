@@ -2,7 +2,7 @@ import { Download, MoreHorizontal, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
-import { EditPrompt } from "../components/EditPrompt";
+import { Composer } from "../components/Composer";
 import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
 import { TimelineStrip } from "../components/TimelineStrip";
@@ -28,6 +28,54 @@ function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" |
 }
 
 const STAGE_GLYPH = { done: "✓", work: "●", fail: "!", off: "—" } as const;
+
+const INTRO_KEY = "localcut.pipelineTaught";
+
+/** One-time teaching strip on the user's first project: how the pipeline
+ * flows, with the live stage highlighted. Structural teaching — no modal
+ * tour (spec doc 09 + review 3). */
+function PipelineIntro({
+  stages,
+}: {
+  stages: { label: string; state: "done" | "work" | "fail" | "off" }[];
+}) {
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(INTRO_KEY) === "1");
+  if (dismissed) return null;
+  const steps = [
+    { label: "Script", teach: "your idea becomes narration, split into scenes" },
+    { label: "Storyboard", teach: "each scene gets a still image — review these first" },
+    { label: "Videos", teach: "stills become clips; drafts render fast at lower quality" },
+    { label: "Final cut", teach: "everything re-renders at full quality into your MP4" },
+  ];
+  const stageState = (label: string) =>
+    stages.find((stage) => stage.label === (label === "Final cut" ? "Export" : label))?.state ??
+    "off";
+  return (
+    <div className="pipeline-intro" role="note" aria-label="How your video is made">
+      <span className="intro-title">How your video is made</span>
+      {steps.map((step, index) => (
+        <span key={step.label} className={`intro-step ${stageState(step.label)}`}>
+          <i>{index + 1}</i>
+          <span>
+            <b>{step.label}</b>
+            <small>{step.teach}</small>
+          </span>
+        </span>
+      ))}
+      <button
+        className="icon-btn-sm"
+        aria-label="Dismiss"
+        title="Got it — don't show again"
+        onClick={() => {
+          localStorage.setItem(INTRO_KEY, "1");
+          setDismissed(true);
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
 
 /** Header overflow menu (⋯): the settings the old strip hid past its
  * scroll fold — audio behavior, caption mode, pro-editor handoff. */
@@ -344,10 +392,7 @@ export function Project() {
         </div>
       ) : (
         <>
-          <EditPrompt
-            scope="project"
-            placeholder='Describe a change — "make it punchier", "crossfade everything", "remove scene 3"'
-          />
+          <PipelineIntro stages={stages} />
           <div className={`scene-grid density-${density}`}>
             {scenes.map((scene, index) => (
               <SceneCard
@@ -360,6 +405,7 @@ export function Project() {
               />
             ))}
           </div>
+          <Composer />
         </>
       )}
 

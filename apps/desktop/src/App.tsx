@@ -11,6 +11,7 @@ import {
 import { useEffect, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { BrandMark } from "./components/BrandMark";
+import { HelpMenu } from "./components/Help";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -146,6 +147,7 @@ export default function App() {
             <SettingsIcon {...ICON} />
             Settings
           </button>
+          <HelpMenu />
         </div>
       </nav>
       {/* The inspector drawer is fixed; the content yields its width so

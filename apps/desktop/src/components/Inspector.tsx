@@ -1,15 +1,30 @@
-import { Pin, RotateCw, X } from "lucide-react";
+import { ChevronRight, Info, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
-import { inspectorTitle, sceneNumber } from "../help/terms";
-import { EditPrompt } from "./EditPrompt";
+import { inspectorTitle, TIPS } from "../help/terms";
 import { Monitor } from "./Monitor";
+import { StatusPill } from "./StatusRing";
+import { Tip } from "./Tooltip";
 import { useApp } from "../store";
 
-/** Right drawer, exists only when something is selected. The advanced fold
- * exposes every generation parameter the engine will honor — params, seed,
- * model override, pinning — all through the same patch ops the NL editor
- * compiles to. */
+type SceneTab = "image" | "motion" | "voice";
+
+/** Small ⓘ affordance reused on labels a word can't carry. */
+function InfoDot({ label, hint }: { label: string; hint: string }) {
+  return (
+    <Tip label={label} hint={hint} side="top">
+      <span className="info-dot" tabIndex={0} aria-label={label}>
+        <Info size={12} strokeWidth={1.8} />
+      </span>
+    </Tip>
+  );
+}
+
+/** One scene editor (review 3): the drawer is titled by the scene, not a
+ * node id, and Image · Motion · Voice tabs replace the per-node-type
+ * variants — laymen never learn node kinds. Advanced holds seed, model,
+ * trim and on-screen text. Natural-language edits live in the composer,
+ * not here. Aux nodes (script, music, …) get the simple field editor. */
 export function Inspector() {
   const {
     board,
@@ -22,6 +37,8 @@ export function Inspector() {
     conditionScene,
     applyClonedVoice,
   } = useApp();
+  const [tab, setTab] = useState<SceneTab>("image");
+  const [advanced, setAdvanced] = useState(false);
   const [cloneConsent, setCloneConsent] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [seed, setSeed] = useState("");
@@ -34,75 +51,77 @@ export function Inspector() {
   const [trimOut, setTrimOut] = useState("");
   const [overlay, setOverlay] = useState("");
 
-  const node =
-    board && selectedNode
-      ? [
-          ...board.scenes.flatMap((s) => [s.keyframe, s.clip, s.narration]),
-          ...Object.values(board.aux),
-        ]
-          .filter((n): n is NodeState => n !== null)
-          .find((n) => n.node_id === selectedNode)
-      : undefined;
+  const sceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
+  const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
+  const auxNode: NodeState | null =
+    !sceneId && selectedNode ? (board?.aux[selectedNode] ?? null) : null;
 
-  // Trim/overlay are presentation data — they live on the timeline node, not
-  // the clip, so editing them re-cuts without re-rendering the scene.
-  const sceneId = selectedNode?.endsWith(".clip")
-    ? selectedNode.slice(0, -".clip".length)
-    : null;
-  // Any scene member (keyframe/clip/narration) anchors a scene-scoped edit.
-  const editSceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
-  const timelineParams = board?.aux.timeline?.params;
+  // The default tab follows what was clicked (a card selects the still, a
+  // timeline block selects the clip); switching tabs is purely visual.
+  useEffect(() => {
+    if (!selectedNode) return;
+    if (selectedNode.endsWith(".narration")) setTab("voice");
+    else if (/\.clip\d*$/.test(selectedNode)) setTab("motion");
+    else setTab("image");
+  }, [selectedNode]);
 
-  // Which content param this node reads, and which extras it understands.
+  const activeNode: NodeState | null = scene
+    ? tab === "image"
+      ? scene.keyframe
+      : tab === "motion"
+        ? scene.clip
+        : scene.narration
+    : auxNode;
+
+  const activeId = activeNode?.node_id ?? null;
+
+  // Which content param the active node reads.
   const contentKey =
-    selectedNode?.endsWith(".narration") || selectedNode === "voiceover"
+    tab === "voice" || selectedNode === "voiceover"
       ? "text"
       : selectedNode === "music"
         ? "brief"
         : "prompt";
-  const isClip = selectedNode ? /\.clip\d*$/.test(selectedNode) : false;
-  const isNarration = contentKey === "text";
-  // Model overrides only make sense where alternative backends exist
-  // (e.g. cloud:kling-2.5 for a hero shot, cloud:claude-… for the script).
-  const modelEditable = selectedNode
-    ? isClip || ["script", "thumbnail"].includes(selectedNode) || selectedNode.endsWith(".keyframe")
+  const modelEditable = activeId
+    ? /\.clip\d*$/.test(activeId) ||
+      activeId.endsWith(".keyframe") ||
+      ["script", "thumbnail"].includes(activeId)
     : false;
 
-  // Re-seed node-owned fields whenever their SERVER value moves — on
-  // selection change AND when an NL edit or script re-expansion rewrites the
-  // selected node. Keying on the values (not just selectedNode) means a
-  // board refresh that changed nothing leaves in-progress typing alone,
-  // while a genuine server change is picked up instead of being silently
-  // reverted the next time Apply diffs against it.
-  // Each field re-seeds on selection change AND when ITS OWN server value
-  // moves (an NL edit, a regenerate) — but never when a SIBLING field moves,
-  // so an unsaved edit in one field is not discarded because another changed
-  // server-side. Per-field deps are what give that isolation.
+  // Each field re-seeds on active-node change AND when ITS OWN server value
+  // moves — never when a sibling field does, so unsaved typing survives
+  // board refreshes (the isolation pattern this drawer has always used).
   useEffect(() => {
-    setPrompt(String(node?.params.prompt ?? node?.params.text ?? node?.params.brief ?? ""));
-  }, [selectedNode, node?.params.prompt, node?.params.text, node?.params.brief]);
+    setPrompt(
+      String(
+        activeNode?.params.prompt ?? activeNode?.params.text ?? activeNode?.params.brief ?? "",
+      ),
+    );
+  }, [activeId, activeNode?.params.prompt, activeNode?.params.text, activeNode?.params.brief]);
   useEffect(() => {
-    setModel(node?.model ?? "");
-  }, [selectedNode, node?.model]);
+    setModel(activeNode?.model ?? "");
+  }, [activeId, activeNode?.model]);
   useEffect(() => {
-    setMotion(String(node?.params.motion ?? ""));
-  }, [selectedNode, node?.params.motion]);
+    setMotion(String(activeNode?.params.motion ?? ""));
+  }, [activeId, activeNode?.params.motion]);
   useEffect(() => {
-    setVoice(String(node?.params.voice ?? ""));
-  }, [selectedNode, node?.params.voice]);
+    setVoice(String(activeNode?.params.voice ?? ""));
+  }, [activeId, activeNode?.params.voice]);
   useEffect(() => {
-    setSpeed(node?.params.speed != null ? String(node.params.speed) : "1.0");
-  }, [selectedNode, node?.params.speed]);
+    setSpeed(activeNode?.params.speed != null ? String(activeNode.params.speed) : "1.0");
+  }, [activeId, activeNode?.params.speed]);
   useEffect(() => {
-    setDuration(node?.params.duration_s != null ? String(node.params.duration_s) : "");
-  }, [selectedNode, node?.params.duration_s]);
+    setDuration(
+      activeNode?.params.duration_s != null ? String(activeNode.params.duration_s) : "",
+    );
+  }, [activeId, activeNode?.params.duration_s]);
   useEffect(() => {
-    setSeed(node ? String(node.seed) : "");
-  }, [selectedNode, node?.seed]);
+    setSeed(activeNode ? String(activeNode.seed) : "");
+  }, [activeId, activeNode?.seed]);
 
-  // Trim/overlay live on the timeline node and are edited optimistically, so
-  // they re-seed only on selection change (a self-inflicted board refresh
-  // must not fight the field the user is typing into).
+  // Trim/overlay live on the timeline node; edited optimistically, so they
+  // re-seed only when the scene changes.
+  const timelineParams = board?.aux.timeline?.params;
   useEffect(() => {
     const trims = (timelineParams?.trims ?? {}) as Record<
       string,
@@ -113,9 +132,10 @@ export function Inspector() {
     setTrimIn(trim?.in != null ? String(trim.in) : "");
     setTrimOut(trim?.out != null ? String(trim.out) : "");
     setOverlay(sceneId ? String(overlays[sceneId] ?? "") : "");
-  }, [selectedNode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId]);
 
-  // Esc closes the drawer from anywhere except an open dropdown/modal.
+  // Esc closes the drawer.
   useEffect(() => {
     if (!selectedNode) return;
     const onKey = (event: KeyboardEvent) => {
@@ -125,7 +145,7 @@ export function Inspector() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedNode, select]);
 
-  if (!node) return null;
+  if (!selectedNode || (!scene && !auxNode)) return null;
 
   const patchTrim = (inValue: string, outValue: string) => {
     if (!sceneId) return;
@@ -148,48 +168,59 @@ export function Inspector() {
     applyTimeline({ overlays });
   };
 
-  // Only what actually changed goes on the wire — an untouched field must
-  // not dirty the node and trigger a re-render.
+  // Only what actually changed goes on the wire.
   const apply = () => {
+    if (!activeNode) return;
     const params: Record<string, unknown> = {};
-    if (prompt !== String(node.params[contentKey] ?? "")) params[contentKey] = prompt;
-    if (isClip && motion !== String(node.params.motion ?? "")) params.motion = motion;
-    if (isClip) {
+    if (prompt !== String(activeNode.params[contentKey] ?? "")) params[contentKey] = prompt;
+    if (tab === "motion") {
+      if (motion !== String(activeNode.params.motion ?? "")) params.motion = motion;
       const value = Number.parseFloat(duration);
-      if (Number.isFinite(value) && value !== node.params.duration_s) params.duration_s = value;
+      if (Number.isFinite(value) && value !== activeNode.params.duration_s)
+        params.duration_s = value;
     }
-    if (isNarration && voice !== String(node.params.voice ?? "")) params.voice = voice;
-    if (isNarration) {
+    if (tab === "voice") {
+      if (voice !== String(activeNode.params.voice ?? "")) params.voice = voice;
       const rate = Number.parseFloat(speed);
-      if (Number.isFinite(rate) && rate !== (node.params.speed ?? 1.0)) params.speed = rate;
+      if (Number.isFinite(rate) && rate !== (activeNode.params.speed ?? 1.0)) params.speed = rate;
     }
     const seedValue = Number.parseInt(seed, 10);
     const modelValue = model.trim() || null;
-    void applyNode(node.node_id, {
+    void applyNode(activeNode.node_id, {
       params,
-      seed: Number.isFinite(seedValue) && seedValue !== node.seed ? seedValue : undefined,
-      model: modelEditable && modelValue !== node.model ? modelValue : undefined,
+      seed: Number.isFinite(seedValue) && seedValue !== activeNode.seed ? seedValue : undefined,
+      model: modelEditable && modelValue !== activeNode.model ? modelValue : undefined,
     });
   };
 
+  const statusNode = scene ? scene.clip : auxNode;
+  const pinned = activeNode?.pinned ?? false;
+
+  const tabs: { id: SceneTab; label: string; present: boolean }[] = [
+    { id: "image", label: "Image", present: Boolean(scene?.keyframe) },
+    { id: "motion", label: "Motion", present: Boolean(scene?.clip) },
+    { id: "voice", label: "Voice", present: Boolean(scene?.narration) },
+  ];
+
   return (
     <aside className="inspector" aria-label="Inspector">
-      {sceneNumber(node.node_id) && <Monitor />}
+      {scene && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <h2 style={{ flex: 1 }}>{inspectorTitle(node.node_id)}</h2>
-        <button
-          className={`icon-btn-sm${node.pinned ? " active" : ""}`}
-          onClick={() => void togglePin(node.node_id, !node.pinned)}
-          aria-label={node.pinned ? "Unpin" : "Pin"}
-          aria-pressed={node.pinned}
-          title={
-            node.pinned
-              ? "Unpin — allow changes again"
-              : "Pin — keep this exactly as it is; regenerating and edits skip it"
-          }
-        >
-          <Pin size={13} strokeWidth={1.8} />
-        </button>
+        <h2 style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {inspectorTitle(selectedNode)}
+          {statusNode && <StatusPill status={statusNode.status} progress={statusNode.progress} />}
+        </h2>
+        {activeNode && (
+          <button
+            className={`icon-btn-sm${pinned ? " active" : ""}`}
+            onClick={() => void togglePin(activeNode.node_id, !pinned)}
+            aria-label={pinned ? "Unpin" : "Pin"}
+            aria-pressed={pinned}
+            title={pinned ? "Unpin — allow changes again" : TIPS.pin}
+          >
+            <Pin size={13} strokeWidth={1.8} />
+          </button>
+        )}
         <button
           className="icon-btn-sm"
           onClick={() => select(null)}
@@ -199,214 +230,305 @@ export function Inspector() {
           <X size={13} strokeWidth={2} />
         </button>
       </div>
-      {node.pinned && (
+
+      {scene && (
+        <div className="tabs inspector-tabs" role="tablist" aria-label="Scene parts">
+          {tabs.map(
+            (entry) =>
+              entry.present && (
+                <button
+                  key={entry.id}
+                  role="tab"
+                  aria-selected={tab === entry.id}
+                  className={tab === entry.id ? "active" : ""}
+                  onClick={() => setTab(entry.id)}
+                >
+                  {entry.label}
+                </button>
+              ),
+          )}
+        </div>
+      )}
+
+      {pinned && (
         <div className="hint">Pinned — this keeps its current result until you unpin it.</div>
       )}
-      <div>
-        <label htmlFor="inspector-prompt">Prompt</label>
-        <textarea
-          id="inspector-prompt"
-          rows={5}
-          value={prompt}
-          disabled={node.pinned}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-      </div>
-      {isClip && (
-        <div>
-          <label htmlFor="inspector-motion">Motion (camera direction)</label>
-          <input
-            id="inspector-motion"
-            value={motion}
-            disabled={node.pinned}
-            onChange={(event) => setMotion(event.target.value)}
-          />
-        </div>
+
+      {!activeNode && scene && (
+        <div className="hint">This scene has no {tab} part.</div>
       )}
-      {isClip && (
-        <div>
-          <label htmlFor="inspector-duration">Clip duration (s)</label>
-          <input
-            id="inspector-duration"
-            type="number"
-            min={1}
-            max={15}
-            step={0.5}
-            value={duration}
-            disabled={node.pinned}
-            onChange={(event) => setDuration(event.target.value)}
-          />
-          <div className="hint">Source length — narration still drives scene timing.</div>
-        </div>
-      )}
-      {isNarration && (
-        <div>
-          <label htmlFor="inspector-voice">Voice</label>
-          <input
-            id="inspector-voice"
-            value={voice}
-            disabled={node.pinned}
-            onChange={(event) => setVoice(event.target.value)}
-          />
-        </div>
-      )}
-      {isNarration && (
-        <div>
-          <label>Voice cloning</label>
-          <label className="hint" style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={cloneConsent}
-              onChange={(event) => setCloneConsent(event.target.checked)}
-            />
-            I have this speaker's permission to clone their voice
-          </label>
-          <input
-            type="file"
-            accept=".wav,.mp3,.flac,.m4a"
-            disabled={!cloneConsent}
-            aria-label="Voice sample"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) {
-                void applyClonedVoice(file).catch((err) =>
-                  console.warn("voice cloning failed:", err),
-                );
-              }
-            }}
-          />
-          <div className="hint">
-            Clones this speaker for every scene's narration (Chatterbox, runs locally).
-          </div>
-        </div>
-      )}
-      {isNarration && (
-        <div>
-          <label htmlFor="inspector-speed">Speech rate</label>
-          <input
-            id="inspector-speed"
-            type="number"
-            min={0.5}
-            max={1.5}
-            step={0.05}
-            value={speed}
-            disabled={node.pinned}
-            onChange={(event) => setSpeed(event.target.value)}
-          />
-          <div className="hint">1.0 = normal; the scene re-times to the new length.</div>
-        </div>
-      )}
-      <div>
-        <label htmlFor="inspector-seed">Seed</label>
-        <input
-          id="inspector-seed"
-          type="number"
-          value={seed}
-          disabled={node.pinned}
-          onChange={(event) => setSeed(event.target.value)}
-        />
-      </div>
-      {modelEditable && (
-        <div>
-          <label htmlFor="inspector-model">Model override</label>
-          <input
-            id="inspector-model"
-            value={model}
-            placeholder="engine default"
-            disabled={node.pinned}
-            onChange={(event) => setModel(event.target.value)}
-          />
-          <div className="hint">e.g. cloud:kling-2.5 for a hero shot (BYOK, billed per clip)</div>
-        </div>
-      )}
-      {sceneId && (
+
+      {activeNode && (
         <>
           <div>
-            <label>Trim</label>
-            <div className="trim-row">
+            <label htmlFor="inspector-prompt">
+              {tab === "voice" || contentKey === "text"
+                ? "What the narrator says"
+                : contentKey === "brief"
+                  ? "Music brief"
+                  : "Prompt"}
+            </label>
+            <textarea
+              id="inspector-prompt"
+              rows={4}
+              value={prompt}
+              disabled={pinned}
+              onChange={(event) => setPrompt(event.target.value)}
+            />
+            {tab === "voice" && <div className="hint">The narration's length sets how long the scene runs.</div>}
+          </div>
+
+          {tab === "motion" && (
+            <>
+              <div>
+                <label htmlFor="inspector-motion" style={{ display: "inline-flex", gap: 4 }}>
+                  Camera movement
+                  <InfoDot label="How the camera moves" hint={TIPS.motion} />
+                </label>
+                <input
+                  id="inspector-motion"
+                  value={motion}
+                  disabled={pinned}
+                  placeholder="e.g. slow push in · static"
+                  onChange={(event) => setMotion(event.target.value)}
+                />
+              </div>
+              <div>
+                <label htmlFor="inspector-duration">Length (seconds)</label>
+                <input
+                  id="inspector-duration"
+                  type="number"
+                  min={1}
+                  max={15}
+                  step={0.5}
+                  value={duration}
+                  disabled={pinned}
+                  onChange={(event) => setDuration(event.target.value)}
+                />
+                <div className="hint">{TIPS.length}</div>
+              </div>
+            </>
+          )}
+
+          {tab === "voice" && (
+            <div>
+              <label htmlFor="inspector-voice" style={{ display: "inline-flex", gap: 4 }}>
+                Voice
+                <InfoDot label="Which narrator speaks" hint={TIPS.voice} />
+              </label>
               <input
-                type="number"
-                min={0}
-                step={0.1}
-                placeholder="in"
-                aria-label="Trim in (seconds)"
-                value={trimIn}
-                onChange={(event) => {
-                  setTrimIn(event.target.value);
-                  patchTrim(event.target.value, trimOut);
-                }}
-              />
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                placeholder="out"
-                aria-label="Trim out (seconds)"
-                value={trimOut}
-                onChange={(event) => {
-                  setTrimOut(event.target.value);
-                  patchTrim(trimIn, event.target.value);
-                }}
+                id="inspector-voice"
+                value={voice}
+                disabled={pinned}
+                placeholder="default"
+                onChange={(event) => setVoice(event.target.value)}
               />
             </div>
-            <div className="hint">Narration length still drives scene duration.</div>
-          </div>
+          )}
+
+          {tab === "image" && sceneId && (
+            <div>
+              <label htmlFor="inspector-asset">Use my photo instead</label>
+              <input
+                id="inspector-asset"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = ""; // same file re-selectable later
+                  if (file) {
+                    void conditionScene(sceneId, file).catch((err) =>
+                      console.warn("asset conditioning failed:", err),
+                    );
+                  }
+                }}
+              />
+              <div className="hint">{TIPS.ownImage}</div>
+            </div>
+          )}
+
+          <button className="btn-outline" onClick={apply} disabled={pinned}>
+            Apply &amp; regenerate
+          </button>
+          <button
+            className="btn-ghost"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onClick={() => void regenerate(activeNode.node_id)}
+            disabled={pinned}
+            title={TIPS.newTake}
+          >
+            <RotateCw size={12} strokeWidth={1.8} />
+            New take
+          </button>
+
           <div>
-            <label htmlFor="inspector-overlay">On-screen text</label>
-            <input
-              id="inspector-overlay"
-              value={overlay}
-              onChange={(event) => {
-                setOverlay(event.target.value);
-                patchOverlay(event.target.value);
-              }}
-            />
+            <button
+              className="adv-toggle"
+              aria-expanded={advanced}
+              onClick={() => setAdvanced(!advanced)}
+            >
+              <ChevronRight
+                size={13}
+                strokeWidth={2}
+                style={{
+                  transform: advanced ? "rotate(90deg)" : undefined,
+                  transition: "transform var(--motion-fast)",
+                }}
+              />
+              Advanced
+              {!advanced && (
+                <small>
+                  {scene ? "seed · model · trim · on-screen text" : "seed · model"}
+                </small>
+              )}
+            </button>
+            {advanced && (
+              <div className="adv-body">
+                <div>
+                  <label htmlFor="inspector-seed" style={{ display: "inline-flex", gap: 4 }}>
+                    Seed
+                    <InfoDot label="Controls the randomness" hint={TIPS.seed} />
+                  </label>
+                  <input
+                    id="inspector-seed"
+                    type="number"
+                    value={seed}
+                    disabled={pinned}
+                    onChange={(event) => setSeed(event.target.value)}
+                  />
+                </div>
+                {modelEditable && (
+                  <div>
+                    <label htmlFor="inspector-model" style={{ display: "inline-flex", gap: 4 }}>
+                      Model
+                      <InfoDot label="One-shot model override" hint={TIPS.model} />
+                    </label>
+                    <input
+                      id="inspector-model"
+                      value={model}
+                      placeholder="Auto"
+                      disabled={pinned}
+                      onChange={(event) => setModel(event.target.value)}
+                    />
+                    <div className="hint">
+                      e.g. cloud:kling-2.5 to render this shot with a cloud model — uses your own
+                      API key, billed per clip.
+                    </div>
+                  </div>
+                )}
+                {tab === "voice" && (
+                  <div>
+                    <label htmlFor="inspector-speed">Speaking speed</label>
+                    <input
+                      id="inspector-speed"
+                      type="number"
+                      min={0.5}
+                      max={1.5}
+                      step={0.05}
+                      value={speed}
+                      disabled={pinned}
+                      onChange={(event) => setSpeed(event.target.value)}
+                    />
+                    <div className="hint">{TIPS.speed}</div>
+                  </div>
+                )}
+                {tab === "voice" && (
+                  <div>
+                    <label>Voice cloning</label>
+                    <label
+                      className="hint"
+                      style={{ display: "flex", gap: "6px", alignItems: "center" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={cloneConsent}
+                        onChange={(event) => setCloneConsent(event.target.checked)}
+                      />
+                      I have this speaker's permission to clone their voice
+                    </label>
+                    <input
+                      type="file"
+                      accept=".wav,.mp3,.flac,.m4a"
+                      disabled={!cloneConsent}
+                      aria-label="Voice sample"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) {
+                          void applyClonedVoice(file).catch((err) =>
+                            console.warn("voice cloning failed:", err),
+                          );
+                        }
+                      }}
+                    />
+                    <div className="hint">
+                      Uses this voice for every scene's narration. Runs entirely on your machine.
+                    </div>
+                  </div>
+                )}
+                {sceneId && (
+                  <>
+                    <div>
+                      <label style={{ display: "inline-flex", gap: 4 }}>
+                        Trim
+                        <InfoDot label="Shorten this clip" hint={TIPS.trim} />
+                      </label>
+                      <div className="trim-row">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          placeholder="start"
+                          aria-label="Trim start (seconds)"
+                          value={trimIn}
+                          onChange={(event) => {
+                            setTrimIn(event.target.value);
+                            patchTrim(event.target.value, trimOut);
+                          }}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          placeholder="end"
+                          aria-label="Trim end (seconds)"
+                          value={trimOut}
+                          onChange={(event) => {
+                            setTrimOut(event.target.value);
+                            patchTrim(trimIn, event.target.value);
+                          }}
+                        />
+                      </div>
+                      <div className="hint">Narration length still drives scene timing.</div>
+                    </div>
+                    <div>
+                      <label htmlFor="inspector-overlay" style={{ display: "inline-flex", gap: 4 }}>
+                        On-screen text
+                        <InfoDot label="Text drawn on the video" hint={TIPS.overlay} />
+                      </label>
+                      <input
+                        id="inspector-overlay"
+                        value={overlay}
+                        onChange={(event) => {
+                          setOverlay(event.target.value);
+                          patchOverlay(event.target.value);
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
+
+          {activeNode.error && <div className="banner error">{activeNode.error}</div>}
         </>
       )}
-      <button className="btn-primary" onClick={apply} disabled={node.pinned}>
-        Apply & regenerate
-      </button>
-      <button
-        className="btn-ghost"
-        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-        onClick={() => void regenerate(node.node_id)}
-        disabled={node.pinned}
-        title="Same prompt, different randomness"
-      >
-        <RotateCw size={12} strokeWidth={1.8} />
-        New take
-      </button>
-      {editSceneId && (
-        <div>
-          <label htmlFor="inspector-asset">Use my image as the shot source</label>
-          <input
-            id="inspector-asset"
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = ""; // same file re-selectable later
-              if (file) {
-                void conditionScene(editSceneId, file).catch((err) =>
-                  console.warn("asset conditioning failed:", err),
-                );
-              }
-            }}
-          />
-          <div className="hint">
-            The clip animates from your image instead of the generated keyframe.
-          </div>
-        </div>
-      )}
-      {editSceneId && (
-        <div>
-          <label>Edit scene with a prompt</label>
-          <EditPrompt scope={editSceneId} placeholder='"same scene, but at night"' />
-        </div>
-      )}
-      {node.error && <div className="banner error">{node.error}</div>}
     </aside>
   );
 }
