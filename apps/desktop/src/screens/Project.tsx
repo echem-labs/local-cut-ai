@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { Download, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 import { CheckpointBanner } from "../components/CheckpointBanner";
 import { EditPrompt } from "../components/EditPrompt";
 import { Inspector } from "../components/Inspector";
@@ -8,10 +9,13 @@ import { TimelineStrip } from "../components/TimelineStrip";
 import { ToolSession } from "../components/ToolSession";
 import { useApp } from "../store";
 
+const READY = ["draft", "final", "pinned"];
+
 /** Project window: scene board over a timeline strip; all modes land
  * here after generation. Tool sessions get a focused single panel. */
 export function Project() {
-  const { currentProject, board, refreshBoard } = useApp();
+  const { currentProject, board, refreshBoard, finalize, client } = useApp();
+  const [finalizing, setFinalizing] = useState(false);
 
   useEffect(() => {
     void refreshBoard();
@@ -38,6 +42,32 @@ export function Project() {
     counts.set(scene.clip.status, (counts.get(scene.clip.status) ?? 0) + 1);
   }
 
+  // The screen's ONE primary action, staged per doc 09 (Review → Finalize →
+  // Export). Suppressed while a beginner checkpoint banner owns the accent.
+  const approvals = currentProject.approvals ?? [];
+  const scriptReady = script ? READY.includes(script.status) : false;
+  const keyframesReady =
+    board.scenes.length > 0 &&
+    board.scenes.every((scene) => !scene.keyframe || READY.includes(scene.keyframe.status));
+  const checkpointPending =
+    currentProject.mode === "beginner" &&
+    ((!approvals.includes("script") && scriptReady) ||
+      (approvals.includes("script") && !approvals.includes("storyboard") && keyframesReady));
+  const exportNode = board.aux.export;
+  const allReady =
+    board.scenes.length > 0 && board.scenes.every((scene) => READY.includes(scene.clip.status));
+  const exported = exportNode?.status === "final" && exportNode.artifact_hash;
+
+  const runFinalize = async () => {
+    if (finalizing) return;
+    setFinalizing(true);
+    try {
+      await finalize();
+    } finally {
+      setFinalizing(false);
+    }
+  };
+
   return (
     <div>
       <div className="board-header">
@@ -52,6 +82,28 @@ export function Project() {
             </span>
           );
         })}
+        {!checkpointPending &&
+          (exported && client ? (
+            <a
+              className="btn-primary"
+              style={{ textDecoration: "none" }}
+              href={client.artifactUrl(currentProject.id, exportNode.artifact_hash!)}
+              download
+            >
+              <Download size={14} strokeWidth={2} />
+              Download MP4
+            </a>
+          ) : allReady ? (
+            <button
+              className="btn-primary"
+              disabled={finalizing}
+              onClick={() => void runFinalize()}
+              title="Re-render draft scenes at final quality, then assemble the export"
+            >
+              <Sparkles size={14} strokeWidth={2} />
+              {finalizing ? "Finalizing…" : "Finalize"}
+            </button>
+          ) : null)}
       </div>
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}

@@ -225,10 +225,8 @@ export function TimelineStrip() {
             )}
           </>
         )}
-        <button
-          className={allReady ? "btn-primary" : "btn-ghost"}
-          onClick={() => void finalize()}
-        >
+        {/* ghost here: the board header owns the screen's one accent CTA */}
+        <button className="btn-ghost" onClick={() => void finalize()}>
           Finalize
         </button>
       </div>
