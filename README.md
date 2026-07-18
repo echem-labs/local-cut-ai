@@ -158,6 +158,28 @@ npm run dev     # vite + electron; auto-spawns the engine via uv with a fresh to
 The desktop shell spawns and owns the engine process; set `LOCALCUT_ENGINE_CMD` /
 `LOCALCUT_BACKEND` to override how it is launched.
 
+## Packaging (Windows)
+
+Two steps: freeze the engine with PyInstaller, then wrap it and the shell
+with electron-builder — the packaged app spawns the bundled
+`resources/engine/localcut-engine.exe` instead of `uv run`:
+
+```bash
+cd engine
+uv sync --group build
+uv run pyinstaller --noconfirm localcut-engine.spec   # → engine/dist/localcut-engine/
+
+cd ../apps/desktop
+npm install
+npm run package        # → release/LocalCut Setup 0.1.0.exe (NSIS, unsigned)
+npm run package:dir    # → release/win-unpacked/ only (run LocalCut.exe directly)
+```
+
+The packaged engine defaults to the mock backend; set `LOCALCUT_BACKEND=local`
+(plus ComfyUI/Ollama per the sections above) before launching to render with
+real models. Builds are unsigned for now — SmartScreen will warn on the
+installer (More info → Run anyway).
+
 ## License
 
 TBD.

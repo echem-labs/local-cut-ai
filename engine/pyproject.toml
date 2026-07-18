@@ -20,6 +20,9 @@ dependencies = [
 localcut-engine = "localcut_engine.cli:main"
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.21.0",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

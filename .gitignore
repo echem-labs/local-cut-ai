@@ -5,6 +5,10 @@ dist-electron/
 out/
 *.tsbuildinfo
 
+# Packaging output
+apps/desktop/release/
+engine/build/
+
 # Python
 __pycache__/
 *.py[cod]

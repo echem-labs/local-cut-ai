@@ -4,6 +4,7 @@
  * the same client code can instead pair with a remote engine, so nothing
  * here leaks into the renderer beyond { url, token }.
  */
+import { app } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
@@ -41,6 +42,11 @@ export class EngineManager {
       const [cmd, ...prefix] = custom.split(" ");
       return { cmd, args: [...prefix, ...args], connection };
     }
+    if (app.isPackaged) {
+      const exe = process.platform === "win32" ? "localcut-engine.exe" : "localcut-engine";
+      const bundled = path.join(process.resourcesPath, "engine", exe);
+      return { cmd: bundled, args, connection };
+    }
     const engineDir = path.resolve(__dirname, "..", "..", "..", "..", "engine");
     return { cmd: "uv", args: ["run", "localcut-engine", ...args], cwd: engineDir, connection };
   }
@@ -60,7 +66,9 @@ export class EngineManager {
 
   private async spawnAndWait(): Promise<EngineConnection> {
     const { cmd, args, cwd, connection } = this.command();
-    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    // windowsHide: the frozen engine is a console binary — without it,
+    // Windows pops a console window behind the packaged GUI app.
+    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     this.child = child;
     child.stdout?.on("data", (chunk: Buffer) =>
       console.log(`[engine] ${chunk.toString().trimEnd()}`),
