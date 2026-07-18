@@ -75,7 +75,7 @@ export default function App() {
           <span className="logo">
             <Clapperboard size={13} strokeWidth={2.2} />
           </span>
-          LocalCut
+          LocalCut AI
         </div>
         <button
           className={firstRunDone && !currentProject && !settingsOpen ? "active" : ""}

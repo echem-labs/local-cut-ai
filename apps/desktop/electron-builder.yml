@@ -2,7 +2,7 @@
 # frozen engine (built first via `uv run pyinstaller` in engine/, see
 # engine/localcut-engine.spec). Output lands in apps/desktop/release/.
 appId: ai.localcut.desktop
-productName: LocalCut
+productName: LocalCut AI
 directories:
   output: release
 files:

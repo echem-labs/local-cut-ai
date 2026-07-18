@@ -35,7 +35,7 @@ async function createWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: "#0E0F12",
-    title: "LocalCut",
+    title: "LocalCut AI",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
