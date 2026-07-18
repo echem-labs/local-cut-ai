@@ -15,6 +15,119 @@ const SHORTCUTS: { keys: string; what: string }[] = [
 
 type Panel = "shortcuts" | "glossary" | null;
 
+/** Panel-level "?" popovers dispatch this to open the glossary that
+ * HelpMenu hosts — one modal, many entry points. */
+export const OPEN_GLOSSARY_EVENT = "localcut:open-glossary";
+
+const PANEL_COPY: Record<
+  "board" | "timeline" | "inspector",
+  { title: string; bullets: string[] }
+> = {
+  board: {
+    title: "The storyboard",
+    bullets: [
+      "Each card is one scene — the still image it starts from, a few seconds of video, and its narration.",
+      "The pill shows where it is: Draft (fast, for deciding) · Rendering · Final · Failed.",
+      "Click a card to open its details; drag cards to change the order of the cut.",
+    ],
+  },
+  timeline: {
+    title: "The timeline",
+    bullets: [
+      "Your scenes in play order — a wider block runs longer.",
+      "The diamonds between blocks set the transition: cut, crossfade, or dip to black.",
+      "▶ plays a quick draft preview of the whole cut, scene by scene.",
+    ],
+  },
+  inspector: {
+    title: "Scene details",
+    bullets: [
+      "Everything about the selected scene — its Image, Motion and Voice.",
+      "Apply & regenerate re-renders only this scene with your changes.",
+      "Pin keeps the scene exactly as it is; New take tries again with fresh randomness.",
+    ],
+  },
+};
+
+const POP_WIDTH = 264;
+
+/** A small "What am I looking at?" popover for a workspace panel: three
+ * plain bullets + a jump into the glossary (review 3 §5). Fixed-positioned
+ * from the button so a dockview panel's overflow can never clip it. */
+export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector" }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const copy = PANEL_COPY[panel];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = Math.max(8, Math.min(rect.right - POP_WIDTH, window.innerWidth - POP_WIDTH - 8));
+    // The timeline lives at the screen's foot — its popover opens upward.
+    setPos(
+      panel === "timeline"
+        ? { left, bottom: window.innerHeight - rect.top + 6 }
+        : { left, top: rect.bottom + 6 },
+    );
+    setOpen(true);
+  };
+
+  return (
+    <div className="panel-help" ref={ref}>
+      <button
+        ref={btnRef}
+        className="icon-btn-sm"
+        aria-label="What am I looking at?"
+        aria-expanded={open}
+        title="What am I looking at?"
+        onClick={toggle}
+      >
+        <HelpCircle size={13} strokeWidth={1.8} />
+      </button>
+      {open && pos && (
+        <div
+          className="panel-help-pop"
+          role="note"
+          aria-label={copy.title}
+          style={{ left: pos.left, top: pos.top, bottom: pos.bottom }}
+        >
+          <b>{copy.title}</b>
+          <ul>
+            {copy.bullets.map((bullet) => (
+              <li key={bullet}>{bullet}</li>
+            ))}
+          </ul>
+          <button
+            className="link"
+            onClick={() => {
+              setOpen(false);
+              window.dispatchEvent(new CustomEvent(OPEN_GLOSSARY_EVENT));
+            }}
+          >
+            <BookOpen size={12} strokeWidth={1.8} />
+            Open glossary
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The ? entry point: a small menu opening the shortcuts overlay and the
  * glossary — the same copy as every tooltip, from one file, so nothing
  * ever disagrees. The ? key opens shortcuts from anywhere. */
@@ -50,6 +163,13 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
   useEffect(() => {
     if (panel === null) setSearch("");
   }, [panel]);
+
+  // Panel-level "?" popovers deep-link here.
+  useEffect(() => {
+    const onOpen = () => setPanel("glossary");
+    window.addEventListener(OPEN_GLOSSARY_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_GLOSSARY_EVENT, onOpen);
+  }, []);
 
   const glossary = GLOSSARY.filter(
     (entry) =>

@@ -1,4 +1,6 @@
 import {
+  ChevronsLeft,
+  ChevronsRight,
   Home as HomeIcon,
   LayoutGrid,
   Moon,
@@ -18,6 +20,7 @@ import { Settings } from "./screens/Settings";
 import { useApp } from "./store";
 
 const ICON = { size: 15, strokeWidth: 1.8 } as const;
+const RAIL_KEY = "localcut.rail.expanded";
 
 /** One window, one persistent left rail. */
 export default function App() {
@@ -68,8 +71,18 @@ export default function App() {
       : "connecting…";
 
   // Inside a project the rail collapses to a 48px icon activity bar —
-  // chrome recedes; the workspace owns the width. Full rail on Home.
+  // chrome recedes; the workspace owns the width. Full rail on Home. A
+  // chevron re-expands it in a project, and the choice persists.
   const inProject = Boolean(currentProject);
+  const [railExpanded, setRailExpanded] = useState(
+    () => localStorage.getItem(RAIL_KEY) === "1",
+  );
+  const compact = inProject && !railExpanded;
+  const toggleRail = () => {
+    const next = !railExpanded;
+    localStorage.setItem(RAIL_KEY, next ? "1" : "0");
+    setRailExpanded(next);
+  };
   const workspaceMode = currentProject ? !currentProject.mode.startsWith("tool:") : false;
 
   return (
@@ -81,8 +94,8 @@ export default function App() {
         <span className="tb-name">LocalCut AI</span>
         {currentProject && <span className="tb-project">{currentProject.title}</span>}
       </header>
-      <nav className={`rail${inProject ? " compact" : ""}`} aria-label="Navigation">
-        {inProject ? (
+      <nav className={`rail${compact ? " compact" : ""}`} aria-label="Navigation">
+        {compact ? (
           <Tip label="Home" hint="close the project" side="top">
             <button
               className="rail-mark"
@@ -115,7 +128,11 @@ export default function App() {
           </button>
         )}
         <div className="rail-bottom">
-          <Tip label="Engine status" hint="click for engine settings" side="top">
+          <Tip
+            label={remoteEngine ? "Remote engine" : "Local engine"}
+            hint={compact ? `${engineDetail} — click for engine settings` : "click for engine settings"}
+            side="top"
+          >
             <button
               className="engine-chip"
               style={{ width: "100%" }}
@@ -150,7 +167,17 @@ export default function App() {
             <SettingsIcon {...ICON} />
             <span className="rail-label">Settings</span>
           </button>
-          <HelpMenu compact={inProject} />
+          <HelpMenu compact={compact} />
+          {inProject && (
+            <button
+              onClick={toggleRail}
+              title={compact ? "Expand the sidebar" : "Collapse the sidebar"}
+              aria-label={compact ? "Expand the sidebar" : "Collapse the sidebar"}
+            >
+              {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
+              <span className="rail-label">Collapse</span>
+            </button>
+          )}
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>

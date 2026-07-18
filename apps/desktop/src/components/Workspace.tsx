@@ -11,6 +11,7 @@ import { movedOrder, orderedScenes } from "../lib/order";
 import { useWorkspace, type WorkspaceView } from "../lib/workspace";
 import { useApp } from "../store";
 import { Composer } from "./Composer";
+import { PanelHelp } from "./Help";
 import { Inspector } from "./Inspector";
 import { Monitor } from "./Monitor";
 import { SceneCard } from "./SceneCard";
@@ -24,12 +25,33 @@ const layoutKey = (view: WorkspaceView) => `localcut.layout.${LAYOUT_VERSION}.${
 
 /* ---------- panels ---------- */
 
+const DRAFT_TEACH_KEY = "localcut.draftTaught";
+
 function BoardPanel(_props: IDockviewPanelProps) {
   const { board, applyTimeline } = useApp();
   const density = useWorkspace((state) => state.density);
   const [dragged, setDragged] = useState<string | null>(null);
+  const [draftTaught, setDraftTaught] = useState(
+    () => localStorage.getItem(DRAFT_TEACH_KEY) === "1",
+  );
+  // The one-time draft-quality note rides the FIRST rendering card and
+  // retires when that render completes (or on dismiss) — "once" means once.
+  const scenes = board ? orderedScenes(board) : [];
+  const teachId = draftTaught
+    ? null
+    : (scenes.find((scene) => scene.clip.status === "rendering")?.scene_id ?? null);
+  const teachShownRef = useRef<string | null>(null);
+  const markTaught = () => {
+    localStorage.setItem(DRAFT_TEACH_KEY, "1");
+    setDraftTaught(true);
+  };
+  useEffect(() => {
+    if (teachId) teachShownRef.current = teachId;
+    else if (teachShownRef.current) markTaught();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teachId]);
+
   if (!board) return null;
-  const scenes = orderedScenes(board);
   const order = scenes.map((scene) => scene.scene_id);
 
   const dropAt = (targetIndex: number, after: boolean) => {
@@ -44,6 +66,9 @@ function BoardPanel(_props: IDockviewPanelProps) {
 
   return (
     <div className="board-panel">
+      <div className="board-help">
+        <PanelHelp panel="board" />
+      </div>
       <div className="board-scroll">
         <div className={`scene-grid density-${density}`}>
           {scenes.map((scene, index) => (
@@ -54,6 +79,8 @@ function BoardPanel(_props: IDockviewPanelProps) {
               onDragStart={() => setDragged(scene.scene_id)}
               onDragEnd={() => setDragged(null)}
               onDropSide={(after) => dropAt(index, after)}
+              teachDraft={scene.scene_id === teachId}
+              onTeachDismiss={markTaught}
             />
           ))}
         </div>

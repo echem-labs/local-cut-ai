@@ -5,6 +5,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { ToolSession } from "../components/ToolSession";
 import { Workspace } from "../components/Workspace";
 import { TIPS } from "../help/terms";
+import { finalizeEta, recordBoard } from "../lib/eta";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useWorkspace } from "../lib/workspace";
@@ -200,34 +201,64 @@ export function Project() {
     void refreshBoard();
   }, [refreshBoard]);
 
-  // Space = draft preview from the selected scene (or the top), anywhere a
-  // form control doesn't own the key. Playback stops when the project closes.
+  // Session render-timing observations feed the honest CTA estimate and
+  // the per-card "about Ns left" labels.
+  useEffect(() => {
+    if (currentProject && board) recordBoard(currentProject.id, board);
+  }, [currentProject, board]);
+
+  // Space = draft preview from the selected scene (or the top); ←/→ move the
+  // board selection — anywhere a form control doesn't own the key. Playback
+  // stops when the project closes.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.code !== "Space") return;
       const target = event.target as HTMLElement;
-      if (
-        ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName) ||
-        target.isContentEditable
-      )
-        return;
-      event.preventDefault();
-      const playback = usePlayback.getState();
-      if (playback.playing) {
-        playback.pause();
+      const formOwned =
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+      if (event.code === "Space") {
+        if (formOwned || target.tagName === "BUTTON") return;
+        event.preventDefault();
+        const playback = usePlayback.getState();
+        if (playback.playing) {
+          playback.pause();
+          return;
+        }
+        const state = useApp.getState();
+        if (!state.board || state.board.scenes.length === 0) return;
+        const ids = orderedScenes(state.board).map((scene) => scene.scene_id);
+        const selectedScene = state.selectedNode?.includes(".")
+          ? state.selectedNode.split(".")[0]
+          : null;
+        const start =
+          playback.sceneId ??
+          (selectedScene && ids.includes(selectedScene) ? selectedScene : ids[0]);
+        state.select(`${start}.clip`);
+        playback.play(start, true);
         return;
       }
-      const state = useApp.getState();
-      if (!state.board || state.board.scenes.length === 0) return;
-      const ids = orderedScenes(state.board).map((scene) => scene.scene_id);
-      const selectedScene = state.selectedNode?.includes(".")
-        ? state.selectedNode.split(".")[0]
-        : null;
-      const start =
-        playback.sceneId ??
-        (selectedScene && ids.includes(selectedScene) ? selectedScene : ids[0]);
-      state.select(`${start}.clip`);
-      playback.play(start, true);
+      if (event.code === "ArrowRight" || event.code === "ArrowLeft") {
+        if (formOwned) return;
+        const state = useApp.getState();
+        if (!state.board || state.board.scenes.length === 0) return;
+        const scenes = orderedScenes(state.board);
+        const current = state.selectedNode?.includes(".")
+          ? state.selectedNode.split(".")[0]
+          : null;
+        const index = current ? scenes.findIndex((s) => s.scene_id === current) : -1;
+        const next =
+          event.code === "ArrowRight"
+            ? Math.min(scenes.length - 1, index + 1)
+            : Math.max(0, index === -1 ? 0 : index - 1);
+        if (next === index) return;
+        event.preventDefault();
+        const scene = scenes[next];
+        state.select(scene.keyframe ? scene.keyframe.node_id : scene.clip.node_id);
+        requestAnimationFrame(() => {
+          document
+            .querySelector(`.scene-grid [data-scene="${scene.scene_id}"]`)
+            ?.scrollIntoView({ block: "nearest" });
+        });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -310,6 +341,9 @@ export function Project() {
   const allReady =
     scenes.length > 0 && scenes.every((scene) => READY.includes(scene.clip.status));
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
+  // "~9 min", from renders observed this session — absent until we've
+  // actually watched one (honest ETA, review 3).
+  const eta = finalizeEta(board);
 
   const runFinalize = async () => {
     if (finalizing) return;
@@ -326,13 +360,34 @@ export function Project() {
       <div className="board-header">
         <h1>{currentProject.title}</h1>
         <div className="pipeline" role="status" aria-label="Project progress">
-          {stages.map((stage) => (
-            <span key={stage.label} className={`st ${stage.state}`}>
-              <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
-              {stage.label}
-              {stage.detail ? <small>{stage.detail}</small> : null}
-            </span>
-          ))}
+          {stages.map((stage) =>
+            // "Videos" jumps the board to the scene that needs attention
+            // (review 3 §3A); the other stages have no landing surface yet.
+            stage.label === "Videos" && scenes.length > 0 ? (
+              <button
+                key={stage.label}
+                className={`st ${stage.state}`}
+                title="Show these scenes on the board"
+                onClick={() => {
+                  const target =
+                    scenes.find((scene) => !READY.includes(scene.clip.status)) ?? scenes[0];
+                  document
+                    .querySelector(`.scene-grid [data-scene="${target.scene_id}"]`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              >
+                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
+                {stage.label}
+                {stage.detail ? <small>{stage.detail}</small> : null}
+              </button>
+            ) : (
+              <span key={stage.label} className={`st ${stage.state}`}>
+                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
+                {stage.label}
+                {stage.detail ? <small>{stage.detail}</small> : null}
+              </span>
+            ),
+          )}
         </div>
         {board.scenes.length > 0 && (
           <>
@@ -388,7 +443,9 @@ export function Project() {
               title={TIPS.createFinal}
             >
               <Sparkles size={14} strokeWidth={2} />
-              {finalizing ? "Creating final video…" : "Create final video"}
+              {finalizing
+                ? "Creating final video…"
+                : `Create final video${eta ? ` · ${eta}` : ""}`}
             </button>
           ) : null)}
       </div>

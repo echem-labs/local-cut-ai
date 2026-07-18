@@ -1,4 +1,4 @@
-import { Download, Pause } from "lucide-react";
+import { Download, Pause, X } from "lucide-react";
 import { useEffect } from "react";
 import { nodeLabel } from "../help/terms";
 import { useApp } from "../store";
@@ -16,7 +16,8 @@ const RING_C = 2 * Math.PI * 7;
  * never money. Background model downloads join the pill (click → Settings)
  * so Home is honest about work the engine is doing off-screen. */
 export function QueueTray() {
-  const { jobs, models, refreshModels, openSettings, startDownload, firstRunDone } = useApp();
+  const { jobs, models, refreshModels, openSettings, startDownload, cancelJob, firstRunDone } =
+    useApp();
   const active = jobs.find((job) => job.status === "rendering");
   const queued = jobs.filter((job) => job.status === "queued").length;
 
@@ -72,6 +73,14 @@ export function QueueTray() {
               <span>
                 <b>{nodeLabel(active.spec.node_id)}</b> · {Math.round(active.progress * 100)}%
               </span>
+              <button
+                className="tray-cancel"
+                aria-label="Stop this render"
+                title="Stop this render"
+                onClick={() => void cancelJob(active.id)}
+              >
+                <X size={11} strokeWidth={2} />
+              </button>
             </>
           ) : (
             <span>idle</span>

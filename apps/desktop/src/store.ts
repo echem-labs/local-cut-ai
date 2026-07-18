@@ -109,6 +109,7 @@ interface AppState {
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
   edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
+  cancelJob: (jobId: string) => Promise<void>;
   conditionScene: (sceneId: string, file: File) => Promise<void>;
   applyClonedVoice: (file: File) => Promise<void>;
   applyTimeline: (params: Record<string, unknown>) => void;
@@ -692,6 +693,19 @@ export const useApp = create<AppState>((set, get) => {
       } finally {
         set({ editBusy: false });
       }
+    },
+
+    cancelJob: async (jobId) => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        await client.cancelJob(jobId);
+      } catch (err) {
+        // 409 = it finished (or died) before the click landed; the refresh
+        // below shows the truth either way.
+        console.warn(`cancel job ${jobId} failed:`, err);
+      }
+      await get().refreshBoard();
     },
 
     conditionScene: async (sceneId, file) => {

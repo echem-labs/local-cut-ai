@@ -3,6 +3,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { movedOrder, orderedScenes } from "../lib/order";
 import { formatTime, usePlayback } from "../lib/playback";
 import { useApp } from "../store";
+import { PanelHelp } from "./Help";
 
 const TRANSITIONS = [
   { id: "cut", label: "Cut", hint: "instant switch" },
@@ -46,24 +47,31 @@ export function TimelineStrip() {
   });
   const totalDuration = durations.reduce((sum, d) => sum + d, 0);
   const DIAMOND_W = 15; // diamond + margins — keeps playhead math honest
-  const blockWidths = durations.map((d) => Math.max(56, Math.round(d * pxPerSec)));
+  const blockWidths = durations.map((d) => Math.max(64, Math.round(d * pxPerSec)));
+  const totalWidth =
+    blockWidths.reduce((sum, w) => sum + w, 0) + DIAMOND_W * Math.max(0, scenes.length - 1);
 
-  // Map the global elapsed time onto pixel space through the real block
-  // widths (min-width + diamonds would put a naive elapsed*px off target).
-  let playheadPx: number | null = null;
-  if (sceneId !== null) {
-    let remaining = elapsed;
+  // Map a global time onto pixel space through the real block widths
+  // (min-width + diamonds would put a naive t*px off target). Shared by
+  // the playhead and the ruler so they can never disagree.
+  const timeToPx = (t: number): number => {
+    let remaining = t;
     let px = 0;
     for (let i = 0; i < scenes.length; i++) {
       if (remaining <= durations[i] || i === scenes.length - 1) {
-        px += Math.min(1, Math.max(0, remaining / durations[i])) * blockWidths[i];
-        playheadPx = px;
-        break;
+        return px + Math.min(1, Math.max(0, remaining / durations[i])) * blockWidths[i];
       }
       remaining -= durations[i];
       px += blockWidths[i] + DIAMOND_W;
     }
-  }
+    return px;
+  };
+  const playheadPx = sceneId !== null ? timeToPx(elapsed) : null;
+
+  // Ruler ticks: 5s steps when zoomed in, 10s otherwise.
+  const tickStep = pxPerSec >= 24 ? 5 : 10;
+  const ticks: number[] = [];
+  for (let t = 0; t <= totalDuration; t += tickStep) ticks.push(t);
 
   const shownIndex = sceneId ? order.indexOf(sceneId) : -1;
 
@@ -127,9 +135,17 @@ export function TimelineStrip() {
             onChange={(event) => setPxPerSec(Number(event.target.value))}
           />
         </label>
+        <PanelHelp panel="timeline" />
       </div>
 
       <div className="tl-scroll">
+        <div className="tl-ruler" style={{ width: totalWidth }} aria-hidden="true">
+          {ticks.map((t) => (
+            <span key={t} style={{ left: timeToPx(t) }}>
+              {t}s
+            </span>
+          ))}
+        </div>
         <div className="tl-blocks" style={{ position: "relative" }}>
           {playheadPx !== null && (
             <div className="tl-playhead" style={{ left: playheadPx }} aria-hidden="true" />

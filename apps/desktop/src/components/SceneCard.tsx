@@ -1,6 +1,7 @@
 import { Pencil, Pin, Play, RotateCw, SlidersHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
+import { remainingLabel } from "../lib/eta";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -38,6 +39,8 @@ export function SceneCard({
   onDragStart,
   onDragEnd,
   onDropSide,
+  teachDraft = false,
+  onTeachDismiss,
 }: {
   scene: SceneCardModel;
   dragging?: boolean;
@@ -45,13 +48,19 @@ export function SceneCard({
   onDragEnd?: () => void;
   /** Called on drop with true when dropped on the right half (insert after). */
   onDropSide?: (after: boolean) => void;
+  /** First-ever rendering card carries the one-time draft-quality note. */
+  teachDraft?: boolean;
+  onTeachDismiss?: () => void;
 }) {
-  const { client, currentProject, selectedNode, select, regenerate, togglePin } = useApp();
+  const { client, currentProject, selectedNode, select, regenerate, togglePin, applyNode } =
+    useApp();
   const playScene = usePlayback((state) => state.play);
   const [dark, setDark] = useState(false);
   const [dropSide, setDropSide] = useState<"before" | "after" | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubBroken, setScrubBroken] = useState(false);
+  const [editingWords, setEditingWords] = useState(false);
+  const [wordsDraft, setWordsDraft] = useState("");
   const scrubRef = useRef<HTMLVideoElement>(null);
   const clip = scene.clip;
   const keyframe = scene.keyframe;
@@ -68,9 +77,26 @@ export function SceneCard({
     clip.artifact_hash && client && currentProject
       ? client.artifactUrl(currentProject.id, clip.artifact_hash)
       : null;
+  const timeLeft =
+    rendering && currentProject
+      ? remainingLabel(currentProject.id, clip.node_id, clip.progress)
+      : null;
+
+  // Inline narration editing (review 3 / Descript's insight): change the
+  // words where you read them — the narration node re-renders on commit.
+  const canEditWords =
+    Boolean(scene.narration) && !rendering && !failed && !scene.narration?.pinned;
+  const commitWords = () => {
+    setEditingWords(false);
+    const next = wordsDraft.trim();
+    if (scene.narration && next && next !== narrationText) {
+      void applyNode(scene.narration.node_id, { params: { text: next } });
+    }
+  };
 
   return (
     <div
+      data-scene={scene.scene_id}
       className={[
         "scene-card",
         selected ? "selected" : "",
@@ -231,14 +257,64 @@ export function SceneCard({
           <span className="scene-name">Scene {sceneNo}</span>
           {Number.isFinite(duration) && <span className="scene-dur">{duration}s</span>}
         </div>
-        <div className="narration">
-          {rendering
-            ? `Rendering video${clip.progress > 0 ? ` · ${Math.round(clip.progress * 100)}%` : "…"}`
-            : failed
-              ? "This scene didn't render."
-              : narrationText || "…"}
-        </div>
+        {editingWords ? (
+          <textarea
+            className="narration-edit"
+            value={wordsDraft}
+            rows={2}
+            autoFocus
+            aria-label={`Scene ${sceneNo} narration`}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => setWordsDraft(event.target.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation(); // the card's R/P/Enter keys must not fire
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                commitWords();
+              }
+              if (event.key === "Escape") setEditingWords(false);
+            }}
+            onBlur={commitWords}
+          />
+        ) : (
+          <div
+            className={`narration${canEditWords ? " editable" : ""}`}
+            title={
+              canEditWords ? "Click to change the words — the narration re-renders" : undefined
+            }
+            onClick={
+              canEditWords
+                ? (event) => {
+                    event.stopPropagation();
+                    setWordsDraft(narrationText);
+                    setEditingWords(true);
+                  }
+                : undefined
+            }
+          >
+            {rendering
+              ? `Rendering video${clip.progress > 0 ? ` · ${Math.round(clip.progress * 100)}%` : "…"}${timeLeft ? ` · ${timeLeft}` : ""}`
+              : failed
+                ? "This scene didn't render."
+                : narrationText || "…"}
+          </div>
+        )}
       </div>
+      {teachDraft && (
+        <div className="draft-teach" role="note">
+          <span>Drafts render fast at lower quality — they're for deciding, not shipping.</span>
+          <button
+            aria-label="Got it"
+            title="Got it"
+            onClick={(event) => {
+              event.stopPropagation();
+              onTeachDismiss?.();
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {failed && (
         <div className="fail-acts">
           <button

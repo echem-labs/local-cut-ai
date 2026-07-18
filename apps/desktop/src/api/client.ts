@@ -151,6 +151,11 @@ export class EngineClient {
     return this.request(`/jobs${projectId ? `?project_id=${projectId}` : ""}`);
   }
 
+  /** Stop a queued or running render (409 once it's already finished). */
+  cancelJob(jobId: string): Promise<{ ok: boolean }> {
+    return this.request(`/jobs/${jobId}/cancel`, { method: "POST" });
+  }
+
   system(): Promise<SystemInfo> {
     return this.request("/system");
   }

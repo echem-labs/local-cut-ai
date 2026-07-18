@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle, TIPS } from "../help/terms";
 import { useWorkspace } from "../lib/workspace";
+import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
 import { Tip } from "./Tooltip";
@@ -213,6 +214,7 @@ export function Inspector() {
           {inspectorTitle(selectedNode)}
           {statusNode && <StatusPill status={statusNode.status} progress={statusNode.progress} />}
         </h2>
+        <PanelHelp panel="inspector" />
         {activeNode && (
           <button
             className={`icon-btn-sm${pinned ? " active" : ""}`}
