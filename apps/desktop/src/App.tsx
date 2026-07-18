@@ -4,6 +4,7 @@ import {
   FolderOpen,
   Home as HomeIcon,
   LayoutGrid,
+  Settings as SettingsIcon,
   Upload,
 } from "lucide-react";
 import { useEffect } from "react";
@@ -95,7 +96,19 @@ export default function App() {
           Export
           <span className="soon">soon</span>
         </button>
-        <Tip label="Engine & settings" side="top">
+        <div className="group-label">App</div>
+        <button
+          className={settingsOpen && !currentProject ? "active" : ""}
+          disabled={!firstRunDone}
+          onClick={() => {
+            closeProject();
+            openSettings();
+          }}
+        >
+          <SettingsIcon {...ICON} />
+          Settings
+        </button>
+        <Tip label="Engine status" hint="click for engine settings" side="top">
           <button
             className="engine-chip"
             style={{ width: "100%" }}

@@ -1,7 +1,25 @@
+import {
+  Boxes,
+  Cpu,
+  KeyRound,
+  RotateCcw,
+  Server,
+  SunMoon,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { Provider } from "../api/types";
 import { ModelLibrary } from "../components/ModelLibrary";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
+import { applyTheme, loadThemePref, type ThemePref } from "../theme";
+
+const SECTION_ICON = { size: 14, strokeWidth: 1.8 } as const;
+
+const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+];
 
 /** Engine provider ids → shell key ids (google's key is a Gemini key). */
 const KEY_IDS: Record<string, ProviderKeyId> = {
@@ -34,6 +52,7 @@ export function Settings() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ThemePref>(loadThemePref);
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -103,15 +122,40 @@ export function Settings() {
 
   return (
     <div className="settings">
-      <div className="board-header">
-        <button className="btn-ghost" onClick={closeSettings}>
-          ← Back
-        </button>
+      <div className="settings-head">
         <h1>Settings</h1>
+        <button className="icon-btn" onClick={closeSettings} aria-label="Close settings">
+          <X size={16} strokeWidth={2} />
+        </button>
       </div>
 
       <section>
-        <h2>Cloud providers</h2>
+        <h2>
+          <SunMoon {...SECTION_ICON} />
+          Appearance
+        </h2>
+        <p className="hint">Dark is the design target for video work; light is fully supported.</p>
+        <div className="seg-toggle" role="group" aria-label="Theme" style={{ display: "inline-flex" }}>
+          {THEME_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              className={theme === option.value ? "active" : ""}
+              onClick={() => {
+                setTheme(option.value);
+                applyTheme(option.value);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2>
+          <KeyRound {...SECTION_ICON} />
+          Cloud providers
+        </h2>
         <p className="hint">
           Bring your own keys: they live in your OS keychain, go only to your engine, and are
           never sent to us.
@@ -165,13 +209,19 @@ export function Settings() {
       </section>
 
       <section>
-        <h2>Model library</h2>
+        <h2>
+          <Boxes {...SECTION_ICON} />
+          Model library
+        </h2>
         <p className="hint">Download more local models any time — jobs pick them up immediately.</p>
         <ModelLibrary showActions />
       </section>
 
       <section>
-        <h2>Remote engine</h2>
+        <h2>
+          <Server {...SECTION_ICON} />
+          Remote engine
+        </h2>
         <p className="hint">
           Run <code>localcut-engine serve --host 0.0.0.0 --token …</code> on a GPU box, then
           paste its pairing code here — this laptop becomes the remote control. Projects and
@@ -229,7 +279,10 @@ export function Settings() {
       </section>
 
       <section>
-        <h2>Engine</h2>
+        <h2>
+          <Cpu {...SECTION_ICON} />
+          Engine
+        </h2>
         <dl className="kv">
           <dt>Engine URL</dt>
           <dd>{client?.baseUrl ?? "not connected"}</dd>
@@ -247,7 +300,10 @@ export function Settings() {
       </section>
 
       <section>
-        <h2>Setup</h2>
+        <h2>
+          <RotateCcw {...SECTION_ICON} />
+          Setup
+        </h2>
         <button className="btn-ghost" onClick={resetFirstRun}>
           Show setup screen again
         </button>

@@ -5,8 +5,8 @@ import {
   Image as ImageIcon,
   Mic,
   Music,
-  Settings as SettingsIcon,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 import { Tip } from "../components/Tooltip";
@@ -66,6 +66,18 @@ const TOOLS: {
   },
 ];
 
+const ASPECTS = [
+  { value: "9:16", label: "Shorts", glyph: "" },
+  { value: "16:9", label: "YouTube", glyph: "wide" },
+  { value: "1:1", label: "Square", glyph: "square" },
+];
+
+const DURATIONS = [
+  { value: 30, label: "30s" },
+  { value: 60, label: "60s" },
+  { value: 120, label: "2min" },
+];
+
 /** Deterministic stand-in art per project until real keyframe thumbs. */
 const thumbClass = (id: string): string => {
   let hash = 0;
@@ -73,17 +85,11 @@ const thumbClass = (id: string): string => {
   return `g${Math.abs(hash) % 4}`;
 };
 
-/** Home: one prompt box — the entire prompt-only mode — plus a
- * Quick Tools row and recent projects. Control budget: ≤6 elements. */
+/** Home: one prompt surface — the video prompt, or the active quick tool's
+ * panel in its place (never both) — plus the Quick Tools row and recent
+ * projects. Control budget: ≤6 elements. */
 export function Home() {
-  const {
-    projects,
-    createFromPrompt,
-    createTool,
-    openProject,
-    openSettings,
-    actionError,
-  } = useApp();
+  const { projects, createFromPrompt, createTool, openProject, actionError } = useApp();
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(60);
   const [aspect, setAspect] = useState("9:16");
@@ -129,94 +135,94 @@ export function Home() {
     <div className="home">
       <div className="home-header">
         <h1>What are we making today?</h1>
-        <Tip label="Settings" hint="engine, models, API keys" side="bottom">
-          <button className="icon-btn" onClick={openSettings} aria-label="Settings">
-            <SettingsIcon size={17} strokeWidth={1.8} />
-          </button>
-        </Tip>
       </div>
       <p className="sub">
         Describe it — script, storyboard, clips, narration and music are generated on this machine.
       </p>
-      <div className="prompt-box">
-        <textarea
-          placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void generate();
-          }}
-          aria-label="Video prompt"
-        />
-        <div className="row">
-          <select
-            value={aspect}
-            onChange={(event) => setAspect(event.target.value)}
-            aria-label="Aspect ratio"
-          >
-            <option value="9:16">9:16 · Shorts</option>
-            <option value="16:9">16:9 · YouTube</option>
-            <option value="1:1">1:1 · Square</option>
-          </select>
-          <select
-            value={duration}
-            onChange={(event) => setDuration(Number(event.target.value))}
-            aria-label="Duration"
-          >
-            <option value={30}>30s</option>
-            <option value={60}>60s</option>
-            <option value={120}>2min</option>
-          </select>
-          <div className="seg-toggle" role="group" aria-label="Generation mode">
-            <button
-              className={mode === "prompt" ? "active" : ""}
-              onClick={() => setMode("prompt")}
-              title="Generate end-to-end without stopping"
-            >
-              Auto
-            </button>
-            <button
-              className={mode === "beginner" ? "active" : ""}
-              onClick={() => setMode("beginner")}
-              title="Pause to review the script and storyboard before rendering"
-            >
-              Review steps
+
+      {!activeTool && (
+        <div className="prompt-box">
+          <textarea
+            placeholder="e.g. Why octopuses have three hearts — fast-paced, for Shorts"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void generate();
+            }}
+            aria-label="Video prompt"
+          />
+          <div className="row">
+            <div className="seg-toggle" role="group" aria-label="Aspect ratio">
+              {ASPECTS.map((entry) => (
+                <button
+                  key={entry.value}
+                  className={aspect === entry.value ? "active" : ""}
+                  onClick={() => setAspect(entry.value)}
+                  title={`${entry.value} · ${entry.label}`}
+                >
+                  <span className={`ratio ${entry.glyph}`} aria-hidden="true" />
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+            <div className="seg-toggle" role="group" aria-label="Duration">
+              {DURATIONS.map((entry) => (
+                <button
+                  key={entry.value}
+                  className={duration === entry.value ? "active" : ""}
+                  onClick={() => setDuration(entry.value)}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+            <div className="seg-toggle" role="group" aria-label="Generation mode">
+              <button
+                className={mode === "prompt" ? "active" : ""}
+                onClick={() => setMode("prompt")}
+                title="Generate end-to-end without stopping"
+              >
+                Auto
+              </button>
+              <button
+                className={mode === "beginner" ? "active" : ""}
+                onClick={() => setMode("beginner")}
+                title="Pause to review the script and storyboard before rendering"
+              >
+                Review steps
+              </button>
+            </div>
+            <div className="spacer" />
+            <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
+              <Sparkles size={14} strokeWidth={2} />
+              {busy ? "Starting…" : "Generate"}
+              <kbd>Ctrl ↵</kbd>
             </button>
           </div>
-          <div className="spacer" />
-          <button className="btn-primary" onClick={() => void generate()} disabled={busy}>
-            <Sparkles size={14} strokeWidth={2} />
-            {busy ? "Starting…" : "Generate"}
-            <kbd>Ctrl ↵</kbd>
-          </button>
+          {actionError?.scope === "create" && (
+            <p className="hint error-text" role="alert">
+              {actionError.message}
+            </p>
+          )}
         </div>
-        {actionError?.scope === "create" && (
-          <p className="hint error-text" role="alert">
-            {actionError.message}
-          </p>
-        )}
-      </div>
-
-      <div className="quick-tools" role="group" aria-label="Quick tools">
-        {TOOLS.map((entry) => {
-          const Icon = entry.icon;
-          return (
-            <Tip key={entry.kind} label={entry.tip} hint="no project needed" side="bottom">
-              <button
-                className={tool === entry.kind ? "active" : ""}
-                onClick={() => setTool(tool === entry.kind ? null : entry.kind)}
-                aria-label={`${entry.label} — ${entry.tip}`}
-              >
-                <Icon {...TOOL_ICON} />
-                {entry.label}
-              </button>
-            </Tip>
-          );
-        })}
-      </div>
+      )}
 
       {activeTool && (
         <div className="prompt-box tool-panel">
+          <div className="tool-head">
+            <activeTool.icon size={15} strokeWidth={1.8} />
+            <b>{activeTool.label}</b>
+            <small>
+              {activeTool.tip} · no project needed — export directly, or turn it into a video later
+            </small>
+            <button
+              className="icon-btn"
+              onClick={() => setTool(null)}
+              aria-label="Close tool, back to video prompt"
+            >
+              <X size={14} strokeWidth={2} />
+            </button>
+          </div>
           <textarea
             placeholder={activeTool.placeholder}
             value={toolInput}
@@ -225,6 +231,7 @@ export function Home() {
               if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void runTool();
             }}
             aria-label={activeTool.kind === "voiceover" ? "Voiceover text" : `${activeTool.label} prompt`}
+            autoFocus
           />
           <div className="row">
             {activeTool.kind === "voiceover" && (
@@ -247,6 +254,7 @@ export function Home() {
             <button className="btn-primary" onClick={() => void runTool()} disabled={busy}>
               <Sparkles size={14} strokeWidth={2} />
               {busy ? "Starting…" : `Generate ${activeTool.label.toLowerCase()}`}
+              <kbd>Ctrl ↵</kbd>
             </button>
           </div>
           {actionError?.scope === "tool" && (
@@ -256,6 +264,31 @@ export function Home() {
           )}
         </div>
       )}
+
+      <div className="tools-head">
+        <h3>Quick tools</h3>
+        <span className="hint">one artifact, no project — script, thumbnail, voice and more</span>
+      </div>
+      <div className="quick-tools" role="group" aria-label="Quick tools">
+        {TOOLS.map((entry) => {
+          const Icon = entry.icon;
+          return (
+            <Tip key={entry.kind} label={entry.tip} hint="no project needed" side="bottom">
+              <button
+                className={tool === entry.kind ? "active" : ""}
+                onClick={() => {
+                  setTool(tool === entry.kind ? null : entry.kind);
+                  setToolInput("");
+                }}
+                aria-label={`${entry.label} — ${entry.tip}`}
+              >
+                <Icon {...TOOL_ICON} />
+                {entry.label}
+              </button>
+            </Tip>
+          );
+        })}
+      </div>
 
       {ordered.length > 0 && (
         <div className="recent">

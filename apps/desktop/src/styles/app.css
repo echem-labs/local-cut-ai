@@ -302,7 +302,7 @@ textarea {
   align-items: center;
   padding: var(--space-3);
   border-top: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--inset-bg);
 }
 
 .prompt-box > .hint {
@@ -389,8 +389,53 @@ textarea {
   color: var(--accent);
 }
 
+/* quick-tools section header: the row explains itself without hovering */
+.tools-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-2);
+}
+
+.tools-head h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+  font-weight: 600;
+}
+
+/* tool session panel: replaces the video prompt while open — one prompt
+ * on screen at a time */
 .tool-panel {
-  margin-top: var(--space-3);
+  margin-top: 0;
+}
+
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.tool-head svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.tool-head b {
+  font-weight: 600;
+}
+
+.tool-head small {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.tool-head .icon-btn {
+  margin-left: auto;
 }
 
 .tool-panel input {
@@ -871,25 +916,55 @@ textarea {
 .seg-toggle {
   display: flex;
   border: 1px solid var(--border);
-  border-radius: var(--radius-s);
+  border-radius: 7px;
   overflow: hidden;
 }
 
 .seg-toggle button {
-  padding: var(--space-1) var(--space-2);
-  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1) var(--space-3);
+  min-height: 30px;
   font-size: var(--text-xs);
   color: var(--text-secondary);
-  transition: background var(--motion-fast);
+  transition:
+    background var(--motion-fast),
+    color var(--motion-fast);
+}
+
+.seg-toggle button + button {
+  border-left: 1px solid var(--border);
 }
 
 .seg-toggle button:hover {
   background: var(--surface-2);
+  color: var(--text-primary);
 }
 
 .seg-toggle button.active {
   background: var(--accent-muted);
   color: var(--text-primary);
+}
+
+/* aspect-ratio preview glyphs inside segmented buttons */
+.ratio {
+  width: 9px;
+  height: 15px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.ratio.wide {
+  width: 17px;
+  height: 10px;
+}
+
+.ratio.square {
+  width: 12px;
+  height: 12px;
 }
 
 /* ---- status ring ---- */
@@ -977,7 +1052,7 @@ textarea {
   position: fixed;
   right: var(--space-4);
   bottom: var(--space-4);
-  background: rgba(30, 33, 40, 0.92);
+  background: var(--tray-bg);
   border: 1px solid var(--border-hi);
   border-radius: 999px;
   padding: var(--space-2) var(--space-4);
@@ -1051,13 +1126,14 @@ textarea {
   display: inline-flex;
 }
 
+/* Tooltips are dark ink on both themes — a deliberate constant. */
 .tip {
   position: absolute;
   left: 50%;
   transform: translateX(-50%) translateY(2px);
-  background: #23262e;
-  border: 1px solid var(--border-hi);
-  color: var(--text-primary);
+  background: var(--tooltip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #eceaf3;
   font-size: 11.5px;
   font-weight: 400;
   border-radius: 7px;
@@ -1082,24 +1158,26 @@ textarea {
   top: calc(100% + 7px);
 }
 
+/* :focus-visible (not :focus-within) — a mouse click must not leave the
+ * tooltip stuck open on the focused control. */
 .tip-wrap:hover .tip,
-.tip-wrap:focus-within .tip {
+.tip-wrap:has(:focus-visible) .tip {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
   transition-delay: 300ms;
 }
 
 .tip .tip-hint {
-  color: var(--text-tertiary);
+  color: #9a97ab;
 }
 
 .tip kbd {
   font-family: var(--font-mono);
   font-size: 10px;
-  border: 1px solid var(--border-hi);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 4px;
   padding: 0 4px;
-  color: var(--text-secondary);
+  color: #c9c6d6;
 }
 
 /* ---- banners ---- */
@@ -1401,14 +1479,38 @@ textarea {
   margin: 0 auto;
 }
 
+.settings .settings-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.settings .settings-head h1 {
+  font-size: var(--text-l);
+  font-weight: 650;
+  flex: 1;
+}
+
 .settings section {
-  margin-top: var(--space-8);
+  margin-top: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-4);
 }
 
 .settings section h2 {
-  font-size: var(--text-m);
-  font-weight: 600;
-  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-s);
+  font-weight: 650;
+  margin-bottom: var(--space-1);
+}
+
+.settings section h2 svg {
+  color: var(--accent);
 }
 
 .settings section > .hint {
@@ -1418,6 +1520,13 @@ textarea {
 
 .settings .banner {
   margin-bottom: var(--space-3);
+}
+
+/* rows inside settings cards sit on the base surface for contrast */
+.settings .provider-row,
+.settings .model-row,
+.settings .kv {
+  background: var(--surface-0);
 }
 
 .provider-row input {

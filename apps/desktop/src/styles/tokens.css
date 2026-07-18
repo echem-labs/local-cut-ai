@@ -1,6 +1,11 @@
-/* Design tokens: near-monochrome dark UI, one violet accent,
-   reserved semantic status colors, 4px grid, Inter/system type. */
-:root {
+/* Design tokens: near-monochrome UI, one violet accent, reserved semantic
+   status colors, 4px grid, Inter/system type. Dark is the design target
+   (doc 09); light derives from the same token set. The resolved theme is
+   stamped as data-theme on <html> by src/theme.ts. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
   /* surfaces: near-black base + elevation steps */
   --surface-0: #0e0f12;
   --surface-1: #16181d;
@@ -25,8 +30,6 @@
   --accent-glow: 0 0 0 3px rgba(139, 124, 246, 0.16);
   --accent-shadow: 0 2px 10px rgba(139, 124, 246, 0.35);
 
-  --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
-
   /* reserved status colors — never decorative */
   --status-generating: var(--accent);
   --status-draft: #d9a13c;
@@ -34,6 +37,50 @@
   --status-failed: #e05c5c;
   --status-pinned: #a9adb8;
 
+  /* chrome that floats over content */
+  --tray-bg: rgba(30, 33, 40, 0.92);
+  --tooltip-bg: #23262e;
+  --inset-bg: rgba(255, 255, 255, 0.015);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* violet-biased light neutrals — picked, not inherited */
+  --surface-0: #f6f5f9;
+  --surface-1: #ffffff;
+  --surface-2: #efedf4;
+  --surface-3: #e6e3ee;
+  --border: #e2e0ea;
+  --border-hi: #cfccdc;
+
+  --shadow-1: 0 1px 2px rgba(35, 30, 60, 0.08), 0 4px 16px rgba(35, 30, 60, 0.07);
+  --shadow-2: 0 2px 4px rgba(35, 30, 60, 0.1), 0 12px 32px rgba(35, 30, 60, 0.12);
+
+  /* text — AA on light surfaces */
+  --text-primary: #23222b;
+  --text-secondary: #5d5b6b;
+  --text-tertiary: #8c8a9a;
+
+  /* deeper violet for contrast on light grounds */
+  --accent: #6d5ce0;
+  --accent-hover: #5b49d6;
+  --accent-muted: rgba(109, 92, 224, 0.12);
+  --accent-glow: 0 0 0 3px rgba(109, 92, 224, 0.14);
+  --accent-shadow: 0 2px 10px rgba(109, 92, 224, 0.25);
+
+  --status-generating: var(--accent);
+  --status-draft: #9a6d10;
+  --status-final: #217a44;
+  --status-failed: #c43d3d;
+  --status-pinned: #5d5b6b;
+
+  --tray-bg: rgba(255, 255, 255, 0.92);
+  --tooltip-bg: #2c2a38;
+  --inset-bg: rgba(35, 30, 60, 0.02);
+}
+
+:root {
   /* spacing on a 4px grid */
   --space-1: 4px;
   --space-2: 8px;
@@ -47,6 +94,7 @@
 
   /* type: 4-step scale + one display size */
   --font-ui: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
   --text-xs: 12px;
   --text-s: 14px;
   --text-m: 16px;
