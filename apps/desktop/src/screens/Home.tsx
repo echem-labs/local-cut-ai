@@ -1,5 +1,6 @@
 import {
   Aperture,
+  Boxes,
   FileText,
   Film,
   Image as ImageIcon,
@@ -12,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { Dropdown } from "../components/Dropdown";
 import { Tip } from "../components/Tooltip";
 import type { ToolKind } from "../api/types";
 import { useApp } from "../store";
@@ -92,7 +94,8 @@ const thumbClass = (id: string): string => {
  * panel in its place (never both) — plus the Quick Tools row and recent
  * projects. Control budget: ≤6 elements. */
 export function Home() {
-  const { projects, createFromPrompt, createTool, openProject, actionError } = useApp();
+  const { projects, createFromPrompt, createTool, openProject, openSettings, actionError } =
+    useApp();
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(60);
   const [aspect, setAspect] = useState("9:16");
@@ -104,7 +107,6 @@ export function Home() {
   const [motion, setMotion] = useState("");
 
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
-  const AspectIcon = ASPECTS.find((entry) => entry.value === aspect)?.icon ?? Smartphone;
 
   const generate = async () => {
     if (!prompt.trim() || busy) return;
@@ -156,33 +158,31 @@ export function Home() {
             aria-label="Video prompt"
           />
           <div className="row">
-            <span className="chip-select">
-              <AspectIcon size={13} strokeWidth={1.8} aria-hidden="true" />
-              <select
-                value={aspect}
-                onChange={(event) => setAspect(event.target.value)}
-                aria-label="Aspect ratio"
+            <Dropdown
+              value={aspect}
+              onChange={setAspect}
+              ariaLabel="Aspect ratio"
+              options={ASPECTS.map((entry) => ({
+                value: entry.value,
+                label: `${entry.value} · ${entry.label}`,
+                icon: entry.icon,
+              }))}
+            />
+            <Dropdown
+              value={duration}
+              onChange={setDuration}
+              ariaLabel="Duration"
+              options={DURATIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
+            />
+            <Tip label="Models" hint="downloads, status & library" side="bottom">
+              <button
+                className="icon-btn"
+                onClick={() => openSettings("models")}
+                aria-label="Model library"
               >
-                {ASPECTS.map((entry) => (
-                  <option key={entry.value} value={entry.value}>
-                    {entry.value} · {entry.label}
-                  </option>
-                ))}
-              </select>
-            </span>
-            <span className="chip-select">
-              <select
-                value={duration}
-                onChange={(event) => setDuration(Number(event.target.value))}
-                aria-label="Duration"
-              >
-                {DURATIONS.map((entry) => (
-                  <option key={entry.value} value={entry.value}>
-                    {entry.label}
-                  </option>
-                ))}
-              </select>
-            </span>
+                <Boxes size={15} strokeWidth={1.8} />
+              </button>
+            </Tip>
             <div className="seg-toggle" role="group" aria-label="Generation mode">
               <button
                 className={mode === "prompt" ? "active" : ""}

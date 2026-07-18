@@ -71,6 +71,9 @@ interface AppState {
   downloadErrors: Record<string, string>;
   firstRunDone: boolean;
   settingsOpen: boolean;
+  // Which Settings tab is showing — deep-linkable (engine chip → "engine",
+  // the prompt bar's model button → "models").
+  settingsTab: string;
   // One natural-language edit at a time — the LLM call is slow and a second
   // plan compiled against the pre-edit view would fight the first.
   editBusy: boolean;
@@ -118,7 +121,8 @@ interface AppState {
   unpairRemote: () => Promise<string | null>;
   finishFirstRun: () => void;
   resetFirstRun: () => void;
-  openSettings: () => void;
+  openSettings: (tab?: string) => void;
+  setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
 }
 
@@ -486,6 +490,7 @@ export const useApp = create<AppState>((set, get) => {
     downloadErrors: {},
     firstRunDone: localStorage.getItem(FIRST_RUN_KEY) === "1",
     settingsOpen: false,
+    settingsTab: "general",
     editBusy: false,
     remoteEngine: false,
     remotePaired: false,
@@ -809,7 +814,10 @@ export const useApp = create<AppState>((set, get) => {
       set({ firstRunDone: false, settingsOpen: false });
     },
 
-    openSettings: () => set({ settingsOpen: true }),
+    openSettings: (tab) =>
+      set(tab ? { settingsOpen: true, settingsTab: tab } : { settingsOpen: true }),
+
+    setSettingsTab: (tab) => set({ settingsTab: tab }),
 
     closeSettings: () => set({ settingsOpen: false }),
   };

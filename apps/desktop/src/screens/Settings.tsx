@@ -62,7 +62,8 @@ export function Settings() {
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePref>(loadThemePref);
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const { settingsTab, setSettingsTab } = useApp();
+  const tab = (TABS.some((entry) => entry.id === settingsTab) ? settingsTab : "general") as SettingsTab;
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -148,7 +149,7 @@ export function Settings() {
               role="tab"
               aria-selected={tab === entry.id}
               className={tab === entry.id ? "active" : ""}
-              onClick={() => setTab(entry.id)}
+              onClick={() => setSettingsTab(entry.id)}
             >
               <Icon size={13} strokeWidth={1.8} />
               {entry.label}

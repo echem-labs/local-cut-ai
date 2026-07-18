@@ -113,8 +113,8 @@ export default function App() {
               className="engine-chip"
               style={{ width: "100%" }}
               disabled={!firstRunDone}
-              onClick={openSettings}
-              aria-label="Engine status — open settings"
+              onClick={() => openSettings("engine")}
+              aria-label="Engine status — open engine settings"
             >
               <span className={`pulse${engineError ? " err" : ""}`} />
               <span style={{ minWidth: 0 }}>
@@ -124,23 +124,23 @@ export default function App() {
             </button>
           </Tip>
           <button
-            className={settingsOpen && !currentProject ? "active" : ""}
-            disabled={!firstRunDone}
-            onClick={() => {
-              closeProject();
-              openSettings();
-            }}
-          >
-            <SettingsIcon {...ICON} />
-            Settings
-          </button>
-          <button
             onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
             title="Toggle theme — the follow-system option lives in Settings"
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           >
             {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
             {theme === "dark" ? "Light mode" : "Dark mode"}
+          </button>
+          <button
+            className={settingsOpen && !currentProject ? "active" : ""}
+            disabled={!firstRunDone}
+            onClick={() => {
+              closeProject();
+              openSettings("general");
+            }}
+          >
+            <SettingsIcon {...ICON} />
+            Settings
           </button>
         </div>
       </nav>

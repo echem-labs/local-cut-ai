@@ -272,6 +272,8 @@ textarea {
   margin-bottom: var(--space-6);
 }
 
+/* no overflow:hidden — the dropdown menus must escape the box; the inner
+ * bar rounds its own bottom corners instead */
 .prompt-box {
   display: flex;
   flex-direction: column;
@@ -279,7 +281,6 @@ textarea {
   border: 1px solid var(--border-hi);
   border-radius: 12px;
   box-shadow: var(--shadow-1);
-  overflow: hidden;
   transition:
     border-color var(--motion-fast),
     box-shadow var(--motion-fast);
@@ -312,30 +313,24 @@ textarea {
   padding: var(--space-3);
   border-top: 1px solid var(--border);
   background: var(--inset-bg);
+  border-radius: 0 0 11px 11px;
 }
 
 .prompt-box > .hint {
   padding: 0 var(--space-4) var(--space-3);
 }
 
-/* dropdown restyled as a chip: native menu behavior, no native chrome —
- * deliberately no chevron (the proposal's chip look) */
-.chip-select {
+/* custom dropdown, chip-styled — icons render in the menu items too,
+ * which a native <select> can't do; deliberately no chevron */
+.dropdown {
   position: relative;
   display: inline-flex;
+}
+
+.dropdown-trigger {
+  display: inline-flex;
   align-items: center;
-}
-
-.chip-select svg {
-  position: absolute;
-  left: 10px;
-  pointer-events: none;
-  color: var(--text-tertiary);
-  transition: color var(--motion-fast);
-}
-
-.chip-select select {
-  appearance: none;
+  gap: 7px;
   background: var(--surface-1);
   color: var(--text-secondary);
   border: 1px solid var(--border);
@@ -343,27 +338,77 @@ textarea {
   padding: var(--space-1) var(--space-3);
   min-height: 30px;
   font-size: var(--text-xs);
-  cursor: pointer;
-  outline: none;
   transition:
     border-color var(--motion-fast),
     color var(--motion-fast),
     background var(--motion-fast);
 }
 
-.chip-select svg + select {
-  padding-left: 30px;
+.dropdown-trigger svg {
+  color: var(--text-tertiary);
+  transition: color var(--motion-fast);
 }
 
-.chip-select select:hover,
-.chip-select select:focus-visible {
+.dropdown-trigger:hover,
+.dropdown-trigger[aria-expanded="true"] {
   border-color: var(--border-hi);
   background: var(--surface-2);
   color: var(--text-primary);
 }
 
-.chip-select select:hover ~ svg,
-.chip-select:hover svg {
+.dropdown-trigger:hover svg,
+.dropdown-trigger[aria-expanded="true"] svg {
+  color: var(--accent);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: max(100%, 150px);
+  background: var(--surface-1);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: var(--z-modal);
+}
+
+.dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  min-height: 28px;
+  border-radius: 5px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.dropdown-menu button svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.dropdown-menu button .grow {
+  flex: 1;
+}
+
+.dropdown-menu button.focused {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.dropdown-menu button.selected {
+  color: var(--text-primary);
+}
+
+.dropdown-menu button.selected svg {
   color: var(--accent);
 }
 
