@@ -1,4 +1,4 @@
-import { Pencil, Pin, Play, RotateCw, SlidersHorizontal } from "lucide-react";
+import { Pencil, Pin, RotateCw, SlidersHorizontal } from "lucide-react";
 import type { SceneCardModel } from "../api/types";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -48,12 +48,7 @@ export function SceneCard({ scene }: { scene: SceneCardModel }) {
         <span className="scene-id">{scene.scene_id}</span>
         {!failed && (
           <div className="acts">
-            <Tip label="Preview" shortcut="Space">
-              <button aria-label="Preview">
-                <Play size={11} strokeWidth={2} />
-              </button>
-            </Tip>
-            <Tip label="Regenerate" hint="new seed" shortcut="R">
+            <Tip label="Regenerate" hint="new take" shortcut="R">
               <button
                 aria-label="Regenerate"
                 onClick={(event) => {

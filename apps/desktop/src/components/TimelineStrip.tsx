@@ -15,16 +15,8 @@ const TRANSITION_GLYPHS: Record<(typeof TRANSITIONS)[number], string> = {
  * buttons on the boundaries, compact export block on the right. Every edit
  * patches the timeline/export node params — scenes stay cached. */
 export function TimelineStrip() {
-  const {
-    board,
-    client,
-    currentProject,
-    selectedNode,
-    select,
-    applyTimeline,
-    applyExport,
-    finalize,
-  } = useApp();
+  const { board, client, currentProject, selectedNode, select, applyTimeline, applyExport } =
+    useApp();
   const [dragged, setDragged] = useState<string | null>(null);
 
   if (!board || !currentProject || board.scenes.length === 0) return null;
@@ -225,10 +217,6 @@ export function TimelineStrip() {
             )}
           </>
         )}
-        {/* ghost here: the board header owns the screen's one accent CTA */}
-        <button className="btn-ghost" onClick={() => void finalize()}>
-          Finalize
-        </button>
       </div>
     </div>
   );

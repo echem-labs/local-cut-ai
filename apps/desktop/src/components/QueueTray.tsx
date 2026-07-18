@@ -1,5 +1,6 @@
 import { Download, Pause } from "lucide-react";
 import { useEffect } from "react";
+import { nodeLabel } from "../help/terms";
 import { useApp } from "../store";
 import { formatSize } from "./ModelLibrary";
 
@@ -69,7 +70,7 @@ export function QueueTray() {
                 />
               </svg>
               <span>
-                <b>{active.spec.node_id}</b> · {Math.round(active.progress * 100)}%
+                <b>{nodeLabel(active.spec.node_id)}</b> · {Math.round(active.progress * 100)}%
               </span>
             </>
           ) : (

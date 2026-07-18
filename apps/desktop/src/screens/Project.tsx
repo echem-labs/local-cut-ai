@@ -4,7 +4,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { EditPrompt } from "../components/EditPrompt";
 import { Inspector } from "../components/Inspector";
 import { SceneCard } from "../components/SceneCard";
-import { StatusChip, StatusPill } from "../components/StatusRing";
+import { StatusPill } from "../components/StatusRing";
 import { TimelineStrip } from "../components/TimelineStrip";
 import { ToolSession } from "../components/ToolSession";
 import { useApp } from "../store";
@@ -98,10 +98,10 @@ export function Project() {
               className="btn-primary"
               disabled={finalizing}
               onClick={() => void runFinalize()}
-              title="Re-render draft scenes at final quality, then assemble the export"
+              title="Re-renders any draft scenes at full quality, then builds your MP4"
             >
               <Sparkles size={14} strokeWidth={2} />
-              {finalizing ? "Finalizing…" : "Finalize"}
+              {finalizing ? "Creating final video…" : "Create final video"}
             </button>
           ) : null)}
       </div>
@@ -129,17 +129,6 @@ export function Project() {
       )}
 
       <TimelineStrip />
-
-      <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-6)" }}>
-        {Object.entries(board.aux).map(([name, node]) => (
-          <span key={name} style={{ display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
-            <span style={{ color: "var(--text-tertiary)", fontSize: "var(--text-xs)" }}>
-              {name}
-            </span>
-            <StatusChip status={node.status} />
-          </span>
-        ))}
-      </div>
 
       <Inspector />
     </div>

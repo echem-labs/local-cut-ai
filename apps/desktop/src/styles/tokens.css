@@ -2,6 +2,17 @@
    status colors, 4px grid, Inter/system type. Dark is the design target
    (doc 09); light derives from the same token set. The resolved theme is
    stamped as data-theme on <html> by src/theme.ts. */
+
+/* Inter Variable is BUNDLED (review 3): without it Windows falls back to
+   Segoe UI, which has no 500/550/650 weights and silently snaps them to
+   400/600/700 — the root cause of "different fonts" on Home. */
+@font-face {
+  font-family: "Inter";
+  src: url("../assets/fonts/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -94,12 +105,20 @@
   --space-6: 24px;
   --space-8: 32px;
 
+  --radius-xs: 4px;
   --radius-s: 6px;
   --radius-m: 10px;
+  --radius-l: 12px;
 
-  /* type: 4-step scale + one display size */
+  /* one control height for every button, chip, input and trigger */
+  --control-h: 32px;
+
+  /* type: 5-step scale + one display size.
+     Weight roles: 400 body · 500 item/tile labels · 600 headings, buttons,
+     eyebrows · 650 display + screen titles only. */
   --font-ui: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  --text-2xs: 10px;
   --text-xs: 12px;
   --text-s: 14px;
   --text-m: 16px;

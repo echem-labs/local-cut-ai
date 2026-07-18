@@ -1,6 +1,7 @@
 import { Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
+import { inspectorTitle } from "../help/terms";
 import { EditPrompt } from "./EditPrompt";
 import { useApp } from "../store";
 
@@ -113,6 +114,16 @@ export function Inspector() {
     setOverlay(sceneId ? String(overlays[sceneId] ?? "") : "");
   }, [selectedNode]);
 
+  // Esc closes the drawer from anywhere except an open dropdown/modal.
+  useEffect(() => {
+    if (!selectedNode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") select(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedNode, select]);
+
   if (!node) return null;
 
   const patchTrim = (inValue: string, outValue: string) => {
@@ -162,24 +173,32 @@ export function Inspector() {
 
   return (
     <aside className="inspector" aria-label="Inspector">
-      <div style={{ display: "flex", alignItems: "center" }}>
-        <h2 style={{ flex: 1 }}>{node.node_id}</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <h2 style={{ flex: 1 }}>{inspectorTitle(node.node_id)}</h2>
         <button
-          className="btn-ghost"
-          style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          className={`icon-btn-sm${node.pinned ? " active" : ""}`}
           onClick={() => void togglePin(node.node_id, !node.pinned)}
-          aria-label={node.pinned ? "Unpin node" : "Pin node"}
-          title={node.pinned ? "Unpin — allow regeneration" : "Pin — lock from regeneration"}
+          aria-label={node.pinned ? "Unpin" : "Pin"}
+          aria-pressed={node.pinned}
+          title={
+            node.pinned
+              ? "Unpin — allow changes again"
+              : "Pin — keep this exactly as it is; regenerating and edits skip it"
+          }
         >
-          <Pin size={12} strokeWidth={1.8} />
-          {node.pinned ? "Unpin" : "Pin"}
+          <Pin size={13} strokeWidth={1.8} />
         </button>
-        <button className="btn-ghost" onClick={() => select(null)} aria-label="Close inspector">
+        <button
+          className="icon-btn-sm"
+          onClick={() => select(null)}
+          aria-label="Close inspector"
+          title="Close (Esc)"
+        >
           <X size={13} strokeWidth={2} />
         </button>
       </div>
       {node.pinned && (
-        <div className="hint">Pinned — this node keeps its current output until unpinned.</div>
+        <div className="hint">Pinned — this keeps its current result until you unpin it.</div>
       )}
       <div>
         <label htmlFor="inspector-prompt">Prompt</label>
@@ -352,9 +371,10 @@ export function Inspector() {
         style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
         onClick={() => void regenerate(node.node_id)}
         disabled={node.pinned}
+        title="Same prompt, different randomness"
       >
         <RotateCw size={12} strokeWidth={1.8} />
-        New seed
+        New take
       </button>
       {editSceneId && (
         <div>
