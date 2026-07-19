@@ -2995,10 +2995,20 @@ button.link:hover {
   max-height: 78vh;
 }
 
+/* Title, intro and the Close row stay pinned; only the list scrolls. */
+.licenses-modal > h2,
+.licenses-modal > p,
+.licenses-modal > .modal-actions {
+  flex-shrink: 0;
+}
+
 .licenses-list {
   list-style: none;
   margin: var(--space-4) 0 0;
   padding: 0;
+  /* min-height:0 lets this flex child shrink below its content so overflow-y
+     actually engages instead of pushing the Close button off-screen. */
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -3007,7 +3017,7 @@ button.link:hover {
 
 .licenses-list li {
   padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-lo);
+  border-bottom: 1px solid var(--border);
 }
 
 .licenses-list li:last-child {

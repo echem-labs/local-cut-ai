@@ -10,7 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Provider } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
@@ -125,17 +125,11 @@ export function Settings() {
     if (tab === "storage") void refreshStorage();
   }, [tab, refreshStorage]);
 
-  // Esc closes the overlay — unless a field or a confirm/licenses dialog owns it.
+  // Esc closes the overlay — unless a field or a layered dialog owns it.
   const dialogOpen = confirmProject !== null || confirmCache || showLicenses;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // A layered dialog swallows Esc: close it, keep Settings open.
-      if (showLicenses) {
-        setShowLicenses(false);
-        return;
-      }
-      if (dialogOpen) return;
+      if (event.key !== "Escape" || dialogOpen) return;
       const target = event.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
         target.blur();
@@ -145,7 +139,26 @@ export function Settings() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dialogOpen, showLicenses, closeSettings]);
+  }, [dialogOpen, closeSettings]);
+
+  // The licenses modal owns Escape while open: capture-phase so it fires before
+  // — and stopImmediatePropagation so it suppresses — every other still-mounted
+  // window keydown listener (Inspector's deselect, the shared handler above),
+  // which would otherwise mutate the project underneath. Focus moves in on open
+  // so keyboard/screen-reader users land inside the dialog, matching ConfirmDialog.
+  const licensesCloseRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!showLicenses) return;
+    licensesCloseRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      setShowLicenses(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [showLicenses]);
 
   const saveKey = async (providerId: string) => {
     const value = (drafts[providerId] ?? "").trim();
@@ -766,7 +779,11 @@ export function Settings() {
               ))}
             </ul>
             <div className="modal-actions">
-              <button className="btn-primary" onClick={() => setShowLicenses(false)}>
+              <button
+                className="btn-primary"
+                ref={licensesCloseRef}
+                onClick={() => setShowLicenses(false)}
+              >
                 {t("settings.about.licensesClose")}
               </button>
             </div>

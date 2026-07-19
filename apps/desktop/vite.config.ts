@@ -16,15 +16,30 @@ function collectLicenses() {
     const raw = typeof repo === "string" ? repo : ((repo as { url?: string })?.url ?? "");
     return raw.replace(/^git\+/, "").replace(/\.git$/, "").replace(/^git:\/\//, "https://");
   };
+  const spdx = (meta: { license?: unknown; licenses?: unknown }): string => {
+    if (typeof meta.license === "string") return meta.license;
+    if (meta.license && typeof (meta.license as { type?: string }).type === "string") {
+      return (meta.license as { type: string }).type;
+    }
+    // Deprecated plural form: `"licenses": [{ "type": "BSD-3-Clause" }, …]`.
+    if (Array.isArray(meta.licenses)) {
+      const ids = meta.licenses
+        .map((l: unknown) => (typeof l === "string" ? l : (l as { type?: string })?.type))
+        .filter(Boolean);
+      if (ids.length) return ids.join(", ");
+    }
+    return "See repository";
+  };
   return Object.keys(dependencies)
     .map((name) => {
       try {
         const meta = JSON.parse(readFileSync(join(here, "node_modules", name, "package.json"), "utf8"));
-        const license =
-          typeof meta.license === "string" ? meta.license : (meta.license?.type ?? "See repository");
-        return { name, version: meta.version as string, license, repository: asUrl(meta.repository) };
+        return { name, version: meta.version as string, license: spdx(meta), repository: asUrl(meta.repository) };
       } catch {
-        return { name, version: dependencies[name as keyof typeof dependencies], license: "See repository", repository: "" };
+        // Degraded path (deps not installed here / unreadable): show the declared
+        // range without its leading semver operator, not "^5.0.14".
+        const declared = dependencies[name as keyof typeof dependencies].replace(/^[\^~>=<\s]+/, "");
+        return { name, version: declared, license: "See repository", repository: "" };
       }
     })
     .sort((a, b) => a.name.localeCompare(b.name));
