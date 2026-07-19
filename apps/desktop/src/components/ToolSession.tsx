@@ -96,7 +96,12 @@ export function ToolSession() {
   // the tool node. `?? node` narrows the type (node is non-null past the
   // guard) — progressNode itself is computed before it.
   const shown = progressNode ?? node;
-  const stageLabel = shown === upstream ? "keyframe" : tool;
+  // Route the stage through the catalog (the raw "keyframe"/tool id was
+  // untranslatable and disagreed with QueueTray's nodeLabel).
+  const stageLabel =
+    shown === upstream
+      ? m().terms.kinds.keyframe
+      : (m().tools as Record<string, { label: string }>)[tool].label;
   return (
     <div className="tool-session">
       <div className="tool-status">

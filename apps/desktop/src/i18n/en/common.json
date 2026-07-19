@@ -17,5 +17,7 @@
   "delete": "Delete…",
   "rename": "Rename",
   "duplicate": "Duplicate",
-  "open": "Open"
+  "open": "Open",
+  "sizeGb": "{value} GB",
+  "sizeMb": "{value} MB"
 }

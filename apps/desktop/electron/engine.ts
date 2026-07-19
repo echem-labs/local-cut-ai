@@ -30,6 +30,7 @@ export class EngineManager {
     cmd: string;
     args: string[];
     cwd?: string;
+    env: NodeJS.ProcessEnv;
     connection: EngineConnection;
   } {
     const custom = process.env.LOCALCUT_ENGINE_CMD;
@@ -37,18 +38,23 @@ export class EngineManager {
     const backend = process.env.LOCALCUT_BACKEND ?? "mock";
     const token = randomBytes(24).toString("base64url");
     const connection = { url: `http://127.0.0.1:${port}`, token };
-    const args = ["serve", "--port", port, "--token", token, "--backend", backend];
+    // Deliver the token via the environment (EngineConfig.from_env reads
+    // LOCALCUT_TOKEN), never as a --token argv flag: a command line is
+    // world-readable to other local processes (ps, /proc/<pid>/cmdline, Task
+    // Manager) for the engine's whole lifetime.
+    const env = { ...process.env, LOCALCUT_TOKEN: token };
+    const args = ["serve", "--port", port, "--backend", backend];
     if (custom) {
       const [cmd, ...prefix] = custom.split(" ");
-      return { cmd, args: [...prefix, ...args], connection };
+      return { cmd, args: [...prefix, ...args], env, connection };
     }
     if (app.isPackaged) {
       const exe = process.platform === "win32" ? "localcut-engine.exe" : "localcut-engine";
       const bundled = path.join(process.resourcesPath, "engine", exe);
-      return { cmd: bundled, args, connection };
+      return { cmd: bundled, args, env, connection };
     }
     const engineDir = path.resolve(__dirname, "..", "..", "..", "..", "engine");
-    return { cmd: "uv", args: ["run", "localcut-engine", ...args], cwd: engineDir, connection };
+    return { cmd: "uv", args: ["run", "localcut-engine", ...args], cwd: engineDir, env, connection };
   }
 
   private starting: Promise<EngineConnection> | null = null;
@@ -65,10 +71,10 @@ export class EngineManager {
   }
 
   private async spawnAndWait(): Promise<EngineConnection> {
-    const { cmd, args, cwd, connection } = this.command();
+    const { cmd, args, cwd, env, connection } = this.command();
     // windowsHide: the frozen engine is a console binary — without it,
     // Windows pops a console window behind the packaged GUI app.
-    const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     this.child = child;
     child.stdout?.on("data", (chunk: Buffer) =>
       console.log(`[engine] ${chunk.toString().trimEnd()}`),

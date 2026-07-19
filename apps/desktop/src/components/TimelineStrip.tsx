@@ -279,9 +279,9 @@ export function TimelineStrip() {
           {minorTicks.map((t) => (
             <span key={`m${t}`} className="minor" style={{ left: timeToPx(t) }} />
           ))}
-          {ticks.map((t) => (
-            <span key={t} style={{ left: timeToPx(t) }}>
-              {t}s
+          {ticks.map((sec) => (
+            <span key={sec} style={{ left: timeToPx(sec) }}>
+              {t("timeline.seconds", { n: sec })}
             </span>
           ))}
         </div>
@@ -294,6 +294,9 @@ export function TimelineStrip() {
               stillHash && client ? client.artifactUrl(currentProject.id, stillHash) : null;
             const boundary = index > 0 ? order[index - 1] : null;
             const boundaryKind = boundary ? (transitions[boundary] ?? "cut") : "cut";
+            const kindLabel =
+              (m().timeline.transitions as Record<string, { label: string }>)[boundaryKind]
+                ?.label ?? boundaryKind;
             const sceneNo = scene.scene_id.replace(/^s/, "");
             return (
               <Fragment key={scene.scene_id}>
@@ -304,9 +307,9 @@ export function TimelineStrip() {
                       title={t("timeline.diamondTitle", {
                         a: boundary.replace(/^s/, ""),
                         b: sceneNo,
-                        kind: boundaryKind,
+                        kind: kindLabel,
                       })}
-                      aria-label={t("timeline.diamondAria", { n: sceneNo, kind: boundaryKind })}
+                      aria-label={t("timeline.diamondAria", { n: sceneNo, kind: kindLabel })}
                       onClick={(event) => {
                         if (openTransition?.boundary === boundary) {
                           setOpenTransition(null);
@@ -405,7 +408,7 @@ export function TimelineStrip() {
                   }}
                 >
                   <span className="n">{sceneNo}</span>
-                  <span className="dur">{durations[index]}s</span>
+                  <span className="dur">{t("timeline.seconds", { n: durations[index] })}</span>
                   <span className={`tick ${clip.status}`} aria-hidden="true" />
                 </div>
               </Fragment>

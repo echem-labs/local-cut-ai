@@ -10,6 +10,7 @@
   "narrationAria": "Scene {n} narration",
   "narrationEditTitle": "Click to change the words — the narration re-renders",
   "rendering": "Rendering video",
+  "pct": "{pct}%",
   "renderingPct": " · {pct}%",
   "renderingTime": " · {timeLeft}",
   "notRendered": "This scene didn't render.",

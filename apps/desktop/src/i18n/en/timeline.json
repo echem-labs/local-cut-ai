@@ -21,5 +21,6 @@
   "seekTitle": "Click or drag to jump",
   "diamondTitle": "Scene {a} → {b}: {kind}. Click to change.",
   "diamondAria": "Transition into scene {n}: {kind}",
-  "blockAria": "Scene {n}, {d}s, {status}"
+  "blockAria": "Scene {n}, {d}s, {status}",
+  "seconds": "{n}s"
 }

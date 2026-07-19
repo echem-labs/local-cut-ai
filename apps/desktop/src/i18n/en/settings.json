@@ -114,6 +114,15 @@
     "licenses": "Open-source licenses",
     "licensesTitle": "Open-source licenses",
     "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors.",
-    "licensesClose": "Close"
+    "licensesClose": "Close",
+    "diagApp": "App {version}",
+    "diagEngine": "Engine {engine} · API v{api}",
+    "diagBackend": "Backend {backend}",
+    "diagUrl": "Engine URL {url}",
+    "diagHardware": "Hardware Tier {tier} · {gpu} · {ram} GB RAM",
+    "diagGpu": "{name} ({vram} GB VRAM)",
+    "diagNoGpu": "no GPU",
+    "diagHardwareUnknown": "Hardware ?",
+    "diagUnknown": "?"
   }
 }

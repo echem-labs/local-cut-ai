@@ -12,11 +12,11 @@ import { Tip } from "./Tooltip";
 const POLL_MS = 4000;
 
 export function formatSize(bytes: number): string {
-  if (bytes <= 0) return "0 GB";
+  if (bytes <= 0) return t("common.sizeGb", { value: 0 });
   const gb = bytes / 2 ** 30;
-  if (gb >= 10) return `${Math.round(gb)} GB`;
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  return `${Math.max(1, Math.round(bytes / 2 ** 20))} MB`;
+  if (gb >= 10) return t("common.sizeGb", { value: Math.round(gb) });
+  if (gb >= 1) return t("common.sizeGb", { value: gb.toFixed(1) });
+  return t("common.sizeMb", { value: Math.max(1, Math.round(bytes / 2 ** 20)) });
 }
 
 /** "wan 2.2" → "Wan 2.2", "ltx" → "LTX", "sdxl" → "SDXL": manifest family

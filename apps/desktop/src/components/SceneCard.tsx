@@ -196,7 +196,9 @@ export function SceneCard({
         )}
         <StatusPill status={clip.status} progress={clip.progress} onThumb />
         {rendering && clip.progress > 0 && (
-          <span className="thumb-progress">{Math.round(clip.progress * 100)}%</span>
+          <span className="thumb-progress">
+            {t("scene.pct", { pct: Math.round(clip.progress * 100) })}
+          </span>
         )}
         {clip.pinned && (
           <span className="pin-badge" title={t("scene.pinnedTitle")}>

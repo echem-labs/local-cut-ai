@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, Menu } from "electron";
 import path from "node:path";
 import { EngineManager } from "./engine";
 import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
@@ -209,6 +209,17 @@ async function applyKeyUpdates(updates: Partial<Record<ProviderKeyId, string>>) 
   return { presence: keyStore.presence(), error };
 }
 
+/** State-mutating IPC (pairing, provider keys) must originate from the app's
+ * own top frame. Navigation is already locked down, so this is defense in
+ * depth — it also rejects an injected subframe/iframe that loaded foreign
+ * content, which will-navigate does not cover. */
+function trustedSender(event: IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent !== null) return false; // top frame only, no iframes
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  return devUrl ? frame.url.startsWith(devUrl) : frame.url.startsWith("file://");
+}
+
 ipcMain.handle("engine:connection", () => ({
   connection: activeConnection(),
   error: engineError,
@@ -218,7 +229,8 @@ ipcMain.handle("engine:connection", () => ({
   remotePaired: remoteStore.exists(),
 }));
 
-ipcMain.handle("engine:pair", async (_event, code: unknown) => {
+ipcMain.handle("engine:pair", async (event, code: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
   if (typeof code !== "string") return { ok: false, error: "pairing code must be text" };
   try {
     const pairing = parsePairingCode(code);
@@ -234,7 +246,8 @@ ipcMain.handle("engine:pair", async (_event, code: unknown) => {
   }
 });
 
-ipcMain.handle("engine:unpair", async () => {
+ipcMain.handle("engine:unpair", async (event) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
   remoteStore.clear();
   remoteConnection = null;
   try {
@@ -247,13 +260,15 @@ ipcMain.handle("engine:unpair", async () => {
   }
 });
 
-ipcMain.handle("providers:set-keys", (_event, input: unknown) =>
-  applyKeyUpdates(sanitizeKeyUpdates(input)),
-);
+ipcMain.handle("providers:set-keys", (event, input: unknown) => {
+  if (!trustedSender(event)) throw new Error("untrusted sender");
+  return applyKeyUpdates(sanitizeKeyUpdates(input));
+});
 
 ipcMain.handle("providers:key-presence", () => keyStore.presence());
 
-ipcMain.handle("providers:clear-key", (_event, id: unknown) => {
+ipcMain.handle("providers:clear-key", (event, id: unknown) => {
+  if (!trustedSender(event)) throw new Error("untrusted sender");
   if (typeof id !== "string" || !(PROVIDER_KEY_IDS as readonly string[]).includes(id)) {
     throw new Error(`unknown provider key id: ${String(id)}`);
   }

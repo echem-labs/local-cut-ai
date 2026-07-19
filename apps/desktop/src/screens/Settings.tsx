@@ -209,14 +209,24 @@ export function Settings() {
   };
 
   const copyDiagnostics = () => {
+    const unknown = t("settings.about.diagUnknown");
     const lines = [
-      `App ${__APP_VERSION__}`,
-      `Engine ${engineVersions?.engine_version ?? "?"} · API v${engineVersions?.api_version ?? "?"}`,
-      `Backend ${system?.backend_mode ?? "?"}`,
-      `Engine URL ${client?.baseUrl ?? "?"}`,
+      t("settings.about.diagApp", { version: __APP_VERSION__ }),
+      t("settings.about.diagEngine", {
+        engine: engineVersions?.engine_version ?? unknown,
+        api: engineVersions?.api_version ?? unknown,
+      }),
+      t("settings.about.diagBackend", { backend: system?.backend_mode ?? unknown }),
+      t("settings.about.diagUrl", { url: client?.baseUrl ?? unknown }),
       system
-        ? `Hardware Tier ${system.hardware.tier} · ${gpu ? `${gpu.name} (${gpu.vram_gb} GB VRAM)` : "no GPU"} · ${system.hardware.ram_gb} GB RAM`
-        : "Hardware ?",
+        ? t("settings.about.diagHardware", {
+            tier: system.hardware.tier,
+            gpu: gpu
+              ? t("settings.about.diagGpu", { name: gpu.name, vram: gpu.vram_gb })
+              : t("settings.about.diagNoGpu"),
+            ram: system.hardware.ram_gb,
+          })
+        : t("settings.about.diagHardwareUnknown"),
     ];
     void navigator.clipboard.writeText(lines.join("\n")).then(() => {
       setCopied(true);
