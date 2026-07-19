@@ -25,9 +25,15 @@ export class EngineClient {
     return this.connection.url;
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(path: string, init?: RequestInit, timeoutMs = 120_000): Promise<T> {
+    // Bound every request: a half-open remote engine (accepts the socket, never
+    // responds) would otherwise leave the promise pending forever and wedge the
+    // establish/reconnect state machine with no recovery but an app restart.
+    const timeout = AbortSignal.timeout(timeoutMs);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     const response = await fetch(`${this.connection.url}${path}`, {
       ...init,
+      signal,
       headers: {
         Authorization: `Bearer ${this.connection.token}`,
         ...(init?.body ? { "Content-Type": "application/json" } : {}),

@@ -128,11 +128,15 @@ export function Home() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "/") return;
+      // Home stays mounted under the Settings overlay; don't steal "/" (and
+      // focus a hidden search box behind it) while Settings is open, or when
+      // there's no search box to focus.
+      if (useApp.getState().settingsOpen || !searchRef.current) return;
       const target = event.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable)
         return;
       event.preventDefault();
-      searchRef.current?.focus();
+      searchRef.current.focus();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -175,7 +179,9 @@ export function Home() {
 
   const runTool = async () => {
     if (!tool || !toolInput.trim() || busy) return;
-    checkReadiness();
+    // No checkReadiness() here: the missing-model banner only renders in the
+    // video prompt box, so setting it from a tool run just leaks a stale note
+    // into the prompt box after the tool closes.
     setBusy(true);
     const effectiveVoice = voice.trim() || defaults.voice.trim();
     try {
@@ -207,7 +213,11 @@ export function Home() {
 
   const real = projects.filter((project) => !project.mode.startsWith("tool:"));
   const toolSessions = projects.filter((project) => project.mode.startsWith("tool:"));
-  const showLibraryControls = projects.length > 6;
+  // Gate on the grid this controls (real projects, not tool sessions), and keep
+  // the controls visible whenever a query is active — otherwise deleting down to
+  // ≤6 unmounts the search box while `search` still filters the grid, hiding
+  // projects with no visible way to clear the query.
+  const showLibraryControls = real.length > 6 || search.trim().length > 0;
 
   const visibleReal = useMemo(() => {
     const q = search.trim().toLowerCase();

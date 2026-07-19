@@ -43,8 +43,11 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
 /** mm:ss.d readout, tabular by the mono font. */
 export function formatTime(seconds: number): string {
   const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const m = Math.floor(safe / 60);
-  const s = safe - m * 60;
+  // Round to the displayed 0.1s precision FIRST, then split — otherwise a value
+  // like 59.96 renders "00:60.0" instead of rolling over to "01:00.0".
+  const tenths = Math.round(safe * 10);
+  const m = Math.floor(tenths / 600);
+  const s = (tenths - m * 600) / 10;
   return `${String(m).padStart(2, "0")}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
 }
 

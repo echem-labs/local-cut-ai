@@ -107,12 +107,18 @@ export class EngineManager {
     while (Date.now() < deadline) {
       if (!this.child) throw new Error("engine process exited during startup");
       try {
-        const response = await fetch(`${connection.url}/health`);
+        // Per-fetch timeout so a bound-but-silent port can't block a single
+        // iteration past the HEALTH_TIMEOUT_MS deadline (undici's default
+        // header/body timeouts are minutes long).
+        const response = await fetch(`${connection.url}/health`, {
+          signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
+        });
         if (response.ok) {
           // /health is unauthenticated — make sure this is OUR engine, not
           // a stale instance from a crashed session still holding the port.
           const authed = await fetch(`${connection.url}/projects`, {
             headers: { Authorization: `Bearer ${connection.token}` },
+            signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
           });
           if (authed.status === 401) {
             throw new EngineConflictError(

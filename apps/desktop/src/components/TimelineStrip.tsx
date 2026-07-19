@@ -173,7 +173,10 @@ export function TimelineStrip() {
     const from = shownIndex >= 0 ? shownIndex : 0;
     const next = Math.min(order.length - 1, Math.max(0, from + delta));
     select(`${order[next]}.clip`);
-    play(order[next], true);
+    // Move the playhead; only start playback if already playing (like a block
+    // click) — prev/next while paused must not force the draft to start.
+    if (playing) play(order[next], true);
+    else seek(order[next], 0);
   };
 
   return (

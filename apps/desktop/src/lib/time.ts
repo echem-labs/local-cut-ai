@@ -7,8 +7,12 @@ export function relativeTime(epochSeconds: number): string {
   const seconds = Math.max(0, Date.now() / 1000 - epochSeconds);
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "narrow" });
   if (seconds < 60) return t("common.justNow");
-  if (seconds < 3600) return rtf.format(-Math.round(seconds / 60), "minute");
-  if (seconds < 86400) return rtf.format(-Math.round(seconds / 3600), "hour");
+  // Round within each unit and promote at the ceiling, so 3599s reads "1 hr
+  // ago" (not "60 min ago") and ~24h reads "1 day ago" (not "24 hr ago").
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return rtf.format(-minutes, "minute");
+  const hours = Math.round(seconds / 3600);
+  if (hours < 24) return rtf.format(-hours, "hour");
   if (seconds < 7 * 86400) return rtf.format(-Math.round(seconds / 86400), "day");
   return new Date(epochSeconds * 1000).toLocaleDateString(locale, {
     month: "short",

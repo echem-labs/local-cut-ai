@@ -202,6 +202,17 @@ function loadPersisted<T extends object>(key: string, fallback: T): T {
     return fallback;
   }
 }
+
+/** Guarded "1" flag read: this runs in the store initializer at module import
+ * (before any ErrorBoundary), so a throwing localStorage — blocked storage,
+ * a restrictive storage policy — must degrade, not blank the whole app. */
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
 // A stale /models snapshot can lag a terminal download event — refetch
 // once more after the engine has settled.
 const DOWNLOAD_SETTLE_MS = 1500;
@@ -597,7 +608,7 @@ export const useApp = create<AppState>((set, get) => {
     selectedNode: null,
     models: [],
     downloadErrors: {},
-    firstRunDone: localStorage.getItem(FIRST_RUN_KEY) === "1",
+    firstRunDone: readFlag(FIRST_RUN_KEY),
     settingsOpen: false,
     settingsTab: "general",
     editBusy: false,
@@ -627,6 +638,10 @@ export const useApp = create<AppState>((set, get) => {
         client.listProjects(),
         client.listJobs().catch(() => get().allJobs),
       ]);
+      // Guard against a switchEngine/disconnect during the fetch: a late
+      // response from the old engine must not overwrite the new one's list
+      // (refreshBoard guards the same way via the project id).
+      if (get().client !== client) return;
       set({ projects, allJobs });
     },
 
@@ -795,10 +810,12 @@ export const useApp = create<AppState>((set, get) => {
     edit: async (instruction, scope = "project") => {
       const { client, currentProject, editBusy } = get();
       if (!client || !currentProject || editBusy) return null;
-      // The LLM's view must include the user's latest manual tweaks.
-      await flushPatches();
+      // Claim the single-edit guard synchronously, before any await: otherwise
+      // two rapid calls both read editBusy=false and fire concurrent LLM edits.
       set({ editBusy: true });
       try {
+        // The LLM's view must include the user's latest manual tweaks.
+        await flushPatches();
         const result = await client.edit(currentProject.id, { instruction, scope });
         await get().refreshBoard();
         return result;
@@ -969,6 +986,7 @@ export const useApp = create<AppState>((set, get) => {
     deleteProject: async (id) => {
       const { client, projects } = get();
       if (!client) return t("errors.engineUnavailable");
+      const removed = projects.find((project) => project.id === id);
       set({ projects: projects.filter((project) => project.id !== id) });
       if (get().currentProject?.id === id) get().closeProject();
       try {
@@ -976,7 +994,12 @@ export const useApp = create<AppState>((set, get) => {
         return null;
       } catch (err) {
         console.warn("delete project failed:", err);
-        set({ projects });
+        // Reverse only THIS change against the live list — restoring a stale
+        // whole-array snapshot would clobber any concurrent lifecycle op (e.g.
+        // resurrect a project a second delete already removed).
+        if (removed && !get().projects.some((project) => project.id === id)) {
+          set({ projects: [removed, ...get().projects] });
+        }
         return messageOf(err);
       }
     },
@@ -984,6 +1007,7 @@ export const useApp = create<AppState>((set, get) => {
     renameProject: async (id, title) => {
       const { client, projects } = get();
       if (!client) return t("errors.engineUnavailable");
+      const original = projects.find((project) => project.id === id);
       set({
         projects: projects.map((project) =>
           project.id === id ? { ...project, title } : project,
@@ -996,7 +1020,17 @@ export const useApp = create<AppState>((set, get) => {
         return null;
       } catch (err) {
         console.warn("rename project failed:", err);
-        set({ projects });
+        // Revert only this project's title against the live list, not a stale
+        // whole-array snapshot (which would clobber a concurrent op).
+        if (original) {
+          set({
+            projects: get().projects.map((project) =>
+              project.id === id ? { ...project, title: original.title } : project,
+            ),
+          });
+          const cur = get().currentProject;
+          if (cur?.id === id) set({ currentProject: { ...cur, title: original.title } });
+        }
         return messageOf(err);
       }
     },

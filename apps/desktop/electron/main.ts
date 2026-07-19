@@ -36,6 +36,7 @@ const TITLEBAR = {
 } as const;
 
 async function createWindow(): Promise<void> {
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -54,11 +55,27 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devUrl) {
-    await window.loadURL(devUrl);
-  } else {
-    await window.loadFile(path.join(__dirname, "..", "..", "dist", "index.html"));
+  // Navigation lockdown: the preload bridge hands out the engine url+token and
+  // the pair/keys mutators, so the webContents must never navigate to — or open
+  // — content outside the app's own origin, which would inherit that bridge
+  // (a redirect, an injected iframe, or an in-bundle XSS).
+  window.webContents.on("will-navigate", (event, url) => {
+    const isApp = devUrl ? url.startsWith(devUrl) : url.startsWith("file://");
+    if (!isApp) event.preventDefault();
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  try {
+    if (devUrl) {
+      await window.loadURL(devUrl);
+    } else {
+      await window.loadFile(path.join(__dirname, "..", "..", "dist", "index.html"));
+    }
+  } catch (error) {
+    // A load failure (Vite dev server not up yet, a packaging path slip) must
+    // not become an unhandled rejection that leaves the app with no window at
+    // all — keep the (blank, reloadable) window and log.
+    console.error("[window] failed to load renderer:", error);
   }
 }
 

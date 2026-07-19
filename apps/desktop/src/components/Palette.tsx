@@ -50,6 +50,10 @@ interface Item {
   run: () => void;
 }
 
+/** The fixed order the list groups render in — `visible` is flattened in this
+ * same order so the highlighted row and the Enter target never diverge. */
+const GROUPS: Item["group"][] = ["projects", "create", "goto", "appearance"];
+
 /** The global Ctrl+K palette (review 4 §SH4): open projects by name, start
  * a video or a quick tool, jump to a Settings category, toggle theme —
  * from any screen. Reuses the shipped .menu-pop/.palette visual recipe. */
@@ -159,16 +163,22 @@ export function Palette() {
 
   const visible = useMemo(() => {
     const q = query.trim();
+    let matched: Item[];
     if (!q) {
       // Rest state: recent projects lead, then the verbs.
       const recents = items.filter((item) => item.group === "projects").slice(0, 6);
-      return [...recents, ...items.filter((item) => item.group !== "projects")];
+      matched = [...recents, ...items.filter((item) => item.group !== "projects")];
+    } else {
+      matched = items
+        .map((item) => ({ item, score: fuzzyScore(q, item.label) }))
+        .filter((entry): entry is { item: Item; score: number } => entry.score !== null)
+        .sort((a, b) => b.score - a.score)
+        .map((entry) => entry.item);
     }
-    return items
-      .map((item) => ({ item, score: fuzzyScore(q, item.label) }))
-      .filter((entry): entry is { item: Item; score: number } => entry.score !== null)
-      .sort((a, b) => b.score - a.score)
-      .map((entry) => entry.item);
+    // Flatten in the SAME fixed group order the list renders in: navigation and
+    // Enter index into `visible`, but the render regroups by group, so a purely
+    // score-sorted list would highlight one row and activate another.
+    return GROUPS.flatMap((group) => matched.filter((item) => item.group === group));
   }, [items, query]);
 
   useEffect(() => setIndex(0), [query, open]);
@@ -180,7 +190,7 @@ export function Palette() {
     item.run();
   };
 
-  const groups: Item["group"][] = ["projects", "create", "goto", "appearance"];
+  const groups = GROUPS;
   let flat = -1;
 
   return (
@@ -196,6 +206,7 @@ export function Palette() {
           onKeyDown={(event) => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
+              if (visible.length === 0) return; // guard % 0 → NaN on no matches
               const delta = event.key === "ArrowDown" ? 1 : -1;
               setIndex((current) => (current + delta + visible.length) % visible.length);
             }

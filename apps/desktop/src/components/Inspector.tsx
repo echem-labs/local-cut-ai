@@ -139,11 +139,20 @@ export function Inspector() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sceneId]);
 
-  // Esc closes the drawer.
+  // Esc closes the drawer — but only when it genuinely owns the keystroke.
   useEffect(() => {
     if (!selectedNode) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") select(null);
+      if (event.key !== "Escape") return;
+      // Don't steal Escape from a modal/overlay that owns it (ConfirmDialog,
+      // command palette, Settings) or from a field being typed in — each of
+      // those would silently deselect the scene out from under the user.
+      if (document.querySelector(".modal-backdrop, .cmdk, .settings-layer")) return;
+      const target = event.target as HTMLElement;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable) {
+        return;
+      }
+      select(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

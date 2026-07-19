@@ -116,6 +116,10 @@ export function engineRequest(
       },
     );
     request.on("error", reject);
+    // Bound the request: a half-open remote (SYN-ACK then silence, or a wedged
+    // engine) would otherwise never fire 'error' and leave this promise — and
+    // the whenReady pairing/health call awaiting it — pending forever.
+    request.setTimeout(30_000, () => request.destroy(new Error("engine request timed out")));
     if (init?.body) request.write(init.body);
     request.end();
   });
