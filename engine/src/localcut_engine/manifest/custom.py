@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import EngineConfig
+from ..project.store import _write_atomic
 from .loader import load_manifest
 from .model import LicenseInfo, ModelEntry, ModelFile, ModelManifest, Requirements
 
@@ -49,7 +50,9 @@ def _load_custom(config: EngineConfig) -> ModelManifest:
 
 
 def _save_custom(config: EngineConfig, manifest: ModelManifest) -> None:
-    _custom_path(config).write_text(json.dumps(manifest.model_dump(), indent=2))
+    # Atomic + utf-8: this file is merged into EVERY manifest read, so a
+    # torn/partial write would break loading the whole model catalog.
+    _write_atomic(_custom_path(config), json.dumps(manifest.model_dump(), indent=2))
 
 
 def _slug(name: str, taken: set[str]) -> str:
@@ -80,6 +83,14 @@ def add_custom_model(
     if workflow_template and Path(workflow_template).name != workflow_template:
         raise ValueError("workflow template must be a bare filename, not a path")
     dest_dir = TASK_DESTS[task]
+    # Compute the unique id up front so the on-disk weight filename can be
+    # namespaced by it — otherwise two custom models sharing a basename
+    # (…/model.safetensors) collide on one path: the second copy is skipped,
+    # its entry silently points at the first's weights, and deleting either
+    # breaks the other.
+    custom = _load_custom(config)
+    taken = {m.id for m in load_manifest(config).models} | {m.id for m in custom.models}
+    slug = _slug(name, taken)
     size = 0
     if source == "url":
         parsed = urlparse(ref)
@@ -88,24 +99,23 @@ def add_custom_model(
         filename = Path(parsed.path).name
         if not filename or "." not in filename:
             raise ValueError("the url must point at a weight file (…/model.safetensors)")
-        files = [ModelFile(url=ref, dest=f"{dest_dir}/{filename}")]
+        files = [ModelFile(url=ref, dest=f"{dest_dir}/{slug}-{filename}")]
     elif source == "file":
         src = Path(ref)
         if not src.is_file():
             raise FileNotFoundError(f"no such file: {ref}")
-        dest = config.resolved_models_dir / dest_dir / src.name
+        dest_name = f"{slug}-{src.name}"
+        dest = config.resolved_models_dir / dest_dir / dest_name
         dest.parent.mkdir(parents=True, exist_ok=True)
         if not dest.exists():
             shutil.copy2(src, dest)
         size = dest.stat().st_size
-        files = [ModelFile(url="", dest=f"{dest_dir}/{src.name}", size=size)]
+        files = [ModelFile(url="", dest=f"{dest_dir}/{dest_name}", size=size)]
     else:
         raise ValueError("source must be 'url' or 'file'")
 
-    custom = _load_custom(config)
-    taken = {m.id for m in load_manifest(config).models} | {m.id for m in custom.models}
     entry = ModelEntry(
-        id=_slug(name, taken),
+        id=slug,
         task=task,
         family=name.strip(),
         requirements=Requirements(

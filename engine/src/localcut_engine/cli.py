@@ -87,7 +87,10 @@ def main(argv: list[str] | None = None) -> int:
     config = EngineConfig(**{**EngineConfig.from_env().model_dump(), **overrides})
 
     network_bind = config.host not in ("127.0.0.1", "localhost", "::1")
-    token_configured = args.token is not None or os.environ.get("LOCALCUT_TOKEN")
+    # bool(), not `is not None`: an empty --token/LOCALCUT_TOKEN must count as
+    # unconfigured, otherwise `--token ""` binds to the LAN with an empty
+    # secret that compare_digest("","") accepts from any client.
+    token_configured = bool(args.token) or bool(os.environ.get("LOCALCUT_TOKEN"))
     if network_bind and not token_configured:
         parser.error(
             "network bind requires an explicit --token (pairing); "

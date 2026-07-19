@@ -6,6 +6,8 @@ OpenAI-compatible chat shape behind different base URLs.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from .base import PriceQuote, TextGen
@@ -64,6 +66,12 @@ class OpenAICompatTextGen(TextGen):
         self.label = label
 
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
+        # OpenAI's reasoning models (o1/o3/o4/…, gpt-5) reject `max_tokens` and
+        # require `max_completion_tokens`; classic chat models still take
+        # `max_tokens`. Pick the right key by model name.
+        model = self.model.split("/")[-1]
+        reasoning = bool(re.match(r"^(o\d|gpt-5)", model))
+        token_key = "max_completion_tokens" if reasoning else "max_tokens"
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
                 response = await client.post(
@@ -71,7 +79,7 @@ class OpenAICompatTextGen(TextGen):
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json={
                         "model": self.model,
-                        "max_tokens": max_tokens,
+                        token_key: max_tokens,
                         "messages": [
                             {"role": "system", "content": system},
                             {"role": "user", "content": prompt},

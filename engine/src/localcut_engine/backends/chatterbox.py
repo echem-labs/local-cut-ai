@@ -48,6 +48,10 @@ class ChatterboxBackend(ExecutionBackend):
         self.model_dir = models_dir / "tts" / "chatterbox"
         self.ffmpeg_bin = ffmpeg_bin
         self._engine = None
+        # Serialize load + GPU inference (like Kokoro/align): concurrent
+        # narration jobs would otherwise double-load the weights into VRAM and
+        # run simultaneous CUDA generate() calls → out-of-memory.
+        self._lock = asyncio.Lock()
 
     def supports(self, kind: NodeKind) -> bool:
         return kind is NodeKind.NARRATION
@@ -88,6 +92,11 @@ class ChatterboxBackend(ExecutionBackend):
             speed = float(spec.params.get("speed") or 1.0)
         except (TypeError, ValueError):
             speed = 1.0
+        # atempo covers only a single-pass [0.5, 2.0]; clamp here so the retime
+        # decision, the atempo factor, and the produced file's duration all
+        # agree — otherwise a speed>2 asks for a stretch we can't render and the
+        # audio length no longer matches the window the timeline laid out.
+        speed = max(_SPEED_MIN, min(_SPEED_MAX, speed))
 
         out = ctx.output_path(spec.output_hash, ".wav")  # also mkdirs output_dir
         # Build in a temp dir on the SAME filesystem as the artifact (so the
@@ -108,7 +117,8 @@ class ChatterboxBackend(ExecutionBackend):
                 samples = wav.squeeze(0).cpu().numpy().astype(np.float32)
                 sf.write(raw, samples, engine.sr)
 
-            await asyncio.to_thread(synth)
+            async with self._lock:
+                await asyncio.to_thread(synth)
             final = raw
             if abs(speed - 1.0) > 0.01:
                 final = tmp_dir / "retimed.wav"
@@ -130,7 +140,7 @@ class ChatterboxBackend(ExecutionBackend):
             "-i",
             str(src),
             "-filter:a",
-            f"atempo={max(_SPEED_MIN, min(_SPEED_MAX, speed)):.4f}",
+            f"atempo={speed:.4f}",  # speed is pre-clamped to atempo's range
             str(dst),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,

@@ -491,6 +491,12 @@ class ProjectService:
         await asyncio.to_thread(self._on_job_done_sync, job)
 
     def _on_job_done_sync(self, job: Job) -> None:
+        # The project can be deleted between a job completing and this handler
+        # running; bail before any load_graph, which would otherwise raise
+        # inside the worker thread and escape into the scheduler.
+        meta = self.store.get(job.project_id)
+        if meta is None:
+            return
         # Only the project's script node expands — a "metadata" publish-kit
         # job is SCRIPT-kind too but must never re-shape the graph.
         if (
@@ -498,8 +504,7 @@ class ProjectService:
             and job.spec.node_id == "script"
             and job.artifact is not None
         ):
-            meta = self.store.get(job.project_id)
-            if meta is not None and meta.mode.startswith("tool:"):
+            if meta.mode.startswith("tool:"):
                 return  # tool sessions stay one node; promotion expands
             with self._lock:
                 graph = self.store.load_graph(job.project_id)
@@ -527,7 +532,10 @@ class ProjectService:
         possible through an optional port) cached output built without it —
         under a hash that already includes this input, so nothing would ever
         re-render it. Drop those artifacts and recompile."""
-        graph = self.store.load_graph(job.project_id)
+        try:
+            graph = self.store.load_graph(job.project_id)
+        except (OSError, ValueError):
+            return  # project deleted between completion and this handler
         if job.spec.node_id not in graph.nodes:
             return
         optional_dsts = [
@@ -627,12 +635,16 @@ class ProjectService:
                 status = "rendering"
             elif job and job.status is JobStatus.QUEUED:
                 status = "queued"
-            elif out_hash in cached:
-                status = "final" if (job and job.spec.quality == "final") else "draft"
             elif job and job.status is JobStatus.FAILED:
+                # A failed render must surface even when a cached draft exists
+                # at the same hash (quality isn't part of the hash) — otherwise
+                # a failed *final* reads as a completed 'final'. The draft stays
+                # viewable via artifact_hash below.
                 status = "failed"
             elif job and job.status is JobStatus.CANCELLED:
                 status = "cancelled"
+            elif out_hash in cached:
+                status = "final" if (job and job.spec.quality == "final") else "draft"
             else:
                 status = "queued"
             return {

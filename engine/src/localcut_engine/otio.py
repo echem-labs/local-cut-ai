@@ -114,6 +114,11 @@ def _trim_track_tail(nodes: list[dict], amount: float) -> None:
             node["source_range"]["duration"] = _time(round(dur - amount, 3))
             amount = 0.0
         i -= 1
+    # A transition can never be the track tail: if the trim consumed the clip
+    # that followed it, drop the now-dangling transition — otherwise callers
+    # (and _node_seconds) treat it as a clip and KeyError on source_range.
+    while nodes and nodes[-1]["OTIO_SCHEMA"] == "Transition.1":
+        nodes.pop()
 
 
 def _segment_video(segment: dict, resolve: Callable[[str], Path]) -> list[dict]:

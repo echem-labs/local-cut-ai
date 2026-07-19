@@ -292,7 +292,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except OSError as exc:
-            raise HTTPException(status_code=500, detail=f"could not add model: {exc}") from exc
+            # Don't echo the raw OSError: it carries absolute local paths and
+            # usernames to a (possibly remote-paired) client. Log it instead.
+            logger.warning("custom model install failed: %s", exc)
+            raise HTTPException(
+                status_code=500, detail="could not install the model file — check engine logs"
+            ) from exc
         return entry.model_dump()
 
     @app.delete("/models/custom/{model_id}", dependencies=[Authed])
@@ -557,11 +562,17 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except KeyError:
             raise HTTPException(status_code=404, detail=f"unknown scene: {body.scope}") from None
         prompt = f"Project view:\n{json.dumps(view)}\n\nInstruction: {body.instruction}"
+        if body.model:
+            # Resolving the provider/key is a client precondition (missing BYOK
+            # key, unknown model) → 4xx, distinct from an upstream failure of
+            # .complete() below, which the 502 handler owns.
+            try:
+                cloud_gen = textgen_for_model(config, body.model)
+            except ProviderError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
             if body.model:
-                raw = await textgen_for_model(config, body.model).complete(
-                    system=EDIT_SYSTEM_PROMPT, prompt=prompt
-                )
+                raw = await cloud_gen.complete(system=EDIT_SYSTEM_PROMPT, prompt=prompt)
             else:
                 # Interactive path onto the same local server as script jobs,
                 # with the same VRAM-yield discipline (Ollama serializes
@@ -595,8 +606,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     class FinalizeBody(BaseModel):
         # The shell's Settings → Defaults video model; absent/None falls back
-        # to the engine-configured final_clip_model.
-        clip_model: str | None = None
+        # to the engine-configured final_clip_model. Validated: an unbounded
+        # free string here is written to every unpinned clip node's model and
+        # persisted, so a garbage value would corrupt the saved graph.
+        clip_model: str | None = Field(
+            default=None, max_length=128, pattern=r"^$|^(local:|cloud:)?[\w.\-]+$"
+        )
 
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId, body: FinalizeBody | None = None) -> dict:

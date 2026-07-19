@@ -74,6 +74,10 @@ def cues_to_srt(cues: list[Cue]) -> str:
 
 def parse_srt(text: str) -> list[Cue]:
     cues: list[Cue] = []
+    # Normalize CRLF/CR first: canonical SubRip separates cue blocks with
+    # "\r\n\r\n", which a bare split("\n\n") never matches — collapsing the
+    # whole file into one garbled cue.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     for block in text.strip().split("\n\n"):
         lines = [line for line in block.splitlines() if line.strip()]
         timing = next((line for line in lines if "-->" in line), None)

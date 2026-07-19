@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -52,6 +53,23 @@ _MAX_LOOPS = 30  # loop-with-crossfade input cap (degenerate short clips)
 
 # Export bitrate by quality tier; draft favors speed, final favors fidelity.
 _VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
+
+
+def _filter_path(path: Path) -> str:
+    """A filesystem path safe to embed in a single-quoted ffmpeg filtergraph
+    option (ass=, drawtext textfile=). ffmpeg accepts forward slashes on
+    Windows, and backslashes are escape characters inside a filtergraph, so a
+    raw `C:\\Users\\…` path is mis-parsed; the drive colon is also special."""
+    return str(path).replace("\\", "/").replace(":", r"\:")
+
+
+def _as_float(value: object, default: float) -> float:
+    """User-editable trim/param values can be null or non-numeric; coerce
+    without letting a bad value crash the whole timeline build."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
 
 
 class FFmpegBackend(ExecutionBackend):
@@ -136,8 +154,9 @@ class FFmpegBackend(ExecutionBackend):
                 take_durations.append(round(take_duration, 3))
             clip_duration = sum(take_durations)
             trim = trims.get(port) or {}
-            trim_in = max(0.0, float(trim.get("in", 0.0)))
-            trim_out = trim.get("out")
+            trim_in = max(0.0, _as_float(trim.get("in"), 0.0))
+            # 0/None/garbage → no out-trim; a positive value is a real trim.
+            trim_out = _as_float(trim.get("out"), 0.0) or None
             narr = narration.get(port)
             narration_duration = (
                 await self._probe_duration(Path(narr)) if narr is not None else None
@@ -257,6 +276,7 @@ class FFmpegBackend(ExecutionBackend):
         bitrate = _VIDEO_BITRATE.get(spec.quality, _VIDEO_BITRATE["draft"])
         # Never under generated/ — everything there is treated as an artifact.
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
+        partial: Path | None = None  # set once the final artifact path is known
         try:
             scene_files: list[Path] = []
             total = len(segments)
@@ -288,6 +308,11 @@ class FFmpegBackend(ExecutionBackend):
             cut = await self._join_segments(segments, scene_files, work, encoder, bitrate, burn)
 
             out = ctx.output_path(spec.output_hash, ".mp4")
+            # Build into a dot-prefixed sibling (skipped by the artifact scan)
+            # and atomically rename into place: a crash mid-encode must never
+            # leave a truncated {hash}.mp4 that the existence cache then serves
+            # as a finished export forever.
+            partial = out.with_name(f".partial-{out.name}")
             music = resolve(timeline.get("music", ""))
             if music is not None and await self._probe_duration(music) is not None:
                 volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
@@ -327,13 +352,16 @@ class FFmpegBackend(ExecutionBackend):
                     "aac",
                     "-b:a",
                     "192k",
-                    str(out),
+                    str(partial),
                 )
             else:
                 # Same container either side — the no-music path is a rename,
                 # not a remux.
-                shutil.move(str(cut), str(out))
+                shutil.move(str(cut), str(partial))
+            os.replace(partial, out)  # atomic publish within generated/
         finally:
+            if partial is not None:
+                partial.unlink(missing_ok=True)  # no-op after a successful replace
             shutil.rmtree(work, ignore_errors=True)
         await ctx.progress(1.0)
         return out
@@ -399,7 +427,7 @@ class FFmpegBackend(ExecutionBackend):
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
 
         if burn is not None:
-            steps.append(f"{cur_v}ass='{burn}'[vout]")
+            steps.append(f"{cur_v}ass='{_filter_path(burn)}'[vout]")
             cur_v = "[vout]"
         if not steps:
             # Single segment, nothing to burn: re-encode to the target rate.
@@ -533,11 +561,11 @@ class FFmpegBackend(ExecutionBackend):
             textfile = workdir / f"{out.stem}.txt"
             textfile.write_text(str(text))
             vf += (
-                # Single-quote the path like the ass= filter above: an
-                # unquoted ':' or ',' in the temp dir path (legal in Linux
-                # paths, e.g. a TMPDIR with those chars) would otherwise be
-                # parsed as a drawtext option/filter separator and break -vf.
-                f",drawtext=textfile='{textfile}':font=Sans:fontsize={height // 14}"
+                # Single-quote AND filtergraph-escape the path: an unquoted
+                # ':'/',' in the temp dir path (legal on Linux) or a Windows
+                # backslash/drive-colon would otherwise be parsed as a drawtext
+                # option/filter separator and break -vf.
+                f",drawtext=textfile='{_filter_path(textfile)}':font=Sans:fontsize={height // 14}"
                 f":fontcolor=white:borderw={max(2, height // 270)}"
                 ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
             )

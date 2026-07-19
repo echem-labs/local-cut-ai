@@ -262,7 +262,13 @@ class ComfyUIBackend(ExecutionBackend):
             deadline = asyncio.get_running_loop().time() + deadline_s
             while True:
                 response = await client.get(f"{self.base_url}/history/{prompt_id}")
-                history = response.json().get(prompt_id)
+                try:
+                    history = response.json().get(prompt_id)
+                except (ValueError, httpx.HTTPError):
+                    # A transient non-JSON reply (reverse-proxy 502 HTML, a
+                    # partial body) must not fail a render that already
+                    # succeeded — treat it as "not ready" and keep polling.
+                    history = None
                 if history:
                     break
                 if asyncio.get_running_loop().time() >= deadline:

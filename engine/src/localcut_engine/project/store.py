@@ -41,7 +41,10 @@ def _write_atomic(path: Path, text: str) -> None:
     sibling temp file and rename over."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
-        with os.fdopen(fd, "w") as handle:
+        # encoding="utf-8": model_dump_json emits raw non-ASCII, and the
+        # platform default on Windows is cp1252 — a CJK/Cyrillic/emoji title
+        # would otherwise raise UnicodeEncodeError and abort create/rename.
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(tmp, path)
     except BaseException:
@@ -56,7 +59,7 @@ def _read_text_retry(path: Path, attempts: int = 6) -> str:
     so a later read always sees a complete file."""
     for attempt in range(attempts):
         try:
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         except PermissionError:
             if attempt == attempts - 1:
                 raise

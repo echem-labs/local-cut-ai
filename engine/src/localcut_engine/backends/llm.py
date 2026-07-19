@@ -107,7 +107,12 @@ class LLMScriptBackend(ExecutionBackend):
             )
             if response.status_code != 200:
                 raise GenerationError(f"local LLM error: {response.text[:500]}")
-            return response.json()["choices"][0]["message"]["content"]
+            # A 200 with an unexpected shape (empty choices, error object) must
+            # fail as a classified GenerationError, not a raw KeyError/IndexError.
+            try:
+                return response.json()["choices"][0]["message"]["content"]
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise GenerationError(f"local LLM returned an unreadable body: {exc}") from exc
 
     async def _unload(self) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and

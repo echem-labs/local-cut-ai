@@ -28,40 +28,55 @@ def ensure_certificate(tls_dir: Path, hosts: list[str]) -> tuple[Path, Path, str
 
     cert_path = tls_dir / "cert.pem"
     key_path = tls_dir / "key.pem"
-    if not (cert_path.exists() and key_path.exists()):
-        tls_dir.mkdir(parents=True, exist_ok=True)
-        key = ec.generate_private_key(ec.SECP256R1())
-        names: list[x509.GeneralName] = [x509.DNSName(_COMMON_NAME)]
-        for host in hosts:
-            if host in ("0.0.0.0", "::"):  # bind-all is not a reachable name
-                continue
-            try:
-                names.append(x509.IPAddress(ipaddress.ip_address(host)))
-            except ValueError:
-                names.append(x509.DNSName(host))
-        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _COMMON_NAME)])
-        now = datetime.now(UTC)
-        certificate = (
-            x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(subject)
-            .public_key(key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(now - timedelta(minutes=5))
-            .not_valid_after(now + timedelta(days=_VALID_DAYS))
-            .add_extension(x509.SubjectAlternativeName(names), critical=False)
-            .sign(key, hashes.SHA256())
+
+    def _existing_fingerprint() -> str | None:
+        # A crash/power-loss between the key write and the cert write leaves a
+        # complete key.pem and a truncated cert.pem; loading it must not brick
+        # every subsequent start — treat an unreadable pair as "regenerate".
+        if not (cert_path.exists() and key_path.exists()):
+            return None
+        try:
+            loaded = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            return loaded.fingerprint(hashes.SHA256()).hex()
+        except (OSError, ValueError):
+            return None
+
+    existing = _existing_fingerprint()
+    if existing is not None:
+        return cert_path, key_path, existing
+
+    tls_dir.mkdir(parents=True, exist_ok=True)
+    key = ec.generate_private_key(ec.SECP256R1())
+    names: list[x509.GeneralName] = [x509.DNSName(_COMMON_NAME)]
+    for host in hosts:
+        if host in ("0.0.0.0", "::"):  # bind-all is not a reachable name
+            continue
+        try:
+            names.append(x509.IPAddress(ipaddress.ip_address(host)))
+        except ValueError:
+            names.append(x509.DNSName(host))
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _COMMON_NAME)])
+    now = datetime.now(UTC)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=5))
+        .not_valid_after(now + timedelta(days=_VALID_DAYS))
+        .add_extension(x509.SubjectAlternativeName(names), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
         )
-        key_path.write_bytes(
-            key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            )
-        )
-        key_path.chmod(0o600)
-        cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    )
+    key_path.chmod(0o600)
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
 
     loaded = x509.load_pem_x509_certificate(cert_path.read_bytes())
-    fingerprint = loaded.fingerprint(hashes.SHA256()).hex()
-    return cert_path, key_path, fingerprint
+    return cert_path, key_path, loaded.fingerprint(hashes.SHA256()).hex()

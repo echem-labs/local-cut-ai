@@ -45,7 +45,10 @@ def compute_storage(config: EngineConfig, store: ProjectStore) -> dict:
         total = _dir_size(project_dir)
         cache = _dir_size(project_dir / "cache")
         cache_bytes += cache
-        projects.append({"id": project.id, "title": project.title, "bytes": total - cache})
+        # clamp at 0: total and cache are two independent walks, so a cache
+        # file created between them can make total-cache go negative (shown in
+        # the UI and used as a sort key) while renders write concurrently.
+        projects.append({"id": project.id, "title": project.title, "bytes": max(0, total - cache)})
     projects.sort(key=lambda row: row["bytes"], reverse=True)
     usage = shutil.disk_usage(config.data_dir)
     return {

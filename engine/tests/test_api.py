@@ -614,7 +614,11 @@ async def test_custom_model_lifecycle(client, tmp_path):
     row = rows[entry["id"]]
     # A local-file source is installed at add time — copied into models dir.
     assert row["custom"] and row["downloaded"]
-    assert (tmp_path / "models" / "checkpoints" / "my-finetune.safetensors").exists()
+    # Weights are namespaced by the unique entry id so two custom models that
+    # share a source basename never collide on one on-disk path.
+    dest_rel = entry["files"][0]["dest"]
+    assert entry["id"] in dest_rel
+    assert (tmp_path / "models" / dest_rel).exists()
 
     # Validation: bad url / missing file / path-shaped template are 422s.
     bad = {"name": "x", "task": "image.gen", "source": "url", "ref": "ftp://nope"}
