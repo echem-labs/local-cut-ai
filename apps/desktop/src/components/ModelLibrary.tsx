@@ -2,6 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModelLicense, ModelRow } from "../api/types";
 import { m, t } from "../i18n";
+import { isWindows } from "../lib/platform";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dropdown } from "./Dropdown";
@@ -134,7 +135,11 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
               placeholder={
                 source === "url"
                   ? t("models.custom.urlPlaceholder")
-                  : t("models.custom.filePlaceholder")
+                  : t(
+                      isWindows
+                        ? "models.custom.filePlaceholderWindows"
+                        : "models.custom.filePlaceholderPosix",
+                    )
               }
               onChange={(event) => setRef(event.target.value)}
             />
