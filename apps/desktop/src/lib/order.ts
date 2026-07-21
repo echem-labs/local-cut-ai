@@ -14,6 +14,20 @@ export function orderedScenes(board: Board): SceneCardModel[] {
   return [...known, ...rest].map((id) => byId.get(id)!);
 }
 
+/** Per-scene seconds — the assembled cut's actuals when a timeline exists
+ * (narration timing stretches scenes at assembly), else the planned
+ * duration_s param. Shared by the monitor and the timeline strip so their
+ * clocks can never disagree. */
+export function sceneDurations(board: Board, scenes: SceneCardModel[]): number[] {
+  const assembled = board.assembled_durations ?? {};
+  return scenes.map((scene) => {
+    const actual = assembled[scene.scene_id];
+    if (Number.isFinite(actual) && actual > 0) return actual;
+    const value = Number(scene.clip.params.duration_s);
+    return Number.isFinite(value) && value > 0 ? value : 4;
+  });
+}
+
 /** Reorder helper: returns the new order array with `id` moved to `to`. */
 export function movedOrder(order: string[], from: number, to: number): string[] | null {
   if (to < 0 || to >= order.length || from === to || from < 0) return null;

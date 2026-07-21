@@ -2,7 +2,7 @@ import { Pause, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { t } from "../i18n";
-import { orderedScenes } from "../lib/order";
+import { orderedScenes, sceneDurations } from "../lib/order";
 import { formatTime, usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 
@@ -20,12 +20,8 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
 
   const scenes = useMemo(() => (board ? orderedScenes(board) : []), [board]);
   const durations = useMemo(
-    () =>
-      scenes.map((scene) => {
-        const value = Number(scene.clip.params.duration_s);
-        return Number.isFinite(value) && value > 0 ? value : 4;
-      }),
-    [scenes],
+    () => (board ? sceneDurations(board, scenes) : []),
+    [board, scenes],
   );
   const totalDuration = durations.reduce((sum, d) => sum + d, 0);
 

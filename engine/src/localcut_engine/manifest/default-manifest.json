@@ -67,7 +67,7 @@
       "version": "0.9",
       "quant": "fp8",
       "requirements": {
-        "vram_gb": 12,
+        "vram_gb": 8,
         "ram_gb": 16,
         "disk_gb": 10,
         "backends": [
