@@ -4,10 +4,12 @@ import {
   Home as HomeIcon,
   LayoutGrid,
   Moon,
+  MoreHorizontal,
   Settings as SettingsIcon,
   Sun,
+  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { t } from "./i18n";
 import { BrandMark } from "./components/BrandMark";
@@ -15,8 +17,9 @@ import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
+import { useOutsideClick } from "./lib/useOutsideClick";
 import { FirstRun } from "./screens/FirstRun";
-import { Home } from "./screens/Home";
+import { Home, tileStatus } from "./screens/Home";
 import { Project } from "./screens/Project";
 import { Settings } from "./screens/Settings";
 import { useApp } from "./store";
@@ -29,6 +32,11 @@ export default function App() {
   const {
     connect,
     currentProject,
+    openProjects,
+    projects,
+    allJobs,
+    openProject,
+    closeOpenProject,
     closeProject,
     closeSettings,
     openSettings,
@@ -38,6 +46,10 @@ export default function App() {
     system,
     remoteEngine,
   } = useApp();
+  // Rail-tab overflow popover (open tabs past the visible cap).
+  const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  const tabsMenuRef = useRef<HTMLDivElement>(null);
+  useOutsideClick(tabsMenuRef, tabsMenuOpen, () => setTabsMenuOpen(false));
 
   useEffect(() => {
     void connect();
@@ -73,10 +85,21 @@ export default function App() {
   // rail is the default everywhere; expanding to the labeled 200px rail is
   // a persisted choice that also holds on every screen. VS Code never
   // resizes its activity bar — shell stability is the point.
-  const inProject = Boolean(currentProject);
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_KEY) === "1",
   );
+  // Open-project tabs: cap the rail at a handful; the rest live in an
+  // overflow menu. The active tab always stays visible — if it sits past
+  // the cap, it swaps with the last visible slot.
+  const RAIL_TABS_MAX = 5;
+  let visibleTabs = openProjects.slice(0, RAIL_TABS_MAX);
+  let overflowTabs = openProjects.slice(RAIL_TABS_MAX);
+  const activeId = currentProject?.id;
+  if (activeId && overflowTabs.includes(activeId)) {
+    const swapped = visibleTabs[visibleTabs.length - 1];
+    visibleTabs = [...visibleTabs.slice(0, -1), activeId];
+    overflowTabs = overflowTabs.map((id) => (id === activeId ? swapped : id));
+  }
   const compact = !railExpanded;
   const toggleRail = () => {
     const next = !railExpanded;
@@ -121,11 +144,71 @@ export default function App() {
             <span className="rail-label">{t("nav.home")}</span>
           </button>
         )}
-        {inProject && (
-          <button className="active" title={t("nav.scenes")} aria-label={t("nav.scenes")}>
-            <LayoutGrid {...ICON} />
-            <span className="rail-label">{t("nav.scenes")}</span>
-          </button>
+        {firstRunDone &&
+          visibleTabs.map((id) => {
+            const project =
+              projects.find((entry) => entry.id === id) ??
+              (currentProject?.id === id ? currentProject : null);
+            const title = project?.title ?? id;
+            const active = currentProject?.id === id && !settingsOpen;
+            return (
+              <div key={id} className="rail-tab">
+                <button
+                  className={active ? "active" : ""}
+                  title={title}
+                  onClick={() => {
+                    closeSettings();
+                    if (currentProject?.id !== id) void openProject(id);
+                  }}
+                >
+                  <LayoutGrid {...ICON} />
+                  {project && (
+                    <i className={`dot ${tileStatus(project, allJobs)}`} aria-hidden="true" />
+                  )}
+                  <span className="rail-label">{title}</span>
+                </button>
+                <button
+                  className="rail-tab-close"
+                  title={t("nav.closeProjectAria", { title })}
+                  aria-label={t("nav.closeProjectAria", { title })}
+                  onClick={() => closeOpenProject(id)}
+                >
+                  <X size={12} strokeWidth={1.8} />
+                </button>
+              </div>
+            );
+          })}
+        {firstRunDone && overflowTabs.length > 0 && (
+          <div className="rail-tab-overflow" ref={tabsMenuRef}>
+            <button
+              aria-haspopup="menu"
+              aria-expanded={tabsMenuOpen}
+              title={t("nav.moreProjects", { n: overflowTabs.length })}
+              onClick={() => setTabsMenuOpen((open) => !open)}
+            >
+              <MoreHorizontal {...ICON} />
+              <span className="rail-label">
+                {t("nav.moreProjects", { n: overflowTabs.length })}
+              </span>
+            </button>
+            {tabsMenuOpen && (
+              <div className="menu-pop" role="menu">
+                {overflowTabs.map((id) => (
+                  <button
+                    key={id}
+                    role="menuitem"
+                    onClick={() => {
+                      setTabsMenuOpen(false);
+                      closeSettings();
+                      void openProject(id);
+                    }}
+                  >
+                    {projects.find((entry) => entry.id === id)?.title ?? id}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         <div className="rail-bottom">
           <Tip

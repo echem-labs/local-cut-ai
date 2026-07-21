@@ -47,8 +47,9 @@ type SortKey = "recent" | "created" | "name";
 type TileStatus = "generating" | "failed" | "final" | "draft";
 
 /** Tile status from the global queue: active work wins, then a trailing
- * failure, then a finished export, else draft. */
-function tileStatus(project: Project, allJobs: Job[]): TileStatus {
+ * failure, then a finished export, else draft. Shared with the rail's
+ * open-project tabs so both status dots always agree. */
+export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   const jobs = allJobs.filter((job) => job.project_id === project.id);
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
     return "generating";
