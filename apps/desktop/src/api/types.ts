@@ -97,6 +97,18 @@ export interface SystemInfo {
     reason: string;
   }[];
   backend_mode: string;
+  /** Resolved per-task routing — absent on engines older than this field. */
+  backends?: {
+    chain: string[];
+    comfy_kinds_auto: boolean;
+    tasks: BackendTask[];
+  };
+}
+
+export interface BackendTask {
+  kind: string;
+  backend: string | null;
+  installed_models: string[];
 }
 
 export type LicenseVerdict = "commercial" | "conditions" | "personal-only";

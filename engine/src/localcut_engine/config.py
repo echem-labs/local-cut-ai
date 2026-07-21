@@ -28,7 +28,10 @@ class EngineConfig(BaseModel):
     backend: str = "mock"
     comfyui_url: str = "http://127.0.0.1:8188"
     # Node kinds ComfyUI serves (music = ACE-Step via native ComfyUI nodes).
-    comfy_kinds: str = "keyframe,thumbnail,clip,music"
+    # "auto" claims a kind only while an installed manifest model can serve
+    # it — no video model means clips fall to the still-clip tier instead
+    # of failing. An explicit list is a static override for power users.
+    comfy_kinds: str = "auto"
     llm_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3:14b"
     # Ceiling for one local completion. Thinking models on modest GPUs can

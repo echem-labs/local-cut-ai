@@ -114,8 +114,14 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     assert registry.resolve(NodeKind.CLIP).name == "mock"  # not in comfy_kinds
     assert registry.resolve(NodeKind.EXPORT).name == "mock"
 
-    # The full-local chain must resolve every generative kind (no dead lanes).
-    local = _build_backends(EngineConfig(data_dir=tmp_path, backend="local"))
+    # The full-local chain must resolve every generative kind (no dead
+    # lanes). Explicit kinds here: the default ("auto") only claims kinds
+    # whose weights are installed — covered by the auto-kinds test below.
+    local = _build_backends(
+        EngineConfig(
+            data_dir=tmp_path, backend="local", comfy_kinds="keyframe,thumbnail,clip,music"
+        )
+    )
     for kind in (
         NodeKind.SCRIPT,
         NodeKind.KEYFRAME,
@@ -130,6 +136,79 @@ def test_backend_chain_parsing_and_composition(tmp_path):
 
     with pytest.raises(ValueError, match="unknown backend"):
         _build_backends(EngineConfig(data_dir=tmp_path, backend="bogus"))
+
+
+def test_comfy_auto_kinds_follow_installed_weights(tmp_path):
+    """Default comfy_kinds ("auto") claims a kind only while a downloaded
+    manifest model can serve it — and flips live, no registry rebuild, so
+    a finished download reroutes the next render without a restart."""
+    from localcut_engine.api.app import _build_backends
+    from localcut_engine.graph.model import NodeKind
+
+    (tmp_path / "model-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "models": [
+                    {
+                        "id": "tiny-i2v",
+                        "task": "video.i2v",
+                        "family": "test",
+                        "requirements": {"vram_gb": 1, "disk_gb": 1},
+                        "license": {"id": "mit", "commercial": True},
+                        "files": [
+                            {"url": "http://localhost/w", "dest": "checkpoints/tiny.safetensors"}
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    config = EngineConfig(data_dir=tmp_path, backend="comfy,ffmpeg,mock")
+    registry = _build_backends(config)
+    # No weights on disk: comfy declines clips → the still-clip tier serves.
+    assert registry.resolve(NodeKind.CLIP).name == "ffmpeg"
+    assert registry.resolve(NodeKind.KEYFRAME).name == "mock"
+
+    weights = tmp_path / "models" / "checkpoints" / "tiny.safetensors"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"w")
+    assert registry.resolve(NodeKind.CLIP).name == "comfyui"
+    # Image/music tasks still have no installed model.
+    assert registry.resolve(NodeKind.KEYFRAME).name == "mock"
+    assert registry.resolve(NodeKind.MUSIC).name == "mock"
+
+
+def test_comfy_auto_kinds_with_broken_manifest_claim_nothing(tmp_path):
+    """An unreadable override manifest must not wedge routing — comfy claims
+    nothing and the chain's fallbacks serve everything."""
+    from localcut_engine.api.app import _build_backends
+    from localcut_engine.graph.model import NodeKind
+
+    (tmp_path / "model-manifest.json").write_text("{not json")
+    registry = _build_backends(EngineConfig(data_dir=tmp_path, backend="comfy,mock"))
+    assert registry.resolve(NodeKind.CLIP).name == "mock"
+    assert registry.resolve(NodeKind.KEYFRAME).name == "mock"
+
+
+async def test_system_reports_resolved_backend_chain(client):
+    body = (await client.get("/system")).json()
+    backends = body["backends"]
+    assert backends["chain"] == ["mock"]
+    assert backends["comfy_kinds_auto"] is True
+    assert [row["kind"] for row in backends["tasks"]] == [
+        "script",
+        "keyframe",
+        "thumbnail",
+        "clip",
+        "narration",
+        "captions",
+        "music",
+        "timeline",
+        "export",
+    ]
+    assert all(row["backend"] == "mock" for row in backends["tasks"])
+    assert all(row["installed_models"] == [] for row in backends["tasks"])
 
 
 async def test_create_project_validates_aspect_and_duration(client):

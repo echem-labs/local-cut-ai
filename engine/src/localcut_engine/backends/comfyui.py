@@ -11,6 +11,7 @@ import asyncio
 import importlib.resources
 import json
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -67,6 +68,7 @@ class ComfyUIBackend(ExecutionBackend):
         templates_dir: Path | None = None,
         kinds: str = "keyframe,thumbnail,clip",
         model_templates: dict[str, str] | None = None,
+        capability: Callable[[], set[NodeKind]] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.templates_dir = templates_dir
@@ -74,10 +76,16 @@ class ComfyUIBackend(ExecutionBackend):
         # Manifest-fed model id → workflow template. Model switching (e.g.
         # LTX drafts, Wan finals) is a template swap, not new code.
         self.model_templates = model_templates or {}
+        # Live install probe ("auto" kinds): a kind is claimed only while
+        # weights able to serve it are on disk, so it flips as downloads
+        # land or models are deleted. None = static claims.
+        self.capability = capability
         self.client_id = uuid.uuid4().hex
 
     def supports(self, kind: NodeKind) -> bool:
-        return kind in self.kinds
+        if kind not in self.kinds:
+            return False
+        return self.capability is None or kind in self.capability()
 
     def _template_path(self, spec: JobSpec) -> Path:
         by_model = self.model_templates.get((spec.model or "").removeprefix("local:"))

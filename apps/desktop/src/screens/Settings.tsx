@@ -8,14 +8,15 @@ import {
   SlidersHorizontal,
   SunMoon,
   Trash2,
+  Waypoints,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { Provider } from "../api/types";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import type { BackendTask, Provider } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
-import { m, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
+import { m, type MessageKey, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { ASPECTS, DURATIONS } from "../lib/formats";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
 import { applyTheme, loadThemePref, type ThemePref } from "../theme";
@@ -54,6 +55,32 @@ const KEY_IDS: Record<string, ProviderKeyId> = {
   openai: "openai",
   google: "gemini",
   fal: "fal",
+};
+
+/** API ids → catalog keys for the routing panel. Partial Records, not typed
+ * unions: a newer engine may send ids this build doesn't know, and those
+ * must fall back to the raw id instead of breaking the panel. */
+const TASK_KIND_LABELS: Record<string, MessageKey> = {
+  script: "settings.backends.kinds.script",
+  keyframe: "settings.backends.kinds.keyframe",
+  thumbnail: "settings.backends.kinds.thumbnail",
+  clip: "settings.backends.kinds.clip",
+  narration: "settings.backends.kinds.narration",
+  captions: "settings.backends.kinds.captions",
+  music: "settings.backends.kinds.music",
+  timeline: "settings.backends.kinds.timeline",
+  export: "settings.backends.kinds.export",
+};
+
+const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
+  comfyui: "settings.backends.names.comfyui",
+  ffmpeg: "settings.backends.names.ffmpeg",
+  llm: "settings.backends.names.llm",
+  kokoro: "settings.backends.names.kokoro",
+  chatterbox: "settings.backends.names.chatterbox",
+  align: "settings.backends.names.align",
+  mock: "settings.backends.names.mock",
+  cloud: "settings.backends.names.cloud",
 };
 
 /** Settings (review 4): an overlay layer with a VS Code-style left category
@@ -196,6 +223,26 @@ export function Settings() {
   };
 
   const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
+
+  /** One routing row: backend display name, plus what makes it concrete —
+   * the installed models behind a ComfyUI claim, or the honest "still
+   * images" caveat when clips landed on the FFmpeg fallback tier. */
+  const routeLabel = (row: BackendTask): string => {
+    if (!row.backend) return t("settings.backends.unrouted");
+    const nameKey = BACKEND_NAME_LABELS[row.backend];
+    const name = nameKey ? t(nameKey) : row.backend;
+    if (row.kind === "clip" && row.backend === "ffmpeg") {
+      return t("settings.backends.stillClips", { name });
+    }
+    if (row.backend === "comfyui" && row.installed_models.length > 0) {
+      const pretty = row.installed_models.map((id) => {
+        const entry = models.find((candidate) => candidate.id === id);
+        return entry?.family ? displayModelName(entry.family, entry.version) : id;
+      });
+      return t("settings.backends.withModels", { name, models: pretty.join(", ") });
+    }
+    return name;
+  };
 
   const submitPairing = () => {
     if (pairBusy || !pairingCode.trim()) return;
@@ -702,6 +749,32 @@ export function Settings() {
                   </dd>
                 </dl>
               </section>
+
+              {system?.backends && (
+                <section>
+                  <h2>
+                    <Waypoints {...ICON_CONTROL} />
+                    {t("settings.backends.heading")}
+                  </h2>
+                  <p className="hint">
+                    {system.backends.comfy_kinds_auto
+                      ? t("settings.backends.hintAuto")
+                      : t("settings.backends.hintManual")}
+                  </p>
+                  <dl className="kv">
+                    {system.backends.tasks.map((row) => (
+                      <Fragment key={row.kind}>
+                        <dt>
+                          {TASK_KIND_LABELS[row.kind]
+                            ? t(TASK_KIND_LABELS[row.kind])
+                            : row.kind}
+                        </dt>
+                        <dd>{routeLabel(row)}</dd>
+                      </Fragment>
+                    ))}
+                  </dl>
+                </section>
+              )}
             </>
           )}
 
