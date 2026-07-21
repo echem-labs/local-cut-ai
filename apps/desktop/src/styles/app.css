@@ -1295,14 +1295,14 @@ button.link:hover {
   margin-top: var(--space-2);
 }
 
-/* Capped card widths (no 1fr balloon) — the board packs like a storyboard,
- * not a landing-page gallery. Density set by the header S/M/L toggle. */
+/* Capped card widths (no 1fr balloon) — cards keep storyboard proportions
+ * while the grid claims every column the panel can fit. Density set by
+ * the header S/M/L toggle. */
 .scene-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 240px));
   justify-content: start;
   gap: var(--space-3);
-  max-width: 1440px;
 }
 
 .scene-grid.density-s {
