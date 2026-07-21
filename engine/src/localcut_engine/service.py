@@ -603,6 +603,22 @@ class ProjectService:
                     key_hash = graph.output_hash(f"{sid}.keyframe", memo)
                     if key_hash in cached:
                         thumb = key_hash
+            # The assembled timeline is the duration authority once it
+            # exists: narration timing stretches scenes at assembly, so the
+            # planned per-clip sum above can disagree with the exported cut
+            # (a 44 s plan can assemble into a 65 s video).
+            if timeline is not None:
+                timeline_hash = graph.output_hash("timeline", memo)
+                if timeline_hash in cached:
+                    path = self.store.resolve_artifact(project_id, timeline_hash)
+                    try:
+                        assembled = (
+                            json.loads(path.read_text()).get("duration") if path else None
+                        )
+                        if isinstance(assembled, (int, float)) and assembled > 0:
+                            duration = float(assembled)
+                    except (OSError, ValueError):
+                        pass  # mock/legacy EDLs — the planned sum stands
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
