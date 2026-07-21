@@ -21,7 +21,10 @@ import { TimelineStrip } from "./TimelineStrip";
 /** Our token-mapped dockview theme (CSS in app.css). */
 const THEME = { ...themeDark, name: "localcut", className: "dockview-theme-localcut" };
 
-const LAYOUT_VERSION = "v1";
+// Bumping the version retires everyone's saved layouts once so a new
+// default (v2: taller prompt, shorter timeline, full-height Details)
+// actually shows up — "Reset layout" would otherwise be required.
+const LAYOUT_VERSION = "v2";
 const layoutKey = (view: WorkspaceView) => `localcut.layout.${LAYOUT_VERSION}.${view}`;
 
 /* ---------- panels ---------- */
@@ -178,10 +181,11 @@ export function Workspace() {
       position: { referencePanel: "board", direction: "below" },
     });
     // A reference-panel split divides the group evenly, and setSize during
-    // construction is ignored — size the row to a two-line prompt once
-    // dockview has done its initial layout pass.
+    // construction is ignored — size the row once dockview has done its
+    // initial layout pass. Tall enough for a real paragraph of prompt: the
+    // composer is the project's primary edit surface, not a status bar.
     requestAnimationFrame(() => {
-      api.getPanel("composer")?.api.setSize({ height: 112 });
+      api.getPanel("composer")?.api.setSize({ height: 190 });
     });
   };
 
@@ -201,13 +205,18 @@ export function Workspace() {
       }
       addComposer(api);
       // No reference panel: dock against the root edge so the timeline
-      // spans the full workspace width in every view.
+      // spans the full workspace width in every view. initialHeight is
+      // unreliable for root-edge docks — enforce after the layout pass;
+      // the strip only needs chip-height blocks, the board needs the room.
       api.addPanel({
         id: "timeline",
         component: "timeline",
         title: panelTitle("timeline"),
         position: { direction: "below" },
-        initialHeight: 150,
+        initialHeight: 200,
+      });
+      requestAnimationFrame(() => {
+        api.getPanel("timeline")?.api.setSize({ height: 200 });
       });
       board.api.setActive();
     } finally {
@@ -266,12 +275,15 @@ export function Workspace() {
     if (selected && !panel) {
       busyRef.current = true;
       try {
+        // Root-edge dock (no reference panel): Details opens as a
+        // full-height right column beside the whole workspace, not a
+        // split confined to the board row.
         api.addPanel({
           id: "inspector",
           component: "inspector",
           title: panelTitle("inspector"),
-          position: { referencePanel: "board", direction: "right" },
-          initialWidth: 340,
+          position: { direction: "right" },
+          initialWidth: 420,
         });
       } finally {
         busyRef.current = false;

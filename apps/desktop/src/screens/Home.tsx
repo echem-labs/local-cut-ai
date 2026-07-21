@@ -1,7 +1,6 @@
 import {
   Aperture,
   ArrowDownToLine,
-  Boxes,
   Clapperboard,
   FileText,
   Film,
@@ -18,6 +17,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
+import { ModelsPopover } from "../components/ModelsPopover";
 import { Tip } from "../components/Tooltip";
 import type { Job, Project, ToolKind } from "../api/types";
 import { m, plural, t } from "../i18n";
@@ -91,11 +91,9 @@ export function Home() {
   const [renameDraft, setRenameDraft] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
-  const [modelsPopOpen, setModelsPopOpen] = useState(false);
   const [missingModel, setMissingModel] = useState<{ task: string; size: number } | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const modelsPopRef = useRef<HTMLDivElement>(null);
 
   const { prompt, tool, toolInput, voice, motion } = homeDraft;
   const { aspect, duration, mode } = defaults;
@@ -114,15 +112,6 @@ export function Home() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuFor]);
 
-  // The models popover closes on outside press too.
-  useEffect(() => {
-    if (!modelsPopOpen) return;
-    const onDown = (event: MouseEvent) => {
-      if (!modelsPopRef.current?.contains(event.target as Node)) setModelsPopOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [modelsPopOpen]);
 
   // "/" focuses search when no field owns the keyboard (review 4 §H4).
   useEffect(() => {
@@ -437,56 +426,7 @@ export function Home() {
               </button>
             </div>
             <div className="spacer" />
-            <div className="models-pop-wrap" ref={modelsPopRef}>
-              <Tip label={t("home.modelsTipLabel")} hint={t("home.modelsTipHint")} side="top">
-                <button
-                  className="icon-btn"
-                  onClick={() => setModelsPopOpen(!modelsPopOpen)}
-                  aria-label={t("home.modelsAria")}
-                  aria-expanded={modelsPopOpen}
-                >
-                  <Boxes {...ICON_CONTROL} />
-                </button>
-              </Tip>
-              {modelsPopOpen && (
-                <div className="menu-pop" role="menu">
-                  <div className="menu-label">{t("home.modelsPopTitle")}</div>
-                  {(system?.recommendations ?? []).map((rec) => {
-                    const row = rec.model
-                      ? models.find((entry) => entry.id === rec.model?.id)
-                      : null;
-                    const ready = row?.downloaded || (rec.model?.files.length ?? 1) === 0;
-                    return (
-                      <div key={rec.task} className="models-pop-row">
-                        <span className="grow">
-                          {(m().models.taskLabels as Record<string, string>)[rec.task] ??
-                            rec.task}
-                        </span>
-                        {rec.model ? (
-                          ready ? (
-                            <small>{displayModelName(rec.model.family, rec.model.version)}</small>
-                          ) : (
-                            <span className="badge warn">{t("home.notInstalled")}</span>
-                          )
-                        ) : (
-                          <small>{t("home.cloudOnly")}</small>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <div className="rule" aria-hidden="true" />
-                  <button
-                    role="menuitem"
-                    onClick={() => {
-                      setModelsPopOpen(false);
-                      openSettings("models");
-                    }}
-                  >
-                    {t("home.manageModels")}
-                  </button>
-                </div>
-              )}
-            </div>
+            <ModelsPopover />
             <Tip label={t("common.generate")} shortcut={t("home.ctrlEnter")} side="top">
               <button
                 className="btn-primary"

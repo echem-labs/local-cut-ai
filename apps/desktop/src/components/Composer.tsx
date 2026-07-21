@@ -5,6 +5,7 @@ import { plural, t } from "../i18n";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
+import { ModelsPopover } from "./ModelsPopover";
 
 interface LogEntry {
   at: number;
@@ -197,48 +198,6 @@ export function Composer() {
       )}
 
       <div className="composer">
-        <div className="composer-scope">
-          <button
-            className="scope-chip"
-            aria-haspopup="listbox"
-            aria-expanded={scopeOpen}
-            onClick={() => setScopeOpen(!scopeOpen)}
-            title={t("composer.scopeTitle")}
-          >
-            {scopeLabel}
-            <ChevronDown size={11} strokeWidth={2} />
-          </button>
-          {scopeOpen && (
-            <div className="dropdown-menu" role="listbox" aria-label={t("composer.scopeMenuAria")}>
-              <button
-                role="option"
-                aria-selected={scope === "project"}
-                className={scope === "project" ? "selected" : ""}
-                onClick={() => {
-                  setScopeOverride("project");
-                  setScopeOpen(false);
-                }}
-              >
-                <span className="grow">{t("composer.wholeVideo")}</span>
-              </button>
-              {sceneOptions.map((id) => (
-                <button
-                  key={id}
-                  role="option"
-                  aria-selected={scope === id}
-                  className={scope === id ? "selected" : ""}
-                  onClick={() => {
-                    setScopeOverride(id);
-                    setScopeOpen(false);
-                  }}
-                >
-                  <span className="grow">{t("composer.scene", { n: id.replace(/^s/, "") })}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         <div className="composer-input">
           {matches.length > 0 && (
             <div className="palette" role="listbox" aria-label={t("composer.commandsAria")}>
@@ -296,6 +255,51 @@ export function Composer() {
           />
         </div>
 
+        <div className="composer-controls">
+        <div className="composer-scope">
+          <button
+            className="scope-chip"
+            aria-haspopup="listbox"
+            aria-expanded={scopeOpen}
+            onClick={() => setScopeOpen(!scopeOpen)}
+            title={t("composer.scopeTitle")}
+          >
+            {scopeLabel}
+            <ChevronDown size={11} strokeWidth={2} />
+          </button>
+          {scopeOpen && (
+            <div className="dropdown-menu" role="listbox" aria-label={t("composer.scopeMenuAria")}>
+              <button
+                role="option"
+                aria-selected={scope === "project"}
+                className={scope === "project" ? "selected" : ""}
+                onClick={() => {
+                  setScopeOverride("project");
+                  setScopeOpen(false);
+                }}
+              >
+                <span className="grow">{t("composer.wholeVideo")}</span>
+              </button>
+              {sceneOptions.map((id) => (
+                <button
+                  key={id}
+                  role="option"
+                  aria-selected={scope === id}
+                  className={scope === id ? "selected" : ""}
+                  onClick={() => {
+                    setScopeOverride(id);
+                    setScopeOpen(false);
+                  }}
+                >
+                  <span className="grow">{t("composer.scene", { n: id.replace(/^s/, "") })}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="spacer" />
+
         {log.length > 0 && (
           <button
             className={`icon-btn-sm${logOpen ? " active" : ""}`}
@@ -307,6 +311,7 @@ export function Composer() {
             <History size={13} strokeWidth={1.8} />
           </button>
         )}
+        <ModelsPopover opens="up" />
         <button
           className="composer-send"
           aria-label={t("composer.sendAria")}
@@ -316,6 +321,7 @@ export function Composer() {
         >
           <SendHorizontal size={13} strokeWidth={2} />
         </button>
+        </div>
       </div>
       {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}
       {feedback && !editBusy && <div className="hint composer-hint">{feedback}</div>}
