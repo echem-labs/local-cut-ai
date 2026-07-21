@@ -175,6 +175,109 @@ textarea {
   cursor: default;
 }
 
+/* Open-project tabs: one rail entry per open project, VS Code-style. The
+ * main button fills the row; the close ✕ floats on its right edge and only
+ * shows on hover/focus so idle rows stay quiet. */
+.rail-tab {
+  position: relative;
+}
+
+.rail-tab > button:first-child {
+  width: 100%;
+  padding-right: 26px; /* room for the ✕ so long titles never sit under it */
+}
+
+.rail-tab .rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-tab .dot {
+  position: absolute;
+  left: 20px;
+  top: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-draft);
+}
+
+.rail-tab .dot.generating {
+  background: var(--status-generating);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.rail-tab .dot.final {
+  background: var(--status-final);
+}
+
+.rail-tab .dot.failed {
+  background: var(--status-failed);
+}
+
+.rail-tab .rail-tab-close {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.rail-tab:hover .rail-tab-close,
+.rail-tab:focus-within .rail-tab-close {
+  opacity: 1;
+}
+
+.rail-tab .rail-tab-close:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* Compact rail: the ✕ overlays the icon's corner on hover. */
+.rail.compact .rail-tab > button:first-child {
+  padding-right: var(--space-2);
+}
+
+.rail.compact .rail-tab .rail-tab-close {
+  right: 1px;
+  top: 1px;
+  transform: none;
+  width: 14px;
+  height: 14px;
+  background: var(--surface-1);
+}
+
+.rail-tab-overflow {
+  position: relative;
+}
+
+.rail-tab-overflow > button {
+  width: 100%;
+}
+
+.rail-tab-overflow .menu-pop {
+  left: calc(100% + 4px);
+  top: 0;
+  max-width: 240px;
+}
+
+.rail-tab-overflow .menu-pop button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
 .rail .soon {
   margin-left: auto;
   font-size: 9px;

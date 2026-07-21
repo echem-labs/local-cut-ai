@@ -1,8 +1,9 @@
 {
   "navigationAria": "Navigation",
   "home": "Home",
-  "homeCloseHint": "close the project",
-  "scenes": "Scenes",
+  "homeCloseHint": "back to your projects",
+  "closeProjectAria": "Close {title}",
+  "moreProjects": "{n} more",
   "settings": "Settings",
   "collapse": "Collapse",
   "expandSidebar": "Expand the sidebar",

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
+import { usePlayback } from "./lib/playback";
 import type {
   Board,
   Checkpoint,
@@ -87,6 +88,9 @@ interface AppState {
   system: SystemInfo | null;
   projects: Project[];
   currentProject: Project | null;
+  /** Ids of projects open as rail tabs, in open order. The active one is
+   * `currentProject`; the rest stay open but idle (no board, no polling). */
+  openProjects: string[];
   board: Board | null;
   jobs: Job[];
   /** Unfiltered queue across all projects — Home tile status dots. */
@@ -120,7 +124,11 @@ interface AppState {
   reconnect: () => Promise<void>;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
+  /** Leave the workspace for Home. Open tabs stay open. */
   closeProject: () => void;
+  /** Drop a project from the rail tabs; if it was active, the nearest
+   * remaining tab takes over (Home when none are left). */
+  closeOpenProject: (id: string) => void;
   createFromPrompt: (
     prompt: string,
     duration: number,
@@ -181,6 +189,27 @@ interface AppState {
 const FIRST_RUN_KEY = "localcut.firstRunDone";
 const DEFAULTS_KEY = "localcut.defaults.v1";
 const DRAFT_KEY = "localcut.home.draft";
+const OPEN_TABS_KEY = "localcut.openTabs";
+
+/** Rail tabs survive a restart (ids only — titles rehydrate from /projects;
+ * refreshHome prunes ids whose projects no longer exist, which also empties
+ * the tabs naturally on an engine switch). */
+function readOpenTabs(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(OPEN_TABS_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOpenTabs(tabs: string[]): void {
+  try {
+    localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(tabs));
+  } catch {
+    /* storage full — tabs just won't survive a restart */
+  }
+}
 const REFRESH_DEBOUNCE_MS = 150;
 const HOME_REFRESH_DEBOUNCE_MS = 600;
 const RECONNECT_DELAY_MS = 3000;
@@ -601,6 +630,7 @@ export const useApp = create<AppState>((set, get) => {
     system: null,
     projects: [],
     currentProject: null,
+    openProjects: readOpenTabs(),
     board: null,
     jobs: [],
     allJobs: [],
@@ -647,6 +677,15 @@ export const useApp = create<AppState>((set, get) => {
       // (refreshBoard guards the same way via the project id).
       if (get().client !== client) return;
       set({ projects, allJobs });
+      // Prune rail tabs whose projects no longer exist — a delete from
+      // another surface, or an engine switch (this list belongs to the new
+      // engine, so foreign ids fall away here).
+      const known = new Set(projects.map((project) => project.id));
+      const pruned = get().openProjects.filter((id) => known.has(id));
+      if (pruned.length !== get().openProjects.length) {
+        set({ openProjects: pruned });
+        saveOpenTabs(pruned);
+      }
     },
 
     openProject: async (id: string) => {
@@ -664,14 +703,47 @@ export const useApp = create<AppState>((set, get) => {
         // a board refresh (scheduleRefresh) that repopulates the list.
         client.listJobs(id).catch(() => [] as Job[]),
       ]);
+      // Stop playback before the swap — the transport holds scene ids and a
+      // playhead from the previous project, meaningless against this board.
+      usePlayback.getState().stop();
+      const tabs = get().openProjects;
+      const openProjects = tabs.includes(id) ? tabs : [...tabs, id];
+      if (openProjects !== tabs) saveOpenTabs(openProjects);
       // Keep an optimistic aux edit made mid-load on top of the fetched board,
       // exactly as refreshBoard does, instead of dropping it.
-      set({ currentProject: project, board: withPending(board, id), jobs, selectedNode: null });
+      set({
+        currentProject: project,
+        openProjects,
+        board: withPending(board, id),
+        jobs,
+        selectedNode: null,
+      });
     },
 
     closeProject: () => {
       void flushPatches(); // nothing reads the project after this — fire and forget
+      usePlayback.getState().stop();
       set({ currentProject: null, board: null, jobs: [], selectedNode: null });
+    },
+
+    closeOpenProject: (id: string) => {
+      const tabs = get().openProjects;
+      const index = tabs.indexOf(id);
+      if (index < 0) return;
+      const openProjects = tabs.filter((tab) => tab !== id);
+      set({ openProjects });
+      saveOpenTabs(openProjects);
+      if (get().currentProject?.id !== id) return;
+      // The active tab closed: its right neighbor takes over (else the new
+      // last tab), Home when nothing is left — the VS Code convention.
+      const next = openProjects[Math.min(index, openProjects.length - 1)];
+      if (next) {
+        void get()
+          .openProject(next)
+          .catch(() => get().closeProject());
+      } else {
+        get().closeProject();
+      }
     },
 
     createFromPrompt: async (prompt, duration, aspect, mode) => {
@@ -992,7 +1064,7 @@ export const useApp = create<AppState>((set, get) => {
       if (!client) return t("errors.engineUnavailable");
       const removed = projects.find((project) => project.id === id);
       set({ projects: projects.filter((project) => project.id !== id) });
-      if (get().currentProject?.id === id) get().closeProject();
+      get().closeOpenProject(id); // drops the rail tab; activates a neighbor
       try {
         await client.deleteProject(id);
         return null;
