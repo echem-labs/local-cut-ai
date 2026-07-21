@@ -2195,22 +2195,35 @@ button.link:hover {
   justify-content: flex-end;
 }
 
+/* The prompt fills the top; scope, models and send sit on one aligned
+ * controls row at the foot — the same shape as Home's prompt box, so the
+ * panel can be dragged tall without the chrome drifting apart. */
 .composer {
   display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
   background: var(--surface-1);
   border: 1px solid var(--border-hi);
   border-radius: var(--radius-m);
-  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-1);
   transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
 }
 
-/* chip and buttons anchor to the foot; the prompt fills the rest */
-.composer .composer-scope,
-.composer .icon-btn-sm,
-.composer .composer-send {
-  margin-bottom: 1px;
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.composer-controls .spacer {
+  flex: 1;
+}
+
+/* In the bottom-docked composer the readiness menu unfolds upward. */
+.models-pop-wrap.opens-up .menu-pop {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
 }
 
 .composer:focus-within {
