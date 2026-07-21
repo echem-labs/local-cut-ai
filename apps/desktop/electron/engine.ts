@@ -35,7 +35,11 @@ export class EngineManager {
   } {
     const custom = process.env.LOCALCUT_ENGINE_CMD;
     const port = process.env.LOCALCUT_ENGINE_PORT ?? "7830";
-    const backend = process.env.LOCALCUT_BACKEND ?? "mock";
+    // Hybrid by default: real backends claim only what they can currently
+    // serve (weights installed, companion servers up), mock catches the
+    // rest — so a fresh machine behaves like the old all-mock default and
+    // upgrades itself piece by piece as models land.
+    const backend = process.env.LOCALCUT_BACKEND ?? "local,mock";
     const token = randomBytes(24).toString("base64url");
     const connection = { url: `http://127.0.0.1:${port}`, token };
     // Deliver the token via the environment (EngineConfig.from_env reads

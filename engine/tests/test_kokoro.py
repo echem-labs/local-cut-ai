@@ -66,15 +66,20 @@ def test_clone_routing_never_lands_on_stock_voices(tmp_path):
     from localcut_engine.backends.kokoro import KokoroBackend
     from localcut_engine.graph.model import NodeKind
 
+    kokoro = KokoroBackend(models_dir=tmp_path)
+    for path in (kokoro.model_path, kokoro.voices_path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()  # supports() is weights-gated
+
     registry = BackendRegistry()
     registry.register(ChatterboxBackend(models_dir=tmp_path))
-    registry.register(KokoroBackend(models_dir=tmp_path))
+    registry.register(kokoro)
     assert registry.resolve(NodeKind.NARRATION, CLONE_MODEL).name == "chatterbox"
     assert registry.resolve(NodeKind.NARRATION).name == "kokoro"
     assert registry.resolve(NodeKind.NARRATION, "local:kokoro-82m").name == "kokoro"
 
     bare = BackendRegistry()
-    bare.register(KokoroBackend(models_dir=tmp_path))
+    bare.register(kokoro)
     with pytest.raises(GenerationError, match="chatterbox"):
         bare.resolve(NodeKind.NARRATION, CLONE_MODEL)
 

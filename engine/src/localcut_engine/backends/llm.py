@@ -13,7 +13,7 @@ import httpx
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from ..schema import Screenplay
-from .base import ExecutionBackend, ExecutionContext, GenerationError
+from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
 
 _SYSTEM_PROMPT = """You are a short-form video screenwriter. Given a topic, produce a JSON \
 screenplay with this exact shape (no markdown fences, JSON only):
@@ -51,9 +51,14 @@ class LLMScriptBackend(ExecutionBackend):
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
         # before image/video jobs run (LLM → unload → image batch).
         self.unload_after = unload_after
+        self.probe = ServiceProbe(f"{self.chat_base}/models")
 
     def supports(self, kind: NodeKind) -> bool:
-        return kind is NodeKind.SCRIPT
+        # Claim scripts only while the LLM server answers — the hybrid
+        # default chain ("local,mock") must fall through to mock on a
+        # machine without Ollama, not fail every script job. A missing
+        # *model* on a live server still fails loudly and actionably.
+        return kind is NodeKind.SCRIPT and self.probe.available()
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         prompt = (
