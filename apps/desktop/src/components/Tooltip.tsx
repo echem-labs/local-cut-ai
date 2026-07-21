@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -64,5 +65,16 @@ export function Tip({
           document.body,
         )}
     </span>
+  );
+}
+
+/** Small ⓘ affordance for labels a word can't carry — hover/focus explains. */
+export function InfoDot({ label, hint }: { label: string; hint: string }) {
+  return (
+    <Tip label={label} hint={hint} side="top">
+      <span className="info-dot" tabIndex={0} aria-label={label}>
+        <Info size={12} strokeWidth={1.8} />
+      </span>
+    </Tip>
   );
 }

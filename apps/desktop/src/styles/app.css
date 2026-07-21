@@ -3587,7 +3587,7 @@ button.link:hover {
   gap: var(--space-2);
   font-size: var(--text-s);
   font-weight: 650;
-  margin-bottom: var(--space-1);
+  margin-bottom: var(--space-2);
 }
 
 /* icons never decorate in accent — active nav, focus and the primary
@@ -3673,6 +3673,9 @@ button.link:hover {
 }
 
 .kv dt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   color: var(--text-tertiary);
 }
 

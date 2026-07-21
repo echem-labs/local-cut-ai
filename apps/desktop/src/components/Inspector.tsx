@@ -1,4 +1,4 @@
-import { ChevronRight, Info, Pin, RotateCw, X } from "lucide-react";
+import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
@@ -7,21 +7,10 @@ import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
-import { Tip } from "./Tooltip";
+import { InfoDot } from "./Tooltip";
 import { useApp } from "../store";
 
 type SceneTab = "image" | "motion" | "voice";
-
-/** Small ⓘ affordance reused on labels a word can't carry. */
-function InfoDot({ label, hint }: { label: string; hint: string }) {
-  return (
-    <Tip label={label} hint={hint} side="top">
-      <span className="info-dot" tabIndex={0} aria-label={label}>
-        <Info size={12} strokeWidth={1.8} />
-      </span>
-    </Tip>
-  );
-}
 
 /** One scene editor (review 3): the drawer is titled by the scene, not a
  * node id, and Image · Motion · Voice tabs replace the per-node-type
