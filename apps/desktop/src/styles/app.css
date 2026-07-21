@@ -2906,11 +2906,13 @@ button.link:hover {
   display: inline-flex;
 }
 
-/* Tooltips are dark ink on both themes — a deliberate constant. */
+/* Tooltips are dark ink on both themes — a deliberate constant. The
+ * bubble is portaled to <body> and fixed-positioned (left/top set inline
+ * from the trigger's rect) so dockview panel edges and sibling panel
+ * groups can never clip or cover it. */
 .tip {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%) translateY(2px);
+  position: fixed;
+  transform: translate(-50%, var(--tip-y));
   background: var(--tooltip-bg);
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: #eceaf3;
@@ -2924,27 +2926,28 @@ button.link:hover {
   align-items: center;
   gap: 7px;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--motion-fast), transform var(--motion-fast);
-  transition-delay: 0ms;
   z-index: var(--z-modal);
+  animation: tip-in var(--motion-fast) 300ms both;
 }
 
-.tip-top .tip {
-  bottom: calc(100% + 7px);
+.tip.tip-top {
+  --tip-y: calc(-100% - 7px);
 }
 
-.tip-bottom .tip {
-  top: calc(100% + 7px);
+.tip.tip-bottom {
+  --tip-y: 7px;
 }
 
-/* :focus-visible (not :focus-within) — a mouse click must not leave the
- * tooltip stuck open on the focused control. */
-.tip-wrap:hover .tip,
-.tip-wrap:has(:focus-visible) .tip {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-  transition-delay: 300ms;
+/* `translate` composes with the centering transform above. */
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    translate: 0 2px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
 }
 
 .tip .tip-hint {
@@ -3841,10 +3844,23 @@ button.link:hover {
   margin-left: auto;
 }
 
+/* The usage bar + legend above aren't a setting-row, so the first row
+ * after them ("Projects by size") draws its own top divider. */
+.storage-legend + .setting-row {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* Inset from the heading so the list reads as its children. */
+.storage-list {
+  margin-top: 6px;
+  padding-left: var(--space-3);
+}
+
 .storage-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
   font-size: var(--text-xs);
@@ -3855,8 +3871,15 @@ button.link:hover {
   border-bottom: 0;
 }
 
+.storage-row .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* nowrap + no shrink — long titles must not squeeze "85 MB" onto two lines */
 .storage-row .size {
-  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   color: var(--text-tertiary);
