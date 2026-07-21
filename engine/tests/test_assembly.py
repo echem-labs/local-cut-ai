@@ -638,3 +638,9 @@ async def test_beat_align_narrationless_never_snaps_past_trim(tmp_path, media):
     )
     seg = edl["video"][0]
     assert seg["duration"] <= 1.5 + 0.001  # never past the trimmed window
+
+
+async def test_real_ffmpeg_supports_drawtext():
+    """The build assembly runs against must render on-screen titles — a
+    static build without libharfbuzz would fail every titled export."""
+    assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True

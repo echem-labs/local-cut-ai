@@ -208,11 +208,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 probe_hardware, str(config.data_dir)
             )
         profile = app.state.hardware_profile
+        if not hasattr(app.state, "ffmpeg_drawtext"):
+            # FFmpeg 7 static builds without libharfbuzz lack drawtext; the
+            # setup surface must say so before an export dies on it. None =
+            # ffmpeg not found at all (its own, clearer failure at use).
+            app.state.ffmpeg_drawtext = await FFmpegBackend(
+                ffmpeg_bin=config.ffmpeg_bin
+            ).supports_drawtext()
         manifest = load_manifest(config)
         return {
             "hardware": profile.model_dump(),
             "recommendations": [r.model_dump() for r in recommend_slate(manifest, profile)],
             "backend_mode": config.backend,
+            "ffmpeg_drawtext": app.state.ffmpeg_drawtext,
         }
 
     @app.get("/models/manifest", dependencies=[Authed])

@@ -61,6 +61,9 @@ async def test_system_reports_tier_and_recommendations(client):
     body = response.json()
     assert body["hardware"]["tier"] in ("S", "A", "B", "C")
     assert len(body["recommendations"]) >= 5
+    # Capability tri-state: True/False when ffmpeg was probed, None when the
+    # binary is absent — setup UIs key the titles warning off False alone.
+    assert body["ffmpeg_drawtext"] in (True, False, None)
 
 
 async def test_manifest_defaults_are_commercial_safe(client):

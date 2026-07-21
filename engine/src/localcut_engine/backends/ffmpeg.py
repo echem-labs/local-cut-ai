@@ -82,6 +82,8 @@ class FFmpegBackend(ExecutionBackend):
             str(bin_path.with_name("ffprobe")) if bin_path.parent != Path(".") else "ffprobe"
         )
         self._encoder: str | None = None
+        self._drawtext: bool | None = None
+        self._drawtext_checked = False
 
     def supports(self, kind: NodeKind) -> bool:
         return kind in _KINDS
@@ -557,9 +559,14 @@ class FFmpegBackend(ExecutionBackend):
             vf = f"setpts={retime:.4f}*(PTS-STARTPTS),{vf}"
         text = segment.get("onscreen_text")
         if text:
+            # Probe before building the graph: a harfbuzz-less static build
+            # would otherwise die mid-export on "No such filter: 'drawtext'".
+            await self._require_drawtext()
             # textfile= sidesteps drawtext's escaping rules for user text.
+            # encoding="utf-8": drawtext reads the file as UTF-8; the Windows
+            # platform default (cp1252) would mangle or reject CJK titles.
             textfile = workdir / f"{out.stem}.txt"
-            textfile.write_text(str(text))
+            textfile.write_text(str(text), encoding="utf-8")
             vf += (
                 # Single-quote AND filtergraph-escape the path: an unquoted
                 # ':'/',' in the temp dir path (legal on Linux) or a Windows
@@ -667,6 +674,47 @@ class FFmpegBackend(ExecutionBackend):
         return out
 
     # -- helpers ------------------------------------------------------------------
+
+    async def _probe_filters(self) -> str:
+        """`ffmpeg -filters` output, or "" when the binary is missing or
+        broken — a capability probe must degrade to "unknown", never crash."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self.ffmpeg_bin,
+                "-hide_banner",
+                "-filters",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            return ""
+        stdout, _ = await process.communicate()
+        return stdout.decode(errors="replace") if process.returncode == 0 else ""
+
+    async def supports_drawtext(self) -> bool | None:
+        """Whether this ffmpeg can render on-screen titles. FFmpeg 7 moved
+        drawtext behind libharfbuzz and popular static builds omit it, so the
+        filter later fails at export with a cryptic "No such filter". None =
+        binary missing/unprobeable (surfaced as its own clearer error at use).
+        Cached — the binary can't change under a running engine."""
+        if not self._drawtext_checked:
+            output = await self._probe_filters()
+            if output:
+                # Second column of the filters table is the filter name.
+                self._drawtext = any(
+                    line.split()[1:2] == ["drawtext"] for line in output.splitlines()
+                )
+            self._drawtext_checked = True
+        return self._drawtext
+
+    async def _require_drawtext(self) -> None:
+        if await self.supports_drawtext() is False:
+            raise GenerationError(
+                "on-screen titles need ffmpeg's drawtext filter, which this build "
+                "lacks (FFmpeg 7+ needs libfreetype and libharfbuzz compiled in; "
+                "some static builds omit them) — point LOCALCUT_FFMPEG_BIN at a "
+                "full build, or clear the scene's on-screen text"
+            )
 
     async def _run(self, *args: str) -> None:
         try:
