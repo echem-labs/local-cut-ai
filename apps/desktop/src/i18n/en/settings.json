@@ -88,10 +88,14 @@
   },
   "engine": {
     "heading": "This engine",
+    "hint": "The connection and hardware of the engine rendering your projects.",
     "url": "Engine URL",
+    "urlInfo": "The local address the app uses to talk to the render engine",
     "notConnected": "not connected",
     "backend": "Backend mode",
+    "backendInfo": "The renderer chain the engine tries in order — the first match serves each task",
     "hardware": "Hardware",
+    "hardwareInfo": "Detected GPU and performance tier — this drives model recommendations",
     "hardwareValue": "Tier {tier} · {detail}",
     "gpuDetail": "{gpu} ({vram} GB VRAM)",
     "noGpu": "no GPU detected",
@@ -124,6 +128,17 @@
       "music": "Music",
       "timeline": "Assembly",
       "export": "Export"
+    },
+    "kindInfo": {
+      "script": "Writes the screenplay — your idea becomes narrated scenes",
+      "keyframe": "Generates the still image that defines each scene's look",
+      "thumbnail": "Small preview images for scene tiles and project cards",
+      "clip": "Animates each scene's keyframe into a moving video clip",
+      "narration": "Speaks the story aloud with text-to-speech",
+      "captions": "Times the spoken words for subtitles",
+      "music": "Generates the background music bed",
+      "timeline": "Cuts clips, narration, captions and music into one edit",
+      "export": "Renders the final MP4 file"
     }
   },
   "setup": {

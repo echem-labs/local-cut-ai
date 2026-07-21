@@ -16,6 +16,7 @@ import type { BackendTask, Provider } from "../api/types";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
+import { InfoDot } from "../components/Tooltip";
 import { m, type MessageKey, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { ASPECTS, DURATIONS } from "../lib/formats";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
@@ -70,6 +71,18 @@ const TASK_KIND_LABELS: Record<string, MessageKey> = {
   music: "settings.backends.kinds.music",
   timeline: "settings.backends.kinds.timeline",
   export: "settings.backends.kinds.export",
+};
+
+const TASK_KIND_INFO: Record<string, MessageKey> = {
+  script: "settings.backends.kindInfo.script",
+  keyframe: "settings.backends.kindInfo.keyframe",
+  thumbnail: "settings.backends.kindInfo.thumbnail",
+  clip: "settings.backends.kindInfo.clip",
+  narration: "settings.backends.kindInfo.narration",
+  captions: "settings.backends.kindInfo.captions",
+  music: "settings.backends.kindInfo.music",
+  timeline: "settings.backends.kindInfo.timeline",
+  export: "settings.backends.kindInfo.export",
 };
 
 const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
@@ -343,7 +356,10 @@ export function Settings() {
         <div className="settings-pane">
           {tab === "general" && (
             <section>
-              <h2>{t("settings.tabs.general")}</h2>
+              <h2>
+                <SunMoon {...ICON_CONTROL} />
+                {t("settings.tabs.general")}
+              </h2>
               <p className="hint">{t("settings.generalHint")}</p>
               <div className="setting-row">
                 <div className="st">{t("settings.appearance.heading")}</div>
@@ -400,7 +416,10 @@ export function Settings() {
 
           {tab === "defaults" && (
             <section>
-              <h2>{t("settings.tabs.defaults")}</h2>
+              <h2>
+                <SlidersHorizontal {...ICON_CONTROL} />
+                {t("settings.tabs.defaults")}
+              </h2>
               <p className="hint">{t("settings.defaults.hint")}</p>
               <div className="setting-row">
                 <div className="st">{t("settings.defaults.formatHeading")}</div>
@@ -474,7 +493,10 @@ export function Settings() {
 
           {tab === "providers" && (
             <section>
-              <h2>{t("settings.providers.heading")}</h2>
+              <h2>
+                <KeyRound {...ICON_CONTROL} />
+                {t("settings.providers.heading")}
+              </h2>
               <p className="hint">{t("settings.providers.hint")}</p>
               {presence && !presence.encrypted && (
                 <div className="banner warning">{t("settings.providers.noKeychain")}</div>
@@ -535,7 +557,10 @@ export function Settings() {
 
           {tab === "models" && (
             <section>
-              <h2>{t("settings.models.heading")}</h2>
+              <h2>
+                <Boxes {...ICON_CONTROL} />
+                {t("settings.models.heading")}
+              </h2>
               <p className="hint">{t("settings.models.hint")}</p>
               <ModelLibrary showActions showAddCustom />
             </section>
@@ -543,7 +568,10 @@ export function Settings() {
 
           {tab === "storage" && (
             <section>
-              <h2>{t("settings.tabs.storage")}</h2>
+              <h2>
+                <HardDrive {...ICON_CONTROL} />
+                {t("settings.tabs.storage")}
+              </h2>
               <p className="hint">{t("settings.storage.hint")}</p>
               {storageStale && storage && (
                 <p className="hint" role="status">
@@ -728,12 +756,31 @@ export function Settings() {
                   <Cpu {...ICON_CONTROL} />
                   {t("settings.engine.heading")}
                 </h2>
+                <p className="hint">{t("settings.engine.hint")}</p>
                 <dl className="kv">
-                  <dt>{t("settings.engine.url")}</dt>
+                  <dt>
+                    {t("settings.engine.url")}
+                    <InfoDot
+                      label={t("settings.engine.url")}
+                      hint={t("settings.engine.urlInfo")}
+                    />
+                  </dt>
                   <dd>{client?.baseUrl ?? t("settings.engine.notConnected")}</dd>
-                  <dt>{t("settings.engine.backend")}</dt>
+                  <dt>
+                    {t("settings.engine.backend")}
+                    <InfoDot
+                      label={t("settings.engine.backend")}
+                      hint={t("settings.engine.backendInfo")}
+                    />
+                  </dt>
                   <dd>{system?.backend_mode ?? t("settings.engine.dash")}</dd>
-                  <dt>{t("settings.engine.hardware")}</dt>
+                  <dt>
+                    {t("settings.engine.hardware")}
+                    <InfoDot
+                      label={t("settings.engine.hardware")}
+                      hint={t("settings.engine.hardwareInfo")}
+                    />
+                  </dt>
                   <dd>
                     {system
                       ? t("settings.engine.hardwareValue", {
@@ -762,16 +809,22 @@ export function Settings() {
                       : t("settings.backends.hintManual")}
                   </p>
                   <dl className="kv">
-                    {system.backends.tasks.map((row) => (
-                      <Fragment key={row.kind}>
-                        <dt>
-                          {TASK_KIND_LABELS[row.kind]
-                            ? t(TASK_KIND_LABELS[row.kind])
-                            : row.kind}
-                        </dt>
-                        <dd>{routeLabel(row)}</dd>
-                      </Fragment>
-                    ))}
+                    {system.backends.tasks.map((row) => {
+                      const label = TASK_KIND_LABELS[row.kind]
+                        ? t(TASK_KIND_LABELS[row.kind])
+                        : row.kind;
+                      return (
+                        <Fragment key={row.kind}>
+                          <dt>
+                            {label}
+                            {TASK_KIND_INFO[row.kind] && (
+                              <InfoDot label={label} hint={t(TASK_KIND_INFO[row.kind])} />
+                            )}
+                          </dt>
+                          <dd>{routeLabel(row)}</dd>
+                        </Fragment>
+                      );
+                    })}
                   </dl>
                 </section>
               )}
@@ -780,7 +833,10 @@ export function Settings() {
 
           {tab === "about" && (
             <section>
-              <h2>{t("settings.tabs.about")}</h2>
+              <h2>
+                <Info {...ICON_CONTROL} />
+                {t("settings.tabs.about")}
+              </h2>
               <p className="hint">{t("settings.about.hint")}</p>
               <div className="setting-row">
                 <div className="st">{t("settings.about.versionHeading")}</div>
