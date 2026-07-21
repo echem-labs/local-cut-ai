@@ -91,7 +91,13 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
             case "mock":
                 registry.register(MockBackend())
             case "llm":
-                registry.register(LLMScriptBackend(base_url=config.llm_url, model=config.llm_model))
+                registry.register(
+                    LLMScriptBackend(
+                        base_url=config.llm_url,
+                        model=config.llm_model,
+                        timeout_s=config.llm_timeout_s,
+                    )
+                )
             case "comfy":
                 try:
                     model_templates = {
@@ -586,7 +592,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 # with the same VRAM-yield discipline (Ollama serializes
                 # concurrent requests internally).
                 raw = await LLMScriptBackend(
-                    base_url=config.llm_url, model=config.llm_model
+                    base_url=config.llm_url,
+                    model=config.llm_model,
+                    timeout_s=config.llm_timeout_s,
                 ).complete(prompt, system=EDIT_SYSTEM_PROMPT)
             plan = parse_edit_plan(raw)
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:

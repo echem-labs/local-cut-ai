@@ -31,6 +31,11 @@ class EngineConfig(BaseModel):
     comfy_kinds: str = "keyframe,thumbnail,clip,music"
     llm_url: str = "http://127.0.0.1:11434/v1"
     llm_model: str = "qwen3:14b"
+    # Ceiling for one local completion. Thinking models on modest GPUs can
+    # spend many minutes on a long screenplay (cold load + reasoning), so
+    # this must be generous — and tunable (LOCALCUT_LLM_TIMEOUT_S) for
+    # machines where even the default is tight.
+    llm_timeout_s: int = 600
     ffmpeg_bin: str = "ffmpeg"
     # "Finalize" swaps unpinned clips to this model (e.g.
     # "local:wan2.2-i2v-14b-fp8" on 16 GB+ tiers). None = same model,
