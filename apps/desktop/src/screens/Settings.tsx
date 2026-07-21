@@ -1,12 +1,22 @@
 import {
+  Activity,
   Boxes,
   Cpu,
+  Database,
+  Film,
+  Folder,
   HardDrive,
   Info,
   KeyRound,
+  Languages,
+  Mic,
+  Palette,
+  Proportions,
+  RotateCcw,
   Server,
   SlidersHorizontal,
   SunMoon,
+  Tag,
   Trash2,
   Waypoints,
   X,
@@ -24,6 +34,8 @@ import { applyTheme, loadThemePref, type ThemePref } from "../theme";
 
 /* one three-step icon scale (review 4 §S10): 15/1.8 for all chrome */
 const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
+/* sub-heading rows sit one step down the same scale */
+const ICON_SUBHEAD = { size: 13, strokeWidth: 1.8 } as const;
 
 const THEME_OPTIONS: { value: ThemePref }[] = [
   { value: "system" },
@@ -362,7 +374,10 @@ export function Settings() {
               </h2>
               <p className="hint">{t("settings.generalHint")}</p>
               <div className="setting-row">
-                <div className="st">{t("settings.appearance.heading")}</div>
+                <div className="st">
+                  <Palette {...ICON_SUBHEAD} />
+                  {t("settings.appearance.heading")}
+                </div>
                 <div className="sd">{t("settings.appearance.hint")}</div>
                 <div className="sc">
                   <div
@@ -387,7 +402,10 @@ export function Settings() {
               </div>
               {SUPPORTED_LOCALES.length > 1 && (
                 <div className="setting-row">
-                  <div className="st">{t("settings.language.heading")}</div>
+                  <div className="st">
+                    <Languages {...ICON_SUBHEAD} />
+                    {t("settings.language.heading")}
+                  </div>
                   <div className="sd">{t("settings.language.hint")}</div>
                   <div className="sc">
                     <Dropdown
@@ -403,7 +421,10 @@ export function Settings() {
                 </div>
               )}
               <div className="setting-row">
-                <div className="st">{t("settings.setup.heading")}</div>
+                <div className="st">
+                  <RotateCcw {...ICON_SUBHEAD} />
+                  {t("settings.setup.heading")}
+                </div>
                 <div className="sd">{t("settings.setup.hint")}</div>
                 <div className="sc">
                   <button className="btn-ghost" onClick={resetFirstRun}>
@@ -422,7 +443,10 @@ export function Settings() {
               </h2>
               <p className="hint">{t("settings.defaults.hint")}</p>
               <div className="setting-row">
-                <div className="st">{t("settings.defaults.formatHeading")}</div>
+                <div className="st">
+                  <Proportions {...ICON_SUBHEAD} />
+                  {t("settings.defaults.formatHeading")}
+                </div>
                 <div className="sd">{t("settings.defaults.formatHint")}</div>
                 <div className="sc">
                   <Dropdown
@@ -464,7 +488,10 @@ export function Settings() {
                 </div>
               </div>
               <div className="setting-row">
-                <div className="st">{t("settings.defaults.voiceHeading")}</div>
+                <div className="st">
+                  <Mic {...ICON_SUBHEAD} />
+                  {t("settings.defaults.voiceHeading")}
+                </div>
                 <div className="sd">{t("settings.defaults.voiceHint")}</div>
                 <div className="sc">
                   <input
@@ -477,7 +504,10 @@ export function Settings() {
                 </div>
               </div>
               <div className="setting-row">
-                <div className="st">{t("settings.defaults.modelHeading")}</div>
+                <div className="st">
+                  <Film {...ICON_SUBHEAD} />
+                  {t("settings.defaults.modelHeading")}
+                </div>
                 <div className="sd">{t("settings.defaults.modelHint")}</div>
                 <div className="sc">
                   <Dropdown
@@ -637,7 +667,10 @@ export function Settings() {
                     );
                   })()}
                   <div className="setting-row">
-                    <div className="st">{t("settings.storage.bySize")}</div>
+                    <div className="st">
+                      <Folder {...ICON_SUBHEAD} />
+                      {t("settings.storage.bySize")}
+                    </div>
                     <div className="storage-list">
                       {storage.projects.map((row) => (
                         <div className="storage-row" key={row.id}>
@@ -658,7 +691,10 @@ export function Settings() {
                     </div>
                   </div>
                   <div className="setting-row">
-                    <div className="st">{t("settings.storage.cacheHeading")}</div>
+                    <div className="st">
+                      <Database {...ICON_SUBHEAD} />
+                      {t("settings.storage.cacheHeading")}
+                    </div>
                     <div className="sd">{t("settings.storage.cacheHint")}</div>
                     <div className="sc">
                       <button className="btn-ghost" onClick={() => setConfirmCache(true)}>
@@ -669,7 +705,10 @@ export function Settings() {
                     </div>
                   </div>
                   <div className="setting-row">
-                    <div className="st">{t("settings.storage.modelsHeading")}</div>
+                    <div className="st">
+                      <Boxes {...ICON_SUBHEAD} />
+                      {t("settings.storage.modelsHeading")}
+                    </div>
                     <div className="sd">{t("settings.storage.modelsHint")}</div>
                     <div className="sc">
                       <button className="btn-ghost" onClick={() => setSettingsTab("models")}>
@@ -839,7 +878,10 @@ export function Settings() {
               </h2>
               <p className="hint">{t("settings.about.hint")}</p>
               <div className="setting-row">
-                <div className="st">{t("settings.about.versionHeading")}</div>
+                <div className="st">
+                  <Tag {...ICON_SUBHEAD} />
+                  {t("settings.about.versionHeading")}
+                </div>
                 <dl className="kv" style={{ marginTop: 8 }}>
                   <dt>{t("settings.about.app")}</dt>
                   <dd>{__APP_VERSION__}</dd>
@@ -854,7 +896,10 @@ export function Settings() {
                 </dl>
               </div>
               <div className="setting-row">
-                <div className="st">{t("settings.about.diagnosticsHeading")}</div>
+                <div className="st">
+                  <Activity {...ICON_SUBHEAD} />
+                  {t("settings.about.diagnosticsHeading")}
+                </div>
                 <div className="sd">{t("settings.about.diagnosticsHint")}</div>
                 <div className="sc" style={{ display: "flex", gap: 8 }}>
                   <button className="btn-ghost" onClick={copyDiagnostics}>
