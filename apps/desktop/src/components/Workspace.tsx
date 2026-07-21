@@ -31,6 +31,24 @@ const layoutKey = (view: WorkspaceView) => `localcut.layout.${LAYOUT_VERSION}.${
 const COMPOSER_H = 160;
 const TIMELINE_H = 200;
 
+// Sash floors: below these, fixed chrome (the composer's controls row,
+// the timeline's transport and clip strip) clips away instead of
+// shrinking — the textarea alone absorbs composer shrinkage (one line).
+const COMPOSER_MIN_H = 136;
+const TIMELINE_MIN_H = 170;
+
+/** Pin a minimum height on the panel's current GROUP, following re-docks.
+ * Sash drags then stop at the floor instead of clipping the content, and
+ * a drag past the floor pushes the next sash (dockview propagation). */
+function useGroupMinHeight(api: IDockviewPanelProps["api"], minimumHeight: number) {
+  useEffect(() => {
+    const apply = () => api.group.api.setConstraints({ minimumHeight });
+    apply();
+    const disposable = api.onDidGroupChange(apply);
+    return () => disposable.dispose();
+  }, [api, minimumHeight]);
+}
+
 /* ---------- panels ---------- */
 
 const DRAFT_TEACH_KEY = "localcut.draftTaught";
@@ -106,7 +124,8 @@ function BoardPanel(_props: IDockviewPanelProps) {
 
 /** The composer as its own dockable panel — drag its top sash to give the
  * prompt more lines, or dock it anywhere like the other panels. */
-function ComposerPanel(_props: IDockviewPanelProps) {
+function ComposerPanel(props: IDockviewPanelProps) {
+  useGroupMinHeight(props.api, COMPOSER_MIN_H);
   return (
     <div className="composer-panel">
       <Composer />
@@ -126,7 +145,8 @@ function InspectorPanel(_props: IDockviewPanelProps) {
   return <Inspector />;
 }
 
-function TimelinePanel(_props: IDockviewPanelProps) {
+function TimelinePanel(props: IDockviewPanelProps) {
+  useGroupMinHeight(props.api, TIMELINE_MIN_H);
   return (
     <div className="timeline-panel">
       <TimelineStrip />
