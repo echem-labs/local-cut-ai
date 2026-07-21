@@ -72,6 +72,7 @@ export function Settings() {
     cleanupStorage,
     deleteProject,
     storage,
+    storageStale,
     models,
     defaults,
     setDefaults,
@@ -497,6 +498,11 @@ export function Settings() {
             <section>
               <h2>{t("settings.tabs.storage")}</h2>
               <p className="hint">{t("settings.storage.hint")}</p>
+              {storageStale && storage && (
+                <p className="hint" role="status">
+                  {t("settings.storage.stale")}
+                </p>
+              )}
               {storage ? (
                 <>
                   {(() => {

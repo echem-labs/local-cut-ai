@@ -52,6 +52,7 @@
   },
   "storage": {
     "hint": "Everything LocalCut AI keeps on this machine. Projects and models can be removed here.",
+    "stale": "Couldn't refresh just now — showing the last loaded sizes.",
     "models": "Models {size}",
     "projects": "Projects {size}",
     "cache": "Cache {size}",

@@ -92,6 +92,9 @@ interface AppState {
   /** Unfiltered queue across all projects — Home tile status dots. */
   allJobs: Job[];
   storage: StorageInfo | null;
+  /** Last storage refresh failed — `storage` shows earlier values. A dead
+   * engine mid-session must not silently present stale sizes as current. */
+  storageStale: boolean;
   engineVersions: { engine_version: string; api_version: number } | null;
   defaults: HomeDefaults;
   homeDraft: HomeDraft;
@@ -602,6 +605,7 @@ export const useApp = create<AppState>((set, get) => {
     jobs: [],
     allJobs: [],
     storage: null,
+    storageStale: false,
     engineVersions: null,
     defaults: loadPersisted(DEFAULTS_KEY, FALLBACK_DEFAULTS),
     homeDraft: loadPersisted(DRAFT_KEY, EMPTY_DRAFT),
@@ -1052,9 +1056,12 @@ export const useApp = create<AppState>((set, get) => {
       const { client } = get();
       if (!client) return;
       try {
-        set({ storage: await client.storage() });
+        set({ storage: await client.storage(), storageStale: false });
       } catch (err) {
+        // Keep the last values (better than a blank pane) but mark them
+        // stale so the pane can say so instead of passing them off as live.
         console.warn("storage overview failed:", err);
+        set({ storageStale: true });
       }
     },
 
