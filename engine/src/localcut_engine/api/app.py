@@ -44,12 +44,13 @@ from ..backends.mock import MockBackend
 from ..config import EngineConfig
 from ..events import EventBus
 from ..graph.editor import EDIT_SYSTEM_PROMPT, parse_edit_plan
-from ..graph.model import NODE_ID_PATTERN
+from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..hardware.probe import probe_hardware
 from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
+from ..manifest.capability import installed_comfy_kinds, installed_comfy_models
 from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
@@ -70,6 +71,40 @@ NodeId = Annotated[str, PathParam(pattern=NODE_ID_PATTERN)]
 OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
 JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
 ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+
+# Node kinds that render as jobs, in pipeline order — the Settings backend
+# panel shows this list verbatim (scene/asset nodes never reach a backend).
+_TASK_KINDS = (
+    NodeKind.SCRIPT,
+    NodeKind.KEYFRAME,
+    NodeKind.THUMBNAIL,
+    NodeKind.CLIP,
+    NodeKind.NARRATION,
+    NodeKind.CAPTIONS,
+    NodeKind.MUSIC,
+    NodeKind.TIMELINE,
+    NodeKind.EXPORT,
+)
+
+
+def _resolved_tasks(backends: BackendRegistry, config: EngineConfig) -> list[dict]:
+    """Per-kind default routing exactly as the scheduler would resolve it,
+    plus which installed models make ComfyUI-eligible kinds servable."""
+    comfy_models = installed_comfy_models(config)
+    tasks = []
+    for kind in _TASK_KINDS:
+        try:
+            name = backends.resolve(kind).name
+        except GenerationError:
+            name = None
+        tasks.append(
+            {
+                "kind": kind.value,
+                "backend": name,
+                "installed_models": comfy_models.get(kind, []),
+            }
+        )
+    return tasks
 
 
 def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
@@ -107,12 +142,18 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     }
                 except (OSError, ValueError):
                     model_templates = {}  # broken override manifest — defaults still work
+                auto_kinds = config.comfy_kinds.strip().lower() == "auto"
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
                         templates_dir=config.data_dir / "comfy-templates",
-                        kinds=config.comfy_kinds,
+                        kinds=(
+                            "keyframe,thumbnail,clip,music" if auto_kinds else config.comfy_kinds
+                        ),
                         model_templates=model_templates,
+                        capability=(
+                            (lambda: installed_comfy_kinds(config)) if auto_kinds else None
+                        ),
                     )
                 )
             case "chatterbox":
@@ -227,6 +268,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             "recommendations": [r.model_dump() for r in recommend_slate(manifest, profile)],
             "backend_mode": config.backend,
             "ffmpeg_drawtext": app.state.ffmpeg_drawtext,
+            # Per-file exists() checks scale with the manifest — keep them
+            # off the loop, like /models does.
+            "backends": {
+                "chain": config.backend_chain,
+                "comfy_kinds_auto": config.comfy_kinds.strip().lower() == "auto",
+                "tasks": await asyncio.to_thread(_resolved_tasks, backends, config),
+            },
         }
 
     @app.get("/models/manifest", dependencies=[Authed])
