@@ -118,7 +118,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
             case "chatterbox":
                 registry.register(
                     ChatterboxBackend(
-                        models_dir=config.resolved_models_dir, ffmpeg_bin=config.ffmpeg_bin
+                        models_dir=config.resolved_models_dir, ffmpeg_bin=config.resolved_ffmpeg_bin
                     )
                 )
             case "kokoro":
@@ -136,7 +136,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     )
                 )
             case "ffmpeg":
-                registry.register(FFmpegBackend(ffmpeg_bin=config.ffmpeg_bin))
+                registry.register(FFmpegBackend(ffmpeg_bin=config.resolved_ffmpeg_bin))
             case _:
                 raise ValueError(f"unknown backend in chain: {name!r}")
     # Model-driven, not chain-driven: `cloud:*` node models route here no
@@ -219,7 +219,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # setup surface must say so before an export dies on it. None =
             # ffmpeg not found at all (its own, clearer failure at use).
             app.state.ffmpeg_drawtext = await FFmpegBackend(
-                ffmpeg_bin=config.ffmpeg_bin
+                ffmpeg_bin=config.resolved_ffmpeg_bin
             ).supports_drawtext()
         manifest = load_manifest(config)
         return {
