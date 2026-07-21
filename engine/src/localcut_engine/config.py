@@ -70,6 +70,18 @@ class EngineConfig(BaseModel):
         return self.models_dir if self.models_dir is not None else self.data_dir / "models"
 
     @property
+    def resolved_ffmpeg_bin(self) -> str:
+        """An explicit ffmpeg_bin wins; the bare default falls back to the
+        managed download in <data_dir>/bin when one exists. The desktop
+        shell installs ffmpeg there but spawns the engine without pointing
+        at it, so PATH-less machines would otherwise fail every assembly."""
+        if self.ffmpeg_bin != "ffmpeg":
+            return self.ffmpeg_bin
+        exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+        managed = self.data_dir / "bin" / exe
+        return str(managed) if managed.exists() else self.ffmpeg_bin
+
+    @property
     def backend_chain(self) -> list[str]:
         chain: list[str] = []
         for name in self.backend.split(","):

@@ -637,3 +637,21 @@ async def test_custom_model_lifecycle(client, tmp_path):
     # Deleting a curated entry through the custom route must refuse.
     curated = next(iter(rows))
     assert (await client.delete(f"/models/custom/{curated}")).status_code == 404
+
+
+def test_resolved_ffmpeg_bin_prefers_managed_download(tmp_path):
+    """The bare default discovers <data_dir>/bin/ffmpeg (the shell installs
+    it there but spawns the engine without pointing at it); an explicit
+    path always wins; no managed copy → the bare name stays."""
+    from localcut_engine.config import EngineConfig
+
+    config = EngineConfig(data_dir=tmp_path)
+    assert config.resolved_ffmpeg_bin == "ffmpeg"
+
+    managed = tmp_path / "bin" / "ffmpeg"
+    managed.parent.mkdir()
+    managed.write_bytes(b"")
+    assert EngineConfig(data_dir=tmp_path).resolved_ffmpeg_bin == str(managed)
+
+    explicit = EngineConfig(data_dir=tmp_path, ffmpeg_bin="/opt/ffmpeg/ffmpeg")
+    assert explicit.resolved_ffmpeg_bin == "/opt/ffmpeg/ffmpeg"
