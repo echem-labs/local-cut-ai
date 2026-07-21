@@ -500,3 +500,26 @@ async def test_consumer_requeues_behind_inflight_producer(tmp_path):
     assert failed.status is JobStatus.FAILED
     assert "missing upstream artifacts" in (failed.error or "")
     queue.close()
+
+
+async def test_meta_duration_prefers_assembled_timeline(rig):
+    """The Home-grid duration badge must match the assembled cut, not the
+    screenplay's planned sum — narration timing stretches scenes at
+    assembly, so the two can disagree by many seconds."""
+    import json
+
+    store, queue, service = rig
+    project = service.create_from_prompt("cut length authority", target_duration_s=24)
+
+    def timeline_done() -> bool:
+        board = service.scene_board(project.id)
+        timeline = board["aux"].get("timeline")
+        return bool(timeline and timeline["artifact_hash"])
+
+    await wait_for(timeline_done)
+
+    board = service.scene_board(project.id)
+    path = store.resolve_artifact(project.id, board["aux"]["timeline"]["artifact_hash"])
+    path.write_text(json.dumps({"duration": 123.4}))
+    service.patch(project.id, [])  # meta refresh path
+    assert store.get(project.id).duration_s == 123.4
