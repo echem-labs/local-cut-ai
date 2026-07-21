@@ -90,8 +90,14 @@ class JobQueue:
     def next_queued(self) -> Job | None:
         while True:
             with self._lock:
+                # rowid tiebreak: created_at is a float clock read, and a
+                # tight enqueue loop CAN produce equal stamps — without the
+                # tiebreak SQLite returns ties in arbitrary order, breaking
+                # the compiler's topological enqueue order (a clip could pop
+                # before its keyframe).
                 row = self._db.execute(
-                    "SELECT id, payload FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1",
+                    "SELECT id, payload FROM jobs WHERE status = ? "
+                    "ORDER BY created_at, rowid LIMIT 1",
                     (JobStatus.QUEUED,),
                 ).fetchone()
             if row is None:

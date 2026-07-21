@@ -422,3 +422,81 @@ def test_cancel_project_cancels_only_in_flight_jobs(tmp_path):
     rendering.status = JobStatus.DONE
     assert queue.update_unless_cancelled(rendering) is False
     assert queue.get(rendering.id).status is JobStatus.CANCELLED
+
+
+async def test_fifo_survives_equal_timestamps(tmp_path):
+    """created_at is a float clock read and tight enqueue loops can produce
+    ties — pops must still follow insertion (= topological) order."""
+    from conftest import make_spec
+
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    queue = JobQueue(tmp_path / "q.db")
+    stamp = 1_000_000.0
+    first = Job(
+        project_id="p1",
+        spec=make_spec(NodeKind.KEYFRAME, node_id="s1.keyframe", output_hash="b" * 64),
+        created_at=stamp,
+    )
+    second = Job(
+        project_id="p1",
+        spec=make_spec(NodeKind.CLIP, node_id="s1.clip", output_hash="c" * 64),
+        created_at=stamp,
+    )
+    queue.put(first)
+    queue.put(second)
+    assert queue.next_queued().id == first.id
+    queue.close()
+
+
+async def test_consumer_requeues_behind_inflight_producer(tmp_path):
+    """A consumer popped before its producer (an ordering hiccup) goes back
+    to QUEUED while the producer is still in flight — and only fails once
+    nothing active can produce the missing artifact."""
+    from conftest import make_spec
+
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    backends = BackendRegistry()
+    backends.register(MockBackend())
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=events,
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+    )
+
+    kf_hash = "b" * 64
+    producer = Job(
+        project_id="p1",
+        spec=make_spec(NodeKind.KEYFRAME, node_id="s1.keyframe", output_hash=kf_hash),
+    )
+    consumer = Job(
+        project_id="p1",
+        spec=make_spec(
+            NodeKind.CLIP,
+            node_id="s1.clip",
+            output_hash="c" * 64,
+            input_hashes={"keyframe": kf_hash},
+        ),
+    )
+    queue.put(producer)
+    queue.put(consumer)
+
+    await scheduler._execute(consumer)
+    assert queue.get(consumer.id).status is JobStatus.QUEUED
+
+    # Producer failed → the same gap is now a real dead end.
+    producer.status = JobStatus.FAILED
+    queue.put(producer)
+    await scheduler._execute(consumer)
+    failed = queue.get(consumer.id)
+    assert failed.status is JobStatus.FAILED
+    assert "missing upstream artifacts" in (failed.error or "")
+    queue.close()
