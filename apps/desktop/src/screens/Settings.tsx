@@ -563,10 +563,10 @@ export function Settings() {
                   })()}
                   <div className="setting-row">
                     <div className="st">{t("settings.storage.bySize")}</div>
-                    <div style={{ marginTop: 6 }}>
+                    <div className="storage-list">
                       {storage.projects.map((row) => (
                         <div className="storage-row" key={row.id}>
-                          <span>{row.title}</span>
+                          <span className="grow">{row.title}</span>
                           <span className="size">{formatSize(row.bytes)}</span>
                           <button
                             className="icon-btn-sm"

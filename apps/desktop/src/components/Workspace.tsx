@@ -22,10 +22,14 @@ import { TimelineStrip } from "./TimelineStrip";
 const THEME = { ...themeDark, name: "localcut", className: "dockview-theme-localcut" };
 
 // Bumping the version retires everyone's saved layouts once so a new
-// default (v2: taller prompt, shorter timeline, full-height Details)
-// actually shows up — "Reset layout" would otherwise be required.
-const LAYOUT_VERSION = "v2";
+// default (v3: rebalanced prompt/board split) actually shows up —
+// "Reset layout" would otherwise be required.
+const LAYOUT_VERSION = "v3";
 const layoutKey = (view: WorkspaceView) => `localcut.layout.${LAYOUT_VERSION}.${view}`;
+
+// Default row heights (group incl. tab bar). The board takes the rest.
+const COMPOSER_H = 160;
+const TIMELINE_H = 200;
 
 /* ---------- panels ---------- */
 
@@ -173,19 +177,35 @@ export function Workspace() {
   const viewRef = useRef(view);
   viewRef.current = view;
 
+  // Board · composer · timeline stack in one vertical branch. dockview's
+  // setSize trades space with ADJACENT siblings (like dragging the sash),
+  // so sizing composer and timeline against each other just shuttles the
+  // excess between them — the board never absorbs it. Instead size the
+  // board itself to (workspace − composer − timeline) and let the two
+  // fixed rows claim their share from what's left.
+  const enforceRowHeights = (api: DockviewApi) => {
+    const size = () => {
+      const total = api.height;
+      if (total > COMPOSER_H + TIMELINE_H + 200) {
+        api.getPanel("board")?.api.setSize({ height: total - COMPOSER_H - TIMELINE_H });
+      }
+      api.getPanel("composer")?.api.setSize({ height: COMPOSER_H });
+      api.getPanel("timeline")?.api.setSize({ height: TIMELINE_H });
+    };
+    // setSize during construction is ignored — wait out the initial layout
+    // pass first; the second frame corrects any residual redistribution.
+    requestAnimationFrame(() => {
+      size();
+      requestAnimationFrame(size);
+    });
+  };
+
   const addComposer = (api: DockviewApi) => {
     api.addPanel({
       id: "composer",
       component: "composer",
       title: panelTitle("composer"),
       position: { referencePanel: "board", direction: "below" },
-    });
-    // A reference-panel split divides the group evenly, and setSize during
-    // construction is ignored — size the row once dockview has done its
-    // initial layout pass. Tall enough for a real paragraph of prompt: the
-    // composer is the project's primary edit surface, not a status bar.
-    requestAnimationFrame(() => {
-      api.getPanel("composer")?.api.setSize({ height: 190 });
     });
   };
 
@@ -205,9 +225,8 @@ export function Workspace() {
       }
       addComposer(api);
       // No reference panel: dock against the root edge so the timeline
-      // spans the full workspace width in every view. initialHeight is
-      // unreliable for root-edge docks — enforce after the layout pass;
-      // the strip only needs chip-height blocks, the board needs the room.
+      // spans the full workspace width in every view. The strip only needs
+      // chip-height blocks; the board gets the room.
       api.addPanel({
         id: "timeline",
         component: "timeline",
@@ -215,9 +234,7 @@ export function Workspace() {
         position: { direction: "below" },
         initialHeight: 200,
       });
-      requestAnimationFrame(() => {
-        api.getPanel("timeline")?.api.setSize({ height: 200 });
-      });
+      enforceRowHeights(api);
       board.api.setActive();
     } finally {
       busyRef.current = false;
@@ -259,6 +276,7 @@ export function Workspace() {
             } finally {
               busyRef.current = false;
             }
+            enforceRowHeights(api);
           }
           return;
         }
@@ -273,6 +291,10 @@ export function Workspace() {
   const syncInspector = (api: DockviewApi, selected: string | null) => {
     const panel = api.getPanel("inspector");
     if (selected && !panel) {
+      const composer = api.getPanel("composer");
+      const composerWasFullHeight = composer
+        ? composer.api.height >= api.height - 4
+        : true;
       busyRef.current = true;
       try {
         // Root-edge dock (no reference panel): Details opens as a
@@ -288,6 +310,27 @@ export function Workspace() {
       } finally {
         busyRef.current = false;
       }
+      // The root-edge split occasionally hoists the composer out of the
+      // board's column into its own full-height column (a dockview
+      // re-orientation edge case) — and a save would then make that
+      // permanent. If the composer just BECAME full-height, re-dock it.
+      requestAnimationFrame(() => {
+        const hoisted = api.getPanel("composer");
+        if (
+          !composerWasFullHeight &&
+          hoisted &&
+          hoisted.api.height >= api.height - 4
+        ) {
+          busyRef.current = true;
+          try {
+            api.removePanel(hoisted);
+            addComposer(api);
+          } finally {
+            busyRef.current = false;
+          }
+          enforceRowHeights(api);
+        }
+      });
     } else if (!selected && panel) {
       busyRef.current = true;
       try {
