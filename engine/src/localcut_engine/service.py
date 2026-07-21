@@ -450,9 +450,29 @@ class ProjectService:
             cached -= clip_hashes
         plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
 
+        # Supersede stale queued work: a re-plan that changed a node's hash
+        # (seed bump, param edit) makes any still-queued job for that node
+        # garbage — cancel it instead of letting it render into an artifact
+        # nothing references, or fail against inputs that no longer exist.
+        # Rendering jobs are left to finish; their output is merely unused.
+        active_jobs = self.queue.active(project_id)
+        planned = {spec.node_id: spec.output_hash for spec in plan.jobs}
+        superseded = {
+            job.id
+            for job in active_jobs
+            if job.status is JobStatus.QUEUED
+            and job.spec.node_id in planned
+            and job.spec.output_hash != planned[job.spec.node_id]
+        }
+        for job_id in superseded:
+            self.queue.cancel(job_id)
         # Skip nodes that already have an identical job in flight — quality
         # included, so finalize still enqueues finals over active drafts.
-        active = {(job.spec.output_hash, job.spec.quality) for job in self.queue.active(project_id)}
+        active = {
+            (job.spec.output_hash, job.spec.quality)
+            for job in active_jobs
+            if job.id not in superseded
+        }
         project = self.store.get(project_id)
         enqueued = 0
         for spec in plan.jobs:
@@ -607,22 +627,35 @@ class ProjectService:
             # exists: narration timing stretches scenes at assembly, so the
             # planned per-clip sum above can disagree with the exported cut
             # (a 44 s plan can assemble into a 65 s video).
-            if timeline is not None:
-                timeline_hash = graph.output_hash("timeline", memo)
-                if timeline_hash in cached:
-                    path = self.store.resolve_artifact(project_id, timeline_hash)
-                    try:
-                        assembled = (
-                            json.loads(path.read_text()).get("duration") if path else None
-                        )
-                        if isinstance(assembled, (int, float)) and assembled > 0:
-                            duration = float(assembled)
-                    except (OSError, ValueError):
-                        pass  # mock/legacy EDLs — the planned sum stands
+            edl = self._assembled_edl(project_id, graph, memo, cached)
+            assembled = edl.get("duration") if edl else None
+            if isinstance(assembled, (int, float)) and assembled > 0:
+                duration = float(assembled)
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
         self.store.save_meta(project)
+
+    def _assembled_edl(
+        self, project_id: str, graph: StoryGraph, memo: dict[str, str], cached: set[str]
+    ) -> dict | None:
+        """The cached timeline EDL, or None. The assembled cut is the
+        authority on real durations once it exists — narration timing
+        stretches scenes at assembly, so planned per-clip sums drift from
+        the exported video."""
+        if "timeline" not in graph.nodes:
+            return None
+        timeline_hash = graph.output_hash("timeline", memo)
+        if timeline_hash not in cached:
+            return None
+        path = self.store.resolve_artifact(project_id, timeline_hash)
+        if path is None:
+            return None
+        try:
+            edl = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None  # mock/legacy EDLs — planned values stand
+        return edl if isinstance(edl, dict) else None
 
     def scene_board(self, project_id: str) -> dict:
         """Scene cards + statuses, derived from graph × jobs × artifacts."""
@@ -708,4 +741,12 @@ class ProjectService:
         ]
         aux_ids += sorted(n for n in graph.nodes if "." not in n and n not in aux_ids)
         aux = {n: state for n in aux_ids if (state := node_state(n)) is not None}
-        return {"scenes": scenes, "aux": aux}
+        # Per-scene actuals from the assembled cut so the timeline strip
+        # agrees with the video it plays (planned sums drift at assembly).
+        edl = self._assembled_edl(project_id, graph, memo, cached)
+        assembled_durations = {
+            str(seg.get("scene")): float(seg["duration"])
+            for seg in (edl.get("video", []) if edl else [])
+            if isinstance(seg, dict) and isinstance(seg.get("duration"), (int, float))
+        }
+        return {"scenes": scenes, "aux": aux, "assembled_durations": assembled_durations}

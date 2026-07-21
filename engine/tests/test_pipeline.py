@@ -520,6 +520,33 @@ async def test_meta_duration_prefers_assembled_timeline(rig):
 
     board = service.scene_board(project.id)
     path = store.resolve_artifact(project.id, board["aux"]["timeline"]["artifact_hash"])
-    path.write_text(json.dumps({"duration": 123.4}))
+    path.write_text(
+        json.dumps({"duration": 123.4, "video": [{"scene": "s1", "duration": 41.5}]})
+    )
     service.patch(project.id, [])  # meta refresh path
     assert store.get(project.id).duration_s == 123.4
+    # The board carries the per-scene actuals so the timeline strip can
+    # agree with the assembled cut it plays.
+    assert service.scene_board(project.id)["assembled_durations"] == {"s1": 41.5}
+
+
+async def test_replan_supersedes_stale_queued_jobs(tmp_path):
+    """A seed bump re-plans a node under a new hash; the previously queued
+    job for that node is garbage — cancel it instead of letting it render
+    an artifact nothing references (or fail against missing inputs)."""
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)  # no scheduler: jobs stay queued
+    project = service.create_from_prompt("city timelapse")
+
+    first = queue.list(project.id, 100)
+    assert [j.spec.node_id for j in first] == ["script"]
+    service.regenerate(project.id, "script")
+
+    jobs = queue.list(project.id, 100)
+    queued = [j for j in jobs if j.status is JobStatus.QUEUED]
+    cancelled = [j for j in jobs if j.status is JobStatus.CANCELLED]
+    assert len(queued) == 1 and queued[0].spec.node_id == "script"
+    assert queued[0].spec.output_hash != first[0].spec.output_hash
+    assert [j.id for j in cancelled] == [first[0].id]
