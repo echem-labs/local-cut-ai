@@ -2,7 +2,7 @@ import { ChevronFirst, ChevronLast, Pause, Play, SkipBack, SkipForward } from "l
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { m, t } from "../i18n";
-import { movedOrder, orderedScenes } from "../lib/order";
+import { movedOrder, orderedScenes, sceneDurations } from "../lib/order";
 import { formatTime, parseTime, usePlayback } from "../lib/playback";
 import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
@@ -62,16 +62,7 @@ export function TimelineStrip() {
   const timeline = board.aux.timeline;
   const transitions = (timeline?.params.transitions ?? {}) as Record<string, string>;
 
-  // Assembled actuals first: the strip plays the assembled draft, and
-  // narration timing stretches scenes at assembly, so the planned
-  // duration_s params can disagree with the cut (44 s plan → 65 s video).
-  const assembled = board.assembled_durations ?? {};
-  const durations = scenes.map((scene) => {
-    const actual = assembled[scene.scene_id];
-    if (Number.isFinite(actual) && actual > 0) return actual;
-    const value = Number(scene.clip.params.duration_s);
-    return Number.isFinite(value) && value > 0 ? value : 4;
-  });
+  const durations = sceneDurations(board, scenes);
   const totalDuration = durations.reduce((sum, d) => sum + d, 0);
   const DIAMOND_W = 15; // diamond + margins — keeps playhead math honest
   const blockWidths = durations.map((d) => Math.max(64, Math.round(d * pxPerSec)));
