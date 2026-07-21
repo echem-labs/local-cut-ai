@@ -361,7 +361,11 @@ textarea {
 
 .composer-panel .composer {
   flex: 1;
-  min-height: 0;
+  /* The box never shrinks below its content: if the panel is ever shorter
+   * than the sash floor allows (a stale saved layout, an extra hint line),
+   * the box overflows the panel edge intact instead of its border cutting
+   * through the controls row. */
+  min-height: min-content;
 }
 
 .monitor-panel {
