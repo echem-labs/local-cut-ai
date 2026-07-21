@@ -86,7 +86,25 @@ async def test_path_params_reject_non_identifier_input(client):
     assert bad_node.status_code == 404
 
 
-def test_backend_chain_parsing_and_composition(tmp_path):
+def _provision_local_stack(config, monkeypatch):
+    """Make every capability gate pass: companion servers 'up' and the
+    weight files the local backends stat into place (dests read from the
+    manifest so the test can't drift from it)."""
+    from localcut_engine.api.app import _model_dests
+    from localcut_engine.backends.base import ServiceProbe
+
+    monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
+    for model_id in ("kokoro-82m", "faster-whisper-base-en"):
+        for dest in _model_dests(config, model_id) or []:
+            path = config.resolved_models_dir / dest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+    managed_ffmpeg = config.data_dir / "bin" / "ffmpeg"
+    managed_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
+    managed_ffmpeg.touch()
+
+
+def test_backend_chain_parsing_and_composition(tmp_path, monkeypatch):
     """The desktop shell passes --backend as a flag; chains must be accepted
     end-to-end (argparse pattern removed, config expands shorthands, and the
     app factory composes the registry in order with mock as catch-all)."""
@@ -108,15 +126,16 @@ def test_backend_chain_parsing_and_composition(tmp_path):
     config = EngineConfig(
         data_dir=tmp_path, backend="llm,comfy,mock", comfy_kinds="keyframe,thumbnail"
     )
+    _provision_local_stack(config, monkeypatch)
     registry = _build_backends(config)
     assert registry.resolve(NodeKind.SCRIPT).name == "llm"
     assert registry.resolve(NodeKind.KEYFRAME).name == "comfyui"
     assert registry.resolve(NodeKind.CLIP).name == "mock"  # not in comfy_kinds
     assert registry.resolve(NodeKind.EXPORT).name == "mock"
 
-    # The full-local chain must resolve every generative kind (no dead
-    # lanes). Explicit kinds here: the default ("auto") only claims kinds
-    # whose weights are installed — covered by the auto-kinds test below.
+    # With every capability gate satisfied, the full-local chain must
+    # resolve every generative kind (no dead lanes). Explicit kinds here:
+    # the default ("auto") is covered by the auto-kinds test below.
     local = _build_backends(
         EngineConfig(
             data_dir=tmp_path, backend="local", comfy_kinds="keyframe,thumbnail,clip,music"
@@ -138,12 +157,70 @@ def test_backend_chain_parsing_and_composition(tmp_path):
         _build_backends(EngineConfig(data_dir=tmp_path, backend="bogus"))
 
 
-def test_comfy_auto_kinds_follow_installed_weights(tmp_path):
-    """Default comfy_kinds ("auto") claims a kind only while a downloaded
-    manifest model can serve it — and flips live, no registry rebuild, so
-    a finished download reroutes the next render without a restart."""
+def test_local_backends_decline_without_their_prerequisites(tmp_path):
+    """The hybrid default chain ('local,mock') must degrade to mock per
+    task on a bare machine — no Ollama, no weights, no ffmpeg — instead of
+    failing jobs. Closed-port URLs make the probes refuse instantly."""
     from localcut_engine.api.app import _build_backends
     from localcut_engine.graph.model import NodeKind
+
+    config = EngineConfig(
+        data_dir=tmp_path,
+        backend="local,mock",
+        llm_url="http://127.0.0.1:9/v1",
+        comfyui_url="http://127.0.0.1:9",
+        ffmpeg_bin=str(tmp_path / "missing" / "ffmpeg"),
+    )
+    registry = _build_backends(config)
+    for kind in (
+        NodeKind.SCRIPT,
+        NodeKind.KEYFRAME,
+        NodeKind.CLIP,
+        NodeKind.NARRATION,
+        NodeKind.CAPTIONS,
+        NodeKind.MUSIC,
+        NodeKind.TIMELINE,
+        NodeKind.EXPORT,
+    ):
+        assert registry.resolve(kind).name == "mock", kind
+
+
+def test_local_backends_claim_once_prerequisites_appear(tmp_path, monkeypatch):
+    """Same registry, no rebuild: gates are probed live, so weights landing
+    (or servers coming up) reroute the next render without a restart."""
+    from localcut_engine.api.app import _build_backends
+    from localcut_engine.graph.model import NodeKind
+
+    config = EngineConfig(
+        data_dir=tmp_path,
+        backend="kokoro,align,ffmpeg,mock",
+        ffmpeg_bin=str(tmp_path / "bin" / "ffmpeg"),
+    )
+    registry = _build_backends(config)
+    assert registry.resolve(NodeKind.NARRATION).name == "mock"
+    assert registry.resolve(NodeKind.CAPTIONS).name == "mock"
+    assert registry.resolve(NodeKind.EXPORT).name == "mock"
+
+    _provision_local_stack(config, monkeypatch)
+    assert registry.resolve(NodeKind.NARRATION).name == "kokoro"
+    assert registry.resolve(NodeKind.CAPTIONS).name == "align"
+    assert registry.resolve(NodeKind.EXPORT).name == "ffmpeg"
+
+
+def test_comfy_auto_kinds_follow_installed_weights(tmp_path, monkeypatch):
+    """Default comfy_kinds ("auto") claims a kind only while a downloaded
+    manifest model can serve it — and flips live, no registry rebuild, so
+    a finished download reroutes the next render without a restart. The
+    server-liveness half of the gate is pinned up here; weights are the
+    variable under test."""
+    from localcut_engine.api.app import _build_backends
+    from localcut_engine.backends.base import ServiceProbe
+    from localcut_engine.graph.model import NodeKind
+
+    monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
+    managed_ffmpeg = tmp_path / "bin" / "ffmpeg"
+    managed_ffmpeg.parent.mkdir(parents=True)
+    managed_ffmpeg.touch()  # the still-clip tier needs a discoverable binary
 
     (tmp_path / "model-manifest.json").write_text(
         json.dumps(

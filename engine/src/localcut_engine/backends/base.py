@@ -5,11 +5,14 @@ wrapped behind this from day one so a future in-house backend is a drop-in.
 
 from __future__ import annotations
 
+import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
@@ -17,6 +20,31 @@ from ..graph.model import NodeKind
 
 class GenerationError(RuntimeError):
     pass
+
+
+class ServiceProbe:
+    """TTL-cached liveness of a companion server (Ollama, ComfyUI), so a
+    backend can decline kinds its server cannot currently serve and let the
+    chain's fallbacks catch them. supports() hooks are sync, so the probe
+    blocks — the timeout stays tight (a down localhost refuses instantly)
+    and the verdict is cached for the TTL."""
+
+    def __init__(self, url: str, timeout_s: float = 0.75, ttl_s: float = 15.0) -> None:
+        self.url = url
+        self.timeout_s = timeout_s
+        self.ttl_s = ttl_s
+        self._checked_at = -ttl_s  # first call always probes
+        self._alive = False
+
+    def available(self) -> bool:
+        now = time.monotonic()
+        if now - self._checked_at >= self.ttl_s:
+            self._checked_at = now
+            try:
+                self._alive = httpx.get(self.url, timeout=self.timeout_s).status_code < 500
+            except httpx.HTTPError:
+                self._alive = False
+        return self._alive
 
 
 class OOMError(GenerationError):

@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
-from ..backends.base import BackendRegistry, GenerationError
+from ..backends.base import BackendRegistry, GenerationError, ServiceProbe
 from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
@@ -143,6 +143,10 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 except (OSError, ValueError):
                     model_templates = {}  # broken override manifest — defaults still work
                 auto_kinds = config.comfy_kinds.strip().lower() == "auto"
+                # Auto mode gates on the server too, not just weights — a
+                # machine with LTX installed but ComfyUI down must fall
+                # through to the still-clip/mock tiers, not fail jobs.
+                comfy_probe = ServiceProbe(f"{config.comfyui_url.rstrip('/')}/queue")
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
@@ -152,7 +156,13 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         ),
                         model_templates=model_templates,
                         capability=(
-                            (lambda: installed_comfy_kinds(config)) if auto_kinds else None
+                            (
+                                lambda: installed_comfy_kinds(config)
+                                if comfy_probe.available()
+                                else set()
+                            )
+                            if auto_kinds
+                            else None
                         ),
                     )
                 )

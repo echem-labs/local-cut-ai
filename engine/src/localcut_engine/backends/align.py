@@ -29,7 +29,9 @@ class AlignBackend(ExecutionBackend):
         self._lock = asyncio.Lock()
 
     def supports(self, kind: NodeKind) -> bool:
-        return kind is NodeKind.CAPTIONS
+        # Weights-gated like the other local backends: no whisper model on
+        # disk → captions fall through to the chain's fallback.
+        return kind is NodeKind.CAPTIONS and (self.model_dir / "model.bin").exists()
 
     def _load(self):
         if self._model is None:

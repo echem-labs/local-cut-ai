@@ -89,7 +89,12 @@ class FFmpegBackend(ExecutionBackend):
         self._drawtext_checked = False
 
     def supports(self, kind: NodeKind) -> bool:
-        return kind in _KINDS
+        # Binary-gated: without an ffmpeg on disk (managed download) or on
+        # PATH, assembly falls through to the chain's fallback instead of
+        # failing — and starts claiming the moment the download lands.
+        return kind in _KINDS and (
+            Path(self.ffmpeg_bin).exists() or shutil.which(self.ffmpeg_bin) is not None
+        )
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         match spec.kind:
