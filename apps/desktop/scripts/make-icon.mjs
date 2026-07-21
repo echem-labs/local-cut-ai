@@ -1,8 +1,10 @@
 // Renders branding/logo.svg into build/icon.ico (embedded in the exe and
-// installer by electron-builder). Small sizes are stored as classic BGRA
-// bitmaps — the format Explorer's taskbar and list views read most
-// reliably — and 64px+ as PNG, the Vista+ convention. Re-run with
-// `npm run icon` after any change to the mark.
+// installer by electron-builder) plus build/icon.png (the Linux
+// AppImage/deb icon — freedesktop wants a plain 512px PNG). Small ico
+// sizes are stored as classic BGRA bitmaps — the format Explorer's
+// taskbar and list views read most reliably — and 64px+ as PNG, the
+// Vista+ convention. Re-run with `npm run icon` after any change to the
+// mark.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,3 +70,7 @@ const out = path.join(here, "..", "build", "icon.ico");
 mkdirSync(path.dirname(out), { recursive: true });
 writeFileSync(out, Buffer.concat([icondir, ...dirEntries, ...entries.map((e) => e.data)]));
 console.log(`wrote ${out} — ${entries.length} sizes, ${offset} bytes`);
+
+const png = path.join(here, "..", "build", "icon.png");
+writeFileSync(png, render(512).asPng());
+console.log(`wrote ${png} — 512px`);

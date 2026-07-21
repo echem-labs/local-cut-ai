@@ -2,7 +2,7 @@
   "name": "localcut-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "LocalCut AI desktop shell — Electron + React frontend for the LocalCut engine",
+  "description": "LocalCut AI desktop shell \u2014 Electron + React frontend for the LocalCut engine",
   "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
@@ -13,7 +13,9 @@
     "start": "electron .",
     "icon": "node scripts/make-icon.mjs",
     "package": "npm run build && electron-builder --win",
-    "package:dir": "npm run build && electron-builder --win --dir"
+    "package:dir": "npm run build && electron-builder --win --dir",
+    "package:linux": "npm run build && electron-builder --linux",
+    "package:linux:dir": "npm run build && electron-builder --linux --dir"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",
@@ -35,5 +37,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "wait-on": "^9.0.10"
-  }
+  },
+  "author": "Hanzla Mateen <hanzlamateen@live.com>",
+  "homepage": "https://github.com/echem-labs/local-cut-ai",
+  "desktopName": "localcut-desktop.desktop"
 }
