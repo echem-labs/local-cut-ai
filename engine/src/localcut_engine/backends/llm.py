@@ -39,6 +39,7 @@ class LLMScriptBackend(ExecutionBackend):
         base_url: str = "http://127.0.0.1:11434/v1",
         model: str = "qwen3:14b",
         unload_after: bool = True,
+        timeout_s: int = 600,
     ) -> None:
         base = base_url.rstrip("/")
         # Accept both http://host:port and http://host:port/v1 — the chat
@@ -46,6 +47,7 @@ class LLMScriptBackend(ExecutionBackend):
         self.root_url = base.removesuffix("/v1")
         self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
+        self.timeout_s = timeout_s
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
         # before image/video jobs run (LLM → unload → image batch).
         self.unload_after = unload_after
@@ -92,10 +94,7 @@ class LLMScriptBackend(ExecutionBackend):
         return raw
 
     async def _local_complete(self, prompt: str, system: str = _SYSTEM_PROMPT) -> str:
-        # 10 min, not 5: a cold Ollama start loads the whole model before the
-        # first token, and on 8 GB-class machines load + a long screenplay
-        # overruns 300 s — the job then fails after minutes of real progress.
-        async with httpx.AsyncClient(timeout=600) as client:
+        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
                 json={
