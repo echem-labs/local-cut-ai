@@ -29,10 +29,13 @@ const authorityOf = (url: string): string | null => {
 };
 
 /** Native-controls overlay colors per theme — backgrounds match the
- * renderer's .titlebar (surface-1), heights must match --titlebar-h. */
+ * renderer's .titlebar (surface-1). Height is one pixel SHORT of
+ * --titlebar-h (38px): the overlay paints on top of the bar, and at full
+ * height it covers the bar's 1px bottom border, visibly breaking the
+ * divider line under the min/max/close buttons. */
 const TITLEBAR = {
-  dark: { color: "#16181d", symbolColor: "#a9adb8", height: 38 },
-  light: { color: "#ffffff", symbolColor: "#5d5b6b", height: 38 },
+  dark: { color: "#16181d", symbolColor: "#a9adb8", height: 37 },
+  light: { color: "#ffffff", symbolColor: "#5d5b6b", height: 37 },
 } as const;
 
 async function createWindow(): Promise<void> {
