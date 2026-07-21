@@ -167,6 +167,26 @@ class Scheduler:
                 NodeKind.TIMELINE,
                 NodeKind.EXPORT,
             ):
+                # Assembly-family inputs are hard requirements — but only
+                # fatally missing when nothing in flight can still produce
+                # them. An ordering hiccup must not fail minutes of good
+                # downstream work: requeue behind the producer instead. The
+                # serial loop guarantees progress — when this job popped,
+                # nothing was rendering, so the producer is QUEUED and pops
+                # next.
+                missing_hashes = {job.spec.input_hashes[port] for port in missing}
+                producing = {
+                    other.spec.output_hash
+                    for other in self.queue.active(job.project_id)
+                    if other.id != job.id
+                }
+                if missing_hashes & producing:
+                    job.status = JobStatus.QUEUED
+                    job.progress = 0.0
+                    job.started_at = None
+                    job.created_at = time.time()  # back of the FIFO
+                    self.queue.update_unless_cancelled(job)
+                    return
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind, job.spec.model)
             artifact = await backend.execute(job.spec, ctx)
