@@ -92,7 +92,10 @@ class LLMScriptBackend(ExecutionBackend):
         return raw
 
     async def _local_complete(self, prompt: str, system: str = _SYSTEM_PROMPT) -> str:
-        async with httpx.AsyncClient(timeout=300) as client:
+        # 10 min, not 5: a cold Ollama start loads the whole model before the
+        # first token, and on 8 GB-class machines load + a long screenplay
+        # overruns 300 s — the job then fails after minutes of real progress.
+        async with httpx.AsyncClient(timeout=600) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
                 json={
