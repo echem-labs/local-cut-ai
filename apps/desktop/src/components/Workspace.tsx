@@ -33,8 +33,11 @@ const TIMELINE_H = 200;
 
 // Sash floors: below these, fixed chrome (the composer's controls row,
 // the timeline's transport and clip strip) clips away instead of
-// shrinking — the textarea alone absorbs composer shrinkage (one line).
-const COMPOSER_MIN_H = 136;
+// shrinking — the textarea alone absorbs composer shrinkage. The composer
+// floor also reserves a line for the feedback hint that renders below the
+// box after an edit; without the reserve the hint squeezes the box and
+// pushes the controls through its border.
+const COMPOSER_MIN_H = 156;
 const TIMELINE_MIN_H = 170;
 
 /** Pin a minimum height on the panel's current GROUP, following re-docks.
