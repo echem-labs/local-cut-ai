@@ -1119,6 +1119,8 @@ button.link:hover {
   height: 22px;
   display: grid;
   place-items: center;
+  /* the UA button padding shoves the icon off-center in a 22px box */
+  padding: 0;
   border-radius: var(--radius-xs);
   background: rgba(14, 15, 18, 0.55);
   color: #c8ccd6;

@@ -53,7 +53,14 @@ function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
     return "generating";
   }
-  if (jobs.length > 0 && jobs[jobs.length - 1].status === "failed") return "failed";
+  // Pick the trailing job by stamp — /jobs arrives newest-first and store
+  // merges may reorder, so indexing either end can grab the oldest job and
+  // pin a long-since-recovered project at "failed".
+  const newest = jobs.reduce<Job | null>(
+    (best, job) => (best && best.created_at >= job.created_at ? best : job),
+    null,
+  );
+  if (newest?.status === "failed") return "failed";
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";
 }

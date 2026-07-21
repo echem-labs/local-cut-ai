@@ -62,7 +62,13 @@ export function TimelineStrip() {
   const timeline = board.aux.timeline;
   const transitions = (timeline?.params.transitions ?? {}) as Record<string, string>;
 
+  // Assembled actuals first: the strip plays the assembled draft, and
+  // narration timing stretches scenes at assembly, so the planned
+  // duration_s params can disagree with the cut (44 s plan → 65 s video).
+  const assembled = board.assembled_durations ?? {};
   const durations = scenes.map((scene) => {
+    const actual = assembled[scene.scene_id];
+    if (Number.isFinite(actual) && actual > 0) return actual;
     const value = Number(scene.clip.params.duration_s);
     return Number.isFinite(value) && value > 0 ? value : 4;
   });

@@ -72,6 +72,9 @@ export interface SceneCardModel {
 export interface Board {
   scenes: SceneCardModel[];
   aux: Record<string, NodeState>;
+  /** Per-scene seconds from the assembled cut — absent until a timeline
+   * exists (and on engines older than this field). */
+  assembled_durations?: Record<string, number>;
 }
 
 export interface HardwareGPU {
@@ -180,6 +183,7 @@ export interface Job {
   status: "queued" | "rendering" | "done" | "failed" | "cancelled";
   progress: number;
   error: string | null;
+  created_at: number;
   spec: { node_id: string; kind: string };
 }
 
