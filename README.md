@@ -15,7 +15,8 @@ BYOK cloud providers, in-app model downloads with a first-run hardware
 screen, publish-kit generation, and OTIO handoff. Editing depth is landing
 next: natural-language edits ("make scene 2 darker") that patch the project
 graph, and an advanced per-node inspector (seeds, model overrides, pinning)
-are in. Still to come: installers (Windows/NVIDIA, Ubuntu, macOS beta).
+are in. Installers build for Windows (NSIS) and Linux (AppImage/deb); macOS
+beta is still to come.
 
 ## What it will do
 
@@ -158,11 +159,12 @@ npm run dev     # vite + electron; auto-spawns the engine via uv with a fresh to
 The desktop shell spawns and owns the engine process; set `LOCALCUT_ENGINE_CMD` /
 `LOCALCUT_BACKEND` to override how it is launched.
 
-## Packaging (Windows)
+## Packaging (Windows & Linux)
 
 Two steps: freeze the engine with PyInstaller, then wrap it and the shell
 with electron-builder — the packaged app spawns the bundled
-`resources/engine/localcut-engine.exe` instead of `uv run`:
+`resources/engine/localcut-engine[.exe]` instead of `uv run`. PyInstaller
+does not cross-compile: freeze on the OS you're packaging for.
 
 ```bash
 cd engine
@@ -171,14 +173,21 @@ uv run pyinstaller --noconfirm localcut-engine.spec   # → engine/dist/localcut
 
 cd ../apps/desktop
 npm install
-npm run package        # → release/LocalCut Setup 0.1.0.exe (NSIS, unsigned)
-npm run package:dir    # → release/win-unpacked/ only (run LocalCut.exe directly)
+# Windows
+npm run package            # → release/LocalCut Setup 0.1.0.exe (NSIS, unsigned)
+npm run package:dir        # → release/win-unpacked/ only (run LocalCut.exe directly)
+# Linux
+npm run package:linux      # → release/*.AppImage + release/*.deb
+npm run package:linux:dir  # → release/linux-unpacked/ only
 ```
 
 The packaged engine defaults to the mock backend; set `LOCALCUT_BACKEND=local`
 (plus ComfyUI/Ollama per the sections above) before launching to render with
-real models. Builds are unsigned for now — SmartScreen will warn on the
-installer (More info → Run anyway).
+real models. Windows builds are unsigned for now — SmartScreen will warn on
+the installer (More info → Run anyway). Neither package bundles ffmpeg: the
+engine finds one via `LOCALCUT_FFMPEG_BIN`/PATH, and on-screen titles need a
+build with the `drawtext` filter (FFmpeg 7+ static builds without libharfbuzz
+lack it — `GET /system` reports this as `ffmpeg_drawtext`).
 
 ## License
 

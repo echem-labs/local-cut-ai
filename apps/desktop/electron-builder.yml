@@ -12,8 +12,10 @@ files:
   # electron + node builtins — no runtime node_modules needed.
   - "!node_modules"
 extraResources:
-  # PyInstaller onedir output → resources/engine/localcut-engine.exe
+  # PyInstaller onedir output → resources/engine/localcut-engine[.exe]
   # (spawned by dist-electron/electron/engine.js when app.isPackaged).
+  # Freeze the engine ON the target OS first — PyInstaller doesn't cross-
+  # compile, so a Linux package needs the engine frozen on Linux.
   - from: ../../engine/dist/localcut-engine
     to: engine
 asar: true
@@ -29,3 +31,33 @@ nsis:
   oneClick: true
   perMachine: false
   deleteAppDataOnUninstall: false
+linux:
+  icon: build/icon.png
+  category: AudioVideo
+  # Keep WM_CLASS in sync with the .desktop entry so desktop environments
+  # associate running windows with the launcher (dock icons, alt-tab).
+  syncDesktopName: true
+  # AppImage runs on any distro; deb serves apt-based installs (the dev/test
+  # baseline is Ubuntu). ffmpeg is NOT bundled: the engine locates one via
+  # LOCALCUT_FFMPEG_BIN/PATH, and /system's ffmpeg_drawtext flag tells the
+  # UI when that build can't render on-screen titles (FFmpeg 7 static
+  # builds without libharfbuzz).
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  synopsis: Local-first AI video generation
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
