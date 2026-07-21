@@ -644,3 +644,23 @@ async def test_real_ffmpeg_supports_drawtext():
     """The build assembly runs against must render on-screen titles — a
     static build without libharfbuzz would fail every titled export."""
     assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True
+
+
+async def test_still_clip_from_keyframe(tmp_path):
+    """The no-video-model tier: CLIP jobs render a real, probe-able mp4 from
+    the scene keyframe (loop + push-in), so assembly can consume them."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    keyframe = synth(
+        tmp_path, "kf.png", ["-f", "lavfi", "-i", "testsrc2=size=448x768", "-frames:v", "1"]
+    )
+    out_dir = tmp_path / "generated"
+    ctx = ExecutionContext(output_dir=out_dir, input_artifacts={"keyframe": keyframe})
+    spec = make_spec(
+        NodeKind.CLIP,
+        {"duration_s": 1.5, "aspect": "9:16"},
+        node_id="s1.clip",
+    )
+    clip = await backend.execute(spec, ctx)
+    assert clip.suffix == ".mp4"
+    duration = await backend._probe_duration(clip)
+    assert duration is not None and abs(duration - 1.5) < 0.2

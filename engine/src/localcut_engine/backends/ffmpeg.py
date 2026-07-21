@@ -21,13 +21,14 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, resolution_for
+from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
 from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat
 from ..captions import srt_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
     CAPTIONS_PORT,
     DEFAULT_PORT,
+    KEYFRAME_PORT,
     MUSIC_PORT,
     SCENE_AUDIO_SUFFIX,
     NodeKind,
@@ -35,7 +36,9 @@ from ..graph.model import (
 )
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
-_KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT}
+_KINDS = {NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT}
+_STILL_CLIP_FPS = 24
+_STILL_CLIP_ZOOM = 0.06  # total push-in over the clip ("stills become clips")
 
 NARRATION_PAD_S = 0.35  # breathing room after each narration line
 MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
@@ -90,11 +93,54 @@ class FFmpegBackend(ExecutionBackend):
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         match spec.kind:
+            case NodeKind.CLIP:
+                return await self._render_still_clip(spec, ctx)
             case NodeKind.TIMELINE:
                 return await self._build_timeline(spec, ctx)
             case NodeKind.EXPORT:
                 return await self._export(spec, ctx)
         raise GenerationError(f"ffmpeg backend cannot handle {spec.kind}")
+
+    # -- clip: the no-video-model tier ("stills become clips") ----------------
+    # Loops the scene's keyframe for the clip duration with a slow push-in.
+    # Real i2v backends outrank this by claiming CLIP ahead of ffmpeg in the
+    # backend chain; this keeps assembly working on hardware where no local
+    # video model fits.
+    async def _render_still_clip(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        keyframe = ctx.input_artifacts.get(KEYFRAME_PORT)
+        if keyframe is None:
+            raise GenerationError("still clip needs a keyframe input")
+        duration = max(0.5, _as_float(spec.params.get("duration_s"), 5.0))
+        aspect = str(spec.params.get("aspect", DEFAULT_ASPECT))
+        width, height = resolution_for(VIDEO_RESOLUTIONS, aspect)
+        frames = max(1, round(duration * _STILL_CLIP_FPS))
+        out = ctx.output_path(spec.output_hash, ".mp4")
+        # Upscale before zoompan so the zoom window always has source pixels
+        # (sampling at 1:1 makes the push-in shimmer on fine detail).
+        vf = (
+            f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+            f"crop={width * 2}:{height * 2},"
+            f"zoompan=z='min(1+{_STILL_CLIP_ZOOM}*on/{frames},{1 + _STILL_CLIP_ZOOM})'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d={frames}:s={width}x{height}:fps={_STILL_CLIP_FPS},format=yuv420p"
+        )
+        await self._run(
+            "-loop",
+            "1",
+            "-i",
+            str(keyframe),
+            "-vf",
+            vf,
+            "-t",
+            f"{duration:.3f}",
+            "-an",
+            "-c:v",
+            await self._pick_encoder(),
+            "-b:v",
+            _VIDEO_BITRATE["draft"],
+            str(out),
+        )
+        return out
 
     # -- timeline: an explicit edit decision list (JSON) -----------------------
     #
