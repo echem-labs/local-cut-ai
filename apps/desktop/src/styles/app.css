@@ -748,7 +748,21 @@ textarea {
   display: inline-flex;
 }
 
-/* The DurationPicker's custom-entry input takes the chip's exact slot. */
+/* The DurationPicker's custom-entry input takes the chip's exact slot;
+ * while editing, a persistent .tip-styled bubble above it carries the
+ * format hint (the input is prefilled, so the placeholder never shows). */
+.duration-edit {
+  position: relative;
+  display: inline-flex;
+}
+
+.duration-edit .duration-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+}
+
 .duration-input {
   width: 110px;
   background: var(--surface-1);

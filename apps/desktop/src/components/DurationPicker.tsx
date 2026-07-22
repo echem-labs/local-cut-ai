@@ -54,19 +54,27 @@ export function DurationPicker({
       setEditing(false);
     };
     return (
-      <input
-        className="duration-input"
-        autoFocus
-        value={draft}
-        placeholder={t("durations.customPlaceholder")}
-        aria-label={t("durations.customAria")}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-          if (event.key === "Escape") setEditing(false);
-        }}
-      />
+      <span className="duration-edit">
+        <input
+          className="duration-input"
+          autoFocus
+          value={draft}
+          placeholder={t("durations.customPlaceholder")}
+          aria-label={t("durations.customAria")}
+          title={t("durations.customHint")}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commit();
+            if (event.key === "Escape") setEditing(false);
+          }}
+        />
+        {/* The chip is prefilled, so the placeholder never shows — a
+            persistent tip above the input carries the format hint. */}
+        <span className="tip duration-tip" role="presentation" aria-hidden="true">
+          {t("durations.customHint")}
+        </span>
+      </span>
     );
   }
 

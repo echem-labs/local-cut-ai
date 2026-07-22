@@ -524,6 +524,7 @@ export function Settings() {
                     style={{ minWidth: 240 }}
                     value={defaults.voice}
                     placeholder={t("home.voicePlaceholder")}
+                    title={t("home.voicePlaceholder")}
                     aria-label={t("settings.defaults.voiceHeading")}
                     onChange={(event) => setDefaults({ voice: event.target.value })}
                   />
