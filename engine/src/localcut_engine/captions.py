@@ -45,8 +45,14 @@ def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
     truth = text.split()
     if not truth or not words:
         return words
+    truth_norm = [_norm(t) for t in truth]
+    # Punctuation-only and non-Latin tokens normalize to "" and would anchor
+    # arbitrarily; when they dominate (non-English narration), the text isn't
+    # alignable this way — keep the transcription.
+    if sum(1 for t in truth_norm if not t) > len(truth_norm) // 2:
+        return words
     matcher = difflib.SequenceMatcher(
-        a=[_norm(w.text) for w in words], b=[_norm(t) for t in truth], autojunk=False
+        a=[_norm(w.text) for w in words], b=truth_norm, autojunk=False
     )
     out: list[Word] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -55,18 +61,28 @@ def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
                 out.append(Word(text=truth[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end))
         elif tag == "replace":
             # Misheard span: spread the true tokens over its time window.
+            # ASR occasionally emits zero-width words — give the span a floor
+            # so no cue ends up with start == end (it would never display).
             start, end = words[i1].start, words[i2 - 1].end
+            if end <= start:
+                end = start + 0.15 * (j2 - j1)
             step = (end - start) / (j2 - j1)
             for k in range(j2 - j1):
                 out.append(
                     Word(text=truth[j1 + k], start=start + k * step, end=start + (k + 1) * step)
                 )
         elif tag == "insert":
-            # Tokens the ASR never emitted: pin them at the boundary so cue
-            # grouping keeps the sentence intact.
+            # Tokens the ASR never emitted: lay them into the following gap
+            # (or a nominal window at the tail) with a per-word floor — a
+            # zero-width cue would be silently dropped by SRT consumers.
+            n = j2 - j1
             anchor = out[-1].end if out else words[0].start
-            for k in range(j2 - j1):
-                out.append(Word(text=truth[j1 + k], start=anchor, end=anchor))
+            following = words[i1].start if i1 < len(words) else anchor + 0.4 * n
+            step = max((following - anchor) / n, 0.15)
+            for k in range(n):
+                out.append(
+                    Word(text=truth[j1 + k], start=anchor + k * step, end=anchor + (k + 1) * step)
+                )
         # "delete": the ASR hallucinated a word the script doesn't have — drop it.
     return out
 
