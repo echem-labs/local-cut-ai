@@ -1,6 +1,7 @@
 import { BookOpen, HelpCircle, Keyboard, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
+import { shortcutLabel } from "../lib/platform";
 import { useOutsideClick } from "../lib/useOutsideClick";
 
 type Panel = "shortcuts" | "glossary" | null;
@@ -213,7 +214,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
               <div className="shortcut-list">
                 {m().help.shortcuts.map((entry) => (
                   <div key={entry.keys}>
-                    <kbd>{entry.keys}</kbd>
+                    <kbd>{shortcutLabel(entry.keys)}</kbd>
                     <span>{entry.what}</span>
                   </div>
                 ))}
