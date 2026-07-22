@@ -49,6 +49,8 @@ declare global {
         id: ProviderKeyId,
       ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
       setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
+      getSystemTextScale: () => Promise<number>;
+      setUiZoom: (factor: number) => void;
     };
   }
 }
