@@ -326,7 +326,18 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     _ensure_edge(graph, "script", "music")
     _ensure_edge(graph, "music", "timeline", port=MUSIC_PORT)
 
-    _ensure_node(graph, "captions", NodeKind.CAPTIONS, params={"style": "word-timed"})
+    _ensure_node(
+        graph,
+        "captions",
+        NodeKind.CAPTIONS,
+        params={
+            "style": "word-timed",
+            # Ground truth for the align backend: caption text comes from the
+            # script verbatim; the audio only contributes word timing (free
+            # transcription mishears homophones and drops punctuation).
+            "texts": {scene.id: scene.narration for scene in screenplay.scenes},
+        },
+    )
     _ensure_edge(graph, "timeline", "captions")
 
     old_export = node.params if (node := graph.nodes.get("export")) else {}

@@ -9,7 +9,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from ..captions import Word, cues_to_srt, words_to_cues
+from ..captions import Word, anchor_words_to_text, cues_to_srt, words_to_cues
 from ..graph.compiler import JobSpec
 from ..graph.model import DEFAULT_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
@@ -54,6 +54,7 @@ class AlignBackend(ExecutionBackend):
             raise GenerationError("captions job is missing its timeline input")
         timeline = json.loads(Path(timeline_path).read_text())
         segments = timeline.get("video", [])
+        texts: dict = spec.params.get("texts") or {}
 
         def synth() -> Path:
             words: list[Word] = []
@@ -70,7 +71,13 @@ class AlignBackend(ExecutionBackend):
                         f"scene {segment.get('scene')}: narration artifact is missing"
                     )
                 offset = float(segment.get("start", 0.0))
-                words.extend(self._align_one(path, offset))
+                scene_words = self._align_one(path, offset)
+                # Anchor to the script's narration when the graph provides
+                # it — the transcription is timing scaffolding, not text.
+                truth = texts.get(str(segment.get("scene")))
+                if truth:
+                    scene_words = anchor_words_to_text(scene_words, truth)
+                words.extend(scene_words)
                 progress = 0.9 * (index + 1) / total
                 asyncio.run_coroutine_threadsafe(ctx.progress(progress), loop)
             out = ctx.output_path(spec.output_hash, ".srt")
