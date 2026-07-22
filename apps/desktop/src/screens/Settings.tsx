@@ -20,6 +20,7 @@ import {
   Trash2,
   Waypoints,
   X,
+  ZoomIn,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendTask, Provider } from "../api/types";
@@ -29,6 +30,7 @@ import { displayModelName, formatSize, ModelLibrary } from "../components/ModelL
 import { InfoDot } from "../components/Tooltip";
 import { m, type MessageKey, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { ASPECTS, DURATIONS } from "../lib/formats";
+import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
 import { applyTheme, loadThemePref, type ThemePref } from "../theme";
 
@@ -142,6 +144,13 @@ export function Settings() {
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemePref>(loadThemePref);
+  // Mirrors the zoom module so the Ctrl +/− shortcuts move the control too.
+  const [zoom, setZoom] = useState(userZoomFactor);
+  useEffect(() => {
+    const onZoom = () => setZoom(userZoomFactor());
+    window.addEventListener(ZOOM_EVENT, onZoom);
+    return () => window.removeEventListener(ZOOM_EVENT, onZoom);
+  }, []);
   const [confirmProject, setConfirmProject] = useState<{ id: string; title: string } | null>(
     null,
   );
@@ -395,6 +404,26 @@ export function Settings() {
                         }}
                       >
                         {t(`settings.theme.${option.value}`)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="setting-row">
+                <div className="st">
+                  <ZoomIn {...ICON_SUBHEAD} />
+                  {t("settings.zoom.heading")}
+                </div>
+                <div className="sd">{t("settings.zoom.hint")}</div>
+                <div className="sc">
+                  <div className="seg-toggle" role="group" aria-label={t("settings.zoom.aria")}>
+                    {ZOOM_STEPS.map((step) => (
+                      <button
+                        key={step}
+                        className={zoom === step ? "active" : ""}
+                        onClick={() => setUserZoom(step)}
+                      >
+                        {Math.round(step * 100)}%
                       </button>
                     ))}
                   </div>

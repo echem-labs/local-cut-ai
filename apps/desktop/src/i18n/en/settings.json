@@ -22,6 +22,11 @@
     "hint": "Dark is the design target for video work; light is fully supported.",
     "aria": "Theme"
   },
+  "zoom": {
+    "heading": "Interface zoom",
+    "hint": "Scales the whole interface on top of your system text size. Ctrl + and Ctrl − work anywhere; Ctrl 0 resets.",
+    "aria": "Interface zoom"
+  },
   "language": {
     "heading": "Language",
     "hint": "The language of the app's interface."

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 /**
  * The renderer gets exactly two things from the shell: where the engine is
@@ -17,4 +17,9 @@ contextBridge.exposeInMainWorld("localcut", {
   clearProviderKey: (id: string) => ipcRenderer.invoke("providers:clear-key", id),
   setTitleBarTheme: (theme: "dark" | "light") =>
     ipcRenderer.invoke("window:set-titlebar-theme", theme),
+  getSystemTextScale: () => ipcRenderer.invoke("window:system-text-scale"),
+  setUiZoom: (factor: number) => {
+    const value = Number(factor);
+    webFrame.setZoomFactor(Number.isFinite(value) ? Math.min(3, Math.max(0.5, value)) : 1);
+  },
 });

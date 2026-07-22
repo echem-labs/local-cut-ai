@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, Menu } from "electron";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import { EngineManager } from "./engine";
 import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
@@ -277,6 +278,29 @@ ipcMain.handle("providers:clear-key", (event, id: unknown) => {
   }
   return applyKeyUpdates({ [id]: "" });
 });
+
+/** GNOME's text-scaling-factor ("Large Text" / Tweaks font scaling) is a
+ * font-only multiplier every GTK app honors but Chromium never reads — on
+ * desktops that use it, the app renders visibly smaller than everything
+ * else. Windows/macOS display scaling is already applied by Chromium, so
+ * they (and non-GNOME setups) get 1. Read once; the renderer folds it into
+ * its zoom baseline. */
+const systemTextScale: Promise<number> =
+  process.platform === "linux"
+    ? new Promise((resolve) => {
+        execFile(
+          "gsettings",
+          ["get", "org.gnome.desktop.interface", "text-scaling-factor"],
+          { timeout: 2000 },
+          (error, stdout) => {
+            const value = error ? NaN : Number.parseFloat(stdout.trim());
+            resolve(Number.isFinite(value) && value >= 0.5 && value <= 3 ? value : 1);
+          },
+        );
+      })
+    : Promise.resolve(1);
+
+ipcMain.handle("window:system-text-scale", () => systemTextScale);
 
 // Retint the native window-control overlay when the renderer's theme
 // resolves or changes (setTitleBarOverlay is Windows-only).

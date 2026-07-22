@@ -1,15 +1,53 @@
 {
   "shortcuts": [
-    { "keys": "Space", "what": "Play / pause the draft preview" },
-    { "keys": "Ctrl K", "what": "Command palette — projects, tools, settings, from anywhere" },
-    { "keys": "/", "what": "Search projects (Home)" },
-    { "keys": "F2", "what": "Rename the focused project tile (Home)" },
-    { "keys": "Enter", "what": "Open the focused scene's details" },
-    { "keys": "R", "what": "Regenerate the focused scene (new take)" },
-    { "keys": "P", "what": "Pin / unpin the focused scene" },
-    { "keys": "Esc", "what": "Close the inspector" },
-    { "keys": "Ctrl ↵", "what": "Generate (Home prompt)" },
-    { "keys": "?", "what": "This overlay" }
+    {
+      "keys": "Space",
+      "what": "Play / pause the draft preview"
+    },
+    {
+      "keys": "Ctrl K",
+      "what": "Command palette — projects, tools, settings, from anywhere"
+    },
+    {
+      "keys": "/",
+      "what": "Search projects (Home)"
+    },
+    {
+      "keys": "F2",
+      "what": "Rename the focused project tile (Home)"
+    },
+    {
+      "keys": "Enter",
+      "what": "Open the focused scene's details"
+    },
+    {
+      "keys": "R",
+      "what": "Regenerate the focused scene (new take)"
+    },
+    {
+      "keys": "P",
+      "what": "Pin / unpin the focused scene"
+    },
+    {
+      "keys": "Esc",
+      "what": "Close the inspector"
+    },
+    {
+      "keys": "Ctrl ↵",
+      "what": "Generate (Home prompt)"
+    },
+    {
+      "keys": "Ctrl + / Ctrl −",
+      "what": "Zoom the interface in / out"
+    },
+    {
+      "keys": "Ctrl 0",
+      "what": "Reset interface zoom"
+    },
+    {
+      "keys": "?",
+      "what": "This overlay"
+    }
   ],
   "panels": {
     "board": {
