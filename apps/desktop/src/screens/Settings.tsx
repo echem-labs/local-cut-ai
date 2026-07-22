@@ -29,7 +29,9 @@ import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
 import { InfoDot } from "../components/Tooltip";
 import { m, type MessageKey, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
-import { ASPECTS, DURATIONS } from "../lib/formats";
+import { DurationPicker } from "../components/DurationPicker";
+import { ASPECTS } from "../lib/formats";
+import { shortcutLabel } from "../lib/platform";
 import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
 import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
 import { applyTheme, loadThemePref, type ThemePref } from "../theme";
@@ -414,7 +416,7 @@ export function Settings() {
                   <ZoomIn {...ICON_SUBHEAD} />
                   {t("settings.zoom.heading")}
                 </div>
-                <div className="sd">{t("settings.zoom.hint")}</div>
+                <div className="sd">{shortcutLabel(t("settings.zoom.hint"))}</div>
                 <div className="sc">
                   <div className="seg-toggle" role="group" aria-label={t("settings.zoom.aria")}>
                     {ZOOM_STEPS.map((step) => (
@@ -488,15 +490,10 @@ export function Settings() {
                       icon: entry.icon,
                     }))}
                   />
-                  <Dropdown
+                  <DurationPicker
                     value={defaults.duration}
                     onChange={(value) => setDefaults({ duration: value })}
                     ariaLabel={t("home.durationAria")}
-                    options={DURATIONS.map((entry) => ({
-                      value: entry.value,
-                      label: m().durations[entry.key],
-                      icon: entry.icon,
-                    }))}
                   />
                   <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
                     <button

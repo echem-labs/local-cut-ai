@@ -22,7 +22,9 @@ import { Tip } from "../components/Tooltip";
 import type { Job, Project, ToolKind } from "../api/types";
 import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
-import { ASPECTS, DURATIONS } from "../lib/formats";
+import { DurationPicker } from "../components/DurationPicker";
+import { ASPECTS } from "../lib/formats";
+import { shortcutLabel } from "../lib/platform";
 import { relativeTime, shortDuration } from "../lib/time";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { useApp } from "../store";
@@ -407,15 +409,10 @@ export function Home() {
                 icon: entry.icon,
               }))}
             />
-            <Dropdown
+            <DurationPicker
               value={duration}
               onChange={(value) => setDefaults({ duration: value })}
               ariaLabel={t("home.durationAria")}
-              options={DURATIONS.map((entry) => ({
-                value: entry.value,
-                label: m().durations[entry.key],
-                icon: entry.icon,
-              }))}
             />
             <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
               <button
@@ -435,7 +432,7 @@ export function Home() {
             </div>
             <div className="spacer" />
             <ModelsPopover />
-            <Tip label={t("common.generate")} shortcut={t("home.ctrlEnter")} side="top">
+            <Tip label={t("common.generate")} shortcut={shortcutLabel(t("home.ctrlEnter"))} side="top">
               <button
                 className="btn-primary"
                 onClick={() => void generate()}
@@ -533,7 +530,7 @@ export function Home() {
               </>
             )}
             <div className="spacer" />
-            <Tip label={t("common.generate")} shortcut={t("home.ctrlEnter")} side="top">
+            <Tip label={t("common.generate")} shortcut={shortcutLabel(t("home.ctrlEnter"))} side="top">
               <button
                 className="btn-primary"
                 onClick={() => void runTool()}
