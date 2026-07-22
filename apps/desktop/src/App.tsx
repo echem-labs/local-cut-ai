@@ -2,14 +2,12 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Home as HomeIcon,
-  LayoutGrid,
   Moon,
-  MoreHorizontal,
   Settings as SettingsIcon,
   Sun,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { t } from "./i18n";
 import { BrandMark } from "./components/BrandMark";
@@ -17,7 +15,6 @@ import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
-import { useOutsideClick } from "./lib/useOutsideClick";
 import { FirstRun } from "./screens/FirstRun";
 import { Home, tileStatus } from "./screens/Home";
 import { Project } from "./screens/Project";
@@ -46,10 +43,6 @@ export default function App() {
     system,
     remoteEngine,
   } = useApp();
-  // Rail-tab overflow popover (open tabs past the visible cap).
-  const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
-  const tabsMenuRef = useRef<HTMLDivElement>(null);
-  useOutsideClick(tabsMenuRef, tabsMenuOpen, () => setTabsMenuOpen(false));
 
   useEffect(() => {
     void connect();
@@ -88,18 +81,6 @@ export default function App() {
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_KEY) === "1",
   );
-  // Open-project tabs: cap the rail at a handful; the rest live in an
-  // overflow menu. The active tab always stays visible — if it sits past
-  // the cap, it swaps with the last visible slot.
-  const RAIL_TABS_MAX = 5;
-  let visibleTabs = openProjects.slice(0, RAIL_TABS_MAX);
-  let overflowTabs = openProjects.slice(RAIL_TABS_MAX);
-  const activeId = currentProject?.id;
-  if (activeId && overflowTabs.includes(activeId)) {
-    const swapped = visibleTabs[visibleTabs.length - 1];
-    visibleTabs = [...visibleTabs.slice(0, -1), activeId];
-    overflowTabs = overflowTabs.map((id) => (id === activeId ? swapped : id));
-  }
   const compact = !railExpanded;
   const toggleRail = () => {
     const next = !railExpanded;
@@ -144,9 +125,9 @@ export default function App() {
             <span className="rail-label">{t("nav.home")}</span>
           </button>
         )}
-        {firstRunDone && visibleTabs.length > 0 && (
+        {firstRunDone && openProjects.length > 0 && (
           <div className="rail-tabs">
-            {visibleTabs.map((id) => {
+            {openProjects.map((id) => {
               const project =
                 projects.find((entry) => entry.id === id) ??
                 (currentProject?.id === id ? currentProject : null);
@@ -162,7 +143,11 @@ export default function App() {
                       if (currentProject?.id !== id) void openProject(id);
                     }}
                   >
-                    <LayoutGrid {...ICON} />
+                    {compact && (
+                      <span className="rail-glyph" aria-hidden="true">
+                        {(title.trim()[0] ?? "?").toUpperCase()}
+                      </span>
+                    )}
                     {project && (
                       <i
                         className={`dot ${tileStatus(project, allJobs)}`}
@@ -182,38 +167,6 @@ export default function App() {
                 </div>
               );
             })}
-          </div>
-        )}
-        {firstRunDone && overflowTabs.length > 0 && (
-          <div className="rail-tab-overflow" ref={tabsMenuRef}>
-            <button
-              aria-haspopup="menu"
-              aria-expanded={tabsMenuOpen}
-              title={t("nav.moreProjects", { n: overflowTabs.length })}
-              onClick={() => setTabsMenuOpen((open) => !open)}
-            >
-              <MoreHorizontal {...ICON} />
-              <span className="rail-label">
-                {t("nav.moreProjects", { n: overflowTabs.length })}
-              </span>
-            </button>
-            {tabsMenuOpen && (
-              <div className="menu-pop" role="menu">
-                {overflowTabs.map((id) => (
-                  <button
-                    key={id}
-                    role="menuitem"
-                    onClick={() => {
-                      setTabsMenuOpen(false);
-                      closeSettings();
-                      void openProject(id);
-                    }}
-                  >
-                    {projects.find((entry) => entry.id === id)?.title ?? id}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         )}
         <div className="rail-bottom">

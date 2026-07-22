@@ -3,7 +3,6 @@
   "home": "Home",
   "homeCloseHint": "back to your projects",
   "closeProjectAria": "Close {title}",
-  "moreProjects": "{n} more",
   "settings": "Settings",
   "collapse": "Collapse",
   "expandSidebar": "Expand the sidebar",

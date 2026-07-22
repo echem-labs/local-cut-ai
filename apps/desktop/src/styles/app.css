@@ -180,9 +180,7 @@ textarea {
  * shows on hover/focus so idle rows stay quiet. */
 
 /* The tab block shrinks and scrolls on short windows instead of shoving
- * the pinned bottom cluster off-screen (the visible cap makes this rare).
- * The "+N more" popover lives OUTSIDE this container — a scroll container
- * clips absolutely-positioned children, which would swallow the menu. */
+ * the pinned bottom cluster off-screen — any number of open projects fits. */
 .rail-tabs {
   display: flex;
   flex-direction: column;
@@ -207,12 +205,13 @@ textarea {
   white-space: nowrap;
 }
 
+/* Expanded rail: the dot IS the leading mark — centered in the same 15px
+ * column the other rows' icons occupy, so labels line up. */
 .rail-tab .dot {
-  position: absolute;
-  left: 20px;
-  top: 8px;
   width: 6px;
   height: 6px;
+  flex-shrink: 0;
+  margin: 0 4.5px;
   border-radius: 50%;
   background: var(--status-draft);
 }
@@ -257,7 +256,24 @@ textarea {
   background: var(--surface-2);
 }
 
-/* Compact rail: the ✕ overlays the icon's corner on hover. */
+/* Compact rail: the title's initial stands in for an icon (a generic glyph
+ * can't tell tabs apart), with the status dot on its corner. */
+.rail-glyph {
+  width: 15px;
+  text-align: center;
+  font-size: var(--text-xs);
+  font-weight: 650;
+  line-height: 1;
+}
+
+.rail.compact .rail-tab .dot {
+  position: absolute;
+  left: 20px;
+  top: 8px;
+  margin: 0;
+}
+
+/* Compact rail: the ✕ overlays the glyph's corner on hover. */
 .rail.compact .rail-tab > button:first-child {
   padding-right: var(--space-2);
 }
@@ -269,27 +285,6 @@ textarea {
   width: 14px;
   height: 14px;
   background: var(--surface-1);
-}
-
-.rail-tab-overflow {
-  position: relative;
-}
-
-.rail-tab-overflow > button {
-  width: 100%;
-}
-
-.rail-tab-overflow .menu-pop {
-  left: calc(100% + 4px);
-  top: 0;
-  max-width: 240px;
-}
-
-.rail-tab-overflow .menu-pop button {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
 }
 
 .rail .soon {
