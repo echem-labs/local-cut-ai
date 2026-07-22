@@ -144,40 +144,46 @@ export default function App() {
             <span className="rail-label">{t("nav.home")}</span>
           </button>
         )}
-        {firstRunDone &&
-          visibleTabs.map((id) => {
-            const project =
-              projects.find((entry) => entry.id === id) ??
-              (currentProject?.id === id ? currentProject : null);
-            const title = project?.title ?? id;
-            const active = currentProject?.id === id && !settingsOpen;
-            return (
-              <div key={id} className="rail-tab">
-                <button
-                  className={active ? "active" : ""}
-                  title={title}
-                  onClick={() => {
-                    closeSettings();
-                    if (currentProject?.id !== id) void openProject(id);
-                  }}
-                >
-                  <LayoutGrid {...ICON} />
-                  {project && (
-                    <i className={`dot ${tileStatus(project, allJobs)}`} aria-hidden="true" />
-                  )}
-                  <span className="rail-label">{title}</span>
-                </button>
-                <button
-                  className="rail-tab-close"
-                  title={t("nav.closeProjectAria", { title })}
-                  aria-label={t("nav.closeProjectAria", { title })}
-                  onClick={() => closeOpenProject(id)}
-                >
-                  <X size={12} strokeWidth={1.8} />
-                </button>
-              </div>
-            );
-          })}
+        {firstRunDone && visibleTabs.length > 0 && (
+          <div className="rail-tabs">
+            {visibleTabs.map((id) => {
+              const project =
+                projects.find((entry) => entry.id === id) ??
+                (currentProject?.id === id ? currentProject : null);
+              const title = project?.title ?? id;
+              const active = currentProject?.id === id && !settingsOpen;
+              return (
+                <div key={id} className="rail-tab">
+                  <button
+                    className={active ? "active" : ""}
+                    title={title}
+                    onClick={() => {
+                      closeSettings();
+                      if (currentProject?.id !== id) void openProject(id);
+                    }}
+                  >
+                    <LayoutGrid {...ICON} />
+                    {project && (
+                      <i
+                        className={`dot ${tileStatus(project, allJobs)}`}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="rail-label">{title}</span>
+                  </button>
+                  <button
+                    className="rail-tab-close"
+                    title={t("nav.closeProjectAria", { title })}
+                    aria-label={t("nav.closeProjectAria", { title })}
+                    onClick={() => closeOpenProject(id)}
+                  >
+                    <X size={12} strokeWidth={1.8} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {firstRunDone && overflowTabs.length > 0 && (
           <div className="rail-tab-overflow" ref={tabsMenuRef}>
             <button
