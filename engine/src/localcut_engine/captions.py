@@ -8,6 +8,8 @@ strong outline.
 
 from __future__ import annotations
 
+import difflib
+import re
 from dataclasses import dataclass
 
 MAX_CUE_WORDS = 5
@@ -28,6 +30,45 @@ class Cue:
     start: float
     end: float
     text: str
+
+
+def _norm(token: str) -> str:
+    return re.sub(r"[^a-z0-9']+", "", token.lower())
+
+
+def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
+    """Replace ASR word text with the narration's ground-truth tokens,
+    keeping the ASR timings. Free transcription mishears homophones
+    ("sun" → "son") and drops the script's punctuation/casing — but the
+    narration audio was synthesized FROM the script, so the script is the
+    truth and the audio only contributes timing."""
+    truth = text.split()
+    if not truth or not words:
+        return words
+    matcher = difflib.SequenceMatcher(
+        a=[_norm(w.text) for w in words], b=[_norm(t) for t in truth], autojunk=False
+    )
+    out: list[Word] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                out.append(Word(text=truth[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end))
+        elif tag == "replace":
+            # Misheard span: spread the true tokens over its time window.
+            start, end = words[i1].start, words[i2 - 1].end
+            step = (end - start) / (j2 - j1)
+            for k in range(j2 - j1):
+                out.append(
+                    Word(text=truth[j1 + k], start=start + k * step, end=start + (k + 1) * step)
+                )
+        elif tag == "insert":
+            # Tokens the ASR never emitted: pin them at the boundary so cue
+            # grouping keeps the sentence intact.
+            anchor = out[-1].end if out else words[0].start
+            for k in range(j2 - j1):
+                out.append(Word(text=truth[j1 + k], start=anchor, end=anchor))
+        # "delete": the ASR hallucinated a word the script doesn't have — drop it.
+    return out
 
 
 def words_to_cues(words: list[Word]) -> list[Cue]:

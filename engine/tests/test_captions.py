@@ -9,6 +9,7 @@ from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.captions import (
     Cue,
     Word,
+    anchor_words_to_text,
     cues_to_srt,
     parse_srt,
     srt_to_ass,
@@ -26,6 +27,35 @@ KOKORO_PRESENT = (MODELS_DIR / "tts" / "kokoro-v1.0.onnx").exists() and (
 
 def w(text: str, start: float, end: float) -> Word:
     return Word(text=text, start=start, end=end)
+
+
+def test_anchor_fixes_homophones_and_keeps_timing():
+    asr = [w("is", 0.0, 0.2), w("our", 0.2, 0.4), w("son.", 0.4, 0.7)]
+    out = anchor_words_to_text(asr, "is our sun.")
+    assert [word.text for word in out] == ["is", "our", "sun."]
+    assert (out[2].start, out[2].end) == (0.4, 0.7)
+
+
+def test_anchor_restores_script_punctuation_and_casing():
+    asr = [w("the", 0.0, 0.1), w("sun", 0.1, 0.4), w("burns", 0.4, 0.8)]
+    out = anchor_words_to_text(asr, "The Sun burns!")
+    assert [word.text for word in out] == ["The", "Sun", "burns!"]
+
+
+def test_anchor_drops_hallucinated_words_and_inserts_missed_ones():
+    # ASR added "uh" and never heard "quietly".
+    asr = [w("the", 0.0, 0.1), w("uh", 0.1, 0.2), w("tide", 0.2, 0.5), w("turns", 0.5, 0.9)]
+    out = anchor_words_to_text(asr, "the tide turns quietly")
+    assert [word.text for word in out] == ["the", "tide", "turns", "quietly"]
+    # Inserted word pins to the preceding boundary; nothing goes backwards.
+    assert out[-1].start == out[-2].end
+    assert all(b.start >= a.start for a, b in zip(out, out[1:]))
+
+
+def test_anchor_without_truth_or_words_is_identity():
+    asr = [w("hello", 0.0, 0.5)]
+    assert anchor_words_to_text(asr, "") == asr
+    assert anchor_words_to_text([], "hello") == []
 
 
 def test_cues_break_on_punctuation_and_word_count():
