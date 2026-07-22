@@ -194,14 +194,6 @@ export default function App() {
             </button>
           </Tip>
           <button
-            onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
-            title={t("nav.toggleThemeTitle")}
-            aria-label={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
-          >
-            {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-            <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
-          </button>
-          <button
             className={settingsOpen ? "active" : ""}
             disabled={!firstRunDone}
             title={t("nav.settings")}
@@ -209,6 +201,14 @@ export default function App() {
           >
             <SettingsIcon {...ICON} />
             <span className="rail-label">{t("nav.settings")}</span>
+          </button>
+          <button
+            onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
+            title={t("nav.toggleThemeTitle")}
+            aria-label={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
+          >
+            {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
+            <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
           </button>
           <HelpMenu compact={compact} />
           <button
