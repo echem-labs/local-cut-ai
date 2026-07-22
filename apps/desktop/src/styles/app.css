@@ -178,6 +178,20 @@ textarea {
 /* Open-project tabs: one rail entry per open project, VS Code-style. The
  * main button fills the row; the close ✕ floats on its right edge and only
  * shows on hover/focus so idle rows stay quiet. */
+
+/* The tab block shrinks and scrolls on short windows instead of shoving
+ * the pinned bottom cluster off-screen (the visible cap makes this rare).
+ * The "+N more" popover lives OUTSIDE this container — a scroll container
+ * clips absolutely-positioned children, which would swallow the menu. */
+.rail-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
 .rail-tab {
   position: relative;
 }
