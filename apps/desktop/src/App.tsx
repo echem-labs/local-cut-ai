@@ -48,6 +48,16 @@ export default function App() {
     void connect();
   }, [connect]);
 
+  // The tab list scrolls; keep the active tab visible in it (the removed
+  // overflow cap used to guarantee this by swapping it into the window).
+  const activeProjectId = currentProject?.id ?? null;
+  useEffect(() => {
+    if (!activeProjectId) return;
+    document
+      .querySelector(".rail-tabs button.active")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeProjectId]);
+
   // Mirrors the resolved theme (Settings toggle and OS changes included).
   const [theme, setTheme] = useState<"dark" | "light">(resolvedTheme);
   useEffect(() => {
@@ -145,15 +155,14 @@ export default function App() {
                   >
                     {compact && (
                       <span className="rail-glyph" aria-hidden="true">
-                        {(title.trim()[0] ?? "?").toUpperCase()}
+                        {/* spread: [0] would split a surrogate pair (emoji titles) */}
+                        {([...title.trim()][0] ?? "?").toUpperCase()}
                       </span>
                     )}
-                    {project && (
-                      <i
-                        className={`dot ${tileStatus(project, allJobs)}`}
-                        aria-hidden="true"
-                      />
-                    )}
+                    <i
+                      className={`dot ${project ? tileStatus(project, allJobs) : "draft"}`}
+                      aria-hidden="true"
+                    />
                     <span className="rail-label">{title}</span>
                   </button>
                   <button

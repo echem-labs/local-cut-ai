@@ -7,11 +7,11 @@ import { Dropdown } from "./Dropdown";
 /** Sentinel option value: never a real duration (bounds start at 5). */
 const CUSTOM = -1;
 
+/** Locale-neutral m:ss — unit words live in the catalog, not here. */
 export function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
-  return rest ? `${minutes}:${String(rest).padStart(2, "0")}` : `${minutes}min`;
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
 
 /** "210", "3:30", "3.5min" → whole seconds clamped to the engine bounds;

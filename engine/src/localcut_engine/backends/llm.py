@@ -21,7 +21,8 @@ screenplay with this exact shape (no markdown fences, JSON only):
  "style": {"visual": str, "voice": str, "music": str},
  "scenes": [{"id": "s1", "duration_s": float, "narration": str, "visual": str,
              "motion": str, "onscreen_text": str|null}]}
-Scenes are 3-8 seconds each. Narration is spoken aloud; visual is an image-generation prompt; \
+Scenes are 3-8 seconds each for short videos; longer targets may use longer scenes, but never \
+exceed 60 seconds per scene. Narration is spoken aloud; visual is an image-generation prompt; \
 motion is a short camera direction. The first scene must hook the viewer instantly."""
 
 _METADATA_PROMPT = """You are a short-form video publisher. Given a video's script, produce a \

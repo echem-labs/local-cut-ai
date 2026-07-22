@@ -194,11 +194,29 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             dirty = apply_patch(graph, ops)
+            self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
         return dirty
+
+    @staticmethod
+    def _sync_caption_texts(graph: StoryGraph) -> None:
+        """Re-derive the captions node's ground-truth texts from the narration
+        nodes. expand_screenplay writes them from the screenplay, but narration
+        text also changes through patches (Inspector edits, LLM edit plans) —
+        without this, captions would anchor the new audio to the old words."""
+        captions = graph.nodes.get("captions")
+        if captions is None:
+            return
+        texts = {
+            node_id.removesuffix(".narration"): str(node.params.get("text", ""))
+            for node_id, node in graph.nodes.items()
+            if node_id.endswith(".narration") and node.params.get("text")
+        }
+        if texts and captions.params.get("texts") != texts:
+            captions.params["texts"] = texts  # hash change → captions re-render
 
     def add_asset(self, project_id: str, filename: str, data: bytes, voice: bool = False) -> dict:
         """Import a user asset as a graph node. The file lands in generated/

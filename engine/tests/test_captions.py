@@ -47,9 +47,28 @@ def test_anchor_drops_hallucinated_words_and_inserts_missed_ones():
     asr = [w("the", 0.0, 0.1), w("uh", 0.1, 0.2), w("tide", 0.2, 0.5), w("turns", 0.5, 0.9)]
     out = anchor_words_to_text(asr, "the tide turns quietly")
     assert [word.text for word in out] == ["the", "tide", "turns", "quietly"]
-    # Inserted word pins to the preceding boundary; nothing goes backwards.
+    # Inserted word starts at the preceding boundary; nothing goes backwards
+    # and every word has real width (zero-width cues never display).
     assert out[-1].start == out[-2].end
     assert all(b.start >= a.start for a, b in zip(out, out[1:]))
+    assert all(word.end > word.start for word in out)
+
+
+def test_anchor_inserted_sentence_still_renders_as_a_cue():
+    # The missed words follow a sentence end, so they flush into their own
+    # cue — which must have nonzero duration or SRT consumers drop it.
+    asr = [w("stay", 0.0, 0.3), w("tuned.", 0.3, 0.7)]
+    out = anchor_words_to_text(asr, "Stay tuned. More soon.")
+    cues = words_to_cues(out)
+    assert [cue.text for cue in cues] == ["Stay tuned.", "More soon."]
+    assert all(cue.end > cue.start for cue in cues)
+
+
+def test_anchor_skips_unalignable_text():
+    # Mostly punctuation/non-Latin tokens normalize to nothing — anchoring
+    # would misplace everything, so the transcription stands.
+    asr = [w("wait", 0.0, 0.4), w("stop", 0.4, 0.8)]
+    assert anchor_words_to_text(asr, "— … —") == asr
 
 
 def test_anchor_without_truth_or_words_is_identity():

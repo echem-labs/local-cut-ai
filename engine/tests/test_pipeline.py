@@ -530,6 +530,28 @@ async def test_meta_duration_prefers_assembled_timeline(rig):
     assert service.scene_board(project.id)["assembled_durations"] == {"s1": 41.5}
 
 
+async def test_narration_edit_syncs_caption_texts(rig):
+    """Captions anchor to the narration text — a patched narration must
+    refresh the captions node's ground truth, or the exported captions
+    would verbatim contradict the re-rendered audio."""
+    store, queue, service = rig
+    project = service.create_from_prompt("the secret life of tide pools", target_duration_s=24)
+    await wait_for(lambda: bool(service.scene_board(project.id)["scenes"]))
+
+    service.patch(
+        project.id,
+        [
+            PatchOp(
+                op="set_params",
+                node_id="s1.narration",
+                params={"text": "Our sun is a star.", "voice": "narrator"},
+            )
+        ],
+    )
+    graph = store.load_graph(project.id)
+    assert graph.nodes["captions"].params["texts"]["s1"] == "Our sun is a star."
+
+
 async def test_replan_supersedes_stale_queued_jobs(tmp_path):
     """A seed bump re-plans a node under a new hash; the previously queued
     job for that node is garbage — cancel it instead of letting it render

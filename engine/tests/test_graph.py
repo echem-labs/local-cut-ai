@@ -105,6 +105,16 @@ def test_node_ids_are_constrained():
         Node(id="a" * 200, kind=NodeKind.CLIP)
 
 
+def test_mock_screenplay_scenes_validate_across_duration_range():
+    """The API accepts 5–1200s; every target in range must yield scenes the
+    schema accepts (duration_s ≤ 60) — the 10-scene cap alone would not."""
+    for target in (5, 24, 60, 600, 601, 900, 1200):
+        screenplay = mock_screenplay("solar flares", target, "9:16", seed=0)
+        assert all(scene.duration_s <= 60 for scene in screenplay.scenes)
+        total = sum(scene.duration_s for scene in screenplay.scenes)
+        assert abs(total - target) < len(screenplay.scenes)  # rounding only
+
+
 def test_template_expansion_builds_full_pipeline():
     g = prompt_template_graph("why octopuses have three hearts", target_duration_s=40)
     screenplay = mock_screenplay("why octopuses have three hearts", 40, "9:16", seed=0)

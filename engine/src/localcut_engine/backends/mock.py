@@ -10,6 +10,7 @@ from __future__ import annotations
 import colorsys
 import hashlib
 import json
+import math
 import struct
 import zlib
 from pathlib import Path
@@ -82,7 +83,9 @@ _NARRATION_BEATS = (
 
 
 def mock_screenplay(prompt: str, target_duration_s: int, aspect: str, seed: int) -> Screenplay:
-    scene_count = max(2, min(10, target_duration_s // 8))
+    # ~8s scenes capped at 10 for short videos, but never fewer scenes than
+    # the schema's 60s-per-scene ceiling requires (a 1200s target needs ≥20).
+    scene_count = max(2, min(10, target_duration_s // 8), math.ceil(target_duration_s / 60))
     scenes = [
         Scene(
             id=f"s{i + 1}",

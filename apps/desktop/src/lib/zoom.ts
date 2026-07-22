@@ -11,42 +11,55 @@ const ZOOM_KEY = "localcut.uiZoom";
 export const ZOOM_EVENT = "localcut-zoomchange";
 export const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.5] as const;
 
-let baseline = 1;
-let userZoom = readStored();
+const nearestStep = (value: number): number =>
+  ZOOM_STEPS.reduce((best, step) => (Math.abs(step - value) < Math.abs(best - value) ? step : best));
 
 function readStored(): number {
-  const value = Number.parseFloat(localStorage.getItem(ZOOM_KEY) ?? "1");
-  return Number.isFinite(value) && value >= ZOOM_STEPS[0] && value <= ZOOM_STEPS[ZOOM_STEPS.length - 1]
-    ? value
-    : 1;
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(ZOOM_KEY);
+  } catch {
+    /* storage disabled — fall through to the default */
+  }
+  const value = Number.parseFloat(raw ?? "1");
+  // Snap to the scale so the Settings control always has a selected state.
+  return Number.isFinite(value) ? nearestStep(value) : 1;
 }
+
+let baseline = 1;
+let userZoom = readStored();
 
 export function userZoomFactor(): number {
   return userZoom;
 }
 
 function apply(): void {
-  window.localcut.setUiZoom(baseline * userZoom);
+  // Optional-chained like theme.ts: the bridge is absent outside Electron
+  // (e.g. vite serving a plain browser), where the browser owns zoom.
+  window.localcut?.setUiZoom(baseline * userZoom);
   window.dispatchEvent(new Event(ZOOM_EVENT));
 }
 
 export function setUserZoom(factor: number): void {
   userZoom = factor;
-  localStorage.setItem(ZOOM_KEY, String(factor));
+  try {
+    localStorage.setItem(ZOOM_KEY, String(factor));
+  } catch {
+    /* storage disabled — the zoom still applies for this session */
+  }
   apply();
 }
 
 function stepZoom(direction: 1 | -1): void {
-  // Nearest step, then move one — so an off-scale stored value still lands
-  // back on the scale after a single keypress.
-  const nearest = ZOOM_STEPS.reduce((best, step) =>
-    Math.abs(step - userZoom) < Math.abs(best - userZoom) ? step : best,
+  const steps: readonly number[] = ZOOM_STEPS;
+  const index = Math.min(
+    steps.length - 1,
+    Math.max(0, steps.indexOf(nearestStep(userZoom)) + direction),
   );
-  const index = Math.min(ZOOM_STEPS.length - 1, Math.max(0, ZOOM_STEPS.indexOf(nearest) + direction));
   setUserZoom(ZOOM_STEPS[index]);
 }
 
-/** Fetch the system baseline, apply the combined zoom, and install the
+/** Apply the persisted zoom, fetch the system baseline, and install the
  * Ctrl +/− / Ctrl 0 shortcuts. Call once at renderer startup. */
 export function initZoom(): void {
   window.addEventListener("keydown", (event) => {
@@ -57,8 +70,11 @@ export function initZoom(): void {
     else return;
     event.preventDefault();
   });
+  // The user half applies synchronously so first paint isn't at the wrong
+  // zoom while the baseline IPC resolves.
+  apply();
   void window.localcut
-    .getSystemTextScale()
+    ?.getSystemTextScale()
     .then((scale) => {
       baseline = scale;
     })
