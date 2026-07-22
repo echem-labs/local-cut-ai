@@ -503,6 +503,7 @@ export function Home() {
               <>
                 <input
                   placeholder={defaults.voice.trim() || t("home.voicePlaceholder")}
+                  title={defaults.voice.trim() || t("home.voicePlaceholder")}
                   value={voice}
                   onChange={(event) => setHomeDraft({ voice: event.target.value })}
                   aria-label={t("home.voiceAria")}

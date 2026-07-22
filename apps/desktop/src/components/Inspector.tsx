@@ -333,6 +333,7 @@ export function Inspector() {
                 value={voice}
                 disabled={pinned}
                 placeholder={t("inspector.voicePlaceholder")}
+                title={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
             </div>
