@@ -437,7 +437,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         prompt: str = Field(min_length=1, max_length=4000)
         # Bounds mirror the screenplay schema (scene duration gt=0 le=60):
         # values outside them would only fail later as opaque job errors.
-        target_duration_s: int = Field(default=60, ge=5, le=600)
+        target_duration_s: int = Field(default=60, ge=5, le=1200)
         aspect: str = "9:16"
         style_preset: str = "cinematic"
         mode: Literal["prompt", "beginner"] = "prompt"
@@ -472,7 +472,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         text: str | None = Field(default=None, max_length=4000)
         voice: str = "narrator"
         aspect: str = "16:9"
-        target_duration_s: int = Field(default=60, ge=5, le=600)
+        target_duration_s: int = Field(default=60, ge=5, le=1200)
         style_preset: str = "cinematic"
         # Single-clip generator: local I2V tops out at short takes.
         motion: str = Field(default="", max_length=500)

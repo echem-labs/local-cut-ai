@@ -748,6 +748,18 @@ textarea {
   display: inline-flex;
 }
 
+/* The DurationPicker's custom-entry input takes the chip's exact slot. */
+.duration-input {
+  width: 110px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s);
+  padding: var(--space-1) var(--space-3);
+  min-height: 30px;
+  font-size: var(--text-xs);
+}
+
 .dropdown-trigger {
   display: inline-flex;
   align-items: center;

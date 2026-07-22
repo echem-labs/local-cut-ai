@@ -295,6 +295,10 @@ async def test_create_project_validates_aspect_and_duration(client):
     assert bad_aspect.status_code == 422
     bad_duration = await client.post("/projects", json={"prompt": "x", "target_duration_s": 0})
     assert bad_duration.status_code == 422
+    over_cap = await client.post("/projects", json={"prompt": "x", "target_duration_s": 1201})
+    assert over_cap.status_code == 422
+    at_cap = await client.post("/projects", json={"prompt": "x", "target_duration_s": 1200})
+    assert at_cap.status_code == 200
 
 
 async def test_patch_input_errors_are_422_not_500(client):

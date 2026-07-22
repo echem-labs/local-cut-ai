@@ -1,5 +1,9 @@
 {
   "d30": "30s",
   "d60": "60s",
-  "d120": "2min"
+  "d120": "2min",
+  "custom": "Custom…",
+  "customTag": "custom",
+  "customPlaceholder": "e.g. 3:30 or 210",
+  "customAria": "Custom duration in minutes:seconds or seconds"
 }

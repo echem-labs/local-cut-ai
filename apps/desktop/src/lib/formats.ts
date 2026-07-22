@@ -14,3 +14,7 @@ export const DURATIONS = [
   { key: "d60", value: 60, icon: Clock },
   { key: "d120", value: 120, icon: Clock },
 ] as const;
+
+/** The engine's target_duration_s bounds (api/app.py) — custom entries
+ * clamp to these so the UI can never submit a value the API rejects. */
+export const DURATION_BOUNDS = { min: 5, max: 1200 } as const;
