@@ -1,5 +1,5 @@
 import { Clock, Timer } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { DURATION_BOUNDS, DURATIONS } from "../lib/formats";
 import { Dropdown } from "./Dropdown";
@@ -52,20 +52,27 @@ export function DurationPicker({
   // once the commit that re-rendered it has actually landed.
   const rootRef = useRef<HTMLSpanElement>(null);
   const restoreFocus = useRef(false);
+  // Per-instance: Home and Settings each render a picker, and Settings is an
+  // overlay that never unmounts Home — a fixed id would have both inputs
+  // describing the first one's hint.
+  const hintId = useId();
   useEffect(() => {
     if (editing || !restoreFocus.current) return;
     restoreFocus.current = false;
     rootRef.current?.querySelector("button")?.focus();
   }, [editing]);
-  const close = () => {
-    restoreFocus.current = true;
+  // Only the KEYBOARD closes restore focus. On blur the user has already
+  // chosen where focus goes — pulling it back to the chip would mean their
+  // next keystrokes land on a button instead of the field they clicked into.
+  const close = (restore = false) => {
+    restoreFocus.current = restore;
     setEditing(false);
     setInvalid(false);
   };
   const isPreset = DURATIONS.some((entry) => entry.value === value);
 
   if (editing) {
-    const commit = () => {
+    const commit = (restore = false) => {
       const parsed = parseDuration(draft);
       // Unparseable input keeps the editor open and says so, rather than
       // silently reverting to the previous value.
@@ -74,7 +81,7 @@ export function DurationPicker({
         return;
       }
       onChange(parsed);
-      close();
+      close(restore);
     };
     return (
       <span className="duration-picker" ref={rootRef}>
@@ -85,7 +92,7 @@ export function DurationPicker({
             value={draft}
             placeholder={t("durations.customPlaceholder")}
             aria-label={t("durations.customAria")}
-            aria-describedby="duration-hint"
+            aria-describedby={hintId}
             aria-invalid={invalid}
             onChange={(event) => {
               setDraft(event.target.value);
@@ -93,14 +100,14 @@ export function DurationPicker({
             }}
             onBlur={() => (parseDuration(draft) === null ? close() : commit())}
             onKeyDown={(event) => {
-              if (event.key === "Enter") commit();
-              if (event.key === "Escape") close();
+              if (event.key === "Enter") commit(true);
+              if (event.key === "Escape") close(true);
             }}
           />
           {/* The chip is prefilled, so the placeholder never shows — a
               persistent hint above the input carries the accepted formats.
               It is the input's accessible description, not decoration. */}
-          <span className="tip duration-tip" id="duration-hint" role="note">
+          <span className="tip duration-tip" id={hintId} role="note">
             {t(invalid ? "durations.customInvalid" : "durations.customHint")}
           </span>
         </span>

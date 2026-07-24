@@ -5,8 +5,8 @@
  * keys over its authenticated API and holds them in memory only.
  */
 import { app, safeStorage } from "electron";
-import fs from "node:fs";
 import path from "node:path";
+import { readJson, writeJsonAtomic } from "./store-file";
 
 export const PROVIDER_KEY_IDS = ["anthropic", "openai", "gemini", "fal"] as const;
 export type ProviderKeyId = (typeof PROVIDER_KEY_IDS)[number];
@@ -50,17 +50,13 @@ export class ProviderKeyStore {
   }
 
   private read(): StoreFile {
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.file, "utf8")) as StoreFile;
-      return { encrypted: Boolean(raw.encrypted), keys: raw.keys ?? {} };
-    } catch {
-      return { encrypted: safeStorage.isEncryptionAvailable(), keys: {} };
-    }
+    const raw = readJson<StoreFile>(this.file);
+    if (!raw) return { encrypted: safeStorage.isEncryptionAvailable(), keys: {} };
+    return { encrypted: Boolean(raw.encrypted), keys: raw.keys ?? {} };
   }
 
   private write(data: StoreFile): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify(data, null, 2), { mode: 0o600 });
+    writeJsonAtomic(this.file, data);
   }
 
   /** Decrypted keys, for pushing to the engine. Never crosses IPC. */

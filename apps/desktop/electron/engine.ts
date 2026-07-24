@@ -46,11 +46,21 @@ export class EngineManager {
     // LOCALCUT_TOKEN), never as a --token argv flag: a command line is
     // world-readable to other local processes (ps, /proc/<pid>/cmdline, Task
     // Manager) for the engine's whole lifetime.
-    const env = { ...process.env, LOCALCUT_TOKEN: token };
+    // LOCALCUT_HOST is pinned, not merely inherited: EngineConfig maps every
+    // field to LOCALCUT_<FIELD>, so a stray `export LOCALCUT_HOST=0.0.0.0`
+    // left over from following the remote-engine docs would put this app's
+    // PRIVATE engine on the LAN — while the shell, which only ever dials
+    // 127.0.0.1, reports it as never becoming healthy.
+    const env = { ...process.env, LOCALCUT_TOKEN: token, LOCALCUT_HOST: "127.0.0.1" };
     const args = ["serve", "--port", port, "--backend", backend];
     if (custom) {
-      const [cmd, ...prefix] = custom.split(" ");
-      return { cmd, args: [...prefix, ...args], env, connection };
+      // Quote-aware: an interpreter or engine path with a space in it is the
+      // norm on Windows ("C:\Program Files\...") and macOS ("/Users/Jane Doe").
+      const tokens = (custom.match(/"[^"]*"|\S+/g) ?? []).map((part) =>
+        part.replace(/^"|"$/g, ""),
+      );
+      const [cmd, ...prefix] = tokens;
+      if (cmd) return { cmd, args: [...prefix, ...args], env, connection };
     }
     if (app.isPackaged) {
       const exe = process.platform === "win32" ? "localcut-engine.exe" : "localcut-engine";

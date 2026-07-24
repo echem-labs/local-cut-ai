@@ -111,20 +111,27 @@ export function engineRequest(
           : {}),
       },
       (response) => {
-        let body = "";
-        response.setEncoding("utf8");
-        response.on("data", (chunk: string) => {
+        // Buffers, not a decoded string: the cap is in BYTES, and a utf8
+        // string's .length counts UTF-16 code units — 8 Mi of those is up to
+        // 24 MB off the wire for 3-byte characters. Decoding once at the end
+        // also can't split a multi-byte character across chunks.
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
           // Cap the body: setTimeout below is an INACTIVITY timer, so a
           // server that trickles bytes forever never trips it. This call is
           // awaited before the first window opens, so an unbounded response
           // means the app grows until it is OOM-killed, showing nothing.
-          if (body.length + chunk.length > MAX_RESPONSE_BYTES) {
+          if (size + chunk.length > MAX_RESPONSE_BYTES) {
             request.destroy(new Error("engine response too large"));
             return;
           }
-          body += chunk;
+          chunks.push(chunk);
+          size += chunk.length;
         });
-        response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+        response.on("end", () =>
+          resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
+        );
       },
     );
     request.on("error", reject);
