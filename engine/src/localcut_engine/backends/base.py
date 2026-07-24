@@ -5,6 +5,7 @@ wrapped behind this from day one so a future in-house backend is a drop-in.
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -25,25 +26,51 @@ class GenerationError(RuntimeError):
 class ServiceProbe:
     """TTL-cached liveness of a companion server (Ollama, ComfyUI), so a
     backend can decline kinds its server cannot currently serve and let the
-    chain's fallbacks catch them. supports() hooks are sync, so the probe
-    blocks — the timeout stays tight (a down localhost refuses instantly)
-    and the verdict is cached for the TTL."""
+    chain's fallbacks catch them.
+
+    supports() hooks are sync and run ON THE EVENT LOOP (the scheduler and
+    the API both call BackendRegistry.resolve), so refreshes happen on a
+    worker thread and available() answers from cache. A blocking probe here
+    freezes the whole engine every TTL when the server is unreachable —
+    dropped SYNs burn the full timeout, and a hostname whose DNS is down
+    stalls in getaddrinfo for far longer than any timeout we pass.
+
+    The very first answer is probed synchronously: that call lands during
+    startup, and guessing "down" there would route real work to the mock
+    backend and write placeholder artifacts into a real project."""
 
     def __init__(self, url: str, timeout_s: float = 0.75, ttl_s: float = 15.0) -> None:
         self.url = url
         self.timeout_s = timeout_s
         self.ttl_s = ttl_s
-        self._checked_at = -ttl_s  # first call always probes
+        self._checked_at: float | None = None
         self._alive = False
+        self._lock = threading.Lock()
+        self._refreshing = False
+
+    def _refresh(self) -> None:
+        try:
+            alive = httpx.get(self.url, timeout=self.timeout_s).status_code < 500
+        except httpx.HTTPError:
+            alive = False
+        except Exception:  # a resolver/socket error the client didn't wrap
+            alive = False
+        with self._lock:
+            self._alive = alive
+            self._checked_at = time.monotonic()
+            self._refreshing = False
 
     def available(self) -> bool:
-        now = time.monotonic()
-        if now - self._checked_at >= self.ttl_s:
-            self._checked_at = now
-            try:
-                self._alive = httpx.get(self.url, timeout=self.timeout_s).status_code < 500
-            except httpx.HTTPError:
-                self._alive = False
+        with self._lock:
+            first = self._checked_at is None
+            fresh = not first and time.monotonic() - self._checked_at < self.ttl_s
+            if fresh or self._refreshing:
+                return self._alive
+            self._refreshing = True
+        if first:
+            self._refresh()  # startup: the first verdict must be real
+        else:
+            threading.Thread(target=self._refresh, daemon=True).start()
         return self._alive
 
 

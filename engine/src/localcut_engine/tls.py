@@ -10,6 +10,7 @@ it (and every paired frontend must re-pair, which is the point).
 from __future__ import annotations
 
 import ipaddress
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -68,14 +69,21 @@ def ensure_certificate(tls_dir: Path, hosts: list[str]) -> tuple[Path, Path, str
         .add_extension(x509.SubjectAlternativeName(names), critical=False)
         .sign(key, hashes.SHA256())
     )
-    key_path.write_bytes(
-        key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
+    # Opened 0600 rather than written-then-chmod'd: on a shared GPU box the
+    # write-then-chmod form leaves the private key world-readable in between
+    # (and permanently so if the process dies there). The client pins this
+    # exact certificate, so whoever steals the key can impersonate the
+    # engine past the pin.
+    key_fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(key_fd, "wb") as key_file:
+        key_file.write(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
         )
-    )
-    key_path.chmod(0o600)
+    key_path.chmod(0o600)  # tighten an existing file the open() reused
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
 
     loaded = x509.load_pem_x509_certificate(cert_path.read_bytes())

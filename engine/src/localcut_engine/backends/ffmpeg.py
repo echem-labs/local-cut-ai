@@ -307,9 +307,15 @@ class FFmpegBackend(ExecutionBackend):
             p = Path(src)
             return p if p.is_absolute() else ctx.output_dir / p
 
-        segments = timeline["video"]
-        if not segments:
-            raise GenerationError("timeline has no video segments")
+        # A placeholder timeline (the mock backend renders one whenever the
+        # managed ffmpeg is still downloading) has no "video" key at all —
+        # classify it like the OTIO converter does instead of letting a bare
+        # KeyError escape as an unhandled traceback.
+        segments = timeline.get("video")
+        if not isinstance(segments, list) or not segments:
+            raise GenerationError(
+                "timeline artifact is not a rendered EDL — regenerate the timeline"
+            )
         for segment in segments:
             sources = segment.get("srcs") or [segment.get("src")]
             segment["srcs"] = [resolve(src) for src in sources if src]
@@ -424,10 +430,15 @@ class FFmpegBackend(ExecutionBackend):
         if spec.params.get("captions", "burn") != "burn":
             return None
         srt = ctx.input_artifacts.get(CAPTIONS_PORT)
-        if srt is None or not srt.exists() or not srt.read_text().strip():
+        # encoding="utf-8" on both hops: the aligner writes the SRT as UTF-8
+        # (align.py says so explicitly), and libass reads the ASS as UTF-8.
+        # Falling back to the platform codepage makes any accented or CJK
+        # caption either kill the export outright on Windows or burn in as
+        # mojibake.
+        if srt is None or not srt.exists() or not srt.read_text(encoding="utf-8").strip():
             return None
         ass = work / "captions.ass"
-        ass.write_text(srt_to_ass(srt.read_text()))
+        ass.write_text(srt_to_ass(srt.read_text(encoding="utf-8")), encoding="utf-8")
         return ass
 
     async def _join_segments(
@@ -623,7 +634,12 @@ class FFmpegBackend(ExecutionBackend):
                 # ':'/',' in the temp dir path (legal on Linux) or a Windows
                 # backslash/drive-colon would otherwise be parsed as a drawtext
                 # option/filter separator and break -vf.
-                f",drawtext=textfile='{_filter_path(textfile)}':font=Sans:fontsize={height // 14}"
+                # expansion=none: titles are user/LLM text, and drawtext's
+                # default expansion evaluates %{...} — "SAVE 100%{TODAY}"
+                # fails the whole export, and "%{pts}" silently burns a
+                # running timestamp in place of the words the user typed.
+                f",drawtext=expansion=none:textfile='{_filter_path(textfile)}'"
+                f":font=Sans:fontsize={height // 14}"
                 f":fontcolor=white:borderw={max(2, height // 270)}"
                 ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
             )

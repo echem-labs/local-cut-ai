@@ -38,6 +38,17 @@ class ChecksumMismatch(DownloadError):
     pass
 
 
+def resolve_dest(models_dir: Path, dest: str) -> Path:
+    """Join a manifest-supplied dest onto the models dir, refusing anything
+    that escapes it. Manifests can be user-supplied (a custom catalog
+    replaces the bundled one wholesale), so every path built from `dest` —
+    read, write or DELETE — has to go through here."""
+    path = models_dir / dest
+    if not path.resolve().is_relative_to(models_dir.resolve()):
+        raise DownloadError(f"destination escapes models dir: {dest}")
+    return path
+
+
 def _sha256_of(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
@@ -58,11 +69,7 @@ async def download_file(
     known) are skipped. A `<dest>.part` file is resumed with a Range
     request; servers that ignore Range restart cleanly.
     """
-    dest = models_dir / file.dest
-    # Containment check must hold for relative and absolute models_dir alike:
-    # manifests can be user-supplied, so dest must never escape.
-    if not dest.resolve().is_relative_to(models_dir.resolve()):
-        raise DownloadError(f"destination escapes models dir: {file.dest}")
+    dest = resolve_dest(models_dir, file.dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     if dest.exists():

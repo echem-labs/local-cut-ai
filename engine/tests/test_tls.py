@@ -67,3 +67,15 @@ def test_pairing_code_round_trips():
         "token": "tok123",
         "fingerprint": "ab" * 32,
     }
+
+
+def test_private_key_is_never_world_readable(tmp_path):
+    """The client pins this exact certificate, so a stolen key defeats the
+    pin — the file must not exist, even briefly, with loose permissions."""
+    import stat
+
+    from localcut_engine.tls import ensure_certificate
+
+    _cert_path, key_path, _fingerprint = ensure_certificate(tmp_path, ["127.0.0.1"])
+    mode = stat.S_IMODE(key_path.stat().st_mode)
+    assert mode & 0o077 == 0, f"key is group/world accessible: {oct(mode)}"

@@ -231,7 +231,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     def token_ok(presented: str | None) -> bool:
         # Constant-time: the engine supports non-localhost binds, where a
         # timing oracle on an early-exit compare would leak the token.
-        return presented is not None and secrets.compare_digest(presented, config.token)
+        # Compared as BYTES: compare_digest raises TypeError on a str holding
+        # any non-ASCII character, so `?token=ü` would leave auth as an
+        # unhandled 500 with a traceback per request instead of a 401.
+        if presented is None:
+            return False
+        return secrets.compare_digest(presented.encode("utf-8"), config.token.encode("utf-8"))
 
     async def auth(
         authorization: Annotated[str | None, Header()] = None,

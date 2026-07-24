@@ -298,12 +298,15 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             graph.edges = [e for e in graph.edges if stale_take not in (e.src, e.dst)]
             graph.nodes.pop(stale_take)
 
-        _ensure_node(
-            graph,
-            narr_id,
-            NodeKind.NARRATION,
-            params={"text": scene.narration, "voice": screenplay.style.voice},
-        )
+        # Speech speed has no screenplay source — it exists only because the
+        # user set it. Like seeds, pins and timeline edits, it has to survive
+        # a re-expansion; otherwise the node hash reverts to the pre-edit
+        # value, the cached pre-edit audio is served, and the Inspector
+        # quietly shows 1.0 again.
+        narration_params: dict = {"text": scene.narration, "voice": screenplay.style.voice}
+        if (existing := graph.nodes.get(narr_id)) and "speed" in existing.params:
+            narration_params["speed"] = existing.params["speed"]
+        _ensure_node(graph, narr_id, NodeKind.NARRATION, params=narration_params)
         _ensure_edge(graph, "script", kf_id)
         _ensure_edge(graph, "script", narr_id)
         _ensure_edge(graph, narr_id, "timeline", port=f"{scene.id}{SCENE_AUDIO_SUFFIX}")
