@@ -328,3 +328,15 @@ def test_overlay_non_text_value_is_dropped():
     ops, warnings = compile_edits(graph, plan)
     assert ops == []
     assert any("on-screen text" in w for w in warnings)
+
+
+def test_non_scalar_prose_is_rejected_not_stringified():
+    """A model that returns an object for narration text must not have its
+    Python repr spoken aloud (and, via caption anchoring, burned on screen)."""
+    from localcut_engine.graph.editor import _DROP, _clean_text
+
+    warnings: list[str] = []
+    assert _clean_text({"a": 1}, 500, warnings, "narration.text") is _DROP
+    assert _clean_text(["x"], 500, warnings, "narration.text") is _DROP
+    assert warnings
+    assert _clean_text("real text", 500, [], "narration.text") == "real text"

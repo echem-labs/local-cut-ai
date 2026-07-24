@@ -598,3 +598,27 @@ async def test_replan_supersedes_stale_queued_jobs(tmp_path):
     assert len(queued) == 1 and queued[0].spec.node_id == "script"
     assert queued[0].spec.output_hash != first[0].spec.output_hash
     assert [j.id for j in cancelled] == [first[0].id]
+
+
+def test_requeue_moves_a_job_to_the_back_of_the_fifo(tmp_path):
+    """The scheduler re-stamps a job whose inputs aren't ready yet so the
+    producer can run first. next_queued orders by the created_at COLUMN, so
+    the upsert has to carry it — otherwise the same job is re-selected
+    forever, and that requeue path has no await: the run loop spins and
+    starves the event loop for the whole process."""
+    from conftest import make_spec
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.jobs.models import Job
+
+    queue = JobQueue(tmp_path / "queue.db")
+    waiting = queue.put(
+        Job(project_id="p", spec=make_spec(NodeKind.EXPORT, output_hash="e" * 64), created_at=1.0)
+    )
+    producer = queue.put(
+        Job(project_id="p", spec=make_spec(NodeKind.TIMELINE, output_hash="t" * 64), created_at=2.0)
+    )
+    assert queue.next_queued().id == waiting.id
+
+    waiting.created_at = 3.0  # what the scheduler does when inputs are missing
+    queue.update(waiting)
+    assert queue.next_queued().id == producer.id

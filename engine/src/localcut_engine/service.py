@@ -599,12 +599,18 @@ class ProjectService:
             return
         cached = self.store.cached_hashes(job.project_id)
         history = self.queue.list(job.project_id, 1000)
-        memo = dict(self._frozen_pins(graph, history, cached))
+        frozen = self._frozen_pins(graph, history, cached)
+        memo = dict(frozen)
         stale: set[str] = set()
         for dst in optional_dsts:
             if graph.output_hash(dst, memo) in cached:
                 stale.add(dst)
                 stale |= graph.downstream_of(dst)
+        # A pin is the user's explicit "leave this alone". The memo above
+        # resolves a pinned node to its FROZEN hash, so deleting it here
+        # would destroy the very artifact the pin protects — and, with the
+        # artifact gone, the pin stops resolving and the node re-renders.
+        stale -= set(frozen)
         dropped = 0
         for node_id in stale:
             if node_id in graph.nodes:

@@ -824,3 +824,14 @@ def test_resolved_ffmpeg_bin_prefers_managed_download(tmp_path):
 
     explicit = EngineConfig(data_dir=tmp_path, ffmpeg_bin="/opt/ffmpeg/ffmpeg")
     assert explicit.resolved_ffmpeg_bin == "/opt/ffmpeg/ffmpeg"
+
+
+async def test_non_ascii_token_is_rejected_not_a_500(client):
+    """compare_digest raises TypeError on non-ASCII str, which would leave
+    auth as an unhandled 500 (plus a traceback per request) instead of a
+    401 — an unauthenticated log-flood primitive on a remote engine."""
+    # Empty Authorization so the QUERY token is what gets compared.
+    response = await client.get(
+        "/projects", params={"token": "ü"}, headers={"Authorization": ""}
+    )
+    assert response.status_code == 401

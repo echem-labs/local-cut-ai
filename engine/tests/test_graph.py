@@ -347,3 +347,17 @@ def test_unpin_dirties_node_and_its_cone():
     assert "s1.clip" in dirty
     assert graph.downstream_of("s1.clip") <= dirty  # the whole cone re-renders
     assert not graph.nodes["s1.clip"].pinned
+
+
+def test_reexpansion_keeps_user_only_narration_params():
+    """Speech speed has no screenplay source, so re-expansion must not wipe
+    it — the node hash would revert and serve the pre-edit audio."""
+    g = prompt_template_graph("tide pools", target_duration_s=24)
+    screenplay = mock_screenplay("tide pools", 24, "9:16", seed=0)
+    expand_screenplay(g, screenplay)
+    g.nodes["s1.narration"].params["speed"] = 0.8
+    edited = g.output_hash("s1.narration")
+
+    expand_screenplay(g, mock_screenplay("tide pools", 24, "9:16", seed=0))
+    assert g.nodes["s1.narration"].params.get("speed") == 0.8
+    assert g.output_hash("s1.narration") == edited

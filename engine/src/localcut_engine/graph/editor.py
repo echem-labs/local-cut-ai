@@ -155,6 +155,12 @@ _DROP = object()
 def _clean_text(value: Any, limit: int, warnings: list[str], label: str) -> Any:
     if value is None:
         return _DROP
+    # str() on a list/dict would write a Python repr into the node — spoken
+    # aloud by TTS and, since captions anchor to narration text, burned onto
+    # the screen. Every other clause rejects non-scalars; so does this one.
+    if not isinstance(value, str | int | float | bool):
+        warnings.append(f"{label}: expected text")
+        return _DROP
     text = str(value).strip()
     if not text:
         warnings.append(f"{label}: empty value dropped")

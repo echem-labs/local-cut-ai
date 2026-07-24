@@ -14,7 +14,7 @@ import time
 
 from ..config import EngineConfig
 from ..events import EventBus
-from .downloads import download_model, is_downloaded, partial_bytes
+from .downloads import download_model, is_downloaded, partial_bytes, resolve_dest
 from .loader import load_manifest
 from .model import ModelEntry
 
@@ -106,7 +106,9 @@ class DownloadManager:
         models_dir = self.config.resolved_models_dir
         freed = 0
         for file in entry.files:
-            dest = models_dir / file.dest
+            # Contained like every other dest use: a hostile manifest must not
+            # turn "delete this model" into "delete that file over there".
+            dest = resolve_dest(models_dir, file.dest)
             for path in (dest, dest.with_suffix(dest.suffix + ".part")):
                 try:
                     freed += path.stat().st_size
