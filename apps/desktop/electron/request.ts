@@ -30,6 +30,10 @@ export interface EngineResponse {
   body: string;
 }
 
+/** Engine replies are small JSON documents; anything larger is a wedged or
+ * hostile server, not a response worth buffering. */
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
 const derToPem = (der: Buffer): string =>
   `-----BEGIN CERTIFICATE-----\n${(der.toString("base64").match(/.{1,64}/g) ?? []).join(
     "\n",
@@ -110,6 +114,14 @@ export function engineRequest(
         let body = "";
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => {
+          // Cap the body: setTimeout below is an INACTIVITY timer, so a
+          // server that trickles bytes forever never trips it. This call is
+          // awaited before the first window opens, so an unbounded response
+          // means the app grows until it is OOM-killed, showing nothing.
+          if (body.length + chunk.length > MAX_RESPONSE_BYTES) {
+            request.destroy(new Error("engine response too large"));
+            return;
+          }
           body += chunk;
         });
         response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
