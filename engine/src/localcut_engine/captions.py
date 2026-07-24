@@ -15,7 +15,12 @@ from dataclasses import dataclass
 MAX_CUE_WORDS = 5
 MAX_CUE_SPAN_S = 2.4
 CUE_GAP_BREAK_S = 0.6  # a pause this long starts a new cue
-_SENTENCE_ENDS = (".", "!", "?", ",", ";", ":")
+_STRONG_ENDS = (".", "!", "?")
+_WEAK_ENDS = (",", ";", ":")
+# A comma only earns a cue break once the cue carries enough words: script
+# punctuation (restored by anchoring) is far denser than what transcription
+# emits, and breaking on every comma leaves single words flashing on screen.
+MIN_WEAK_BREAK_WORDS = 3
 
 
 @dataclass
@@ -107,7 +112,10 @@ def words_to_cues(words: list[Word]) -> list[Cue]:
             if len(current) >= MAX_CUE_WORDS or span > MAX_CUE_SPAN_S or gap > CUE_GAP_BREAK_S:
                 flush()
         current.append(word)
-        if word.text.strip().endswith(_SENTENCE_ENDS):
+        token = word.text.strip()
+        if token.endswith(_STRONG_ENDS) or (
+            token.endswith(_WEAK_ENDS) and len(current) >= MIN_WEAK_BREAK_WORDS
+        ):
             flush()
     flush()
     return cues

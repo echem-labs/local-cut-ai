@@ -85,6 +85,32 @@ def test_cues_break_on_punctuation_and_word_count():
     assert all(len(c.text.split()) <= 5 for c in cues)
 
 
+def test_commas_do_not_strand_single_word_cues():
+    """Anchoring restores the script's punctuation, which is far denser than
+    what transcription emits — a break on every comma would flash one-word
+    cues on screen. Weak punctuation breaks only once the cue has body."""
+    words = [
+        w("The", 0.0, 0.2),
+        w("star", 0.2, 0.5),
+        w("of", 0.5, 0.6),
+        w("the", 0.6, 0.7),
+        w("show", 0.7, 1.0),
+        w("is,", 1.0, 1.2),
+        w("of", 1.2, 1.4),
+        w("course,", 1.4, 1.8),
+        w("our", 1.8, 2.0),
+        w("Sun!", 2.0, 2.5),
+    ]
+    cues = words_to_cues(words)
+    assert [cue.text for cue in cues] == [
+        "The star of the show",
+        "is, of course,",
+        "our Sun!",
+    ]
+    # Strong punctuation still breaks immediately, however short the cue.
+    assert words_to_cues([w("Stop.", 0.0, 0.3), w("Go", 0.3, 0.6)])[0].text == "Stop."
+
+
 def test_cues_break_on_long_pause():
     words = [w("one", 0.0, 0.3), w("two", 2.0, 2.3)]  # 1.7s gap
     cues = words_to_cues(words)
