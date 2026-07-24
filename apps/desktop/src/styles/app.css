@@ -74,8 +74,9 @@ textarea {
 }
 
 /* ---- custom title bar (frameless window) ---- */
-/* The whole bar is a drag region; Windows overlays its native min/max/close
- * buttons on the right edge, colored to match via titleBarOverlay. */
+/* The whole bar is a drag region; Windows and Linux overlay their native
+ * min/max/close buttons on the right edge, colored to match via
+ * titleBarOverlay. */
 .titlebar {
   position: fixed;
   top: 0;
@@ -90,6 +91,13 @@ textarea {
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   z-index: var(--z-tray);
+}
+
+/* macOS has no overlay to retint: it keeps its traffic lights at the top
+ * LEFT. The reserved gutter swaps sides there, or the brand mark and the
+ * project title render underneath the close/minimise/zoom buttons. */
+:root[data-platform="mac"] .titlebar {
+  padding: 0 var(--space-3) 0 80px;
 }
 
 .titlebar svg {

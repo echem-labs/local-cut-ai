@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
+import { forgetEditLog } from "./lib/editlog";
 import { usePlayback } from "./lib/playback";
 import type {
   Board,
@@ -1069,6 +1070,7 @@ export const useApp = create<AppState>((set, get) => {
       get().closeOpenProject(id); // drops the rail tab; activates a neighbor
       try {
         await client.deleteProject(id);
+        forgetEditLog(id); // only once the engine agreed it is gone
         return null;
       } catch (err) {
         console.warn("delete project failed:", err);

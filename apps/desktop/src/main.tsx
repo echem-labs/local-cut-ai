@@ -4,9 +4,11 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useLocale } from "./i18n";
 import "./styles/app.css";
+import { initPlatform } from "./lib/platform";
 import { initZoom } from "./lib/zoom";
 import { initTheme } from "./theme";
 
+initPlatform();
 initTheme();
 initZoom();
 

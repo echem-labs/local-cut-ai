@@ -2,30 +2,11 @@ import { ChevronDown, History, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditResult } from "../api/types";
 import { plural, t } from "../i18n";
+import { type LogEntry, MAX_LOG_ENTRIES, loadLog, saveLog } from "../lib/editlog";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { ModelsPopover } from "./ModelsPopover";
-
-interface LogEntry {
-  at: number;
-  instruction: string;
-  summary: string;
-  dirty: string[];
-  warnings: string[];
-}
-
-const logKey = (projectId: string) => `localcut.editlog.${projectId}`;
-
-function loadLog(projectId: string): LogEntry[] {
-  try {
-    const raw = localStorage.getItem(logKey(projectId));
-    const parsed = raw ? (JSON.parse(raw) as LogEntry[]) : [];
-    return Array.isArray(parsed) ? parsed.slice(-40) : [];
-  } catch {
-    return [];
-  }
-}
 
 /** The one composer (review 3): a scope-aware natural-language edit box
  * that is ALSO the command palette — typed text fuzzy-matches quick
@@ -121,13 +102,9 @@ export function Composer() {
 
   const pushLog = (entry: LogEntry) => {
     if (!projectId) return;
-    const next = [...log, entry].slice(-40);
+    const next = [...log, entry].slice(-MAX_LOG_ENTRIES);
     setLog(next);
-    try {
-      localStorage.setItem(logKey(projectId), JSON.stringify(next));
-    } catch {
-      /* storage full — the log is a nicety */
-    }
+    saveLog(projectId, next);
   };
 
   const submit = async () => {

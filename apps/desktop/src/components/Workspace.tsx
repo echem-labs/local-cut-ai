@@ -45,7 +45,18 @@ const TIMELINE_MIN_H = 170;
  * a drag past the floor pushes the next sash (dockview propagation). */
 function useGroupMinHeight(api: IDockviewPanelProps["api"], minimumHeight: number) {
   useEffect(() => {
-    const apply = () => api.group.api.setConstraints({ minimumHeight });
+    const apply = () => {
+      api.group.api.setConstraints({ minimumHeight });
+      // setConstraints only governs future sash drags — it does not resize a
+      // group that is ALREADY shorter. A layout restored from an older
+      // version (or one saved before a floor was raised) therefore keeps its
+      // undersized height, and the panel's content, which is bottom-aligned
+      // and refuses to shrink below min-content, then paints upward over its
+      // own tab strip. Lift it back to the floor.
+      if (api.group.api.height < minimumHeight) {
+        api.group.api.setSize({ height: minimumHeight });
+      }
+    };
     apply();
     const disposable = api.onDidGroupChange(apply);
     return () => disposable.dispose();

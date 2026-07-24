@@ -9,6 +9,7 @@
 import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { readJson, writeJsonAtomic } from "./store-file";
 
 export interface RemotePairing {
   url: string;
@@ -67,18 +68,14 @@ export class RemoteEngineStore {
   }
 
   load(): RemotePairing | null {
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.file, "utf8")) as Record<string, unknown>;
-      if (typeof raw.url !== "string" || typeof raw.token !== "string") return null;
-      return {
-        url: raw.url,
-        token: raw.token,
-        fingerprint: typeof raw.fingerprint === "string" ? raw.fingerprint : undefined,
-        cert: typeof raw.cert === "string" ? raw.cert : undefined,
-      };
-    } catch {
-      return null;
-    }
+    const raw = readJson<Record<string, unknown>>(this.file);
+    if (!raw || typeof raw.url !== "string" || typeof raw.token !== "string") return null;
+    return {
+      url: raw.url,
+      token: raw.token,
+      fingerprint: typeof raw.fingerprint === "string" ? raw.fingerprint : undefined,
+      cert: typeof raw.cert === "string" ? raw.cert : undefined,
+    };
   }
 
   /** Is a pairing on disk, regardless of whether the engine is reachable?
@@ -88,8 +85,9 @@ export class RemoteEngineStore {
   }
 
   save(pairing: RemotePairing): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    fs.writeFileSync(this.file, JSON.stringify(pairing, null, 2), { mode: 0o600 });
+    // Atomic: a torn write here loses the token AND the pinned certificate
+    // in one shot, and re-pairing needs a code from the other machine.
+    writeJsonAtomic(this.file, pairing);
   }
 
   clear(): void {
