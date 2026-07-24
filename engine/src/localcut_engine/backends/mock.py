@@ -123,19 +123,19 @@ class MockBackend(ExecutionBackend):
         for step in range(_PROGRESS_STEPS):
             await ctx.progress((step + 1) / _PROGRESS_STEPS)
 
-        out = ctx.output_path(spec.output_hash, _SUFFIX[spec.kind])
+        # Published like every real backend's output — same temp-and-rename
+        # path, so the tests exercise the plumbing the real renders use.
+        suffix = _SUFFIX[spec.kind]
         if spec.kind is NodeKind.SCRIPT and spec.params.get("task") == "metadata":
-            out = ctx.output_path(spec.output_hash, ".metadata.json")
-            out.write_text(
-                json.dumps(
-                    {
-                        "title": "Mock publish title",
-                        "description": "Mock description of the video.",
-                        "hashtags": ["mock", "localcut"],
-                    },
-                    indent=2,
-                )
-            )
+            suffix = ".metadata.json"
+            body = json.dumps(
+                {
+                    "title": "Mock publish title",
+                    "description": "Mock description of the video.",
+                    "hashtags": ["mock", "localcut"],
+                },
+                indent=2,
+            ).encode()
         elif spec.kind is NodeKind.SCRIPT:
             screenplay = mock_screenplay(
                 prompt=str(spec.params.get("prompt", "")),
@@ -143,14 +143,12 @@ class MockBackend(ExecutionBackend):
                 aspect=str(spec.params.get("aspect", DEFAULT_ASPECT)),
                 seed=spec.seed,
             )
-            out.write_text(screenplay.model_dump_json(indent=2))
+            body = screenplay.model_dump_json(indent=2).encode()
         elif spec.kind in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
-            out.write_bytes(_slate_png(spec.node_id, spec.seed))
+            body = _slate_png(spec.node_id, spec.seed)
         elif spec.kind in (NodeKind.TIMELINE, NodeKind.CAPTIONS):
-            out.write_text(
-                json.dumps({"node": spec.node_id, "inputs": spec.input_hashes}, indent=2)
-            )
+            body = json.dumps({"node": spec.node_id, "inputs": spec.input_hashes}, indent=2).encode()
         else:
             # Media placeholder: enough to exercise artifact plumbing.
-            out.write_bytes(json.dumps({"mock": spec.node_id, "seed": spec.seed}).encode())
-        return out
+            body = json.dumps({"mock": spec.node_id, "seed": spec.seed}).encode()
+        return ctx.publish_bytes(spec.output_hash, suffix, body)

@@ -69,13 +69,20 @@ def test_pairing_code_round_trips():
     }
 
 
-def test_private_key_is_never_world_readable(tmp_path):
+def test_private_key_is_never_world_readable(tmp_path, monkeypatch):
     """The client pins this exact certificate, so a stolen key defeats the
-    pin — the file must not exist, even briefly, with loose permissions."""
+    pin — the file must not exist, even briefly, with loose permissions.
+
+    Asserting the final mode alone would pass for a write-then-chmod too,
+    which leaves the key world-readable in between (and permanently so if
+    the process dies there). Neutralizing chmod is what pins the real
+    invariant: the CREATE has to carry the mode."""
     import stat
+    from pathlib import Path
 
     from localcut_engine.tls import ensure_certificate
 
+    monkeypatch.setattr(Path, "chmod", lambda self, mode: None)
     _cert_path, key_path, _fingerprint = ensure_certificate(tmp_path, ["127.0.0.1"])
     mode = stat.S_IMODE(key_path.stat().st_mode)
-    assert mode & 0o077 == 0, f"key is group/world accessible: {oct(mode)}"
+    assert mode & 0o077 == 0, f"key was created group/world accessible: {oct(mode)}"

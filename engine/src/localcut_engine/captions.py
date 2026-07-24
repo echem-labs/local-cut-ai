@@ -22,6 +22,10 @@ _WEAK_ENDS = (",", ";", ":")
 # emits, and breaking on every comma leaves single words flashing on screen.
 MIN_WEAK_BREAK_WORDS = 3
 MIN_CUE_S = 0.4  # a shorter cue reads as a flash; zero-length never renders
+# Time to allow a script word the ASR never emitted, when there is room for
+# it. Deliberately below a natural speaking rate: this is reclaiming space
+# the transcription left blank, not asserting when the word was said.
+_INSERT_WORD_S = 0.3
 
 
 @dataclass
@@ -50,12 +54,18 @@ def _match_keys(tokens: list[str], side: str) -> list[str]:
     return [_norm(token) or f"\x00{side}{index}" for index, token in enumerate(tokens)]
 
 
-def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
+def anchor_words_to_text(words: list[Word], text: str, floor: float | None = None) -> list[Word]:
     """Replace ASR word text with the narration's ground-truth tokens,
     keeping the ASR timings. Free transcription mishears homophones
     ("sun" → "son") and drops the script's punctuation/casing — but the
     narration audio was synthesized FROM the script, so the script is the
-    truth and the audio only contributes timing."""
+    truth and the audio only contributes timing.
+
+    `floor` is the earliest time these words may occupy — the scene's own
+    start. Without it, words the ASR dropped from the HEAD of a scene have
+    no room and collapse onto the first transcribed word; callers that
+    can't name a floor keep that conservative behaviour rather than risk
+    spreading back over the previous scene's captions."""
     truth = text.split()
     if not truth or not words:
         return words
@@ -89,8 +99,21 @@ def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
             # tail, the next scene's captions). A span with no room collapses
             # to zero width here; words_to_cues gives the cue display time.
             n = j2 - j1
-            anchor = out[-1].end if out else words[0].start
-            following = words[i1].start if i1 < len(words) else anchor
+            if i1 < len(words):
+                following = words[i1].start
+            else:  # nothing follows: the tail belongs to the next scene
+                following = out[-1].end if out else words[0].start
+            if out:
+                anchor = out[-1].end
+            elif floor is None:
+                anchor = following  # no floor given — invent nothing
+            else:
+                # A LEADING insert's room is behind the first transcribed
+                # word, not ahead of it: the audio was synthesized from the
+                # whole script, so head words the ASR dropped were still
+                # spoken. Without this they all collapse onto one instant and
+                # fold into a single unreadable cue.
+                anchor = max(floor, following - _INSERT_WORD_S * n)
             step = max(0.0, following - anchor) / n
             for k in range(n):
                 out.append(

@@ -291,3 +291,62 @@ async def test_traversal_dest_rejected_even_with_relative_models_dir(tmp_path, m
             ModelFile(url="http://127.0.0.1:1/x", dest="/etc/escaped.bin"),
             tmp_path / "models",
         )
+
+
+def test_publishing_removes_the_partial_when_the_producer_fails(tmp_path):
+    """ffmpeg and soundfile write the file themselves, so they get a temp
+    path. A killed or failed encode must leave NO {hash}{suffix} behind:
+    cached_hashes() reads the cache off bare filenames, so a truncated file
+    is served as a finished render forever and never re-enqueued."""
+    from localcut_engine.backends.base import ExecutionContext
+
+    ctx = ExecutionContext(output_dir=tmp_path)
+    with pytest.raises(RuntimeError):
+        with ctx.publishing("deadbeef", ".mp4") as partial:
+            partial.write_bytes(b"truncated moov-less mp4")
+            # The temp must be invisible to the artifact scan while in flight.
+            assert partial.name.startswith(".")
+            assert partial.suffix == ".mp4", "muxers pick format by extension"
+            raise RuntimeError("encoder died")
+
+    assert not (tmp_path / "deadbeef.mp4").exists()
+    assert list(tmp_path.iterdir()) == [], "a partial file was left behind"
+
+
+def test_publishing_renames_into_place_on_success(tmp_path):
+    from localcut_engine.backends.base import ExecutionContext
+
+    ctx = ExecutionContext(output_dir=tmp_path)
+    with ctx.publishing("cafe1234", ".wav") as partial:
+        partial.write_bytes(b"RIFF....")
+    out = tmp_path / "cafe1234.wav"
+    assert out.read_bytes() == b"RIFF...."
+    assert [p.name for p in tmp_path.iterdir()] == ["cafe1234.wav"]
+
+
+def test_escaping_dest_is_never_reported_installed(tmp_path):
+    """A user-supplied catalog can name any dest. The read-only probes must
+    not answer from outside models_dir — that turns the models list into a
+    file-existence/size oracle, and lets a bogus entry claim it is already
+    installed so its real weights are never fetched."""
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (tmp_path / "secret.txt").write_bytes(b"x" * 64)
+
+    def entry_for(dest: str, size: int) -> ModelEntry:
+        return ModelEntry(
+            id="evil",
+            task="image.gen",
+            family="test",
+            requirements=Requirements(vram_gb=1, disk_gb=1),
+            license=LicenseInfo(id="mit", commercial=True),
+            files=[ModelFile(url="http://x/y", dest=dest, size=size)],
+        )
+
+    escaped = entry_for("../secret.txt", 64)
+    assert is_downloaded(escaped, models_dir) is False
+    assert partial_bytes(escaped, models_dir) == 0
+
+    # A contained dest still reports normally.
+    (models_dir / "real.bin").write_bytes(b"y" * 8)
+    assert is_downloaded(entry_for("real.bin", 8), models_dir) is True

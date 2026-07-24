@@ -15,7 +15,7 @@ from ..providers.textgen import ProviderError
 import json
 
 from .base import ExecutionBackend, ExecutionContext, GenerationError
-from .llm import _METADATA_PROMPT, _SYSTEM_PROMPT, LLMScriptBackend
+from .llm import _METADATA_PROMPT, _SYSTEM_PROMPT, LLMScriptBackend, script_prompt
 
 
 class CloudBackend(ExecutionBackend):
@@ -51,13 +51,7 @@ class CloudBackend(ExecutionBackend):
                 ".metadata.json",
                 json.dumps(LLMScriptBackend._parse_metadata(raw), indent=2),
             )
-        prompt = (
-            f"Topic: {spec.params.get('prompt', '')}\n"
-            f"Target duration: {spec.params.get('target_duration_s', 60)}s\n"
-            f"Aspect: {spec.params.get('aspect', '9:16')}\n"
-            f"Style preset: {spec.params.get('style_preset', 'cinematic')}"
-        )
-        raw = await textgen.complete(system=_SYSTEM_PROMPT, prompt=prompt)
+        raw = await textgen.complete(system=_SYSTEM_PROMPT, prompt=script_prompt(spec.params))
         await ctx.progress(0.9)
         screenplay = LLMScriptBackend._parse_screenplay(raw)
         return ctx.publish_text(

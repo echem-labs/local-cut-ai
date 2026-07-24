@@ -258,3 +258,45 @@ async def test_real_narration_aligns_to_timed_captions(tmp_path):
     assert cues[0].start >= 10.0  # offset by the segment start
     joined = " ".join(c.text.lower() for c in cues)
     assert "heart" in joined and "three" in joined
+
+
+def test_head_words_the_asr_dropped_get_the_room_behind_them():
+    """When the transcription misses a run of words at the START of a scene,
+    they have no room ahead of the first transcribed word — and collapsing
+    them onto one instant folds the whole line into a single unreadable
+    flash. The audio was synthesized from the script, so those words WERE
+    spoken: lay them into the scene's own head, never past its start."""
+    from localcut_engine.captions import MIN_CUE_S, Word, anchor_words_to_text, words_to_cues
+
+    script = "Today we take a very close look at solar flares"
+    words = anchor_words_to_text([Word("flares", 1.0, 1.5)], script, floor=0.0)
+    cues = words_to_cues(words)
+
+    assert len(cues) > 1, "ten words were folded into one cue"
+    assert all(cue.end > cue.start for cue in cues)
+    assert all(b.start >= a.end for a, b in zip(cues, cues[1:]))
+    # Every script word still appears, in order, and none is on screen for
+    # less than the readable floor.
+    assert " ".join(cue.text for cue in cues) == script
+    assert all(cue.end - cue.start >= MIN_CUE_S - 1e-9 for cue in cues)
+
+
+def test_head_insert_never_spreads_back_past_the_scene_start():
+    """The floor is the previous scene's captions: crossing it stacks two
+    lines on screen."""
+    from localcut_engine.captions import Word, anchor_words_to_text
+
+    words = anchor_words_to_text(
+        [Word("flares", 1.0, 1.5)], "a very close look at solar flares", floor=0.8
+    )
+    assert words[0].start >= 0.8
+    assert all(w.start >= 0.8 for w in words)
+
+
+def test_no_floor_keeps_the_conservative_behaviour():
+    """A caller that cannot name a scene start gets no invented time, rather
+    than time borrowed from whatever came before."""
+    from localcut_engine.captions import Word, anchor_words_to_text
+
+    words = anchor_words_to_text([Word("flares", 1.0, 1.5)], "at solar flares")
+    assert all(w.start >= 1.0 for w in words)

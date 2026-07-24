@@ -285,11 +285,16 @@ class ProjectService:
             # Same ground-truth sync as patch(): an NL edit rewrites narration
             # text, so the captions must follow the new words, not the old.
             dirty |= self._sync_caption_texts(graph)
-            if ops:
+            # Persist whenever the graph changed at all, not just when the plan
+            # compiled to ops: the sync above can dirty the captions on its own
+            # (a graph whose texts drifted), and enqueueing work derived from a
+            # graph that was never saved would render under a hash the stored
+            # graph can never reproduce — re-rendering forever.
+            if ops or dirty:
                 self.store.save_graph(project_id, graph)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
-            if ops:
+            if ops or dirty:
                 self._refresh_meta_locked(project_id, graph)
         self.events.publish(
             "project.edited", project_id=project_id, ops=len(ops), summary=plan.summary

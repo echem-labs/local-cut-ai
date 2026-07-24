@@ -622,3 +622,76 @@ def test_requeue_moves_a_job_to_the_back_of_the_fifo(tmp_path):
     waiting.created_at = 3.0  # what the scheduler does when inputs are missing
     queue.update(waiting)
     assert queue.next_queued().id == producer.id
+
+
+async def test_healing_never_deletes_a_pinned_artifact(rig):
+    """Healing an optional-input consumer must skip pinned nodes.
+
+    A pin resolves through its frozen_hash, so deleting the artifact stored
+    under that hash does not merely "refresh" the node — it destroys the
+    only copy the pin points at, the pin then stops resolving, and the node
+    re-renders. That is the exact opposite of what the user asked for.
+    """
+    from localcut_engine.graph.model import CAPTIONS_PORT
+
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools at dusk", target_duration_s=24)
+
+    def export_hash():
+        return service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash")
+
+    await wait_for(lambda: bool(export_hash()))
+
+    graph = store.load_graph(project.id)
+    assert any(
+        e.port == CAPTIONS_PORT and e.dst == "export" for e in graph.edges
+    ), "fixture assumption: captions feeds export through the optional port"
+
+    service.patch(project.id, [PatchOp(op="pin", node_id="export")])
+    graph = store.load_graph(project.id)
+    frozen = graph.nodes["export"].frozen_hash
+    assert frozen and frozen in store.cached_hashes(project.id)
+    before = sorted(p.name for p in store.generated_dir(project.id).iterdir())
+
+    # A captions job completing is what triggers the heal for `export`. Use
+    # the real one the scheduler ran, not a hand-built stand-in.
+    captions_job = next(j for j in queue.list(project.id, 1000) if j.spec.node_id == "captions")
+    service._heal_optional_consumers(captions_job)
+
+    assert frozen in store.cached_hashes(project.id), "healing deleted the pinned artifact"
+    assert sorted(p.name for p in store.generated_dir(project.id).iterdir()) == before
+
+
+async def test_edit_plan_with_no_ops_still_persists_a_caption_resync(rig):
+    """The caption resync can dirty the graph on its own. Enqueueing work
+    derived from a graph that was never saved would render under a hash the
+    stored graph can never recompute — so the render is orphaned and the
+    work re-enqueues forever."""
+    from localcut_engine.graph.editor import EditPlan
+
+    store, queue, service = rig
+    project = service.create_from_prompt("kelp forests", target_duration_s=24)
+    await wait_for(lambda: "captions" in store.load_graph(project.id).nodes)
+
+    # Drift the ground truth, the way a graph written by an older sync would.
+    graph = store.load_graph(project.id)
+    graph.nodes["captions"].params["texts"] = {}
+    store.save_graph(project.id, graph)
+    expected = {
+        node_id.removesuffix(".narration"): str(node.params.get("text", ""))
+        for node_id, node in graph.nodes.items()
+        if node_id.endswith(".narration")
+    }
+    assert expected, "fixture assumption: the project has narration nodes"
+
+    # A plan that compiles to nothing: every edit names a node that isn't there.
+    plan = EditPlan.model_validate(
+        {
+            "summary": "",
+            "edits": [{"action": "update", "node_id": "nope", "params": {"text": "x"}}],
+        }
+    )
+    result = service.apply_edit_plan(project.id, plan, scope="script")
+    assert result["ops"] == 0
+
+    assert store.load_graph(project.id).nodes["captions"].params["texts"] == expected

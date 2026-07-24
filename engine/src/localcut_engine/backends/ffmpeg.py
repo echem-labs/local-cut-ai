@@ -81,8 +81,14 @@ class FFmpegBackend(ExecutionBackend):
     def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
         self.ffmpeg_bin = ffmpeg_bin
         bin_path = Path(ffmpeg_bin)
+        # Keep the extension: ffmpeg ships as ffmpeg.exe on Windows, and a
+        # bare with_name("ffprobe") would look for an extensionless sibling
+        # that isn't there — every render then dies at the first probe,
+        # after the clips have already been generated.
         self.ffprobe_bin = (
-            str(bin_path.with_name("ffprobe")) if bin_path.parent != Path(".") else "ffprobe"
+            str(bin_path.with_name(f"ffprobe{bin_path.suffix}"))
+            if bin_path.parent != Path(".")
+            else "ffprobe"
         )
         self._encoder: str | None = None
         self._drawtext: bool | None = None
@@ -119,7 +125,6 @@ class FFmpegBackend(ExecutionBackend):
         aspect = str(spec.params.get("aspect", DEFAULT_ASPECT))
         width, height = resolution_for(VIDEO_RESOLUTIONS, aspect)
         frames = max(1, round(duration * _STILL_CLIP_FPS))
-        out = ctx.output_path(spec.output_hash, ".mp4")
         # Upscale before zoompan so the zoom window always has source pixels
         # (sampling at 1:1 makes the push-in shimmer on fine detail).
         vf = (
@@ -129,23 +134,28 @@ class FFmpegBackend(ExecutionBackend):
             f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
             f":d={frames}:s={width}x{height}:fps={_STILL_CLIP_FPS},format=yuv420p"
         )
-        await self._run(
-            "-loop",
-            "1",
-            "-i",
-            str(keyframe),
-            "-vf",
-            vf,
-            "-t",
-            f"{duration:.3f}",
-            "-an",
-            "-c:v",
-            await self._pick_encoder(),
-            "-b:v",
-            _VIDEO_BITRATE["draft"],
-            str(out),
-        )
-        return out
+        # Published through the temp-and-rename helper: a killed or failed
+        # encode must not leave a truncated {hash}.mp4 that the existence
+        # cache then serves as a finished clip forever (the timeline job
+        # would fail "clip is not decodable media" on it every run).
+        with ctx.publishing(spec.output_hash, ".mp4") as partial:
+            await self._run(
+                "-loop",
+                "1",
+                "-i",
+                str(keyframe),
+                "-vf",
+                vf,
+                "-t",
+                f"{duration:.3f}",
+                "-an",
+                "-c:v",
+                await self._pick_encoder(),
+                "-b:v",
+                _VIDEO_BITRATE["draft"],
+                str(partial),
+            )
+        return ctx.output_path(spec.output_hash, ".mp4")
 
     # -- timeline: an explicit edit decision list (JSON) -----------------------
     #
@@ -287,9 +297,10 @@ class FFmpegBackend(ExecutionBackend):
             "music_volume": MUSIC_BED_VOLUME,
             "ducking": bool(spec.params.get("ducking", True)),
         }
-        out = ctx.output_path(spec.output_hash, ".timeline.json")
-        out.write_text(json.dumps(timeline, indent=2))
-        return out
+        # The EDL is the single timing authority for export AND captions; a
+        # half-written one silently reverts every duration the UI shows
+        # (_assembled_edl swallows the parse error), so publish atomically.
+        return ctx.publish_text(spec.output_hash, ".timeline.json", json.dumps(timeline, indent=2))
 
     # -- export: timed segments → transition chain → captions → music bed -----
 

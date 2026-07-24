@@ -14,7 +14,13 @@ import time
 
 from ..config import EngineConfig
 from ..events import EventBus
-from .downloads import download_model, is_downloaded, partial_bytes, resolve_dest
+from .downloads import (
+    contained_dest,
+    download_model,
+    is_downloaded,
+    partial_bytes,
+    resolve_dest,
+)
 from .loader import load_manifest
 from .model import ModelEntry
 
@@ -125,7 +131,11 @@ class DownloadManager:
     async def _run(self, entry: ModelEntry, models_dir) -> None:
         # Files already in place are skipped by the downloader without a
         # single progress callback — pre-seed them so the bar starts honest.
-        done_by_file = {f.dest: f.size for f in entry.files if (models_dir / f.dest).exists()}
+        done_by_file = {
+            f.dest: f.size
+            for f in entry.files
+            if (path := contained_dest(models_dir, f.dest)) is not None and path.exists()
+        }
         state = {
             "done": sum(done_by_file.values()),
             "total": sum(f.size for f in entry.files),
