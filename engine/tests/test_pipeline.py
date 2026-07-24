@@ -552,6 +552,32 @@ async def test_narration_edit_syncs_caption_texts(rig):
     assert graph.nodes["captions"].params["texts"]["s1"] == "Our sun is a star."
 
 
+async def test_natural_language_edit_syncs_caption_texts(rig):
+    """The NL edit box rewrites narration through a different entry point
+    than patch(); captions must follow the new words there too, or the
+    burned-in text contradicts what the voice says."""
+    from localcut_engine.graph.editor import Edit, EditPlan
+
+    store, queue, service = rig
+    project = service.create_from_prompt("the secret life of tide pools", target_duration_s=24)
+    await wait_for(lambda: bool(service.scene_board(project.id)["scenes"]))
+
+    result = service.apply_edit_plan(
+        project.id,
+        EditPlan(
+            summary="fix the line",
+            edits=[
+                Edit(action="update", node_id="s1.narration", params={"text": "Our sun is a star."})
+            ],
+        ),
+        scope="project",
+    )
+    graph = store.load_graph(project.id)
+    assert graph.nodes["s1.narration"].params["text"] == "Our sun is a star."
+    assert graph.nodes["captions"].params["texts"]["s1"] == "Our sun is a star."
+    assert "captions" in result["dirty"]
+
+
 async def test_replan_supersedes_stale_queued_jobs(tmp_path):
     """A seed bump re-plans a node under a new hash; the previously queued
     job for that node is garbage — cancel it instead of letting it render

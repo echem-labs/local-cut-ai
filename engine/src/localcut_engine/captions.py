@@ -21,6 +21,7 @@ _WEAK_ENDS = (",", ";", ":")
 # punctuation (restored by anchoring) is far denser than what transcription
 # emits, and breaking on every comma leaves single words flashing on screen.
 MIN_WEAK_BREAK_WORDS = 3
+MIN_CUE_S = 0.4  # a shorter cue reads as a flash; zero-length never renders
 
 
 @dataclass
@@ -41,6 +42,14 @@ def _norm(token: str) -> str:
     return re.sub(r"[^a-z0-9']+", "", token.lower())
 
 
+def _match_keys(tokens: list[str], side: str) -> list[str]:
+    """Comparison keys for the aligner. A token that normalizes to nothing —
+    standalone punctuation, or any non-Latin script — gets a position-unique
+    key so it can never match another empty by accident; it falls into a
+    replace/insert span instead, where the script text still wins."""
+    return [_norm(token) or f"\x00{side}{index}" for index, token in enumerate(tokens)]
+
+
 def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
     """Replace ASR word text with the narration's ground-truth tokens,
     keeping the ASR timings. Free transcription mishears homophones
@@ -50,14 +59,10 @@ def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
     truth = text.split()
     if not truth or not words:
         return words
-    truth_norm = [_norm(t) for t in truth]
-    # Punctuation-only and non-Latin tokens normalize to "" and would anchor
-    # arbitrarily; when they dominate (non-English narration), the text isn't
-    # alignable this way — keep the transcription.
-    if sum(1 for t in truth_norm if not t) > len(truth_norm) // 2:
-        return words
     matcher = difflib.SequenceMatcher(
-        a=[_norm(w.text) for w in words], b=truth_norm, autojunk=False
+        a=_match_keys([w.text for w in words], "a"),
+        b=_match_keys(truth, "b"),
+        autojunk=False,
     )
     out: list[Word] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -66,24 +71,27 @@ def anchor_words_to_text(words: list[Word], text: str) -> list[Word]:
                 out.append(Word(text=truth[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end))
         elif tag == "replace":
             # Misheard span: spread the true tokens over its time window.
-            # ASR occasionally emits zero-width words — give the span a floor
-            # so no cue ends up with start == end (it would never display).
             start, end = words[i1].start, words[i2 - 1].end
             if end <= start:
-                end = start + 0.15 * (j2 - j1)
-            step = (end - start) / (j2 - j1)
+                # ASR occasionally emits zero-width words. Borrow time up to
+                # the next transcribed word, never past it.
+                nominal = start + 0.15 * (j2 - j1)
+                end = min(nominal, words[i2].start) if i2 < len(words) else nominal
+            step = max(0.0, end - start) / (j2 - j1)
             for k in range(j2 - j1):
                 out.append(
                     Word(text=truth[j1 + k], start=start + k * step, end=start + (k + 1) * step)
                 )
         elif tag == "insert":
-            # Tokens the ASR never emitted: lay them into the following gap
-            # (or a nominal window at the tail) with a per-word floor — a
-            # zero-width cue would be silently dropped by SRT consumers.
+            # Words the ASR never emitted: lay them into the gap BEFORE the
+            # next transcribed word, never past it — time invented beyond a
+            # real boundary would overlap the next cue (or, at a scene's
+            # tail, the next scene's captions). A span with no room collapses
+            # to zero width here; words_to_cues gives the cue display time.
             n = j2 - j1
             anchor = out[-1].end if out else words[0].start
-            following = words[i1].start if i1 < len(words) else anchor + 0.4 * n
-            step = max((following - anchor) / n, 0.15)
+            following = words[i1].start if i1 < len(words) else anchor
+            step = max(0.0, following - anchor) / n
             for k in range(n):
                 out.append(
                     Word(text=truth[j1 + k], start=anchor + k * step, end=anchor + (k + 1) * step)
@@ -118,7 +126,36 @@ def words_to_cues(words: list[Word]) -> list[Cue]:
         ):
             flush()
     flush()
-    return cues
+    return _give_display_time(cues)
+
+
+def _give_display_time(cues: list[Cue]) -> list[Cue]:
+    """A cue with no measurable span never renders — SRT consumers drop it
+    and burn-in flashes nothing. Stretch a too-short cue toward MIN_CUE_S,
+    but never into the cue that follows: overlapping captions would stack
+    two lines on screen.
+
+    Words the aligner could not place in time at all (script words the ASR
+    skipped between two adjacent words) arrive here as a zero-span cue with
+    no room to grow. Rather than invent time that would overlap, fold their
+    text into the next cue — the words still reach the screen, beside the
+    ones they were spoken with."""
+    out: list[Cue] = []
+    carried = ""
+    for index, cue in enumerate(cues):
+        if carried:
+            cue.text = f"{carried} {cue.text}"
+            carried = ""
+        if cue.end - cue.start < MIN_CUE_S:
+            ceiling = cues[index + 1].start if index + 1 < len(cues) else cue.start + MIN_CUE_S
+            if ceiling <= cue.start:
+                carried = cue.text
+                continue
+            cue.end = max(cue.end, min(cue.start + MIN_CUE_S, ceiling))
+        out.append(cue)
+    if carried and out:  # nothing followed it — append to the last cue shown
+        out[-1].text = f"{out[-1].text} {carried}"
+    return out
 
 
 def _srt_time(seconds: float) -> str:

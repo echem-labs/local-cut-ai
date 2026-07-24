@@ -62,9 +62,14 @@ class LLMScriptBackend(ExecutionBackend):
         return kind is NodeKind.SCRIPT and self.probe.available()
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        # A scene may not exceed 60s (screenplay schema), so a long target
+        # needs a floor on the scene count — models otherwise return a
+        # handful of over-long scenes that fail validation outright.
+        target_s = int(spec.params.get("target_duration_s", 60))
         prompt = (
             f"Topic: {spec.params.get('prompt', '')}\n"
-            f"Target duration: {spec.params.get('target_duration_s', 60)}s\n"
+            f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
+            "no scene may exceed 60 seconds)\n"
             f"Aspect: {spec.params.get('aspect', '9:16')}\n"
             f"Style preset: {spec.params.get('style_preset', 'cinematic')}"
         )

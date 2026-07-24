@@ -148,6 +148,12 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
 # retime bound on whatever length actually renders).
 MAX_CLIP_S = 8.0
 
+# Music is a loopable bed, not a full score: cap what we ask the generator
+# for. ACE-Step's own node refuses more than 1000s, and a multi-minute
+# request is a slow, VRAM-hungry way to produce something assembly would
+# have looped anyway.
+MAX_MUSIC_S = 180
+
 
 def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) -> Node:
     """Add the node, or refresh its derived params in place — seed, pin and
@@ -320,7 +326,11 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         NodeKind.MUSIC,
         params={
             "brief": screenplay.style.music,
-            "target_duration_s": screenplay.target_duration_s,
+            # The bed loops to fill the program (assembly passes -stream_loop),
+            # so generating a full-length track buys nothing and costs a lot:
+            # a long request is slow, VRAM-hungry, and past MAX_MUSIC_S the
+            # local generator rejects it outright.
+            "target_duration_s": min(screenplay.target_duration_s, MAX_MUSIC_S),
         },
     )
     _ensure_edge(graph, "script", "music")
