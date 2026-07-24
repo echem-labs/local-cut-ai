@@ -32,6 +32,24 @@ Title under 70 characters, hook first, no all-caps clickbait. Description is 2-3
 5-10 hashtags, lowercase, without the # symbol."""
 
 
+def script_prompt(params: dict) -> str:
+    """The user-turn prompt for a screenplay, shared by the local and cloud
+    script backends — they also share _SYSTEM_PROMPT and _parse_screenplay,
+    so a rule stated in only one of them is a bug on the other provider.
+
+    A scene may not exceed 60s (screenplay schema), so a long target needs a
+    floor on the scene count: models otherwise return a handful of over-long
+    scenes that fail validation outright, on every retry."""
+    target_s = int(params.get("target_duration_s", 60))
+    return (
+        f"Topic: {params.get('prompt', '')}\n"
+        f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
+        "no scene may exceed 60 seconds)\n"
+        f"Aspect: {params.get('aspect', '9:16')}\n"
+        f"Style preset: {params.get('style_preset', 'cinematic')}"
+    )
+
+
 class LLMScriptBackend(ExecutionBackend):
     name = "llm"
 
@@ -62,17 +80,7 @@ class LLMScriptBackend(ExecutionBackend):
         return kind is NodeKind.SCRIPT and self.probe.available()
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        # A scene may not exceed 60s (screenplay schema), so a long target
-        # needs a floor on the scene count — models otherwise return a
-        # handful of over-long scenes that fail validation outright.
-        target_s = int(spec.params.get("target_duration_s", 60))
-        prompt = (
-            f"Topic: {spec.params.get('prompt', '')}\n"
-            f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
-            "no scene may exceed 60 seconds)\n"
-            f"Aspect: {spec.params.get('aspect', '9:16')}\n"
-            f"Style preset: {spec.params.get('style_preset', 'cinematic')}"
-        )
+        prompt = script_prompt(spec.params)
         if spec.model is not None and spec.model.startswith("cloud:"):
             # Never fall back to the local model silently — the user asked
             # for cloud quality and would believe they got it.

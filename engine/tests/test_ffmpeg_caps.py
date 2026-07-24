@@ -75,3 +75,17 @@ async def test_probe_is_cached(monkeypatch):
     await backend.supports_drawtext()
     await backend.supports_drawtext()
     assert calls == 1
+
+
+def test_ffprobe_keeps_the_executable_extension():
+    """ffmpeg ships as ffmpeg.exe on Windows. Deriving the probe's path by
+    name alone looks for an extensionless sibling that isn't there — and
+    supports() gates on ffmpeg only, so the backend claims the work and then
+    dies at the first probe, after every clip has already been generated."""
+    from localcut_engine.backends.ffmpeg import FFmpegBackend
+
+    # Path is platform-native, so a Windows drive path is not a Windows path
+    # on this host — what matters is that the suffix survives at all.
+    assert FFmpegBackend("/opt/ffmpeg/bin/ffmpeg.exe").ffprobe_bin.endswith("ffprobe.exe")
+    assert FFmpegBackend("/opt/ffmpeg/bin/ffmpeg").ffprobe_bin == "/opt/ffmpeg/bin/ffprobe"
+    assert FFmpegBackend("ffmpeg").ffprobe_bin == "ffprobe"  # bare name: resolve on PATH

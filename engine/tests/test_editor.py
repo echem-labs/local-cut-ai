@@ -332,11 +332,32 @@ def test_overlay_non_text_value_is_dropped():
 
 def test_non_scalar_prose_is_rejected_not_stringified():
     """A model that returns an object for narration text must not have its
-    Python repr spoken aloud (and, via caption anchoring, burned on screen)."""
-    from localcut_engine.graph.editor import _DROP, _clean_text
+    Python repr spoken aloud (and, via caption anchoring, burned on screen).
 
-    warnings: list[str] = []
-    assert _clean_text({"a": 1}, 500, warnings, "narration.text") is _DROP
-    assert _clean_text(["x"], 500, warnings, "narration.text") is _DROP
+    Driven through compile_edits, not the private helper: what matters is
+    that the prose path actually routes through the sanitizer, which a
+    direct call on the helper cannot show."""
+    graph = make_graph(1)
+    plan = EditPlan.model_validate(
+        {
+            "summary": "",
+            "edits": [
+                {
+                    "action": "update",
+                    "node_id": "s1.narration",
+                    "params": {"text": {"a": 1}},
+                }
+            ],
+        }
+    )
+    ops, warnings = compile_edits(graph, plan)
+    assert ops == []
     assert warnings
-    assert _clean_text("real text", 500, [], "narration.text") == "real text"
+    assert graph.nodes["s1.narration"].params.get("text") != "{'a': 1}"
+
+    # A list is the other shape models reach for, and valid prose still passes.
+    plan.edits[0].params = {"text": ["x"]}
+    assert compile_edits(graph, plan)[0] == []
+    plan.edits[0].params = {"text": "real text"}
+    ops, _ = compile_edits(graph, plan)
+    assert [op.params for op in ops] == [{"text": "real text"}]

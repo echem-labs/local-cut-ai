@@ -835,3 +835,61 @@ async def test_non_ascii_token_is_rejected_not_a_500(client):
         "/projects", params={"token": "ü"}, headers={"Authorization": ""}
     )
     assert response.status_code == 401
+
+
+def test_probe_callers_wait_for_the_first_verdict(monkeypatch):
+    """available() must never answer from the uninitialized default while
+    the first probe is still running: a False there routes real work to the
+    mock backend, which writes placeholder artifacts into a real project."""
+    import threading
+
+    import httpx
+
+    from localcut_engine.backends.base import ServiceProbe
+
+    release = threading.Event()
+
+    def slow_get(url, timeout=None):
+        release.wait(5.0)
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", slow_get)
+    probe = ServiceProbe("http://127.0.0.1:1/health", timeout_s=1.0, ttl_s=60.0)
+
+    answers: list[bool] = []
+    first = threading.Thread(target=lambda: answers.append(probe.available()))
+    first.start()
+    threading.Event().wait(0.1)  # let the first caller take the probe
+    second = threading.Thread(target=lambda: answers.append(probe.available()))
+    second.start()
+
+    release.set()
+    first.join(10.0)
+    second.join(10.0)
+    assert answers == [True, True], f"a concurrent caller saw a stale verdict: {answers}"
+
+
+def test_probe_survives_a_refresh_thread_that_cannot_start(monkeypatch):
+    """_refresh is the only thing that clears the in-flight flag, so a
+    failed Thread.start() would freeze this verdict for the process's life —
+    a server that came back up reported down forever."""
+    import threading
+
+    import httpx
+
+    from localcut_engine.backends.base import ServiceProbe
+
+    monkeypatch.setattr(
+        httpx, "get", lambda url, timeout=None: httpx.Response(200, request=httpx.Request("GET", url))
+    )
+    probe = ServiceProbe("http://127.0.0.1:1/health", timeout_s=1.0, ttl_s=0.0)
+    assert probe.available() is True  # synchronous first probe
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    assert probe.available() is True  # ttl expired -> background refresh refused
+    monkeypatch.undo()
+    # Not latched: the next call is free to refresh again.
+    assert probe.available() is True

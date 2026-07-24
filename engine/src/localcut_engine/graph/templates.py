@@ -106,7 +106,13 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
                     kind=NodeKind.MUSIC,
                     params={
                         "brief": str(params.get("prompt", "")),
-                        "target_duration_s": int(params.get("target_duration_s", 60)),
+                        # The standalone tool honours the length the user
+                        # asked for (unlike the assembly bed, which loops and
+                        # so caps at MAX_MUSIC_S) — but not past what the
+                        # generator will accept, or the job just fails.
+                        "target_duration_s": min(
+                            int(params.get("target_duration_s", 60)), GENERATOR_MAX_MUSIC_S
+                        ),
                     },
                 )
             )
@@ -153,6 +159,11 @@ MAX_CLIP_S = 8.0
 # request is a slow, VRAM-hungry way to produce something assembly would
 # have looped anyway.
 MAX_MUSIC_S = 180
+
+# The generator's own ceiling. Assembly never approaches it (MAX_MUSIC_S is
+# far lower), but the standalone music tool passes the user's length through
+# and must still land inside what ACE-Step will accept.
+GENERATOR_MAX_MUSIC_S = 1000
 
 
 def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) -> Node:

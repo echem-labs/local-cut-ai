@@ -43,9 +43,24 @@ def resolve_dest(models_dir: Path, dest: str) -> Path:
     that escapes it. Manifests can be user-supplied (a custom catalog
     replaces the bundled one wholesale), so every path built from `dest` —
     read, write or DELETE — has to go through here."""
-    path = models_dir / dest
-    if not path.resolve().is_relative_to(models_dir.resolve()):
+    path = contained_dest(models_dir, dest)
+    if path is None:
         raise DownloadError(f"destination escapes models dir: {dest}")
+    return path
+
+
+def contained_dest(models_dir: Path, dest: str) -> Path | None:
+    """resolve_dest for the read-only probes (exists/size), which must not
+    raise out of a listing route: an escaping dest is simply not a model
+    file we have. Answering from the escaped path instead would make the
+    models list an out-of-tree file-existence and file-size oracle, and let
+    a bogus entry report itself installed so its weights never download."""
+    path = models_dir / dest
+    try:
+        if not path.resolve().is_relative_to(models_dir.resolve()):
+            return None
+    except OSError:  # unresolvable (loops, permissions) is not contained
+        return None
     return path
 
 
@@ -157,7 +172,11 @@ async def download_model(
 
 
 def is_downloaded(entry: ModelEntry, models_dir: Path) -> bool:
-    return bool(entry.files) and all((models_dir / f.dest).exists() for f in entry.files)
+    def present(dest: str) -> bool:
+        path = contained_dest(models_dir, dest)
+        return path is not None and path.exists()
+
+    return bool(entry.files) and all(present(f.dest) for f in entry.files)
 
 
 def partial_bytes(entry: ModelEntry, models_dir: Path) -> int:
@@ -166,7 +185,9 @@ def partial_bytes(entry: ModelEntry, models_dir: Path) -> int:
     "Download" after a restart."""
     done = 0
     for f in entry.files:
-        dest = models_dir / f.dest
+        dest = contained_dest(models_dir, f.dest)
+        if dest is None:
+            continue
         if dest.exists():
             done += f.size or dest.stat().st_size
             continue

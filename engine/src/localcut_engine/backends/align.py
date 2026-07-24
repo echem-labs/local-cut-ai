@@ -76,16 +76,17 @@ class AlignBackend(ExecutionBackend):
                 # it — the transcription is timing scaffolding, not text.
                 truth = texts.get(str(segment.get("scene")))
                 if truth:
-                    scene_words = anchor_words_to_text(scene_words, truth)
+                    # floor=offset: head words the ASR dropped may be laid back
+                    # into this scene's own window, never into the one before.
+                    scene_words = anchor_words_to_text(scene_words, truth, floor=offset)
                 words.extend(scene_words)
                 progress = 0.9 * (index + 1) / total
                 asyncio.run_coroutine_threadsafe(ctx.progress(progress), loop)
-            out = ctx.output_path(spec.output_hash, ".srt")
-            # encoding="utf-8": a transcribed non-cp1252 character (CJK/Cyrillic
-            # proper noun, em-dash) would otherwise crash the captions job on
-            # Windows' default codepage.
-            out.write_text(cues_to_srt(words_to_cues(words)), encoding="utf-8")
-            return out
+            # publish_text encodes UTF-8 and renames into place: a transcribed
+            # non-cp1252 character (CJK/Cyrillic proper noun, em-dash) would
+            # crash on Windows' default codepage, and a truncated SRT would be
+            # served as finished captions forever.
+            return ctx.publish_text(spec.output_hash, ".srt", cues_to_srt(words_to_cues(words)))
 
         loop = asyncio.get_running_loop()
         # CPU inference is blocking; one at a time keeps memory bounded.

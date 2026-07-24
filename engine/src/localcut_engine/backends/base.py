@@ -9,7 +9,8 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,7 +46,9 @@ class ServiceProbe:
         self.ttl_s = ttl_s
         self._checked_at: float | None = None
         self._alive = False
-        self._lock = threading.Lock()
+        # A Condition, not a Lock: callers that arrive while the FIRST probe
+        # is still running have to wait for its verdict (see available()).
+        self._lock = threading.Condition()
         self._refreshing = False
 
     def _refresh(self) -> None:
@@ -59,9 +62,18 @@ class ServiceProbe:
             self._alive = alive
             self._checked_at = time.monotonic()
             self._refreshing = False
+            self._lock.notify_all()
 
     def available(self) -> bool:
         with self._lock:
+            # Someone else is producing the first verdict — wait for it rather
+            # than answer from the uninitialized default. Returning False here
+            # is exactly the "route real work to the mock backend and write
+            # placeholder artifacts into a real project" outcome the
+            # synchronous first probe exists to prevent. The timeout is a
+            # backstop against a lost notify, never the expected path.
+            while self._checked_at is None and self._refreshing:
+                self._lock.wait(timeout=self.timeout_s + 5.0)
             first = self._checked_at is None
             fresh = not first and time.monotonic() - self._checked_at < self.ttl_s
             if fresh or self._refreshing:
@@ -70,8 +82,17 @@ class ServiceProbe:
         if first:
             self._refresh()  # startup: the first verdict must be real
         else:
-            threading.Thread(target=self._refresh, daemon=True).start()
-        return self._alive
+            try:
+                threading.Thread(target=self._refresh, daemon=True).start()
+            except RuntimeError:
+                # Thread exhaustion, or interpreter shutdown. _refresh is the
+                # only thing that clears the flag, so leaving it latched would
+                # freeze this verdict for the life of the process — a server
+                # that came back up would be reported down forever.
+                with self._lock:
+                    self._refreshing = False
+        with self._lock:
+            return self._alive
 
 
 class OOMError(GenerationError):
@@ -111,6 +132,25 @@ class ExecutionContext:
 
     def publish_text(self, output_hash: str, suffix: str, text: str) -> Path:
         return self.publish_bytes(output_hash, suffix, text.encode())
+
+    @contextmanager
+    def publishing(self, output_hash: str, suffix: str) -> Iterator[Path]:
+        """publish_bytes for producers that write the file themselves (ffmpeg,
+        soundfile): yields a temp path on the same filesystem and renames it
+        into place only if the block completes. The temp keeps `suffix` so
+        muxers that pick a format by extension still choose right.
+
+        Handing the final path to a producer that can die mid-write is the
+        bug this exists to prevent: cached_hashes() reads the cache off bare
+        filenames, so a truncated `{hash}{suffix}` is served as a finished
+        render forever and the node is never re-enqueued."""
+        out = self.output_path(output_hash, suffix)
+        tmp = out.with_name(f".partial-{uuid.uuid4().hex}{suffix}")
+        try:
+            yield tmp
+            tmp.replace(out)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     async def progress(self, fraction: float) -> None:
         if self.report_progress is not None:

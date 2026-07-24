@@ -95,17 +95,19 @@ class KokoroBackend(ExecutionBackend):
         except (TypeError, ValueError):
             speed = 1.0
 
-        def synth() -> Path:
+        def synth(target: Path) -> None:
             import soundfile as sf
 
             engine = self._load()
             samples, sample_rate = engine.create(text, voice=voice, speed=speed, lang="en-us")
-            out = ctx.output_path(spec.output_hash, ".wav")
-            sf.write(str(out), samples, sample_rate)
-            return out
+            sf.write(str(target), samples, sample_rate)
 
         # ONNX inference is blocking; one at a time keeps memory bounded.
+        # Synthesize into the temp name and publish on success: an inference
+        # that dies partway must not leave a clipped {hash}.wav that the
+        # existence cache serves as finished narration forever.
         async with self._lock:
-            out = await asyncio.to_thread(synth)
+            with ctx.publishing(spec.output_hash, ".wav") as partial:
+                await asyncio.to_thread(synth, partial)
         await ctx.progress(1.0)
-        return out
+        return ctx.output_path(spec.output_hash, ".wav")

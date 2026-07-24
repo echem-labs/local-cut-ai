@@ -1,7 +1,8 @@
+from localcut_engine.graph import templates
 from localcut_engine.graph.compiler import compile_graph
 from localcut_engine.graph.model import Node, NodeKind, StoryGraph
 from localcut_engine.graph.patch import PatchOp, apply_patch
-from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from localcut_engine.backends.mock import mock_screenplay
 
 import pytest
@@ -115,7 +116,9 @@ def test_expansion_writes_caption_ground_truth_and_caps_music():
     assert g.nodes["captions"].params["texts"] == {
         scene.id: scene.narration for scene in screenplay.scenes
     }
-    assert g.nodes["music"].params["target_duration_s"] <= 1000  # ACE-Step's own limit
+    # The bed is looped by assembly, so it is capped at MAX_MUSIC_S — not
+    # merely at what the generator would accept.
+    assert g.nodes["music"].params["target_duration_s"] == templates.MAX_MUSIC_S
 
 
 def test_mock_screenplay_scenes_validate_across_duration_range():
@@ -361,3 +364,14 @@ def test_reexpansion_keeps_user_only_narration_params():
     expand_screenplay(g, mock_screenplay("tide pools", 24, "9:16", seed=0))
     assert g.nodes["s1.narration"].params.get("speed") == 0.8
     assert g.output_hash("s1.narration") == edited
+
+
+def test_music_tool_honours_the_request_up_to_the_generator_ceiling():
+    """The standalone tool is not the looped assembly bed, so it keeps the
+    length the user asked for — but never past what the generator accepts,
+    or the job just fails."""
+    g = tool_graph("music", {"prompt": "lofi", "target_duration_s": 300})
+    assert g.nodes["music"].params["target_duration_s"] == 300
+
+    g = tool_graph("music", {"prompt": "lofi", "target_duration_s": 1200})
+    assert g.nodes["music"].params["target_duration_s"] == templates.GENERATOR_MAX_MUSIC_S

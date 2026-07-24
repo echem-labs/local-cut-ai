@@ -46,6 +46,12 @@ def _write_atomic(path: Path, text: str) -> None:
         # would otherwise raise UnicodeEncodeError and abort create/rename.
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            # Without the fsync the rename can be journalled while the data
+            # blocks are not: a power loss then leaves project.json present
+            # but EMPTY. The project still lists (that reads meta.json) and
+            # is permanently unopenable — there is no server copy to restore.
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
