@@ -194,7 +194,7 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             dirty = apply_patch(graph, ops)
-            self._sync_caption_texts(graph)
+            dirty |= self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
@@ -202,21 +202,32 @@ class ProjectService:
         return dirty
 
     @staticmethod
-    def _sync_caption_texts(graph: StoryGraph) -> None:
+    def _sync_caption_texts(graph: StoryGraph) -> set[str]:
         """Re-derive the captions node's ground-truth texts from the narration
-        nodes. expand_screenplay writes them from the screenplay, but narration
-        text also changes through patches (Inspector edits, LLM edit plans) —
-        without this, captions would anchor the new audio to the old words."""
+        nodes, returning the nodes it dirtied. expand_screenplay writes them
+        from the screenplay, but narration text also changes through patches
+        (Inspector edits) and LLM edit plans — without this, captions would
+        anchor the new audio to the old words.
+
+        Every narration node contributes, empty text included, so this
+        derivation matches expand_screenplay's exactly: a mismatch would flip
+        the captions hash back and forth between the two paths, re-rendering
+        the caption track and the export on every cycle."""
         captions = graph.nodes.get("captions")
         if captions is None:
-            return
+            return set()
         texts = {
             node_id.removesuffix(".narration"): str(node.params.get("text", ""))
             for node_id, node in graph.nodes.items()
-            if node_id.endswith(".narration") and node.params.get("text")
+            if node_id.endswith(".narration")
         }
-        if texts and captions.params.get("texts") != texts:
-            captions.params["texts"] = texts  # hash change → captions re-render
+        if not texts or captions.params.get("texts") == texts:
+            return set()
+        # The hash change is what re-renders the captions; report it as dirty
+        # so the work is enqueued now rather than lying in wait for whatever
+        # unrelated action next triggers a plan.
+        captions.params["texts"] = texts
+        return {"captions"}
 
     def add_asset(self, project_id: str, filename: str, data: bytes, voice: bool = False) -> dict:
         """Import a user asset as a graph node. The file lands in generated/
@@ -271,6 +282,9 @@ class ProjectService:
                 )
             ops, warnings = compile_edits(graph, plan, scope)
             dirty = apply_patch(graph, ops) if ops else set()
+            # Same ground-truth sync as patch(): an NL edit rewrites narration
+            # text, so the captions must follow the new words, not the old.
+            dirty |= self._sync_caption_texts(graph)
             if ops:
                 self.store.save_graph(project_id, graph)
             if dirty:

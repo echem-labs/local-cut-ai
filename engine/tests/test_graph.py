@@ -105,6 +105,19 @@ def test_node_ids_are_constrained():
         Node(id="a" * 200, kind=NodeKind.CLIP)
 
 
+def test_expansion_writes_caption_ground_truth_and_caps_music():
+    """Captions carry each scene's narration verbatim — that param is what
+    stops the aligner captioning a misheard homophone. Music is a loopable
+    bed, so its request stays capped however long the video is."""
+    g = prompt_template_graph("solar flares", target_duration_s=1200)
+    screenplay = mock_screenplay("solar flares", 1200, "9:16", seed=0)
+    expand_screenplay(g, screenplay)
+    assert g.nodes["captions"].params["texts"] == {
+        scene.id: scene.narration for scene in screenplay.scenes
+    }
+    assert g.nodes["music"].params["target_duration_s"] <= 1000  # ACE-Step's own limit
+
+
 def test_mock_screenplay_scenes_validate_across_duration_range():
     """The API accepts 5–1200s; every target in range must yield scenes the
     schema accepts (duration_s ≤ 60) — the 10-scene cap alone would not."""

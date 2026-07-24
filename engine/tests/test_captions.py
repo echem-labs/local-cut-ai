@@ -47,11 +47,14 @@ def test_anchor_drops_hallucinated_words_and_inserts_missed_ones():
     asr = [w("the", 0.0, 0.1), w("uh", 0.1, 0.2), w("tide", 0.2, 0.5), w("turns", 0.5, 0.9)]
     out = anchor_words_to_text(asr, "the tide turns quietly")
     assert [word.text for word in out] == ["the", "tide", "turns", "quietly"]
-    # Inserted word starts at the preceding boundary; nothing goes backwards
-    # and every word has real width (zero-width cues never display).
+    # The trailing word has no transcribed time of its own, so it pins to the
+    # preceding boundary; timing never runs backwards, and the cue it lands
+    # in still gets real screen time.
     assert out[-1].start == out[-2].end
     assert all(b.start >= a.start for a, b in zip(out, out[1:]))
-    assert all(word.end > word.start for word in out)
+    cues = words_to_cues(out)
+    assert "quietly" in " ".join(cue.text for cue in cues)
+    assert all(cue.end > cue.start for cue in cues)
 
 
 def test_anchor_inserted_sentence_still_renders_as_a_cue():
@@ -64,11 +67,78 @@ def test_anchor_inserted_sentence_still_renders_as_a_cue():
     assert all(cue.end > cue.start for cue in cues)
 
 
-def test_anchor_skips_unalignable_text():
-    # Mostly punctuation/non-Latin tokens normalize to nothing — anchoring
-    # would misplace everything, so the transcription stands.
-    asr = [w("wait", 0.0, 0.4), w("stop", 0.4, 0.8)]
-    assert anchor_words_to_text(asr, "— … —") == asr
+def test_anchor_keeps_non_latin_script_text():
+    # Tokens that carry no [a-z0-9'] normalize to nothing. They must never
+    # match each other by accident — the script still wins, spread over the
+    # transcribed span, rather than the ASR's English guess surviving.
+    asr = [w("shall", 0.0, 0.4), w("we", 0.4, 0.7), w("go", 0.7, 1.0)]
+    out = anchor_words_to_text(asr, "今天 我们 出发 吧")
+    assert [word.text for word in out] == ["今天", "我们", "出发", "吧"]
+    assert out[0].start == 0.0 and out[-1].end == 1.0
+
+
+def test_anchor_never_crosses_the_next_transcribed_word():
+    # Mid-sequence inserts must stay inside the gap: time invented past a
+    # real boundary would overlap the following cue on screen.
+    asr = [w("One.", 0.0, 0.4), w("Two", 0.4, 0.8), w("three.", 0.8, 1.2)]
+    out = anchor_words_to_text(asr, "One. A brand new inserted clause here. Two three.")
+    assert [word.text for word in out] == (
+        "One. A brand new inserted clause here. Two three.".split()
+    )
+    assert all(b.start >= a.start for a, b in zip(out, out[1:]))
+    assert all(word.end >= word.start for word in out)
+    cues = words_to_cues(out)
+    # Cues must be ordered and non-overlapping, or burn-in stacks two lines.
+    assert all(b.start >= a.end for a, b in zip(cues, cues[1:]))
+    assert all(cue.end > cue.start for cue in cues)
+
+
+def test_anchor_zero_width_asr_span_does_not_overlap_the_next_word():
+    # faster-whisper occasionally emits a zero-width word; borrowing time for
+    # the replacement must stop at the next word's start.
+    asr = [w("sun", 0.0, 0.0), w("rises", 0.0, 0.5), w("east", 0.5, 1.0)]
+    out = anchor_words_to_text(asr, "son rises east")
+    assert [word.text for word in out] == ["son", "rises", "east"]
+    assert all(b.start >= a.start for a, b in zip(out, out[1:]))
+    assert out[0].end <= out[1].start
+
+
+async def test_align_backend_uses_the_graph_texts(tmp_path, monkeypatch):
+    """The plumbing the feature rides on: the captions node's `texts` param
+    must reach the backend and be keyed by the EDL segment's scene. Mocked
+    transcription so this runs without model weights."""
+    import json
+
+    backend = AlignBackend(models_dir=tmp_path)
+    model_dir = backend.model_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model.bin").touch()
+    narration = tmp_path / "s1.wav"
+    narration.touch()
+    monkeypatch.setattr(
+        AlignBackend,
+        "_align_one",
+        lambda self, path, offset: [
+            Word("our", offset + 0.0, offset + 0.3),
+            Word("son.", offset + 0.3, offset + 0.8),
+        ],
+    )
+    edl = {"video": [{"scene": "s1", "narration": narration.name, "start": 0.0, "duration": 2.0}]}
+    edl_path = tmp_path / "e.timeline.json"
+    edl_path.write_text(json.dumps(edl))
+
+    out = await backend.execute(
+        make_spec(NodeKind.CAPTIONS, {"texts": {"s1": "our sun."}}, output_hash="e" * 64),
+        ExecutionContext(output_dir=tmp_path, input_artifacts={"default": edl_path}),
+    )
+    assert "our sun." in out.read_text()
+
+    # No texts (legacy graph) → the transcription stands.
+    plain = await backend.execute(
+        make_spec(NodeKind.CAPTIONS, output_hash="f" * 64),
+        ExecutionContext(output_dir=tmp_path, input_artifacts={"default": edl_path}),
+    )
+    assert "our son." in plain.read_text()
 
 
 def test_anchor_without_truth_or_words_is_identity():

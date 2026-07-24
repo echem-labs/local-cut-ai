@@ -299,6 +299,15 @@ async def test_create_project_validates_aspect_and_duration(client):
     assert over_cap.status_code == 422
     at_cap = await client.post("/projects", json={"prompt": "x", "target_duration_s": 1200})
     assert at_cap.status_code == 200
+    # Quick tools carry the same bounds — they build the same script node.
+    tool_over = await client.post(
+        "/tools", json={"tool": "script", "prompt": "x", "target_duration_s": 1201}
+    )
+    assert tool_over.status_code == 422
+    tool_at = await client.post(
+        "/tools", json={"tool": "script", "prompt": "x", "target_duration_s": 1200}
+    )
+    assert tool_at.status_code == 200
 
 
 async def test_patch_input_errors_are_422_not_500(client):
