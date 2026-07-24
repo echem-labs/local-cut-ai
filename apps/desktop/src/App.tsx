@@ -50,13 +50,15 @@ export default function App() {
 
   // The tab list scrolls; keep the active tab visible in it (the removed
   // overflow cap used to guarantee this by swapping it into the window).
+  // settingsOpen is a dependency: the overlay strips the active class off
+  // every tab, and closing it restores the class without the id changing.
   const activeProjectId = currentProject?.id ?? null;
   useEffect(() => {
-    if (!activeProjectId) return;
+    if (!activeProjectId || settingsOpen) return;
     document
       .querySelector(".rail-tabs button.active")
       ?.scrollIntoView({ block: "nearest" });
-  }, [activeProjectId]);
+  }, [activeProjectId, settingsOpen]);
 
   // Mirrors the resolved theme (Settings toggle and OS changes included).
   const [theme, setTheme] = useState<"dark" | "light">(resolvedTheme);

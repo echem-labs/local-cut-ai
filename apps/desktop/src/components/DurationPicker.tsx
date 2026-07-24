@@ -1,5 +1,5 @@
 import { Clock, Timer } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { DURATION_BOUNDS, DURATIONS } from "../lib/formats";
 import { Dropdown } from "./Dropdown";
@@ -45,34 +45,64 @@ export function DurationPicker({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [invalid, setInvalid] = useState(false);
+  // Closing the editor unmounts the focused input, which would drop a
+  // keyboard user at the top of the document. The ref lives on a wrapper
+  // that outlives both branches; focus moves back to the chip in an effect,
+  // once the commit that re-rendered it has actually landed.
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (editing || !restoreFocus.current) return;
+    restoreFocus.current = false;
+    rootRef.current?.querySelector("button")?.focus();
+  }, [editing]);
+  const close = () => {
+    restoreFocus.current = true;
+    setEditing(false);
+    setInvalid(false);
+  };
   const isPreset = DURATIONS.some((entry) => entry.value === value);
 
   if (editing) {
     const commit = () => {
       const parsed = parseDuration(draft);
-      if (parsed !== null) onChange(parsed);
-      setEditing(false);
+      // Unparseable input keeps the editor open and says so, rather than
+      // silently reverting to the previous value.
+      if (parsed === null) {
+        setInvalid(true);
+        return;
+      }
+      onChange(parsed);
+      close();
     };
     return (
-      <span className="duration-edit">
-        <input
-          className="duration-input"
-          autoFocus
-          value={draft}
-          placeholder={t("durations.customPlaceholder")}
-          aria-label={t("durations.customAria")}
-          title={t("durations.customHint")}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") commit();
-            if (event.key === "Escape") setEditing(false);
-          }}
-        />
-        {/* The chip is prefilled, so the placeholder never shows — a
-            persistent tip above the input carries the format hint. */}
-        <span className="tip duration-tip" role="presentation" aria-hidden="true">
-          {t("durations.customHint")}
+      <span className="duration-picker" ref={rootRef}>
+        <span className="duration-edit">
+          <input
+            className={`duration-input${invalid ? " invalid" : ""}`}
+            autoFocus
+            value={draft}
+            placeholder={t("durations.customPlaceholder")}
+            aria-label={t("durations.customAria")}
+            aria-describedby="duration-hint"
+            aria-invalid={invalid}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setInvalid(false);
+            }}
+            onBlur={() => (parseDuration(draft) === null ? close() : commit())}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit();
+              if (event.key === "Escape") close();
+            }}
+          />
+          {/* The chip is prefilled, so the placeholder never shows — a
+              persistent hint above the input carries the accepted formats.
+              It is the input's accessible description, not decoration. */}
+          <span className="tip duration-tip" id="duration-hint" role="note">
+            {t(invalid ? "durations.customInvalid" : "durations.customHint")}
+          </span>
         </span>
       </span>
     );
@@ -91,18 +121,20 @@ export function DurationPicker({
   ];
 
   return (
-    <Dropdown
-      value={value}
-      options={options}
-      ariaLabel={ariaLabel}
-      onChange={(picked) => {
-        if (picked === CUSTOM) {
-          setDraft(formatDuration(value));
-          setEditing(true);
-        } else {
-          onChange(picked);
-        }
-      }}
-    />
+    <span className="duration-picker" ref={rootRef}>
+      <Dropdown
+        value={value}
+        options={options}
+        ariaLabel={ariaLabel}
+        onChange={(picked) => {
+          if (picked === CUSTOM) {
+            setDraft(formatDuration(value));
+            setEditing(true);
+          } else {
+            onChange(picked);
+          }
+        }}
+      />
+    </span>
   );
 }

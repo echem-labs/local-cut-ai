@@ -62,6 +62,9 @@ function stepZoom(direction: 1 | -1): void {
 /** Apply the persisted zoom, fetch the system baseline, and install the
  * Ctrl +/− / Ctrl 0 shortcuts. Call once at renderer startup. */
 export function initZoom(): void {
+  // Only claim the chords where we can actually scale: in a plain browser
+  // (vite dev) the native zoom is the real thing and must not be swallowed.
+  if (!window.localcut) return;
   window.addEventListener("keydown", (event) => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
     if (event.key === "=" || event.key === "+") stepZoom(1);
