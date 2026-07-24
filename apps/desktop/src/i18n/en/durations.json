@@ -6,5 +6,6 @@
   "customTag": "custom",
   "customPlaceholder": "e.g. 3:30 or 210",
   "customAria": "Custom duration in minutes:seconds or seconds",
-  "customHint": "Seconds (210), minutes:seconds (3:30), or minutes (3.5min) — 5s to 20min"
+  "customHint": "Seconds (210), minutes:seconds (3:30), or minutes (3.5min) — 5s to 20min",
+  "customInvalid": "Not a duration — use seconds (210), m:ss (3:30) or minutes (3.5min)"
 }

@@ -686,6 +686,10 @@ textarea {
 
 .prompt-box .row {
   display: flex;
+  /* Wrap rather than overflow: a narrow window — or a wide one at 150%
+     interface zoom — otherwise pushes Generate off the right edge behind a
+     horizontal scrollbar. */
+  flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
   padding: var(--space-3);
@@ -756,11 +760,19 @@ textarea {
   display: inline-flex;
 }
 
+.duration-picker {
+  display: inline-flex;
+}
+
 .duration-edit .duration-tip {
   position: absolute;
   left: 50%;
   bottom: calc(100% + 6px);
   transform: translateX(-50%);
+}
+
+.duration-input.invalid {
+  border-color: var(--status-failed);
 }
 
 .duration-input {
