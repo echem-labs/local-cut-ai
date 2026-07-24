@@ -25,6 +25,25 @@ interface StoreFile {
   keys: Partial<Record<ProviderKeyId, string>>;
 }
 
+/** Is safeStorage actually backed by an OS keychain?
+ *
+ * On Linux `isEncryptionAvailable()` also returns true for Chromium's
+ * `basic_text` backend, which "encrypts" with a hardcoded password — so
+ * reporting that as encrypted tells the user their keys are keychain-
+ * protected when anyone who can read the file can recover them. The keys
+ * are still stored through safeStorage either way; this only governs the
+ * claim the UI makes. */
+function keychainBacked(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false;
+  if (process.platform !== "linux") return true;
+  try {
+    const backend = safeStorage.getSelectedStorageBackend();
+    return backend !== "basic_text" && backend !== "unknown";
+  } catch {
+    return false; // can't prove a keychain — don't claim one
+  }
+}
+
 export class ProviderKeyStore {
   private get file(): string {
     return path.join(app.getPath("userData"), "provider-keys.json");
@@ -115,7 +134,8 @@ export class ProviderKeyStore {
       openai: Boolean(data.keys.openai),
       gemini: Boolean(data.keys.gemini),
       fal: Boolean(data.keys.fal),
-      encrypted: data.encrypted,
+      // What the UI promises the user, not merely "safeStorage accepted it".
+      encrypted: data.encrypted && keychainBacked(),
     };
   }
 }

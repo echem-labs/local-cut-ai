@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent, Menu, session } from "electron";
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { EngineManager } from "./engine";
 import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
@@ -28,6 +29,47 @@ const authorityOf = (url: string): string | null => {
     return null;
   }
 };
+
+const hostOf = (url: string): string | null => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+};
+
+/** Is this URL the app's own renderer? Everything downstream of this — the
+ * navigation lockdown and every state-mutating IPC handler — treats "yes"
+ * as "may hold the engine token".
+ *
+ * It compares ORIGINS, not string prefixes. `startsWith(devUrl)` accepts
+ * `http://127.0.0.1:5173@evil.com/`, which WHATWG parses as host evil.com
+ * with the dev URL as userinfo; the packaged `startsWith("file://")` form
+ * accepted any file on disk. */
+function isAppUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devUrl) {
+    try {
+      return url.origin === new URL(devUrl).origin;
+    } catch {
+      return false;
+    }
+  }
+  if (url.protocol !== "file:") return false;
+  const root = path.resolve(__dirname, "..", "..", "dist");
+  try {
+    const file = path.resolve(fileURLToPath(url));
+    return file === path.join(root, "index.html") || file.startsWith(root + path.sep);
+  } catch {
+    return false;
+  }
+}
 
 /** Native-controls overlay colors per theme — backgrounds match the
  * renderer's .titlebar (surface-1). Height is one pixel SHORT of
@@ -64,8 +106,7 @@ async function createWindow(): Promise<void> {
   // — content outside the app's own origin, which would inherit that bridge
   // (a redirect, an injected iframe, or an in-bundle XSS).
   window.webContents.on("will-navigate", (event, url) => {
-    const isApp = devUrl ? url.startsWith(devUrl) : url.startsWith("file://");
-    if (!isApp) event.preventDefault();
+    if (!isAppUrl(url)) event.preventDefault();
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
@@ -220,18 +261,22 @@ async function applyKeyUpdates(updates: Partial<Record<ProviderKeyId, string>>) 
 function trustedSender(event: IpcMainInvokeEvent): boolean {
   const frame = event.senderFrame;
   if (!frame || frame.parent !== null) return false; // top frame only, no iframes
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
-  return devUrl ? frame.url.startsWith(devUrl) : frame.url.startsWith("file://");
+  return isAppUrl(frame.url);
 }
 
-ipcMain.handle("engine:connection", () => ({
-  connection: activeConnection(),
-  error: engineError,
-  remote: remoteConnection !== null,
-  // A pairing on disk even if the remote is currently unreachable — so the
-  // UI can always offer Disconnect and isn't stranded on a dead box.
-  remotePaired: remoteStore.exists(),
-}));
+// Gated like the mutators: this hands out the engine's URL and bearer token,
+// which is full authenticated access to every project on the machine.
+ipcMain.handle("engine:connection", (event) => {
+  if (!trustedSender(event)) throw new Error("untrusted sender");
+  return {
+    connection: activeConnection(),
+    error: engineError,
+    remote: remoteConnection !== null,
+    // A pairing on disk even if the remote is currently unreachable — so the
+    // UI can always offer Disconnect and isn't stranded on a dead box.
+    remotePaired: remoteStore.exists(),
+  };
+});
 
 ipcMain.handle("engine:pair", async (event, code: unknown) => {
   if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
@@ -315,6 +360,26 @@ app.whenReady().then(async () => {
   // in packaged builds so Alt can't summon it either. Dev keeps it for the
   // reload/devtools accelerators.
   if (app.isPackaged) Menu.setApplicationMenu(null);
+
+  // Pin the remote engine's certificate for the RENDERER's traffic too.
+  // certificate-error (below) only fires once Chromium's own verification
+  // has already failed, so a cert Chromium happens to trust — a public CA,
+  // a corporate MITM root, malware-installed root — sailed past the pin
+  // while the renderer handed over the engine bearer token. A verify proc
+  // runs on every verification, so the pin is authoritative.
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    const pairing = remoteConnection ?? remoteStore.load();
+    const pinnedHost = pairing?.url ? hostOf(pairing.url) : null;
+    if (pinnedHost && request.hostname === pinnedHost) {
+      const matches =
+        !!pairing?.cert &&
+        !!request.certificate?.data &&
+        pemBody(request.certificate.data) === pemBody(pairing.cert);
+      callback(matches ? 0 : -2); // 0 = trust this cert, -2 = reject
+      return;
+    }
+    callback(-3); // anything else: Chromium's own verdict stands
+  });
   try {
     await connectEngine();
     await armStoredKeys();
