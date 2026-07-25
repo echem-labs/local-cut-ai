@@ -216,6 +216,10 @@ export type EngineEvent =
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
   | { type: "project.renamed"; project_id: string; title: string }
+  // A post-completion hook failed — most often a screenplay the expander
+  // could not apply. The job itself succeeded, so nothing else reports it.
+  | { type: "project.error"; project_id: string; node_id: string; error: string }
+  | { type: "project.deleted"; project_id: string }
   // done/total are bytes across the whole model, throttled to ~0.5s.
   | { type: "model.download.progress"; model: string; file: string; done: number; total: number }
   | { type: "model.download.done"; model: string }

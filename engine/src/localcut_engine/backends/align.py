@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from ..captions import Word, anchor_words_to_text, cues_to_srt, words_to_cues
@@ -14,9 +15,14 @@ from ..graph.compiler import JobSpec
 from ..graph.model import DEFAULT_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
+logger = logging.getLogger(__name__)
+
 # Fallback when no manifest is available; normally the model dir comes from
 # the faster-whisper-base-en manifest entry's file dests.
 _DEFAULT_MODEL_DIR = "asr/faster-whisper-base.en"
+# A progress publish that cannot land within this is not worth blocking
+# transcription for — the SRT matters, the percentage does not.
+_PROGRESS_TIMEOUT_S = 5.0
 
 
 class AlignBackend(ExecutionBackend):
@@ -56,6 +62,28 @@ class AlignBackend(ExecutionBackend):
         segments = timeline.get("video", [])
         texts: dict = spec.params.get("texts") or {}
 
+        def report(fraction: float) -> None:
+            """Publish progress from the transcription thread onto the loop.
+
+            The future is awaited, not discarded. A `concurrent.futures.Future`
+            emits no "exception never retrieved" warning, so a progress persist
+            that failed was completely invisible and the board silently stopped
+            updating. Progress is also strictly best-effort: a failure here (or
+            a loop that has already closed during shutdown) must never take
+            down an otherwise-complete captions job before it writes its SRT.
+            """
+            try:
+                future = asyncio.run_coroutine_threadsafe(ctx.progress(fraction), loop)
+            except RuntimeError:
+                return  # loop closed under us (shutdown) — the SRT still lands
+            try:
+                future.result(timeout=_PROGRESS_TIMEOUT_S)
+            except TimeoutError:
+                future.cancel()
+                logger.debug("progress publish timed out; continuing transcription")
+            except Exception:  # noqa: BLE001 — progress must not fail the job
+                logger.warning("progress publish failed during alignment", exc_info=True)
+
         def synth() -> Path:
             words: list[Word] = []
             total = len(segments) or 1
@@ -80,8 +108,7 @@ class AlignBackend(ExecutionBackend):
                     # into this scene's own window, never into the one before.
                     scene_words = anchor_words_to_text(scene_words, truth, floor=offset)
                 words.extend(scene_words)
-                progress = 0.9 * (index + 1) / total
-                asyncio.run_coroutine_threadsafe(ctx.progress(progress), loop)
+                report(0.9 * (index + 1) / total)
             # publish_text encodes UTF-8 and renames into place: a transcribed
             # non-cp1252 character (CJK/Cyrillic proper noun, em-dash) would
             # crash on Windows' default codepage, and a truncated SRT would be

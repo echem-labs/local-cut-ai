@@ -73,7 +73,8 @@
     "clearCacheConfirm": "Clear cache",
     "modelsHeading": "Models",
     "modelsHint": "Downloaded model weights are managed in the model library.",
-    "loading": "Measuring disk usage…"
+    "loading": "Measuring disk usage…",
+    "failed": "Could not measure disk usage — the engine did not answer. Reopen this tab to try again."
   },
   "remote": {
     "heading": "Remote engine",
@@ -87,6 +88,12 @@
     "disconnect": "Disconnect",
     "disconnecting": "Disconnecting…",
     "pair": "Pair",
+    "checking": "Checking…",
+    "reviewHost": "Engine",
+    "reviewFingerprint": "Certificate",
+    "reviewVerify": "Check this matches what the other machine printed before you continue. Anyone who gives you a pairing code chooses the address it connects to.",
+    "reviewArmKeys": "Also send my provider keys ({keys}) to {host}",
+    "reviewConfirm": "Connect",
     "pairing": "Pairing…",
     "pairPlaceholder": "Paste pairing code…",
     "pairAria": "Pairing code"
@@ -111,6 +118,7 @@
     "hintAuto": "What renders each step of your video. Routing is automatic: a step runs on a generative backend only while a model for it is installed.",
     "hintManual": "What renders each step of your video. Routing is pinned by LOCALCUT_COMFY_KINDS; delete that variable to route from installed models.",
     "unrouted": "no backend — this step cannot render",
+    "noFfmpeg": "Assembly and export need FFmpeg, and none was found on this machine. Install FFmpeg and restart LocalCut AI — until then these steps will fail rather than produce a placeholder video.",
     "stillClips": "{name} — still images with motion applied; install a video model for true motion",
     "withModels": "{name} · {models}",
     "names": {

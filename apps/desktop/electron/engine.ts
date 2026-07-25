@@ -12,6 +12,10 @@ import type { EngineConnection } from "../src/api/types";
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_INTERVAL_MS = 250;
+/** How long a terminated process group gets before it is SIGKILLed. */
+const TERM_GRACE_MS = 3_000;
+/** How long to wait for a killed orphan to release the port before retrying. */
+const PORT_RELEASE_MS = 4_000;
 
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
@@ -78,17 +82,48 @@ export class EngineManager {
     // Dedup concurrent starts: during startup `connection` is still null, so a
     // second caller (e.g. whenReady racing engine:unpair) would otherwise
     // spawn a second engine and orphan the first.
-    this.starting ??= this.spawnAndWait().finally(() => {
+    this.starting ??= this.startWithOrphanRecovery().finally(() => {
       this.starting = null;
     });
     return this.starting;
+  }
+
+  /**
+   * Start, and if a stale engine from a crashed session is holding the port,
+   * reclaim it and try once more.
+   *
+   * The dead end this replaces: the next launch finds the port held, gets a
+   * 401 (it is not our token), and tells the user to quit a process that on
+   * Windows has no window — `windowsHide: true` means there is nothing to
+   * close, so recovery meant opening Task Manager. Since we are the ones who
+   * orphaned it, we are also the ones who can clean it up.
+   */
+  private async startWithOrphanRecovery(): Promise<EngineConnection> {
+    try {
+      return await this.spawnAndWait();
+    } catch (error) {
+      if (!(error instanceof EngineConflictError)) throw error;
+      const port = Number(process.env.LOCALCUT_ENGINE_PORT ?? "7830");
+      console.warn(`[engine] port ${port} held by a stale engine; reclaiming it`);
+      if (!(await reclaimPort(port))) throw error; // not ours to kill — report it
+      return this.spawnAndWait();
+    }
   }
 
   private async spawnAndWait(): Promise<EngineConnection> {
     const { cmd, args, cwd, env, connection } = this.command();
     // windowsHide: the frozen engine is a console binary — without it,
     // Windows pops a console window behind the packaged GUI app.
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      // Its own process group on POSIX, so stop() can signal the engine AND
+      // its ffmpeg children together instead of orphaning them mid-encode.
+      // (Windows gets the same effect from `taskkill /T`.)
+      detached: process.platform !== "win32",
+    });
     this.child = child;
     child.stdout?.on("data", (chunk: Buffer) =>
       console.log(`[engine] ${chunk.toString().trimEnd()}`),
@@ -158,11 +193,131 @@ export class EngineManager {
 
   stop(): void {
     if (this.child) {
-      this.child.kill("SIGTERM");
+      killTree(this.child);
       this.child = null;
     }
     // Drop the connection too: a stopped engine's URL/token is dead, and a
     // later failed restart must read as "no connection", not a stale one.
     this.connection = null;
+  }
+}
+
+/** Run a command to completion; resolves to its stdout, or null if it could
+ * not be launched or exited non-zero. */
+function run(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let out = "";
+    const child = spawn(cmd, args, { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    child.stdout?.on("data", (chunk: Buffer) => (out += chunk.toString()));
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => resolve(code === 0 ? out : null));
+  });
+}
+
+/**
+ * Kill whatever is listening on `port` and wait for it to let go.
+ *
+ * Only ever called after the engine answered /health but rejected our token —
+ * i.e. it IS a LocalCut engine, just one orphaned by a previous session. A
+ * false return means "could not identify or kill it", and the caller reports
+ * the original conflict rather than pretending to have fixed anything.
+ */
+async function reclaimPort(port: number): Promise<boolean> {
+  const pids = new Set<number>();
+  if (process.platform === "win32") {
+    const out = await run("netstat", ["-ano", "-p", "TCP"]);
+    for (const line of (out ?? "").split(/\r?\n/)) {
+      // "  TCP    127.0.0.1:7830   0.0.0.0:0   LISTENING   1234"
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 5 && parts[3] === "LISTENING" && parts[1]?.endsWith(`:${port}`)) {
+        const pid = Number(parts[4]);
+        if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+      }
+    }
+  } else {
+    const out = await run("lsof", ["-tiTCP:" + port, "-sTCP:LISTEN"]);
+    for (const line of (out ?? "").split(/\r?\n/)) {
+      const pid = Number(line.trim());
+      if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+    }
+  }
+  if (pids.size === 0) return false;
+  // Never kill ourselves — an Electron helper bound to this port would mean
+  // something is very wrong, and taking down the app is not the fix.
+  pids.delete(process.pid);
+  if (pids.size === 0) return false;
+
+  for (const pid of pids) {
+    console.warn(`[engine] terminating orphaned engine pid ${pid}`);
+    if (process.platform === "win32") {
+      await run("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    } else {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone, or not ours */
+      }
+    }
+  }
+  // The socket lingers briefly after the process dies; a retry that races it
+  // would just fail to bind for a reason the user can do nothing about.
+  const deadline = Date.now() + PORT_RELEASE_MS;
+  while (Date.now() < deadline) {
+    if (!(await portIsHeld(port))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return !(await portIsHeld(port));
+}
+
+/** Whether anything currently accepts a connection on the loopback port. */
+async function portIsHeld(port: number): Promise<boolean> {
+  try {
+    await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Kill the engine AND its descendants.
+ *
+ * `child.kill("SIGTERM")` maps to TerminateProcess on one PID on Windows, so
+ * ffmpeg children are orphaned mid-encode and uvicorn's lifespan shutdown
+ * (queue close, download shutdown) never runs — the DB row stays `rendering`
+ * and the orphan keeps the port. `taskkill /T` walks the tree; POSIX gets the
+ * process group, which is why spawn() sets detached there.
+ */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    try {
+      // /T kills the tree, /F forces it. Fire-and-forget: the engine is
+      // already being torn down, and a failure here is reported by the
+      // orphan check on the next launch.
+      spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      }).on("error", (err) => console.warn("[engine] taskkill failed:", err.message));
+    } catch (err) {
+      console.warn("[engine] taskkill failed:", err);
+      child.kill("SIGKILL");
+    }
+    return;
+  }
+  try {
+    // Negative pid = the whole process group (spawn used detached: true).
+    process.kill(-child.pid, "SIGTERM");
+    // Backstop: SIGKILL the group if anything is still alive. unref() so a
+    // pending timer can never hold the app open during quit.
+    setTimeout(() => {
+      try {
+        process.kill(-child.pid!, "SIGKILL");
+      } catch {
+        /* already gone — the normal case */
+      }
+    }, TERM_GRACE_MS).unref();
+  } catch {
+    child.kill("SIGTERM"); // group gone already, or no permission
   }
 }

@@ -33,6 +33,7 @@ _SUFFIX = {
     NodeKind.THUMBNAIL: ".png",
 }
 
+
 def _png_chunk(tag: bytes, data: bytes) -> bytes:
     return (
         struct.pack(">I", len(data))
@@ -53,9 +54,9 @@ def _slate_png(node_id: str, seed: int, width: int = 320, height: int = 180) -> 
     for y in range(height):
         shade = 1.0 - 0.55 * y / height
         rows.append(0)  # scanline filter: none
-        rows += bytes(
-            (round(r * 255 * shade), round(g * 255 * shade), round(b * 255 * shade))
-        ) * width
+        rows += (
+            bytes((round(r * 255 * shade), round(g * 255 * shade), round(b * 255 * shade))) * width
+        )
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -113,10 +114,34 @@ def mock_screenplay(prompt: str, target_duration_s: int, aspect: str, seed: int)
 _PROGRESS_STEPS = 4
 
 
+# Assembly kinds: the ones that produce something the user takes away and
+# treats as the finished thing. A placeholder here is not a degraded result,
+# it is a wrong one.
+_ASSEMBLY_KINDS = {NodeKind.TIMELINE, NodeKind.EXPORT}
+
+
 class MockBackend(ExecutionBackend):
     name = "mock"
 
+    def __init__(self, assembly: bool = True) -> None:
+        """`assembly=False` makes this backend decline TIMELINE and EXPORT.
+
+        Mock is the catch-all at the end of the hybrid chain, so on a machine
+        with no ffmpeg — a stock Windows or macOS box, or a minimal Ubuntu
+        install, since the deb declares no dependency — the FFmpeg backend
+        declined every kind and assembly fell through to here. The user then
+        got a completed "export" that was a placeholder MP4, presented
+        exactly like a real one. Declining is what turns that into an error
+        they can act on.
+
+        Left on for an explicit all-mock chain, which is the demo/test
+        configuration and is not pretending to be anything else.
+        """
+        self.assembly = assembly
+
     def supports(self, kind: NodeKind) -> bool:
+        if kind in _ASSEMBLY_KINDS and not self.assembly:
+            return False
         return kind in _SUFFIX
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
@@ -147,7 +172,9 @@ class MockBackend(ExecutionBackend):
         elif spec.kind in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
             body = _slate_png(spec.node_id, spec.seed)
         elif spec.kind in (NodeKind.TIMELINE, NodeKind.CAPTIONS):
-            body = json.dumps({"node": spec.node_id, "inputs": spec.input_hashes}, indent=2).encode()
+            body = json.dumps(
+                {"node": spec.node_id, "inputs": spec.input_hashes}, indent=2
+            ).encode()
         else:
             # Media placeholder: enough to exercise artifact plumbing.
             body = json.dumps({"mock": spec.node_id, "seed": spec.seed}).encode()

@@ -43,6 +43,26 @@ OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT, CAPTIONS_PORT}
 # v5: segments carry `srcs` — the sequential takes of a split scene).
 EDL_VERSION = 5
 
+# The project.json wire format. Distinct from EDL_VERSION (which only
+# invalidates a cached artifact hash) and from the app version in
+# manifest.json (which is written and never read).
+#
+# Bump ONLY on a change an older engine would mis-handle by dropping it:
+# every model here uses pydantic's default extra="ignore", so an older build
+# opening a newer project silently discards the fields it doesn't know — and
+# the next action that touches the graph (any patch, regenerate, approve, or
+# job completion) writes the reduced object back over the user's work, with
+# no error and nothing to detect it against afterwards.
+#
+# The compatibility contract, enforced in project/store.py:
+#   - graph_version > GRAPH_VERSION  → refuse to open. Upgrade the engine.
+#   - graph_version <= GRAPH_VERSION → open, migrate forward, rewrite.
+#   - absent                         → a pre-versioning project; treated as
+#                                      version 1, which is what it is.
+# This matters most in the documented remote-engine topology, where laptop
+# and GPU box are separate installs on separate update schedules.
+GRAPH_VERSION = 1
+
 # Node ids must stay addressable through the API's path params — the same
 # pattern guards both places.
 NODE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -68,6 +88,51 @@ class NodeKind(StrEnum):
     THUMBNAIL = "thumbnail"
 
 
+# Params that describe how an artifact is PRESENTED, not how it is generated.
+# They are deliberately excluded from the output hash: including one means a
+# change no backend can even observe still re-renders the artifact.
+#
+# `onscreen_text` is the case this exists for. Titles are burned at assembly
+# from the timeline node's `overlays`, and no clip backend reads the clip's
+# copy — yet it sat in the clip's params, so re-running the script with a
+# reworded title re-rendered the video. Ignoring it here (rather than only
+# dropping it from newly built graphs) keeps graphs already on disk hashing
+# the same as fresh ones, so there is exactly one re-render, not two.
+PRESENTATION_PARAMS = frozenset({"onscreen_text"})
+
+
+def normalize_params(params: dict[str, Any]) -> dict[str, Any]:
+    """A param dict reduced to what actually identifies the output.
+
+    Two normalizations, both about the same failure — an edit that changes
+    nothing still re-renders:
+
+    1. Presentation-only keys are dropped (see PRESENTATION_PARAMS).
+    2. Integral floats collapse to int, so `5` and `5.0` hash the same. The
+       Inspector sends whatever JSON.stringify produced (a whole number
+       serializes as `5`), while the LLM edit path coerces through float()
+       and sends `5.0`. The values are equal, but the serialized payloads
+       were not — so each edit through the other path invalidated the cache
+       and re-rendered work that was already correct.
+
+    Applied recursively: nested dicts (timeline `trims`) and lists carry the
+    same numbers through the same two paths.
+    """
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, bool):
+            return value  # bool is an int subclass — must not become 0/1
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        return value
+
+    return {k: clean(v) for k, v in params.items() if k not in PRESENTATION_PARAMS}
+
+
 class Node(BaseModel):
     id: str = Field(pattern=NODE_ID_PATTERN)
     kind: NodeKind
@@ -82,7 +147,7 @@ class Node(BaseModel):
     def fingerprint_payload(self) -> dict[str, Any]:
         return {
             "kind": self.kind.value,
-            "params": self.params,
+            "params": normalize_params(self.params),
             "seed": self.seed,
             "model": self.model,
         }
@@ -95,6 +160,9 @@ class Edge(BaseModel):
 
 
 class StoryGraph(BaseModel):
+    # Written on every save; absent in projects created before versioning
+    # (they are version 1 by definition). See GRAPH_VERSION for the contract.
+    version: int = GRAPH_VERSION
     nodes: dict[str, Node] = Field(default_factory=dict)
     edges: list[Edge] = Field(default_factory=list)
 

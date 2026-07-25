@@ -31,6 +31,30 @@ nsis:
   oneClick: true
   perMachine: false
   deleteAppDataOnUninstall: false
+mac:
+  # Both arches ship, built separately: PyInstaller does not cross-compile, so
+  # each needs its engine frozen on that arch (check-engine.mjs gates it).
+  icon: build/icon.icns
+  category: public.app-category.video
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # Hardened runtime + entitlements, or Gatekeeper refuses to exec the
+  # bundled PyInstaller engine at all — the app would launch and then sit
+  # permanently disconnected, with the real cause buried in Console.app.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Signing identity comes from the environment (CSC_LINK / CSC_KEY_PASSWORD)
+  # so no developer certificate is baked into the repo. An unsigned local
+  # build still works for `--dir` testing.
+  notarize: false
+dmg:
+  writeUpdateInfo: false
+
 linux:
   icon: build/icon.png
   category: AudioVideo

@@ -37,6 +37,9 @@ class DownloadManager:
         self.events = events
         self._tasks: dict[str, asyncio.Task] = {}
         self._progress: dict[str, dict] = {}  # model id -> {done, total} bytes
+        # Serializes start() per model — see the comment there for why the
+        # check-then-create_task sequence cannot be left interleavable.
+        self._starts: dict[str, asyncio.Lock] = {}
 
     def _manifest(self):
         # A malformed override manifest must surface as an actionable API
@@ -81,16 +84,34 @@ class DownloadManager:
         models_dir = self.config.resolved_models_dir
         if is_downloaded(entry, models_dir):
             return "downloaded"
-        task = self._tasks.get(model_id)
-        if task is not None and not task.done():
-            if not task.cancelling():
-                return "downloading"
-            # Cancel-then-restart: let the dying task release the .part file
-            # before a fresh one resumes from it.
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
-        self._tasks[model_id] = asyncio.get_running_loop().create_task(self._run(entry, models_dir))
-        return "started"
+        # One start per model at a time. The awaits below are what make this
+        # necessary: two concurrent starts could both observe a cancelling
+        # task, both await it, and both then create_task — and since only the
+        # second is recorded in _tasks, the first becomes invisible to
+        # cancel(), to delete()'s in-progress guard, and to shutdown(). Both
+        # would append to the same .part file, so the hash fails and one
+        # racer unlinks the file while the other is still writing it.
+        lock = self._starts.setdefault(model_id, asyncio.Lock())
+        async with lock:
+            # Re-check under the lock: the download may have finished (or
+            # been started) while we waited for it.
+            if is_downloaded(entry, models_dir):
+                return "downloaded"
+            task = self._tasks.get(model_id)
+            if task is not None and not task.done():
+                if not task.cancelling():
+                    return "downloading"
+                # Cancel-then-restart: let the dying task release the .part
+                # file before a fresh one resumes from it. This can take a
+                # while — an in-flight to_thread(_sha256_of, …) over a
+                # multi-GB file cannot actually be cancelled — which is
+                # exactly why the lock has to be held across it.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            self._tasks[model_id] = asyncio.get_running_loop().create_task(
+                self._run(entry, models_dir)
+            )
+            return "started"
 
     def cancel(self, model_id: str) -> bool:
         task = self._tasks.get(model_id)

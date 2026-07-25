@@ -210,6 +210,9 @@ export function Workspace() {
   const busyRef = useRef(false);
   const viewRef = useRef(view);
   viewRef.current = view;
+  // The pending layout save, cancellable from outside onReady's closure so a
+  // view switch can drop a snapshot of the layout it is replacing.
+  const saveTimerRef = useRef<{ cancel: () => void } | null>(null);
 
   // Board · composer · timeline stack in one vertical branch. dockview's
   // setSize trades space with ADJACENT siblings (like dragging the sash),
@@ -382,17 +385,28 @@ export function Workspace() {
     syncInspector(api, useApp.getState().selectedNode);
 
     // Persist user-made layout changes per view, debounced.
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    //
+    // The view is captured WHEN THE CHANGE FIRED, not when the timer expires.
+    // `viewRef.current` is assigned during render, but the effect that
+    // actually swaps the layout runs after the commit — so a view switch
+    // inside the debounce window left a gap where the api still held the
+    // outgoing layout while the ref already named the incoming view, and the
+    // save wrote one view's panel arrangement over another's.
     api.onDidLayoutChange(() => {
       if (busyRef.current) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
+      saveTimerRef.current?.cancel();
+      const view = viewRef.current;
+      const handle = setTimeout(() => {
+        // Still the same view when the timer fires? If not, this snapshot
+        // belongs to a layout that is no longer on screen — drop it.
+        if (viewRef.current !== view) return;
         try {
-          localStorage.setItem(layoutKey(viewRef.current), JSON.stringify(api.toJSON()));
+          localStorage.setItem(layoutKey(view), JSON.stringify(api.toJSON()));
         } catch {
           /* storage full — layouts are recoverable from defaults */
         }
       }, 400);
+      saveTimerRef.current = { cancel: () => clearTimeout(handle) };
     });
 
     // Closing the Details tab by hand deselects — the two stay in step.
@@ -412,6 +426,10 @@ export function Workspace() {
     }
     const api = apiRef.current;
     if (!api) return;
+    // Drop any save still pending for the OUTGOING view before the layout is
+    // replaced under it — belt and braces with the view check in the timer.
+    saveTimerRef.current?.cancel();
+    saveTimerRef.current = null;
     restore(api, view);
     syncInspector(api, useApp.getState().selectedNode);
     // eslint-disable-next-line react-hooks/exhaustive-deps

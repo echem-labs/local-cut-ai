@@ -41,7 +41,15 @@ export function Dropdown<V extends string | number>({
     setOpen(true);
   };
 
-  const pick = (option: DropdownOption<V>) => {
+  // The option list can shrink while the menu is open — a download finishing
+  // or a model being deleted rewrites it underneath. The retained index then
+  // points past the end, and Enter dereferenced undefined and raised a
+  // TypeError out of the keydown handler. Clamp on every render instead of
+  // trusting the index to still be valid.
+  const safeIndex = options.length === 0 ? -1 : Math.min(activeIndex, options.length - 1);
+
+  const pick = (option: DropdownOption<V> | undefined) => {
+    if (!option) return; // nothing under the cursor — an empty or shrunk list
     onChange(option.value);
     setOpen(false);
   };
@@ -68,7 +76,7 @@ export function Dropdown<V extends string | number>({
           }
           if (event.key === "Enter" && open) {
             event.preventDefault();
-            pick(options[activeIndex]);
+            pick(options[safeIndex]);
           }
           if (event.key === "Escape") setOpen(false);
         }}
@@ -87,7 +95,7 @@ export function Dropdown<V extends string | number>({
                 key={String(option.value)}
                 role="option"
                 aria-selected={isSelected}
-                className={`${isSelected ? "selected" : ""}${index === activeIndex ? " focused" : ""}`}
+                className={`${isSelected ? "selected" : ""}${index === safeIndex ? " focused" : ""}`}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => pick(option)}
               >

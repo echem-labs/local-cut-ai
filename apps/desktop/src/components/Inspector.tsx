@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
 import { t } from "../i18n";
+import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
@@ -115,18 +116,28 @@ export function Inspector() {
   // Trim/overlay live on the timeline node; edited optimistically, so they
   // re-seed only when the scene changes.
   const timelineParams = board?.aux.timeline?.params;
+  // This scene's server-side trim/overlay, as strings. Re-seeded on scene
+  // change AND when the scene's own stored values arrive: keying only on
+  // sceneId meant selecting a scene before the board had loaded left both
+  // fields showing "" while the server held real values — and then setting
+  // one bound sent {out: 5} with no `in`, silently dropping the other.
+  const storedTrim = (
+    (timelineParams?.trims ?? {}) as Record<string, { in?: number; out?: number } | undefined>
+  )[sceneId ?? ""];
+  const storedOverlay = sceneId
+    ? String(((timelineParams?.overlays ?? {}) as Record<string, string>)[sceneId] ?? "")
+    : "";
+  const storedIn = storedTrim?.in != null ? String(storedTrim.in) : "";
+  const storedOut = storedTrim?.out != null ? String(storedTrim.out) : "";
   useEffect(() => {
-    const trims = (timelineParams?.trims ?? {}) as Record<
-      string,
-      { in?: number; out?: number } | undefined
-    >;
-    const overlays = (timelineParams?.overlays ?? {}) as Record<string, string>;
-    const trim = sceneId ? trims[sceneId] : undefined;
-    setTrimIn(trim?.in != null ? String(trim.in) : "");
-    setTrimOut(trim?.out != null ? String(trim.out) : "");
-    setOverlay(sceneId ? String(overlays[sceneId] ?? "") : "");
+    setTrimIn(storedIn);
+    setTrimOut(storedOut);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sceneId]);
+  }, [sceneId, storedIn, storedOut]);
+  useEffect(() => {
+    setOverlay(storedOverlay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneId, storedOverlay]);
 
   // Esc closes the drawer — but only when it genuinely owns the keystroke.
   useEffect(() => {
@@ -153,10 +164,18 @@ export function Inspector() {
     if (!sceneId) return;
     const trims = { ...((timelineParams?.trims ?? {}) as Record<string, unknown>) };
     const trim: Record<string, number> = {};
-    const inNum = Number.parseFloat(inValue);
-    const outNum = Number.parseFloat(outValue);
-    if (Number.isFinite(inNum)) trim.in = inNum;
-    if (Number.isFinite(outNum)) trim.out = outNum;
+    // Fall back to the SERVER value when a field is empty: an empty box may
+    // mean "cleared", but it also means "not loaded yet", and the two used to
+    // be indistinguishable — so editing one bound wiped the other.
+    const inNum = Number.parseFloat(inValue !== "" ? inValue : storedIn);
+    const outNum = Number.parseFloat(outValue !== "" ? outValue : storedOut);
+    // Negative trims are meaningless; the engine clamps them anyway.
+    if (Number.isFinite(inNum) && inNum >= 0) trim.in = inNum;
+    if (Number.isFinite(outNum) && outNum > 0) trim.out = outNum;
+    // An out before the in is not a trim, it is an empty window.
+    if (trim.in !== undefined && trim.out !== undefined && trim.out <= trim.in) {
+      delete trim.out;
+    }
     if (Object.keys(trim).length > 0) trims[sceneId] = trim;
     else delete trims[sceneId];
     applyTimeline({ trims });
@@ -177,14 +196,24 @@ export function Inspector() {
     if (prompt !== String(activeNode.params[contentKey] ?? "")) params[contentKey] = prompt;
     if (tab === "motion") {
       if (motion !== String(activeNode.params.motion ?? "")) params.motion = motion;
+      // Clamped, not merely parsed. A number input does not stop a typed or
+      // pasted value from leaving its min/max, and nothing downstream
+      // validated it: zero and negative durations reached the engine, where
+      // ComfyUI fails the job outright and ffmpeg silently clamps, while a
+      // huge value turns into a frame count that OOMs the GPU.
       const value = Number.parseFloat(duration);
-      if (Number.isFinite(value) && value !== activeNode.params.duration_s)
-        params.duration_s = value;
+      if (Number.isFinite(value)) {
+        const clamped = Math.min(CLIP_MAX_S, Math.max(CLIP_MIN_S, value));
+        if (clamped !== activeNode.params.duration_s) params.duration_s = clamped;
+      }
     }
     if (tab === "voice") {
       if (voice !== String(activeNode.params.voice ?? "")) params.voice = voice;
       const rate = Number.parseFloat(speed);
-      if (Number.isFinite(rate) && rate !== (activeNode.params.speed ?? 1.0)) params.speed = rate;
+      if (Number.isFinite(rate)) {
+        const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate));
+        if (clamped !== (activeNode.params.speed ?? 1.0)) params.speed = clamped;
+      }
     }
     const seedValue = Number.parseInt(seed, 10);
     const modelValue = model.trim() || null;
@@ -310,8 +339,8 @@ export function Inspector() {
                 <input
                   id="inspector-duration"
                   type="number"
-                  min={1}
-                  max={15}
+                  min={CLIP_MIN_S}
+                  max={CLIP_MAX_S}
                   step={0.5}
                   value={duration}
                   disabled={pinned}
@@ -418,8 +447,8 @@ export function Inspector() {
                     <input
                       id="inspector-speed"
                       type="number"
-                      min={0.5}
-                      max={1.5}
+                      min={SPEED_MIN}
+                      max={SPEED_MAX}
                       step={0.05}
                       value={speed}
                       disabled={pinned}
