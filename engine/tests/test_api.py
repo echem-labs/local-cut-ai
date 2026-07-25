@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -9,7 +10,12 @@ import httpx
 import pytest
 
 from localcut_engine.api.app import create_app
+from localcut_engine.backends.base import GenerationError
 from localcut_engine.config import EngineConfig
+
+# resolved_ffmpeg_bin discovers <data_dir>/bin/ffmpeg[.exe]; the managed copy
+# these tests plant has to use the name the platform actually looks for.
+_FFMPEG_EXE = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
 
 
 @pytest.fixture
@@ -39,6 +45,162 @@ async def test_health_is_open_and_versioned(client):
 async def test_routes_require_token(client):
     response = await client.get("/projects", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+
+
+async def test_unauthenticated_bodies_are_capped_before_auth(client):
+    """FastAPI parses the body before route dependencies run, so the 401 is
+    decided only after the bytes are already in memory. The cap has to sit
+    ahead of the app, at the ASGI layer, or any LAN peer (or any web page
+    that can reach the loopback port) can exhaust engine memory with no
+    token at all."""
+    huge = "x" * (128 << 10)  # 128 KiB, over the unauthenticated ceiling
+    rejected = await client.post(
+        "/projects", json={"prompt": huge}, headers={"Authorization": "Bearer wrong"}
+    )
+    assert rejected.status_code == 413
+    assert "limit" in rejected.json()["detail"]
+
+    # Declared-but-not-sent is refused just as hard: no reading 4 GiB to
+    # discover it was too big.
+    lying = await client.post(
+        "/projects",
+        content=b"{}",
+        headers={"Authorization": "Bearer wrong", "content-length": str(4 << 30)},
+    )
+    assert lying.status_code == 413
+
+
+async def test_authenticated_uploads_get_the_generous_cap(client):
+    """The tight cap must not break a legitimate authenticated request that
+    is merely large — asset upload streams its own 50 MB limit."""
+    created = await client.post("/projects", json={"prompt": "x"})
+    pid = created.json()["id"]
+    # Comfortably past the unauthenticated ceiling, well under the authed one.
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * (256 << 10)
+    response = await client.post(
+        f"/projects/{pid}/assets", params={"filename": "big.png"}, content=body
+    )
+    assert response.status_code == 200
+
+
+async def test_ws_token_rides_a_subprotocol_not_the_query_string(tmp_path):
+    """A ?token= lands in uvicorn's own handshake log line (INFO, on the
+    uvicorn.error logger that access_log=False does not silence), and from
+    there in journald and any log attached to a bug report. Browsers can't
+    set headers on a WebSocket, so the token rides the subprotocol list —
+    and the server must echo the marker back or the handshake fails."""
+    from starlette.testclient import TestClient
+
+    from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL
+
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")
+    app = create_app(config)
+    with TestClient(app) as http:
+        with http.websocket_connect("/ws", subprotocols=[WS_TOKEN_SUBPROTOCOL, "test-token"]) as ws:
+            assert ws.accepted_subprotocol == WS_TOKEN_SUBPROTOCOL
+
+        with pytest.raises(Exception):
+            with http.websocket_connect("/ws", subprotocols=[WS_TOKEN_SUBPROTOCOL, "wrong-token"]):
+                pass
+
+        # The query form still authenticates (curl, older frontends); the log
+        # filter is what keeps it out of the logs.
+        with http.websocket_connect("/ws?token=test-token"):
+            pass
+
+
+def test_log_redaction_scrubs_tokens_from_request_lines():
+    """uvicorn logs '"WebSocket /ws?token=… [accepted]"' on uvicorn.error, a
+    logger access_log=False does not touch."""
+    import logging
+
+    from localcut_engine.api.app import install_log_redaction
+
+    install_log_redaction()
+    install_log_redaction()  # idempotent — safe for embedders and tests
+    logger = logging.getLogger("uvicorn.error")
+    assert len(logger.filters) == 1
+
+    record = logging.LogRecord(
+        "uvicorn.error",
+        logging.INFO,
+        __file__,
+        0,
+        '%s - "WebSocket %s" [accepted]',
+        ("127.0.0.1:43986", "/ws?token=aGn_Ni-2xOCzL3p6_6Sr3CGEnbPfJ9AJ"),
+        None,
+    )
+    assert all(f.filter(record) for f in logger.filters)
+    assert "aGn_Ni" not in (record.getMessage())
+    assert "token=[redacted]" in record.getMessage()
+
+
+@pytest.mark.parametrize(
+    ("msg", "args", "expect_absent"),
+    [
+        # The token baked into the format string, with args still to fill.
+        # Redacting the format string in place eats the `%s` inside the token
+        # run, leaving more args than placeholders — logging then drops the
+        # record and prints a traceback of its own.
+        ("WebSocket /ws?token=%s [accepted]", ("s3cr3t-value",), "s3cr3t-value"),
+        # No args at all: the plainest case.
+        ("connected to /ws?token=s3cr3t-value", (), "s3cr3t-value"),
+        # Token in the args, format string clean — uvicorn's real shape.
+        ('%s - "WebSocket %s"', ("127.0.0.1:1", "/ws?token=s3cr3t-value"), "s3cr3t-value"),
+    ],
+)
+def test_log_redaction_survives_every_record_shape(msg, args, expect_absent):
+    """The filter is installed on loggers the engine does not own, so it must
+    never be able to break a record: a record that raises during formatting is
+    dropped, which is both noisy and a hole in the output being sanitized."""
+    import logging
+
+    from localcut_engine.api.app import install_log_redaction
+
+    install_log_redaction()
+    logger = logging.getLogger("uvicorn.error")
+    record = logging.LogRecord("uvicorn.error", logging.INFO, __file__, 0, msg, args, None)
+    assert all(f.filter(record) for f in logger.filters)
+    rendered = record.getMessage()  # must not raise
+    assert expect_absent not in rendered
+    assert "token=[redacted]" in rendered
+
+
+def test_log_redaction_leaves_dict_style_args_alone():
+    """`%`-style dict args are stored as the bare dict, not a 1-tuple.
+    Wrapping one makes getMessage() raise "format requires a mapping"."""
+    import logging
+
+    from localcut_engine.api.app import install_log_redaction
+
+    install_log_redaction()
+    logger = logging.getLogger("uvicorn.error")
+    # Passed as a 1-tuple, which is what `logger.info("%(k)s", {...})` does —
+    # LogRecord unwraps it to the bare dict, and that is the shape the filter
+    # has to leave alone.
+    record = logging.LogRecord(
+        "uvicorn.error", logging.INFO, __file__, 0, "%(where)s ready", ({"where": "engine"},), None
+    )
+    assert record.args == {"where": "engine"}  # unwrapped, not a tuple
+    assert all(f.filter(record) for f in logger.filters)
+    assert record.getMessage() == "engine ready"
+
+
+def test_log_redaction_keeps_lazy_formatting_for_records_without_a_token():
+    """The common case must stay untouched — pre-rendering every record would
+    defeat lazy formatting and break structured handlers that read `args`."""
+    import logging
+
+    from localcut_engine.api.app import install_log_redaction
+
+    install_log_redaction()
+    logger = logging.getLogger("uvicorn.error")
+    record = logging.LogRecord(
+        "uvicorn.error", logging.INFO, __file__, 0, "started on %s", ("127.0.0.1:7830",), None
+    )
+    assert all(f.filter(record) for f in logger.filters)
+    assert record.msg == "started on %s"
+    assert record.args == ("127.0.0.1:7830",)
 
 
 async def test_create_and_fetch_project(client):
@@ -99,7 +261,7 @@ def _provision_local_stack(config, monkeypatch):
             path = config.resolved_models_dir / dest
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
-    managed_ffmpeg = config.data_dir / "bin" / "ffmpeg"
+    managed_ffmpeg = config.data_dir / "bin" / _FFMPEG_EXE
     managed_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
     managed_ffmpeg.touch()
 
@@ -107,7 +269,8 @@ def _provision_local_stack(config, monkeypatch):
 def test_backend_chain_parsing_and_composition(tmp_path, monkeypatch):
     """The desktop shell passes --backend as a flag; chains must be accepted
     end-to-end (argparse pattern removed, config expands shorthands, and the
-    app factory composes the registry in order with mock as catch-all)."""
+    app factory composes the registry in order with mock as the catch-all
+    for everything EXCEPT assembly)."""
     from localcut_engine.api.app import _build_backends
     from localcut_engine.config import EngineConfig
     from localcut_engine.graph.model import NodeKind
@@ -131,7 +294,10 @@ def test_backend_chain_parsing_and_composition(tmp_path, monkeypatch):
     assert registry.resolve(NodeKind.SCRIPT).name == "llm"
     assert registry.resolve(NodeKind.KEYFRAME).name == "comfyui"
     assert registry.resolve(NodeKind.CLIP).name == "mock"  # not in comfy_kinds
-    assert registry.resolve(NodeKind.EXPORT).name == "mock"
+    # NOT mock: this chain has no ffmpeg, and a placeholder MP4 handed over
+    # as a finished export is worse than a clear failure.
+    with pytest.raises(GenerationError, match="ffmpeg"):
+        registry.resolve(NodeKind.EXPORT)
 
     # With every capability gate satisfied, the full-local chain must
     # resolve every generative kind (no dead lanes). Explicit kinds here:
@@ -159,8 +325,14 @@ def test_backend_chain_parsing_and_composition(tmp_path, monkeypatch):
 
 def test_local_backends_decline_without_their_prerequisites(tmp_path):
     """The hybrid default chain ('local,mock') must degrade to mock per
-    task on a bare machine — no Ollama, no weights, no ffmpeg — instead of
-    failing jobs. Closed-port URLs make the probes refuse instantly."""
+    GENERATIVE task on a bare machine — no Ollama, no weights, no ffmpeg —
+    instead of failing jobs. Closed-port URLs make the probes refuse
+    instantly.
+
+    Assembly is the exception: a draft still or a placeholder narration is a
+    recognisable stand-in the user can see is provisional, but a placeholder
+    MP4 named "your export" is indistinguishable from the real thing. That
+    one has to fail."""
     from localcut_engine.api.app import _build_backends
     from localcut_engine.graph.model import NodeKind
 
@@ -179,10 +351,16 @@ def test_local_backends_decline_without_their_prerequisites(tmp_path):
         NodeKind.NARRATION,
         NodeKind.CAPTIONS,
         NodeKind.MUSIC,
-        NodeKind.TIMELINE,
-        NodeKind.EXPORT,
     ):
         assert registry.resolve(kind).name == "mock", kind
+    for kind in (NodeKind.TIMELINE, NodeKind.EXPORT):
+        with pytest.raises(GenerationError, match="ffmpeg"):
+            registry.resolve(kind)
+
+    # An EXPLICIT all-mock chain is the demo/test configuration and is not
+    # pretending to be anything else — it still assembles end to end.
+    all_mock = _build_backends(EngineConfig(data_dir=tmp_path, backend="mock"))
+    assert all_mock.resolve(NodeKind.EXPORT).name == "mock"
 
 
 def test_local_backends_claim_once_prerequisites_appear(tmp_path, monkeypatch):
@@ -199,7 +377,8 @@ def test_local_backends_claim_once_prerequisites_appear(tmp_path, monkeypatch):
     registry = _build_backends(config)
     assert registry.resolve(NodeKind.NARRATION).name == "mock"
     assert registry.resolve(NodeKind.CAPTIONS).name == "mock"
-    assert registry.resolve(NodeKind.EXPORT).name == "mock"
+    with pytest.raises(GenerationError, match="ffmpeg"):
+        registry.resolve(NodeKind.EXPORT)  # no ffmpeg yet — never faked
 
     _provision_local_stack(config, monkeypatch)
     assert registry.resolve(NodeKind.NARRATION).name == "kokoro"
@@ -218,7 +397,7 @@ def test_comfy_auto_kinds_follow_installed_weights(tmp_path, monkeypatch):
     from localcut_engine.graph.model import NodeKind
 
     monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
-    managed_ffmpeg = tmp_path / "bin" / "ffmpeg"
+    managed_ffmpeg = tmp_path / "bin" / _FFMPEG_EXE
     managed_ffmpeg.parent.mkdir(parents=True)
     managed_ffmpeg.touch()  # the still-clip tier needs a discoverable binary
 
@@ -233,6 +412,7 @@ def test_comfy_auto_kinds_follow_installed_weights(tmp_path, monkeypatch):
                         "family": "test",
                         "requirements": {"vram_gb": 1, "disk_gb": 1},
                         "license": {"id": "mit", "commercial": True},
+                        "comfy_graph_template": "clip_default.json",
                         "files": [
                             {"url": "http://localhost/w", "dest": "checkpoints/tiny.safetensors"}
                         ],
@@ -350,9 +530,14 @@ async def test_promote_requires_a_finished_script(client):
     assert response.status_code == 409  # full projects aren't tool sessions
 
 
-async def test_model_download_api_lifecycle(client, tmp_path):
+async def test_model_download_api_lifecycle(client, tmp_path, monkeypatch):
     """POST /models/{id}/download runs the manifest download in the
     background; GET /models reflects install state throughout."""
+    # The route under test is the lifecycle, not the SSRF policy — and the
+    # policy refuses loopback on purpose (test_downloads covers it).
+    from localcut_engine.manifest import downloads as downloads_module
+
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
     payload = b"localcut-tiny-weights" * 200
     (tmp_path / "weights.bin").write_bytes(payload)
     httpd = ThreadingHTTPServer(
@@ -482,7 +667,7 @@ async def test_edit_applies_a_natural_language_plan(client, monkeypatch):
         while not await scenes():
             await asyncio.sleep(0.05)
 
-    async def fake_complete(self, prompt, system):
+    async def fake_complete(self, prompt, system, max_tokens=None):
         assert "Project view" in prompt and "city of glass" in prompt
         return json.dumps(
             {
@@ -519,7 +704,7 @@ async def test_edit_applies_a_natural_language_plan(client, monkeypatch):
         await client.post(f"/projects/{pid}/edit", json={"instruction": "x", "model": "local:qwen"})
     ).status_code == 422
 
-    async def broken_complete(self, prompt, system):
+    async def broken_complete(self, prompt, system, max_tokens=None):
         return "Sure! I've made those edits for you."
 
     monkeypatch.setattr(LLMScriptBackend, "complete", broken_complete)
@@ -650,7 +835,7 @@ async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypat
 
     # The LLM "thinks" — and during that window the project is patched, which
     # moves the revision the view was built against.
-    async def edit_during_which_graph_changes(self, prompt, system):
+    async def edit_during_which_graph_changes(self, prompt, system, max_tokens=None):
         await client.post(
             f"/projects/{pid}/patch",
             json={
@@ -698,9 +883,7 @@ async def test_rename_project(client):
     assert listed[pid]["title"] == "A better name"
 
     assert (await client.patch(f"/projects/{pid}", json={"title": "   "})).status_code == 422
-    assert (
-        await client.patch("/projects/aaaaaaaaaa", json={"title": "x"})
-    ).status_code == 404
+    assert (await client.patch("/projects/aaaaaaaaaa", json={"title": "x"})).status_code == 404
 
 
 async def test_list_carries_home_read_model(client):
@@ -817,7 +1000,7 @@ def test_resolved_ffmpeg_bin_prefers_managed_download(tmp_path):
     config = EngineConfig(data_dir=tmp_path)
     assert config.resolved_ffmpeg_bin == "ffmpeg"
 
-    managed = tmp_path / "bin" / "ffmpeg"
+    managed = tmp_path / "bin" / _FFMPEG_EXE
     managed.parent.mkdir()
     managed.write_bytes(b"")
     assert EngineConfig(data_dir=tmp_path).resolved_ffmpeg_bin == str(managed)
@@ -831,9 +1014,7 @@ async def test_non_ascii_token_is_rejected_not_a_500(client):
     auth as an unhandled 500 (plus a traceback per request) instead of a
     401 — an unauthenticated log-flood primitive on a remote engine."""
     # Empty Authorization so the QUERY token is what gets compared.
-    response = await client.get(
-        "/projects", params={"token": "ü"}, headers={"Authorization": ""}
-    )
+    response = await client.get("/projects", params={"token": "ü"}, headers={"Authorization": ""})
     assert response.status_code == 401
 
 
@@ -880,7 +1061,9 @@ def test_probe_survives_a_refresh_thread_that_cannot_start(monkeypatch):
     from localcut_engine.backends.base import ServiceProbe
 
     monkeypatch.setattr(
-        httpx, "get", lambda url, timeout=None: httpx.Response(200, request=httpx.Request("GET", url))
+        httpx,
+        "get",
+        lambda url, timeout=None: httpx.Response(200, request=httpx.Request("GET", url)),
     )
     probe = ServiceProbe("http://127.0.0.1:1/health", timeout_s=1.0, ttl_s=0.0)
     assert probe.available() is True  # synchronous first probe

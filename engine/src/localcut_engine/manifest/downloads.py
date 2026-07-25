@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
+import socket
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -28,6 +32,14 @@ _CHUNK = 1 << 20  # 1 MiB
 # compromised server must never be able to fill the disk unbounded.
 _MAX_UNSIZED_BYTES = 100 << 30  # 100 GiB
 _SIZE_SLACK = 1 << 20  # manifest sizes are exact, but allow a stray chunk
+# A weight file that is smaller than this is not weights. Without a checksum
+# there is nothing else standing between "captive portal served us its login
+# page" and "the model reports installed forever" (SEC-5).
+_MIN_UNVERIFIED_BYTES = 1 << 20  # 1 MiB
+# Content types a weight file is never served as. Checked only on the
+# checksum-less path — a manifest sha256 is a far stronger statement than
+# any header, and some CDNs mislabel .safetensors as text/plain.
+_HTML_CONTENT_TYPES = ("text/html", "application/xhtml", "text/plain")
 
 
 class DownloadError(RuntimeError):
@@ -36,6 +48,63 @@ class DownloadError(RuntimeError):
 
 class ChecksumMismatch(DownloadError):
     pass
+
+
+class UnsafeURL(DownloadError):
+    """A catalog URL that resolves somewhere the engine must not fetch."""
+
+
+def _is_public(ip: str) -> bool:
+    """Whether an address is routable on the public internet. Everything the
+    SSRF guard cares about — loopback, RFC1918, link-local (which covers the
+    169.254.169.254 cloud metadata endpoint), CGNAT, multicast, reserved —
+    answers False here."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return not (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_reserved
+        or addr.is_unspecified
+        # 100.64.0.0/10 is "private" to ipaddress only from 3.13; be explicit.
+        or (addr.version == 4 and addr in ipaddress.ip_network("100.64.0.0/10"))
+    )
+
+
+def assert_public_url(url: str) -> None:
+    """Refuse a catalog URL that is not plain https to a public host.
+
+    Custom catalog entries are user-supplied and the URL is fetched by the
+    engine, from the engine's network position — on the documented remote
+    topology that is a GPU box inside someone's LAN, or a cloud instance with
+    a metadata endpoint. Every resolved address must be public, so a hostname
+    that resolves to several addresses cannot pass the check on one and be
+    dialled on another (SEC-3)."""
+    parts = urlsplit(url)
+    if parts.scheme != "https":
+        raise UnsafeURL(f"model URLs must be https, got {parts.scheme or 'no'} scheme: {url}")
+    host = (parts.hostname or "").strip("[]")
+    if not host:
+        raise UnsafeURL(f"model URL has no host: {url}")
+    try:
+        infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise UnsafeURL(f"could not resolve {host}: {exc}") from exc
+    addresses = {info[4][0] for info in infos}
+    if not addresses:
+        raise UnsafeURL(f"could not resolve {host}")
+    private = sorted(a for a in addresses if not _is_public(a))
+    if private:
+        raise UnsafeURL(
+            f"refusing to fetch {host}: it resolves to a non-public address ({private[0]}). "
+            "Model URLs must point at a public host."
+        )
 
 
 def resolve_dest(models_dir: Path, dest: str) -> Path:
@@ -72,6 +141,33 @@ def _sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+_MAX_REDIRECTS = 5
+
+
+@asynccontextmanager
+async def _stream_checked(client: httpx.AsyncClient, url: str, headers: dict):
+    """`client.stream("GET", url)` that re-validates every redirect hop.
+
+    httpx's own `follow_redirects=True` would check only the URL we passed,
+    so a public host could bounce us to 169.254.169.254 or a LAN box after
+    the guard had already run. Weight hosts do redirect (HuggingFace hands
+    off to a CDN), so redirects have to be followed — just not blindly."""
+    for _ in range(_MAX_REDIRECTS):
+        assert_public_url(url)
+        response = await client.send(client.build_request("GET", url, headers=headers), stream=True)
+        if response.is_redirect and response.has_redirect_location:
+            location = str(response.next_request.url)
+            await response.aclose()
+            url = location
+            continue
+        try:
+            yield response
+        finally:
+            await response.aclose()
+        return
+    raise UnsafeURL(f"too many redirects fetching {url}")
+
+
 async def download_file(
     file: ModelFile,
     models_dir: Path,
@@ -96,10 +192,13 @@ async def download_file(
     offset = part.stat().st_size if part.exists() else 0
 
     owns_client = client is None
-    client = client or httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(30, read=120))
+    # follow_redirects stays OFF: _stream_checked walks the chain itself so
+    # every hop is re-validated against the SSRF guard.
+    client = client or httpx.AsyncClient(timeout=httpx.Timeout(30, read=120))
+    content_type = ""
     try:
         headers = {"Range": f"bytes={offset}-"} if offset else {}
-        async with client.stream("GET", file.url, headers=headers) as response:
+        async with _stream_checked(client, file.url, headers) as response:
             if response.status_code == 416:
                 pass  # already fully downloaded, fall through to verify
             elif response.status_code == 206:
@@ -110,6 +209,14 @@ async def download_file(
                 raise DownloadError(f"HTTP {response.status_code} for {file.url}")
 
             if response.status_code in (200, 206):
+                # Only from a response that actually carried the file. A 416
+                # means the .part is already complete, and its error page is
+                # `text/html` on most servers — reading the type off THAT
+                # would condemn a finished multi-GB download as a login page
+                # and delete it.
+                content_type = (
+                    response.headers.get("content-type", "").split(";")[0].strip().lower()
+                )
                 total = int(response.headers.get("content-length", 0)) + offset
                 # Never trust the stream to end: a lying server must hit the
                 # manifest size (plus slack) or a hard ceiling, not the disk.
@@ -139,10 +246,6 @@ async def download_file(
         if owns_client:
             await client.aclose()
 
-    if not file.sha256:
-        # Override manifests may omit checksums; that choice must at least
-        # be visible in the logs, not silent.
-        logger.warning("no sha256 in manifest for %s — skipping verification", file.dest)
     if file.sha256:
         # Hashing a multi-GB file must not stall the event loop.
         actual = await asyncio.to_thread(_sha256_of, part)
@@ -150,6 +253,27 @@ async def download_file(
             part.unlink(missing_ok=True)  # do not resume from poisoned bytes
             raise ChecksumMismatch(
                 f"{file.dest}: expected sha256 {file.sha256[:16]}…, got {actual[:16]}…"
+            )
+    else:
+        # Override manifests may omit checksums. Nothing can prove these bytes
+        # are the right weights, but the cheap sanity checks still separate
+        # "weights" from "the captive portal's login page" — which would
+        # otherwise be saved as a .safetensors and report installed forever,
+        # so the real weights never download and the failure surfaces much
+        # later as an opaque load error (SEC-5).
+        logger.warning("no sha256 in manifest for %s — verifying heuristically", file.dest)
+        size = part.stat().st_size if part.exists() else 0
+        if content_type.startswith(_HTML_CONTENT_TYPES):
+            part.unlink(missing_ok=True)
+            raise DownloadError(
+                f"{file.dest}: server returned {content_type}, not a weight file — "
+                "this is usually a login page or an error page, not the model"
+            )
+        if size < _MIN_UNVERIFIED_BYTES:
+            part.unlink(missing_ok=True)
+            raise DownloadError(
+                f"{file.dest}: got {size} bytes, too small to be model weights — "
+                "the download was probably an error page"
             )
     part.replace(dest)
     return dest
@@ -163,9 +287,9 @@ async def download_model(
     if not entry.files:
         raise DownloadError(f"model {entry.id} has no downloadable files in the manifest")
     paths = []
-    async with httpx.AsyncClient(
-        follow_redirects=True, timeout=httpx.Timeout(30, read=120)
-    ) as client:
+    # No follow_redirects: download_file walks redirects itself so the SSRF
+    # guard sees every hop.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=120)) as client:
         for file in entry.files:
             paths.append(await download_file(file, models_dir, progress, client))
     return paths

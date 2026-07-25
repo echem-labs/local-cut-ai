@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import tempfile
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
@@ -53,9 +54,40 @@ DIP_S = 0.25  # fade-to-black halves of the dip transition
 # a crossfaded seam instead.
 RETIME_MAX = 1.15
 _MAX_LOOPS = 30  # loop-with-crossfade input cap (degenerate short clips)
+# How long a terminated child gets to exit before it is killed outright.
+_KILL_GRACE_S = 2.0
 
 # Export bitrate by quality tier; draft favors speed, final favors fidelity.
 _VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
+
+
+@asynccontextmanager
+async def _terminating(process: asyncio.subprocess.Process):
+    """Guarantee a child encoder dies with the job that started it.
+
+    Without this, cancelling a render (app quit, project delete) leaves
+    ffmpeg/ffprobe running detached — still burning CPU, still writing into a
+    workdir that has already been removed. `communicate()` propagates the
+    CancelledError but never touches the child, and nothing else ever will.
+    """
+    try:
+        yield process
+    except BaseException:
+        # Every signal call is guarded. The child can exit between the
+        # returncode check and the signal, and an unguarded ProcessLookupError
+        # here would REPLACE the exception we are unwinding — turning the
+        # scheduler's CancelledError into an error it does not handle, so the
+        # job records as failed instead of being requeued.
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.terminate()
+            try:
+                await asyncio.wait_for(asyncio.shield(process.wait()), timeout=_KILL_GRACE_S)
+            except (TimeoutError, asyncio.CancelledError):
+                if process.returncode is None:
+                    with suppress(ProcessLookupError):
+                        process.kill()
+        raise
 
 
 def _filter_path(path: Path) -> str:
@@ -226,13 +258,34 @@ class FFmpegBackend(ExecutionBackend):
             )
             if narr is not None and narration_duration is None:
                 raise GenerationError(f"scene {port}: narration is not decodable media")
+            # The window the user's trim leaves of the source clip. Both
+            # branches below need it: the narrated one to know how much real
+            # material a trim actually left.
+            trimmed_window = max(
+                0.0,
+                (min(clip_duration, float(trim_out)) if trim_out else clip_duration) - trim_in,
+            )
+            transition = str(transitions.get(port, "cut"))
+            # A crossfade out of this scene overlaps the NEXT one by
+            # CROSSFADE_S. The overlap has to land in this scene's breathing
+            # pad, not in its speech — otherwise the two scenes talk over
+            # each other and both captions sit on screen together. So a scene
+            # that crossfades out reserves at least a fade's worth of pad.
+            pad = (
+                max(NARRATION_PAD_S, CROSSFADE_S)
+                if transition == "crossfade"
+                else (NARRATION_PAD_S)
+            )
             if narration_duration is not None:
                 # Narration drives scene duration; trims pick which part of
-                # the clip fills that window, they never cut speech.
-                duration = narration_duration + NARRATION_PAD_S
+                # the clip fills that window, they never cut speech. But a
+                # trim-out is not nothing here: it bounds the material the
+                # segment may show, so the renderer loops or retimes within
+                # the trimmed window instead of running past trim.out and
+                # revealing footage the user explicitly cut.
+                duration = narration_duration + pad
             else:
-                window = min(clip_duration, float(trim_out)) if trim_out else clip_duration
-                duration = max(0.1, window - trim_in)
+                duration = max(0.1, trimmed_window)
             # A crossfade boundary overlaps this segment with the running
             # chain by CROSSFADE_S — the stored start must say where the scene
             # actually lands in the output, or caption alignment and every
@@ -250,11 +303,18 @@ class FFmpegBackend(ExecutionBackend):
                 # Flex only the pad: never below the speech floor, and never
                 # past real clip material or a user trim-out (which would
                 # reveal footage they cut or loop the clip just to hit a beat).
-                floor = (
-                    narration_duration + BEAT_MIN_PAD_S if narration_duration is not None else 0.1
+                # Beat-snapping shrinks the pad, so it must not shrink past
+                # the fade reserve either — same overlap-into-speech rule.
+                min_pad = (
+                    max(BEAT_MIN_PAD_S, CROSSFADE_S)
+                    if transition == "crossfade"
+                    else (BEAT_MIN_PAD_S)
                 )
+                floor = narration_duration + min_pad if narration_duration is not None else 0.1
                 if narration_duration is not None:
-                    material = max(0.0, clip_duration - trim_in)
+                    # trimmed_window, not clip_duration: stretching to a beat
+                    # must not reach past the user's trim-out either.
+                    material = trimmed_window
                     ceiling = min(duration + BEAT_SNAP_MAX_S, max(duration, material))
                 else:
                     ceiling = duration  # exact trimmed window — shrink-to-beat only
@@ -283,7 +343,11 @@ class FFmpegBackend(ExecutionBackend):
                     "duration": round(duration, 3),
                     "clip_duration": round(clip_duration, 3),
                     "trim_in": trim_in,
-                    "transition": str(transitions.get(port, "cut")),
+                    # The material this segment may draw on, after the user's
+                    # trim. Narration-driven segments can be longer than it
+                    # (they loop or retime); they must never read past it.
+                    "trim_window": round(trimmed_window, 3),
+                    "transition": transition,
                     "onscreen_text": overlays.get(port),
                 }
             )
@@ -580,7 +644,15 @@ class FFmpegBackend(ExecutionBackend):
         # Timing policy (in order): clip long enough → trim; short by ≤ the
         # retime bound → slow it slightly; shorter → loop with a crossfaded
         # seam; degenerate (clip shorter than a crossfade) → hard loop.
+        #
+        # The window is what the user's trim LEFT, not the whole clip: a
+        # narration-driven segment that overran trim.out would silently show
+        # the footage they cut. EDLs from older builds carry no trim_window,
+        # so fall back to the untrimmed tail.
+        stored_window = segment.get("trim_window")
         window = max(0.01, clip_duration - trim_in)
+        if isinstance(stored_window, (int, float)) and stored_window > 0:
+            window = max(0.01, min(window, float(stored_window)))
         retime = None
         loop_hard = False
         if window < target:
@@ -724,7 +796,9 @@ class FFmpegBackend(ExecutionBackend):
         for _ in range(loops):
             if trim_in:
                 args += ["-ss", f"{trim_in:.3f}"]
-            args += ["-i", clip]
+            # -t before -i bounds each repetition to the trimmed window, so a
+            # loop can never reveal footage past the user's trim-out.
+            args += ["-t", f"{window:.3f}", "-i", clip]
         steps: list[str] = []
         cur, cur_len = "[0:v]", window
         for i in range(1, loops):
@@ -766,7 +840,8 @@ class FFmpegBackend(ExecutionBackend):
             )
         except OSError:
             return ""
-        stdout, _ = await process.communicate()
+        async with _terminating(process):
+            stdout, _ = await process.communicate()
         return stdout.decode(errors="replace") if process.returncode == 0 else ""
 
     async def supports_drawtext(self) -> bool | None:
@@ -806,7 +881,8 @@ class FFmpegBackend(ExecutionBackend):
             )
         except FileNotFoundError as exc:
             raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
-        _, stderr = await process.communicate()
+        async with _terminating(process):
+            _, stderr = await process.communicate()
         if process.returncode != 0:
             raise GenerationError(f"ffmpeg failed: {stderr.decode()[-600:]}")
 
@@ -835,7 +911,8 @@ class FFmpegBackend(ExecutionBackend):
             )
         except FileNotFoundError as exc:
             raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
-        stdout, _ = await process.communicate()
+        async with _terminating(process):
+            stdout, _ = await process.communicate()
         if process.returncode != 0 or not stdout:
             return None
         return np.frombuffer(stdout, dtype=np.float32)
@@ -861,7 +938,8 @@ class FFmpegBackend(ExecutionBackend):
                 f"ffprobe binary not found next to ffmpeg: {self.ffprobe_bin} — "
                 "assembly requires both"
             ) from exc
-        stdout, _ = await process.communicate()
+        async with _terminating(process):
+            stdout, _ = await process.communicate()
         try:
             return float(stdout.decode().strip())
         except ValueError:
@@ -895,7 +973,8 @@ class FFmpegBackend(ExecutionBackend):
                     )
                 except FileNotFoundError as exc:
                     raise GenerationError(f"ffmpeg binary not found: {self.ffmpeg_bin}") from exc
-                await process.communicate()
+                async with _terminating(process):
+                    await process.communicate()
                 if process.returncode == 0:
                     self._encoder = candidate
                     break

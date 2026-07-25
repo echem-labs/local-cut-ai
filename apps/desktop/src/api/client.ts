@@ -18,6 +18,10 @@ import type {
   ToolKind,
 } from "./types";
 
+/** Marker subprotocol that tells the engine the next offered protocol is the
+ * bearer token. Must match WS_TOKEN_SUBPROTOCOL in the engine's api/app.py. */
+const WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1";
+
 export class EngineClient {
   constructor(private readonly connection: EngineConnection) {}
 
@@ -246,7 +250,13 @@ export class EngineClient {
   /** Subscribe to engine events; returns an unsubscribe function. */
   subscribe(onEvent: (event: EngineEvent) => void, onDrop?: () => void): () => void {
     const wsUrl = this.connection.url.replace(/^http/, "ws");
-    const socket = new WebSocket(`${wsUrl}/ws?token=${this.connection.token}`);
+    // The token rides as a WebSocket subprotocol, not `?token=`: a query
+    // string ends up in the engine's own log line for the handshake (uvicorn
+    // logs it at INFO), and from there in journald, Docker logs, and any log
+    // a user attaches to a bug report. Browsers can't set headers on a
+    // WebSocket, so the subprotocol list is the only header-ish channel.
+    // The engine echoes WS_TOKEN_SUBPROTOCOL back to complete the handshake.
+    const socket = new WebSocket(`${wsUrl}/ws`, [WS_TOKEN_SUBPROTOCOL, this.connection.token]);
     socket.onmessage = (message) => {
       // A non-JSON frame (a proxy keepalive, a truncated message) must not
       // throw an uncaught SyntaxError out of the event handler.

@@ -78,7 +78,9 @@ def anchor_words_to_text(words: list[Word], text: str, floor: float | None = Non
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for k in range(i2 - i1):
-                out.append(Word(text=truth[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end))
+                out.append(
+                    Word(text=truth[j1 + k], start=words[i1 + k].start, end=words[i1 + k].end)
+                )
         elif tag == "replace":
             # Misheard span: spread the true tokens over its time window.
             start, end = words[i1].start, words[i2 - 1].end

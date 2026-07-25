@@ -253,8 +253,18 @@ async function pushKeysToEngine(keys: Partial<Record<ProviderKeyId, string>>): P
   }
 }
 
-/** Re-arm BYOK keys after any (re)connect — the engine never persists them. */
+/** Re-arm BYOK keys after any (re)connect — the engine never persists them.
+ *
+ * Skipped for a remote engine the user did not agree to send keys to. The
+ * agreement is per-host and lives on the pairing, because this runs on every
+ * launch: without the check, declining at pair time would be silently undone
+ * by the next app start. A LOCAL engine is always armed — it is this
+ * machine, and the keys are already on it. */
 async function armStoredKeys(): Promise<void> {
+  if (remoteConnection && remoteConnection.armKeys !== true) {
+    console.log("[keys] remote engine is not key-armed; skipping");
+    return;
+  }
   const stored = keyStore.load();
   if (Object.keys(stored).length > 0) {
     await pushKeysToEngine(stored).catch((err) =>
@@ -279,14 +289,17 @@ function sanitizeKeyUpdates(input: unknown): Partial<Record<ProviderKeyId, strin
 async function applyKeyUpdates(updates: Partial<Record<ProviderKeyId, string>>) {
   keyStore.set(updates);
   let error: string | null = null;
-  if (Object.keys(updates).length > 0) {
+  // Same gate as armStoredKeys: entering a key must not become an implicit
+  // "…and send it to the GPU box" for a remote the user never armed.
+  const armed = !remoteConnection || remoteConnection.armKeys === true;
+  if (Object.keys(updates).length > 0 && armed) {
     try {
       await pushKeysToEngine(updates);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
   }
-  return { presence: keyStore.presence(), error };
+  return { presence: keyStore.presence(), error, armed };
 }
 
 /** State-mutating IPC (pairing, provider keys) must originate from the app's
@@ -323,18 +336,78 @@ ipcMain.handle("engine:connection", (event) => {
   };
 });
 
-ipcMain.handle("engine:pair", async (event, code: unknown) => {
+/** Decode a pairing code WITHOUT acting on it, so the renderer can show the
+ * user which host they are about to trust. A pairing code is an opaque blob:
+ * nothing in it is legible until it is decoded, so without this step
+ * "accepting a pairing code" is an unreviewable action. */
+ipcMain.handle("engine:inspect-pairing", (event, code: unknown) => {
   if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
   if (typeof code !== "string") return { ok: false, error: "pairing code must be text" };
   try {
     const pairing = parsePairingCode(code);
+    const url = new URL(pairing.url);
+    return {
+      ok: true,
+      error: null,
+      host: url.host,
+      url: pairing.url,
+      // Grouped in pairs, the way the engine prints it, so the user can
+      // compare it against what the GPU box showed them.
+      fingerprint: pairing.fingerprint
+        ? (pairing.fingerprint.match(/../g) ?? []).join(":")
+        : null,
+      // Which keys this pairing would hand over if armed. Named, not
+      // counted: "3 keys" is not something anyone can reason about.
+      keys: keyStore.presence(),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.handle("engine:pair", async (event, code: unknown, options: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  if (typeof code !== "string") return { ok: false, error: "pairing code must be text" };
+  // Arming is now an explicit, separate decision. Accepting a pairing code
+  // used to push every stored provider key (Anthropic, OpenAI, Gemini, fal)
+  // to whatever host the code named — and the certificate pin is no defence,
+  // because the same code supplies both the certificate and its fingerprint,
+  // so a hostile code pins its own certificate and passes. The renderer shows
+  // the decoded host and asks; only an explicit yes reaches here.
+  const armKeys = typeof options === "object" && options !== null
+    ? (options as { armKeys?: unknown }).armKeys === true
+    : false;
+  try {
+    const pairing = { ...parsePairingCode(code), armKeys };
     await verifyPairing(pairing); // captures + pins the cert, checks the token
     remoteStore.save(pairing);
     forgetStoredPairing();
     remoteConnection = pairing;
     engineError = null;
     engine.stop(); // the GPU box renders now; no reason to keep a local engine
-    await armStoredKeys();
+    if (armKeys) await armStoredKeys();
+    return { ok: true, error: null, keysArmed: armKeys };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+/** Arm the stored provider keys against the engine that is connected NOW.
+ * Separate from pairing so "connect to my GPU box" and "send my API keys to
+ * my GPU box" are two decisions, not one. */
+ipcMain.handle("providers:arm-keys", async (event) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  try {
+    // Record the agreement before sending, and against this exact pairing:
+    // the decision has to survive the next launch, or startup would ask
+    // again (or, worse, arm anyway).
+    if (remoteConnection) {
+      remoteConnection = { ...remoteConnection, armKeys: true };
+      remoteStore.save(remoteConnection);
+    }
+    const stored = keyStore.load();
+    if (Object.keys(stored).length === 0) return { ok: true, error: null };
+    await pushKeysToEngine(stored);
     return { ok: true, error: null };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

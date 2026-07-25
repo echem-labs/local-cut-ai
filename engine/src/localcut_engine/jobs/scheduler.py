@@ -26,8 +26,25 @@ FALLBACK_LADDER: list[dict[str, Any]] = [
     {"resolution_scale": 0.5, "offload": "aggressive"},
 ]
 
+# How long stop() lets the current job wind down before cancelling it, and
+# how long the cancellation itself gets to unwind. Both are short: the shell
+# force-kills the engine if quitting takes too long, and a force-kill is
+# strictly worse than a cancel (nothing gets to clean up).
+SHUTDOWN_GRACE_S = 3.0
+CANCEL_GRACE_S = 5.0
+
 ArtifactResolver = Callable[[str, str], Path | None]  # (project_id, output_hash) -> path
 JobHook = Callable[[Job], Awaitable[None]]
+
+
+def _relative_artifact(artifact: Path, output_dir: Path) -> str:
+    """An artifact path as `Job.artifact` stores it: relative to the
+    project's generated/ dir. Falls back to the absolute path for a backend
+    that wrote outside it (none do today, but the record must stay usable)."""
+    try:
+        return artifact.relative_to(output_dir).as_posix()
+    except ValueError:
+        return str(artifact)
 
 
 class Scheduler:
@@ -56,11 +73,38 @@ class Scheduler:
         self.events.bind_to_running_loop()
         self._task = self._loop.create_task(self._run(), name="scheduler")
 
-    async def stop(self) -> None:
+    async def stop(self, grace_s: float = SHUTDOWN_GRACE_S) -> None:
+        """Stop the loop, cancelling an in-flight render if it does not wind
+        down within `grace_s`.
+
+        Awaiting the task unconditionally means quitting during a render
+        blocks for the length of that render — up to ComfyUI's 600s
+        inactivity window for a wedged workflow. The shell then force-kills
+        the engine, which skips this shutdown entirely: the DB row stays
+        `rendering` until the next boot, and ffmpeg children survive as
+        orphans writing into a workdir that has already been removed. So the
+        cancel has to come from in here, where the backends can still clean
+        up after themselves.
+        """
         self._stopping = True
         self._wakeup.set()
-        if self._task is not None:
-            await self._task
+        task = self._task
+        if task is None:
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=grace_s)
+        except TimeoutError:
+            logger.warning("scheduler did not stop in %.0fs; cancelling the running job", grace_s)
+            task.cancel()
+            # The job's own CancelledError handler marks the row and kills
+            # its children; give it a bounded moment to do so.
+            try:
+                await asyncio.wait_for(task, timeout=CANCEL_GRACE_S)
+            except (TimeoutError, asyncio.CancelledError):
+                logger.warning("scheduler task did not unwind cleanly")
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
 
     def notify(self) -> None:
         """Call after enqueueing work — safe from worker threads."""
@@ -75,14 +119,25 @@ class Scheduler:
 
     async def _run(self) -> None:
         while not self._stopping:
+            # Clear BEFORE polling, never after. The poll below awaits, so an
+            # enqueue can land while it is in flight; clearing afterwards
+            # would wipe that notification and park the loop for the full
+            # 30s timeout with work sitting in the queue.
+            self._wakeup.clear()
             try:
-                job = self.queue.next_queued()
+                # Claim, don't peek: the row comes back already RENDERING, so
+                # a second scheduler against the same db cannot pop it too.
+                # Off the loop — every queue call takes a mutex that worker
+                # threads also hold, and blocking the loop on it stalls the
+                # /ws progress fan-out and every in-flight request.
+                job = await asyncio.to_thread(self.queue.claim_next)
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001 — a bad row must not kill the loop
                 logger.exception("scheduler failed to read the queue; retrying")
                 await asyncio.sleep(5.0)
                 continue
             if job is None:
-                self._wakeup.clear()
                 try:
                     # Every in-process enqueue calls notify(); the timeout only
                     # covers out-of-process writers sharing the queue db.
@@ -92,26 +147,33 @@ class Scheduler:
                 continue
             try:
                 await self._execute(job)
+            except asyncio.CancelledError:
+                # Shutdown (or a stuck-job cancel) landed mid-render. Put the
+                # job back so the next boot re-renders it, rather than leaving
+                # a RENDERING row that only _recover_interrupted will ever
+                # notice — and re-raise, because a cancelled task must die.
+                logger.info("scheduler cancelled while running job %s; requeueing", job.id)
+                await asyncio.shield(asyncio.to_thread(self._requeue_quietly, job))
+                raise
             except Exception:  # noqa: BLE001 — one job must never kill the loop
-                # _execute does pre-`try` work (persist RENDERING, publish
-                # job.started); if that raises (e.g. the queue db is locked)
-                # the exception would otherwise escape _run and stop the
-                # scheduler forever, wedging every later job as QUEUED.
+                # _execute does pre-`try` work (publish job.started); if that
+                # raises (e.g. the queue db is locked) the exception would
+                # otherwise escape _run and stop the scheduler forever,
+                # wedging every later job as QUEUED.
                 logger.exception("scheduler crashed handling job %s", job.id)
-                if not self._fail_quietly(job):
+                if not await asyncio.to_thread(self._fail_quietly, job):
                     # Couldn't even persist the failure — back off so we don't
                     # hot-loop the same still-QUEUED row against a locked db.
                     await asyncio.sleep(1.0)
 
     async def _execute(self, job: Job) -> None:
-        job.status = JobStatus.RENDERING
-        job.progress = 0.0
-        job.started_at = time.time()
+        # claim_next already persisted RENDERING/started_at; this only adds
+        # the resolved backend name (the cache-trust boundary).
         try:
             job.backend = self.backends.resolve(job.spec.kind, job.spec.model).name
         except GenerationError:
             job.backend = None  # the resolve below fails the job properly
-        if not self.queue.update_unless_cancelled(job):
+        if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
             return  # cancelled before it started — do not render it
         self.events.publish(
             "job.started", job_id=job.id, node_id=job.spec.node_id, project_id=job.project_id
@@ -134,7 +196,10 @@ class Scheduler:
                 # in the meantime. update_unless_cancelled makes the check and
                 # write atomic against a threaded cancel (project deletion runs
                 # queue.cancel_project on a worker thread, not this loop).
-                if not self.queue.update_unless_cancelled(job):
+                # On a thread: this runs from inside backend.execute, i.e. on
+                # the event loop, and the write takes a mutex that the worker
+                # threads hold across a transaction.
+                if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                     cancelled = True
                     return
             self.events.publish(
@@ -177,7 +242,7 @@ class Scheduler:
                 missing_hashes = {job.spec.input_hashes[port] for port in missing}
                 producing = {
                     other.spec.output_hash
-                    for other in self.queue.active(job.project_id)
+                    for other in await asyncio.to_thread(self.queue.active, job.project_id)
                     if other.id != job.id
                 }
                 if missing_hashes & producing:
@@ -185,32 +250,42 @@ class Scheduler:
                     job.progress = 0.0
                     job.started_at = None
                     job.created_at = time.time()  # back of the FIFO
-                    self.queue.update_unless_cancelled(job)
+                    await asyncio.to_thread(self.queue.update_unless_cancelled, job)
                     return
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind, job.spec.model)
             artifact = await backend.execute(job.spec, ctx)
             job.status = JobStatus.DONE
             job.progress = 1.0
-            job.artifact = str(artifact)
+            # Stored RELATIVE to the project's generated/ dir, as the field
+            # has always been documented. An absolute path breaks the moment
+            # the data dir moves, the app is reinstalled under another
+            # account, or a backup is restored onto a new machine: the
+            # artifact is still there under its hash, but the recorded path
+            # is not, so tool promotion reports "the script has not finished
+            # generating yet" forever. The EDL builder relativises for the
+            # same reason.
+            job.artifact = _relative_artifact(artifact, ctx.output_dir)
             job.finished_at = time.time()
-            if not self.queue.update_unless_cancelled(job):
+            if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                 return  # user cancelled during the render — honor it, skip DONE
             self.events.publish(
                 "job.done",
                 job_id=job.id,
                 node_id=job.spec.node_id,
-                artifact=str(artifact),
+                artifact=job.artifact,
                 project_id=job.project_id,
             )
-        except OOMError as exc:
+        except (OOMError, asyncio.CancelledError) as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                raise  # _run requeues and re-raises; never record it as failed
             await self._handle_oom(job, exc)
             return
         except Exception as exc:  # noqa: BLE001 — job isolation boundary
             job.status = JobStatus.FAILED
             job.error = str(exc)
             job.finished_at = time.time()
-            if not self.queue.update_unless_cancelled(job):
+            if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                 # The user's cancel outranks whatever the render died of — bail
                 # before logging so an intentional cancel isn't recorded as a
                 # spurious ERROR with a traceback (still inside the except, so
@@ -238,6 +313,19 @@ class Scheduler:
                     node_id=job.spec.node_id,
                     error=str(exc),
                 )
+
+    def _requeue_quietly(self, job: Job) -> None:
+        """Put a cancelled-by-shutdown job back on the queue. Best effort: a
+        failure here just leaves the row RENDERING, which _recover_interrupted
+        fixes on the next boot — the same place it would have ended up before
+        shutdown cancelled anything."""
+        try:
+            job.status = JobStatus.QUEUED
+            job.progress = 0.0
+            job.started_at = None
+            self.queue.update_unless_cancelled(job)
+        except Exception:  # noqa: BLE001
+            logger.exception("could not requeue job %s during shutdown", job.id)
 
     def _fail_quietly(self, job: Job) -> bool:
         """Best-effort mark a job FAILED after an unexpected scheduler error.
@@ -267,7 +355,7 @@ class Scheduler:
             job.spec.params = {**job.spec.params, **rung}
             job.status = JobStatus.QUEUED
             job.progress = 0.0
-            if not self.queue.update_unless_cancelled(job):
+            if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                 return  # never resurrect a job the user cancelled mid-render
             self.events.publish(
                 "job.retrying",
@@ -282,7 +370,7 @@ class Scheduler:
         job.status = JobStatus.FAILED
         job.error = f"out of memory after {job.attempt} fallback attempts: {exc}"
         job.finished_at = time.time()
-        if not self.queue.update_unless_cancelled(job):
+        if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
             return  # cancelled mid-render — leave the CANCELLED status intact
         # The UI renders this as choices, not an error code.
         self.events.publish(

@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 from ..config import EngineConfig
 from ..project.store import _write_atomic
+from .downloads import UnsafeURL, assert_public_url
 from .loader import load_manifest
 from .model import LicenseInfo, ModelEntry, ModelFile, ModelManifest, Requirements
 
@@ -96,6 +97,14 @@ def add_custom_model(
         parsed = urlparse(ref)
         if parsed.scheme not in ("http", "https"):
             raise ValueError("source url must be http(s)")
+        # Reject a non-public target here, at add time, with a message the
+        # user can act on — rather than at download time buried in a job
+        # error. download_file re-checks (and re-checks every redirect hop),
+        # so this is the friendly gate, not the security boundary.
+        try:
+            assert_public_url(ref)
+        except UnsafeURL as exc:
+            raise ValueError(str(exc)) from exc
         filename = Path(parsed.path).name
         if not filename or "." not in filename:
             raise ValueError("the url must point at a weight file (…/model.safetensors)")
@@ -118,9 +127,7 @@ def add_custom_model(
         id=slug,
         task=task,
         family=name.strip(),
-        requirements=Requirements(
-            vram_gb=vram_gb, disk_gb=max(round(size / 2**30, 1), 0.1)
-        ),
+        requirements=Requirements(vram_gb=vram_gb, disk_gb=max(round(size / 2**30, 1), 0.1)),
         license=LicenseInfo(
             id="unknown",
             commercial=False,
