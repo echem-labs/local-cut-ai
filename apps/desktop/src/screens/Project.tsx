@@ -18,16 +18,14 @@ import { t } from "../i18n";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
+import { isSettled } from "../lib/status";
 import { useWorkspace } from "../lib/workspace";
 import { useApp } from "../store";
-
-const READY = ["draft", "final", "pinned"];
 
 /** One pipeline stage in the header: done ✓ · working ● · failed ! · —. */
 function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" | "off" {
   if (!node) return "off";
-  if (node.status === "final" || node.status === "pinned" || node.status === "draft")
-    return "done";
+  if (isSettled(node.status)) return "done";
   if (node.status === "rendering" || node.status === "queued") return "work";
   if (node.status === "failed") return "fail";
   return "off";
@@ -304,21 +302,21 @@ export function Project() {
   const scenes = orderedScenes(board);
 
   // The header's pipeline indicator: the project's story arc at a glance.
-  const clipDone = scenes.filter((scene) => READY.includes(scene.clip.status)).length;
+  const clipDone = scenes.filter((scene) => isSettled(scene.clip.status)).length;
   const clipFailed = scenes.filter((scene) => scene.clip.status === "failed").length;
   const clipsRendering = scenes.some(
     (scene) => scene.clip.status === "rendering" || scene.clip.status === "queued",
   );
   const keyframesAllReady =
     scenes.length > 0 &&
-    scenes.every((scene) => !scene.keyframe || READY.includes(scene.keyframe.status));
+    scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
   const audioNodes = [board.aux.voiceover, board.aux.music].filter(
     (node): node is NodeState => Boolean(node),
   );
   const audioStage =
     audioNodes.length === 0
       ? ("off" as const)
-      : audioNodes.every((node) => READY.includes(node.status))
+      : audioNodes.every((node) => isSettled(node.status))
         ? ("done" as const)
         : audioNodes.some((node) => node.status === "failed")
           ? ("fail" as const)
@@ -358,7 +356,7 @@ export function Project() {
         scenes.length > 0
           ? () => {
               const target =
-                scenes.find((scene) => !READY.includes(scene.clip.status)) ?? scenes[0];
+                scenes.find((scene) => !isSettled(scene.clip.status)) ?? scenes[0];
               scrollToScene(target.scene_id, { behavior: "smooth", block: "center" });
             }
           : undefined,
@@ -372,13 +370,13 @@ export function Project() {
   // final video → Download). Suppressed while a beginner checkpoint banner
   // owns the accent.
   const approvals = currentProject.approvals ?? [];
-  const scriptReady = script ? READY.includes(script.status) : false;
+  const scriptReady = script ? isSettled(script.status) : false;
   const checkpointPending =
     currentProject.mode === "beginner" &&
     ((!approvals.includes("script") && scriptReady) ||
       (approvals.includes("script") && !approvals.includes("storyboard") && keyframesAllReady));
   const allReady =
-    scenes.length > 0 && scenes.every((scene) => READY.includes(scene.clip.status));
+    scenes.length > 0 && scenes.every((scene) => isSettled(scene.clip.status));
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
