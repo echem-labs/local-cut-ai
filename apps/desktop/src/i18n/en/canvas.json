@@ -4,6 +4,7 @@
   "loading": "Reading the graph…",
   "help": "Every node is one step of the render. Drag from a node's right edge onto another node's input to rewire it; select a node to edit it in Details.",
   "nodeAria": "{kind} node {id}, {status}",
+  "nodeGroupAria": "node {id} and its connections",
   "portAria": "{port} input of {id}",
   "outputAria": "output of {id}",
   "edgeAria": "{src} feeds the {port} input of {dst}",
@@ -32,6 +33,11 @@
     "disconnect": "Disconnect {port}",
     "remove": "Delete node",
     "cancelWire": "Cancel"
+  },
+  "confirmDelete": {
+    "title": "Delete {id}?",
+    "message": "The node goes, and so does every connection to it. There is no undo, and nothing in the canvas can add a node back.",
+    "confirm": "Delete node"
   },
   "wiring": {
     "prompt": "Drop on a node to wire it in",

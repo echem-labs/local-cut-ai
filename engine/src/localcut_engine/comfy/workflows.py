@@ -93,7 +93,31 @@ def parse_workflow(source: str | bytes | dict) -> dict:
         )
     if len(source) > MAX_WORKFLOW_NODES:
         raise WorkflowError(f"workflow has {len(source)} nodes; the limit is {MAX_WORKFLOW_NODES}")
+    # Measured on the PARSED document, not only on a string: the API route
+    # takes a dict (FastAPI already parsed the body) and the CLI parses the
+    # file before posting it, so a size check that only ran for `str | bytes`
+    # never ran at all in production. A three-node workflow whose inputs are
+    # megabytes of text passes the node count and is then written into the
+    # templates directory, where the backend re-reads it on every render.
+    if _encoded_over(source, MAX_WORKFLOW_BYTES):
+        raise WorkflowError(
+            f"workflow is larger than {MAX_WORKFLOW_BYTES // 1024} KiB — "
+            "that is not a ComfyUI graph"
+        )
     return source
+
+
+def _encoded_over(document: Any, limit: int) -> bool:
+    """Would `document` serialize to more than `limit` bytes of JSON?
+    Incremental, so an oversized document is never encoded in full just to be
+    rejected. (Same guard as graph.template_io, the other untrusted-document
+    route; the messages differ, so the two are not shared.)"""
+    size = 0
+    for chunk in json.JSONEncoder(separators=(",", ":"), default=str).iterencode(document):
+        size += len(chunk)
+        if size > limit:
+            return True
+    return False
 
 
 def class_types(workflow: dict) -> list[str]:

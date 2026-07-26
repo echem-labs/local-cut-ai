@@ -317,3 +317,67 @@ def test_a_template_document_is_plain_json(tmp_path):
     assert document["nodes"]["s1.clip"]["kind"] == "clip"  # a string, not NodeKind
     assert isinstance(document["edges"][0], dict)
     assert Edge.model_validate(document["edges"][0])
+
+
+# -- presets: the fields a template sets on the PROJECT, not on the graph -----
+#
+# `/projects` bounds all three of these on the way in. A template is a second
+# route to the same fields, so anything it can set that the create route
+# refuses is a project state no supported flow can otherwise produce.
+
+
+def test_a_template_cannot_carry_a_mode_the_engine_does_not_have():
+    """`mode` is not decoration. Project.tsx renders a `tool:` project as a
+    one-node Quick Tool shell instead of the workspace, and
+    ProjectService._on_job_done refuses to expand a tool session's screenplay
+    into scenes at all. A shared document that could set it to an unknown
+    `tool:` kind would import as a project that draws as a broken tool and
+    never grows past its script node."""
+    with pytest.raises(TemplateError, match="unknown project mode"):
+        from_template(_document(mode="tool:exfiltrate"))
+
+    with pytest.raises(TemplateError, match="unknown project mode"):
+        from_template(_document(mode="kiosk"))
+
+
+def test_the_modes_a_project_really_has_still_travel():
+    """The check is a bound, not a new restriction: every mode the engine
+    itself sets has to survive an export/import round trip."""
+    for mode in ("prompt", "beginner", "advanced", "flowchart", "tool:script", "tool:thumbnail"):
+        assert from_template(_document(mode=mode)).mode == mode
+
+
+def test_an_aspect_outside_the_export_table_is_refused():
+    """/projects refuses one because an unknown aspect renders as the default
+    one silently. Accepting it here would make a template the only way to get
+    a project whose stated aspect and rendered aspect disagree."""
+    with pytest.raises(TemplateError, match="unsupported aspect"):
+        from_template(_document(aspect="21:9"))
+
+    assert from_template(_document(aspect="16:9")).aspect == "16:9"
+    assert from_template(_document(aspect=None)).aspect is None
+
+
+def test_a_duration_that_is_not_a_number_of_seconds_is_refused():
+    """json.loads accepts NaN and Infinity, and either poisons the length
+    arithmetic and the project tile that reports it. The bound is deliberately
+    NOT the create route's 5-1200s target range: this field is the assembled
+    cut length, and a three-second Quick Tool cut is legitimately under it."""
+    for bad in (float("nan"), float("inf"), -1.0):
+        with pytest.raises(TemplateError, match="number of seconds"):
+            from_template(_document(duration_s=bad))
+
+    assert from_template(_document(duration_s=3.2)).duration_s == 3.2
+
+
+def test_the_size_cap_applies_to_a_parsed_document_too():
+    """Every route that reaches from_template hands in a dict — FastAPI parsed
+    the request body, the CLI parsed the file — so a cap that only measured
+    `str | bytes` fired in tests and nowhere else. Node and edge counts do not
+    catch this: three nodes whose params are megabytes apiece pass all of
+    them, and the document is then written to graph.json at that size."""
+    document = _document()
+    document["nodes"]["s1.clip"]["params"]["motion"] = "x" * (2 << 20)
+
+    with pytest.raises(TemplateError, match="larger than"):
+        from_template(document)

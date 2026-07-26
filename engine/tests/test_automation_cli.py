@@ -328,3 +328,20 @@ def test_errors_go_to_stderr_leaving_stdout_clean(engine, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err
+
+
+def test_exporting_into_a_directory_that_does_not_exist_says_so(engine, capsys, tmp_path):
+    """The write is as much a failure mode as the request. `--out
+    build/cut.mp4` before `build/` exists is the ordinary way a CI script hits
+    this, and a traceback about a WinError is not the automation contract this
+    command advertises."""
+    run(engine, "create", "unwritable", "--json")
+    project_id = json_out(capsys)["id"]
+    run(engine, "render", project_id, "--timeout", "120", "--json")
+    capsys.readouterr()
+
+    assert run(engine, "export", project_id, "--out", str(tmp_path / "no-dir" / "cut.mp4")) == 1
+
+    error = capsys.readouterr().err
+    assert error.startswith("error: could not write")
+    assert "no-dir" in error
