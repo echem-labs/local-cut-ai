@@ -12,7 +12,7 @@ on:
 # build carries no red mark.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least privilege. This workflow only reads the tree; nothing here publishes,
 # comments, or writes back. Matters more once the repo is public, where the

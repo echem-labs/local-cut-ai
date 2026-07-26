@@ -152,7 +152,12 @@ def main(argv: list[str] | None = None) -> int:
     config_kwargs = dict(
         host=config.host, port=config.port, log_level="info", access_log=False, **ssl_args
     )
-    server = uvicorn.Server(uvicorn.Config(create_app(config), **config_kwargs))
+    uvicorn_config = uvicorn.Config(create_app(config), **config_kwargs)
+    # Again, now that uvicorn has installed its own handlers: a filter on a
+    # Logger only sees records logged directly to it, so the handlers are
+    # what covers uvicorn's child loggers.
+    install_log_redaction()
+    server = uvicorn.Server(uvicorn_config)
     server.run(sockets=sockets)
     return 0
 

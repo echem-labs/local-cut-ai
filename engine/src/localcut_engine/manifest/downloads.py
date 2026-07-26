@@ -83,9 +83,20 @@ def assert_public_url(url: str) -> None:
     Custom catalog entries are user-supplied and the URL is fetched by the
     engine, from the engine's network position — on the documented remote
     topology that is a GPU box inside someone's LAN, or a cloud instance with
-    a metadata endpoint. Every resolved address must be public, so a hostname
-    that resolves to several addresses cannot pass the check on one and be
-    dialled on another (SEC-3)."""
+    a metadata endpoint.
+
+    What this guarantees: at the moment of the check, EVERY address the host
+    resolves to is public. A host with one public and one private A record is
+    refused outright rather than passing on the address that happened to
+    sort first.
+
+    What it does not: the connection re-resolves. httpx dials by hostname, so
+    a DNS record that answers publicly here and privately a moment later —
+    classic rebinding — still reaches the private address. Closing that means
+    pinning the checked IP and carrying the hostname only for TLS/SNI and the
+    Host header, which is a transport-level change rather than a guard. The
+    exposure is bounded: reaching this code at all requires the user to have
+    added a custom catalog entry naming the attacker's host."""
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise UnsafeURL(f"model URLs must be https, got {parts.scheme or 'no'} scheme: {url}")
