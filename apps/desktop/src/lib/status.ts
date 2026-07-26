@@ -8,15 +8,14 @@ import type { NodeStatus } from "../api/types";
  * — the compiler deliberately never enqueues it. Anything that waits for a
  * node to settle has to count it, or it waits forever.
  *
- * Two copies of this list already existed (the checkpoint banner and the tool
- * session) and both read `["draft", "final", "pinned"]`, so a scene
- * conditioned on an uploaded image left the storyboard checkpoint
+ * Three copies of this list already existed (the checkpoint banner, the tool
+ * session and the project header) and all read `["draft", "final", "pinned"]`,
+ * so a scene conditioned on an uploaded image left the storyboard checkpoint
  * unreachable: its keyframe is skipped, never becomes ready, and the approve
- * button that unblocks beginner mode never appears.
+ * button that unblocks beginner mode never appears. Every one of them now
+ * imports this — a fourth copy is how the two halves of the gate came to
+ * disagree in the first place.
  */
 export const SETTLED: readonly NodeStatus[] = ["draft", "final", "pinned", "skipped"];
 
 export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(status);
-
-/** A node the engine will never produce an artifact for, by design. */
-export const isSkipped = (status: NodeStatus): boolean => status === "skipped";

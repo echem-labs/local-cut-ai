@@ -50,7 +50,13 @@ async function mount(
 const sendButton = () => screen.queryByRole("button", { name: /send keys/i });
 
 beforeEach(() => {
-  useApp.setState({ remotePaired: false, remoteEngine: false } as never);
+  // Every field `mount` writes, or a test inherits the previous one's engine.
+  useApp.setState({
+    settingsOpen: false,
+    remotePaired: false,
+    remoteEngine: false,
+    remoteKeysArmed: true,
+  } as never);
 });
 
 describe("an unarmed remote engine", () => {

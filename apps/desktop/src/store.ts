@@ -1163,8 +1163,9 @@ export const useApp = create<AppState>((set, get) => {
 
     armRemoteKeys: async () => {
       const { ok, error } = await window.localcut.armProviderKeys();
-      // Re-read rather than assume: the main process persists the consent on
-      // the pairing, and the pane must reflect what was actually recorded.
+      // `ok` means the keys reached the engine AND the consent was recorded
+      // on the pairing (the handler does them in that order), so this cannot
+      // claim armed for a push that failed.
       if (ok) set({ remoteKeysArmed: true });
       return ok ? null : (error ?? t("errors.pairingFailed"));
     },
