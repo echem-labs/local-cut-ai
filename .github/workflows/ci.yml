@@ -94,7 +94,12 @@ jobs:
 
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest -q
+      # -rs prints the reason for every skip. A skip is a test that did not
+      # run, and this suite skips rather than fails when a dependency is
+      # absent — which is exactly how a runner with a crippled ffmpeg once
+      # looked green while testing no assembly at all. What is NOT running
+      # should be readable from the log without re-running anything.
+      - run: uv run pytest -q -rs
 
   desktop:
     name: desktop (${{ matrix.os }})
