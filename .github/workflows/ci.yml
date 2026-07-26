@@ -5,10 +5,21 @@ on:
     branches: [main]
   pull_request:
 
-# A new push to a PR makes the previous run's result irrelevant.
+# A new push to a PR makes the previous run's result irrelevant — cancel it.
+# NOT on main: every commit there needs its own verdict. All pushes to main
+# share one ref, so blanket cancellation means two PRs merging a minute apart
+# leave the first merge with no result at all, and a commit that broke the
+# build carries no red mark.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Least privilege. This workflow only reads the tree; nothing here publishes,
+# comments, or writes back. Matters more once the repo is public, where the
+# default token grant is the difference between a compromised dependency
+# being able to push and not.
+permissions:
+  contents: read
 
 jobs:
   engine:
@@ -20,6 +31,10 @@ jobs:
     # on Windows for exactly that reason.
     name: engine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # The suite runs in ~90s locally; brew/choco installing ffmpeg is the
+    # slow part. Well clear of a normal run, but far below the 6h default —
+    # a wedged render backend would otherwise burn a whole runner-day.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +79,7 @@ jobs:
   desktop:
     name: desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
