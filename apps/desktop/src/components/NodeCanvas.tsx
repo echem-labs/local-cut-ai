@@ -40,6 +40,7 @@ import {
   wouldCycle,
 } from "../lib/graphLayout";
 import { useApp } from "../store";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { PanelHelp } from "./Help";
 
 /** A wire being dragged, from the moment a source port is grabbed. */
@@ -97,6 +98,12 @@ export function NodeCanvas() {
 
   const [wire, setWire] = useState<PendingWire | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  // Deleting a node is the one edit here with no way back: `add_node` has no
+  // UI at all, so a structural node (export, timeline, script) removed by a
+  // stray Delete leaves a project that can never finish a cut. ConfirmDialog
+  // is what the app already puts in front of acts like that, and Backspace on
+  // a focused element is a reflex key, not a decision.
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   // Fetch on mount and whenever the project changes. The storyboard never
@@ -251,12 +258,28 @@ export function NodeCanvas() {
                 onStartWire={(event) => startWire(placed.id, event)}
                 onDropWire={(port) => void dropWire(placed.id, port)}
                 onDisconnect={(port) => void disconnectPort(placed.id, port)}
-                onRemove={() => void removeNode(placed.id)}
+                onRemove={() => setPendingDelete(placed.id)}
               />
             );
           })}
         </div>
       </div>
+      {pendingDelete && (
+        <ConfirmDialog
+          title={t("canvas.confirmDelete.title", { id: pendingDelete })}
+          message={t("canvas.confirmDelete.message")}
+          confirmLabel={t("canvas.confirmDelete.confirm")}
+          danger
+          onConfirm={() => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            void removeNode(target).then((error) => {
+              if (error) setHint(error);
+            });
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -300,32 +323,39 @@ function NodeBox(props: NodeBoxProps) {
         node.pinned ? " pinned" : ""
       }${status ? ` status-${status}` : ""}`}
       style={{ left: props.x, top: props.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
-      // A button rather than a div with a click handler: the canvas has to be
-      // keyboard-reachable, and every node is a real focus stop.
-      role="button"
-      tabIndex={0}
-      aria-pressed={props.selected}
-      aria-label={t("canvas.nodeAria", {
-        kind: kindLabel(node.kind),
-        id: node.id,
-        // Through the catalog like every other status surface — the raw value
-        // is a wire id ("skipped" reads "not needed" everywhere else).
-        status: status ? t(`status.${status}`) : t("canvas.kinds.scene"),
-      })}
-      onClick={props.onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          props.onSelect();
-        }
-        if (event.key === "Delete" || event.key === "Backspace") {
-          event.preventDefault();
-          props.onRemove();
-        }
-      }}
+      // A GROUP, not a button, even though the whole box is clickable. The
+      // ports below are real buttons, and ARIA specifies the children of a
+      // `button` as presentational: nesting them inside one hides the only
+      // way to disconnect an edge — and every drop target for a wire — from
+      // assistive technology, however reachable they are by Tab. The node's
+      // own select affordance is the body button instead, which fills the box.
+      role="group"
+      aria-label={t("canvas.nodeGroupAria", { id: node.id })}
     >
-      <span className="canvas-node-kind">{kindLabel(node.kind)}</span>
-      <span className="canvas-node-id">{node.id}</span>
+      <button
+        type="button"
+        className="canvas-node-body"
+        aria-pressed={props.selected}
+        aria-label={t("canvas.nodeAria", {
+          kind: kindLabel(node.kind),
+          id: node.id,
+          // Through the catalog like every other status surface — the raw
+          // value is a wire id ("skipped" reads "not needed" everywhere else).
+          status: status ? t(`status.${status}`) : t("canvas.kinds.scene"),
+        })}
+        onClick={props.onSelect}
+        // Enter and Space are the button's own; only the delete keys need
+        // handling, and they ask rather than act (see the canvas's dialog).
+        onKeyDown={(event) => {
+          if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            props.onRemove();
+          }
+        }}
+      >
+        <span className="canvas-node-kind">{kindLabel(node.kind)}</span>
+        <span className="canvas-node-id">{node.id}</span>
+      </button>
       {node.pinned && (
         <span className="canvas-node-pin" title={t("canvas.pinned")} aria-hidden>
           ●

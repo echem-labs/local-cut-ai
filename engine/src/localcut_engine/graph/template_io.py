@@ -33,11 +33,13 @@ What deliberately does NOT travel:
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
 from .. import __version__
+from ..aspects import EXPORT_RESOLUTIONS
 from .model import GRAPH_VERSION, Edge, Node, NodeKind, StoryGraph
 from .patch import RESERVED_PARAMS
 
@@ -58,6 +60,17 @@ MAX_DOCUMENT_BYTES = 1 << 20  # 1 MiB of JSON is a very large story graph
 # Assets cannot travel (see the module docstring), so a node of this kind is
 # dropped on export and refused on import.
 _UNPORTABLE_KINDS = frozenset({NodeKind.ASSET})
+
+# The presets are project fields, not graph structure, and `mode` in
+# particular is not decoration: it selects which screen the desktop renders
+# (Project.tsx switches on a `tool:` prefix and shows a one-node Quick Tool
+# shell instead of the workspace) and whether a rendered screenplay expands
+# into scenes at all (ProjectService._on_job_done returns early for a tool
+# session). An unbounded string here would let a document written by a
+# stranger decide both, so it is checked against the same values the engine
+# itself can set — /projects for the workspace modes, /tools for the kinds.
+PORTABLE_MODES = frozenset({"prompt", "beginner", "advanced", "flowchart"})
+TOOL_KINDS = frozenset({"script", "thumbnail", "voiceover", "image", "music", "clip"})
 
 
 class TemplateError(ValueError):
@@ -199,6 +212,10 @@ def from_template(document: Any) -> GraphTemplate:
         raise TemplateError(f"template has {len(nodes)} nodes; the limit is {MAX_NODES}")
     if edges is not None and (not isinstance(edges, list) or len(edges) > MAX_EDGES):
         raise TemplateError(f"template has more than {MAX_EDGES} edges")
+    if _encoded_over(document, MAX_DOCUMENT_BYTES):
+        raise TemplateError(
+            f"template is larger than {MAX_DOCUMENT_BYTES // 1024} KiB — that is not a story graph"
+        )
 
     try:
         template = GraphTemplate.model_validate(document)
@@ -211,6 +228,32 @@ def from_template(document: Any) -> GraphTemplate:
     mismatched = sorted(nid for nid, node in template.nodes.items() if node.id != nid)
     if mismatched:
         raise TemplateError(f"node id does not match its key: {', '.join(mismatched)}")
+
+    # Presets, checked exactly as the routes that set the same fields check
+    # them. /projects refuses an aspect outside the export table because an
+    # unknown one renders as the default silently; skipping that here would
+    # make a template the one way to get a project whose stated aspect and
+    # rendered aspect disagree.
+    if not _portable_mode(template.mode):
+        raise TemplateError(
+            f"unknown project mode {template.mode!r} — a template may carry "
+            f"{', '.join(sorted(PORTABLE_MODES))}, or tool:<kind>"
+        )
+    if template.aspect is not None and template.aspect not in EXPORT_RESOLUTIONS:
+        raise TemplateError(
+            f"unsupported aspect {template.aspect!r} — "
+            f"one of: {', '.join(sorted(EXPORT_RESOLUTIONS))}"
+        )
+    # Deliberately NOT the create route's 5-1200s target bounds: this field is
+    # the assembled cut length, recomputed from the clips at every assembly,
+    # and a three-second Quick Tool cut is legitimately below them. What is
+    # never legitimate is a value that is not a number of seconds — json.loads
+    # accepts NaN and Infinity, and either poisons the length arithmetic and
+    # the project tile that reports it.
+    if template.duration_s is not None and not (
+        math.isfinite(template.duration_s) and template.duration_s >= 0
+    ):
+        raise TemplateError("duration must be a non-negative number of seconds")
 
     unportable = sorted(
         nid for nid, node in template.nodes.items() if node.kind in _UNPORTABLE_KINDS
@@ -254,6 +297,34 @@ def build_graph(template: GraphTemplate) -> StoryGraph:
         nodes={nid: node.model_copy(deep=True) for nid, node in template.nodes.items()},
         edges=[e.model_copy() for e in template.edges],
     )
+
+
+def _portable_mode(mode: str) -> bool:
+    """May a template carry this project mode?"""
+    if mode in PORTABLE_MODES:
+        return True
+    return mode.startswith("tool:") and mode.removeprefix("tool:") in TOOL_KINDS
+
+
+def _encoded_over(document: Any, limit: int) -> bool:
+    """Would `document` serialize to more than `limit` bytes of JSON?
+
+    Measured incrementally and abandoned at the limit, so an oversized
+    document is never encoded in full just to be rejected.
+
+    The cap has to apply to a PARSED document, not only to a string. Every
+    route that reaches from_template hands in a dict — FastAPI parsed the
+    request body, and the CLI parsed the file — so a check that only looked at
+    `str | bytes` fired in tests and nowhere else. A 400-node template whose
+    params are megabytes apiece passes every count above it, and is then
+    written to graph.json at that size and re-read on every board build.
+    """
+    size = 0
+    for chunk in json.JSONEncoder(separators=(",", ":"), default=str).iterencode(document):
+        size += len(chunk)
+        if size > limit:
+            return True
+    return False
 
 
 def _first_reason(exc: ValidationError) -> str:

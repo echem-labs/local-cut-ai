@@ -4467,31 +4467,40 @@ button.link:hover {
   stroke-dasharray: 4 3;
 }
 
+/* The box positions; the body inside it is the button. They are separate
+ * elements because the ports are buttons too, and a button inside a button
+ * is hidden from assistive technology (see NodeCanvas). */
 .canvas-node {
   position: absolute;
+  border-radius: var(--radius-2, 8px);
+}
+
+.canvas-node-body {
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+  width: 100%;
+  height: 100%;
   padding: 0 var(--space-3);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-2, 8px);
+  border-radius: inherit;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
 
-.canvas-node:hover {
+.canvas-node-body:hover {
   border-color: var(--border-hi);
 }
 
-.canvas-node:focus-visible {
+.canvas-node-body:focus-visible {
   outline: none;
   box-shadow: var(--accent-glow);
 }
 
-.canvas-node.selected {
+.canvas-node.selected .canvas-node-body {
   border-color: var(--accent);
   box-shadow: var(--accent-shadow);
 }
@@ -4518,24 +4527,27 @@ button.link:hover {
   right: 8px;
   font-size: 8px;
   color: var(--status-pinned);
+  /* Decorative and on top of the body button: without this it would swallow
+   * the click that selects a pinned node. */
+  pointer-events: none;
 }
 
 /* Status accent down the left edge — the same colours the board's pills use,
  * so a node reads the same in both views. */
-.canvas-node.status-rendering {
+.canvas-node.status-rendering .canvas-node-body {
   border-left: 3px solid var(--status-generating);
 }
-.canvas-node.status-draft {
+.canvas-node.status-draft .canvas-node-body {
   border-left: 3px solid var(--status-draft);
 }
-.canvas-node.status-final {
+.canvas-node.status-final .canvas-node-body {
   border-left: 3px solid var(--status-final);
 }
-.canvas-node.status-failed {
+.canvas-node.status-failed .canvas-node-body {
   border-left: 3px solid var(--status-failed);
 }
-.canvas-node.status-pinned,
-.canvas-node.status-skipped {
+.canvas-node.status-pinned .canvas-node-body,
+.canvas-node.status-skipped .canvas-node-body {
   border-left: 3px solid var(--status-pinned);
 }
 
