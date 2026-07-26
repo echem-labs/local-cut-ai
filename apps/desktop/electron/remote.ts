@@ -18,6 +18,12 @@ export interface RemotePairing {
   // The engine's exact certificate (PEM), captured and fingerprint-verified
   // at pair time, then pinned for every request. Absent until captured.
   cert?: string;
+  // Whether the user agreed to send their stored provider keys to THIS host.
+  // Persisted because startup re-arms on every launch: without it, declining
+  // at pair time would be undone by the next app start. Absent (from a
+  // pairing saved before this existed) is treated as "not agreed" — the
+  // conservative reading, and the user is re-asked.
+  armKeys?: boolean;
 }
 
 /** Decode and validate a pairing code (base64url JSON printed by
@@ -75,6 +81,7 @@ export class RemoteEngineStore {
       token: raw.token,
       fingerprint: typeof raw.fingerprint === "string" ? raw.fingerprint : undefined,
       cert: typeof raw.cert === "string" ? raw.cert : undefined,
+      armKeys: raw.armKeys === true,
     };
   }
 

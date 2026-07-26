@@ -15,7 +15,14 @@ from ..providers.textgen import ProviderError
 import json
 
 from .base import ExecutionBackend, ExecutionContext, GenerationError
-from .llm import _METADATA_PROMPT, _SYSTEM_PROMPT, LLMScriptBackend, script_prompt
+from .llm import (
+    METADATA_MAX_TOKENS,
+    _METADATA_PROMPT,
+    _SYSTEM_PROMPT,
+    LLMScriptBackend,
+    script_max_tokens,
+    script_prompt,
+)
 
 
 class CloudBackend(ExecutionBackend):
@@ -44,14 +51,23 @@ class CloudBackend(ExecutionBackend):
             # Publish-kit nodes are SCRIPT-kind with a different contract —
             # same split the local LLM backend makes.
             raw = await textgen.complete(
-                system=_METADATA_PROMPT, prompt=str(spec.params.get("prompt", ""))
+                system=_METADATA_PROMPT,
+                prompt=str(spec.params.get("prompt", "")),
+                max_tokens=METADATA_MAX_TOKENS,
             )
             return ctx.publish_text(
                 spec.output_hash,
                 ".metadata.json",
                 json.dumps(LLMScriptBackend._parse_metadata(raw), indent=2),
             )
-        raw = await textgen.complete(system=_SYSTEM_PROMPT, prompt=script_prompt(spec.params))
+        # Sized from the target duration: the adapters' 4096 default truncated
+        # any long screenplay at HTTP 200, so the same project succeeded
+        # locally (no cap at all) and failed on every cloud provider.
+        raw = await textgen.complete(
+            system=_SYSTEM_PROMPT,
+            prompt=script_prompt(spec.params),
+            max_tokens=script_max_tokens(spec.params),
+        )
         await ctx.progress(0.9)
         screenplay = LLMScriptBackend._parse_screenplay(raw)
         return ctx.publish_text(

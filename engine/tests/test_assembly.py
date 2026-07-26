@@ -664,3 +664,65 @@ async def test_still_clip_from_keyframe(tmp_path):
     assert clip.suffix == ".mp4"
     duration = await backend._probe_duration(clip)
     assert duration is not None and abs(duration - 1.5) < 0.2
+
+
+async def test_a_crossfade_never_overlaps_the_two_scenes_speech(tmp_path, media):
+    """A crossfade pulls the incoming scene back by CROSSFADE_S. That overlap
+    has to land in the outgoing scene's breathing pad, not in its narration —
+    otherwise the two scenes talk over each other and both captions sit on
+    screen together. A scene that crossfades out therefore reserves at least
+    a fade's worth of pad."""
+    from localcut_engine.backends.ffmpeg import CROSSFADE_S
+
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    ctx = ExecutionContext(
+        output_dir=tmp_path / "generated",
+        input_artifacts={
+            "s1": media["clip1"],
+            "s1.audio": media["narr1"],
+            "s2": media["clip2"],
+            "s2.audio": media["narr2"],
+        },
+    )
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16", "transitions": {"s1": "crossfade"}}),
+        ctx,
+    )
+    segments = json.loads(timeline_path.read_text())["video"]
+    first, second = segments[0], segments[1]
+
+    # The outgoing scene reserves a full fade of pad beyond its speech...
+    pad = first["duration"] - first["narration_duration"]
+    assert pad >= CROSSFADE_S - 0.001, f"only {pad:.3f}s of pad for a {CROSSFADE_S}s fade"
+    # ...so the incoming scene starts no earlier than the outgoing one stops
+    # speaking. This is the property that matters; the pad is how it is met.
+    speech_ends = first["start"] + first["narration_duration"]
+    assert second["start"] >= speech_ends - 0.001, (
+        f"scene 2 starts {speech_ends - second['start']:.3f}s before scene 1 stops speaking"
+    )
+
+
+async def test_trim_out_bounds_a_narrated_scene(tmp_path, media):
+    """Narration drives scene duration, so a trim-out cannot shorten a
+    narrated scene — but it must still bound which part of the clip is shown.
+    Ignoring it entirely meant setting the tail trim on a narrated scene did
+    nothing at all, silently."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    ctx = ExecutionContext(
+        output_dir=tmp_path / "generated",
+        input_artifacts={"s1": media["clip1"], "s1.audio": media["narr1"]},
+    )
+    timeline_path = await backend.execute(
+        make_spec(
+            NodeKind.TIMELINE,
+            {"aspect": "9:16", "trims": {"s1": {"in": 0.5, "out": 1.5}}},
+        ),
+        ctx,
+    )
+    segment = json.loads(timeline_path.read_text())["video"][0]
+    # Narration still sets the length...
+    assert segment["duration"] == pytest.approx(3 + 0.35, abs=0.05)
+    # ...but the material the renderer may draw on is the trimmed window,
+    # which is what stops it revealing footage the user cut.
+    assert segment["trim_window"] == pytest.approx(1.0, abs=0.01)
+    assert segment["trim_in"] == pytest.approx(0.5, abs=0.01)

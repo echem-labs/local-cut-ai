@@ -41,8 +41,21 @@ def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
     models_dir = config.resolved_models_dir
     ready: dict[str, list[str]] = {}
     for entry in manifest.models:
-        if is_downloaded(entry, models_dir):
-            ready.setdefault(entry.task, []).append(entry.id)
+        if not is_downloaded(entry, models_dir):
+            continue
+        if not entry.comfy_graph_template:
+            # Downloaded weights with no workflow to run them are not a
+            # capability. Counting them claimed the kind and then rendered it
+            # with the packaged default graph — which loads a DIFFERENT
+            # checkpoint, one that isn't installed — so every job failed with
+            # an opaque ComfyUI validation error. Better to leave the kind
+            # unclaimed and let the chain's fallback tier serve it.
+            logger.debug(
+                "%s is installed but declares no comfy_graph_template; not claiming its task",
+                entry.id,
+            )
+            continue
+        ready.setdefault(entry.task, []).append(entry.id)
     return {
         kind: [mid for task in tasks for mid in ready.get(task, [])]
         for kind, tasks in COMFY_TASKS.items()

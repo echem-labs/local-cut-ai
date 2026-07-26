@@ -33,7 +33,12 @@ import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
 import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
-import { type ProviderKeyId, type ProviderKeyPresence, useApp } from "../store";
+import {
+  type PairingPreview,
+  type ProviderKeyId,
+  type ProviderKeyPresence,
+  useApp,
+} from "../store";
 import { applyTheme, loadThemePref, type ThemePref } from "../theme";
 
 /* one three-step icon scale (review 4 §S10): 15/1.8 for all chrome */
@@ -134,6 +139,7 @@ export function Settings() {
     setDefaults,
     remoteEngine,
     remotePaired,
+    inspectPairing,
     pairRemote,
     unpairRemote,
   } = useApp();
@@ -145,6 +151,12 @@ export function Settings() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
+  // The decoded, not-yet-accepted pairing. Non-null = the review step is on
+  // screen and nothing has been sent to the host yet.
+  const [pairPreview, setPairPreview] = useState<PairingPreview | null>(null);
+  // Defaults to false: sending provider keys to another machine is opt-in,
+  // never a side effect of connecting to it.
+  const [armKeys, setArmKeys] = useState(false);
   const [theme, setTheme] = useState<ThemePref>(loadThemePref);
   // Mirrors the zoom module so the Ctrl +/− shortcuts move the control too.
   const [zoom, setZoom] = useState(userZoomFactor);
@@ -157,6 +169,9 @@ export function Settings() {
     null,
   );
   const [confirmCache, setConfirmCache] = useState(false);
+  // A failed delete or cache purge — shown in the storage pane rather than
+  // discarded, which is what used to happen to both.
+  const [storageError, setStorageError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showLicenses, setShowLicenses] = useState(false);
   const locale = useLocale((state) => state.locale);
@@ -211,8 +226,17 @@ export function Settings() {
   // which would otherwise mutate the project underneath. Focus moves in on open
   // so keyboard/screen-reader users land inside the dialog, matching ConfirmDialog.
   const licensesCloseRef = useRef<HTMLButtonElement>(null);
+  const licensesReturnRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!showLicenses) return;
+    if (!showLicenses) {
+      // Closing: hand focus back to whatever opened the modal. Without this
+      // a keyboard user is dumped at the top of the document and has to tab
+      // all the way back to where they were.
+      licensesReturnRef.current?.focus();
+      licensesReturnRef.current = null;
+      return;
+    }
+    licensesReturnRef.current = document.activeElement as HTMLElement | null;
     licensesCloseRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -260,6 +284,21 @@ export function Settings() {
 
   const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
 
+  // The provider keys a pairing would hand over, by name. "3 keys" is not
+  // something anyone can weigh; "Anthropic, OpenAI" is.
+  const storedKeyNames = Object.entries(KEY_IDS)
+    .filter(([, keyId]) => pairPreview?.keys?.[keyId])
+    .map(([providerId]) => providers.find((p) => p.id === providerId)?.label ?? providerId);
+
+  // Assembly with no backend means no working ffmpeg. The engine deliberately
+  // refuses to let the mock stand in here — a placeholder MP4 handed over as
+  // a finished export is worse than a clear failure — so this is the one
+  // place that failure is explained rather than just showing "unrouted"
+  // against two rows the user has no reason to connect to a missing binary.
+  const assemblyUnrouted = (system?.backends?.tasks ?? []).some(
+    (row) => (row.kind === "timeline" || row.kind === "export") && !row.backend,
+  );
+
   /** One routing row: backend display name, plus what makes it concrete —
    * the installed models behind a ComfyUI claim, or the honest "still
    * images" caveat when clips landed on the FFmpeg fallback tier. */
@@ -280,14 +319,40 @@ export function Settings() {
     return name;
   };
 
+  /** Step 1 of pairing: decode the code and show what it names. A pairing
+   * code is an opaque blob — accepting one blind is not a decision anyone
+   * can make, so nothing is sent until the user has seen the host. */
   const submitPairing = () => {
     if (pairBusy || !pairingCode.trim()) return;
     setPairBusy(true);
     setPairError(null);
-    void pairRemote(pairingCode.trim())
+    void inspectPairing(pairingCode.trim())
+      .then((preview) => {
+        if (!preview.ok) {
+          setPairError(preview.error ?? t("errors.pairingFailed"));
+          return;
+        }
+        setPairPreview(preview);
+      })
+      .finally(() => setPairBusy(false));
+  };
+
+  /** Step 2: the user has seen the host and said yes. `armKeys` is their
+   * separate answer to "…and send this host your provider keys?". */
+  const confirmPairing = (armKeys: boolean) => {
+    if (pairBusy) return;
+    setPairBusy(true);
+    setPairError(null);
+    void pairRemote(pairingCode.trim(), armKeys)
       .then((error) => {
         setPairError(error);
-        if (!error) setPairingCode("");
+        if (!error) {
+          setPairingCode("");
+          setPairPreview(null);
+          // Back to opt-in for the NEXT pairing: a checkbox left ticked from
+          // the last host would pre-arm a different one.
+          setArmKeys(false);
+        }
       })
       .finally(() => setPairBusy(false));
   };
@@ -332,7 +397,7 @@ export function Settings() {
     <div className="settings">
       <div className="settings-head">
         <h1>{t("settings.title")}</h1>
-        <kbd>esc</kbd>
+        <kbd>{shortcutLabel(t("common.keys.escape"))}</kbd>
         <button className="icon-btn" onClick={closeSettings} aria-label={t("settings.closeAria")}>
           <X size={16} strokeWidth={2} />
         </button>
@@ -635,6 +700,11 @@ export function Settings() {
                   {t("settings.storage.stale")}
                 </p>
               )}
+              {storageError && (
+                <p className="banner error" role="alert">
+                  {storageError}
+                </p>
+              )}
               {storage ? (
                 <>
                   {(() => {
@@ -744,6 +814,14 @@ export function Settings() {
                     </div>
                   </div>
                 </>
+              ) : storageStale ? (
+                // A first measurement that FAILED leaves `storage` null, so
+                // the loading line below would sit there permanently — a
+                // spinner for work that is not happening. storageStale is the
+                // signal that the attempt finished and lost.
+                <p className="banner error" role="alert">
+                  {t("settings.storage.failed")}
+                </p>
               ) : (
                 <p className="hint">{t("settings.storage.loading")}</p>
               )}
@@ -794,6 +872,61 @@ export function Settings() {
                         : t("settings.remote.disconnect")}
                     </button>
                   </div>
+                ) : pairPreview ? (
+                  /* Review before trust. The code is decoded but nothing has
+                     been sent yet: the host, its certificate fingerprint and
+                     the exact keys at stake are all on screen first. */
+                  <div className="pair-review">
+                    <dl className="kv">
+                      <dt>{t("settings.remote.reviewHost")}</dt>
+                      <dd>
+                        <code>{pairPreview.url}</code>
+                      </dd>
+                      {pairPreview.fingerprint && (
+                        <>
+                          <dt>{t("settings.remote.reviewFingerprint")}</dt>
+                          <dd>
+                            <code className="fingerprint">{pairPreview.fingerprint}</code>
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+                    <p className="hint">{t("settings.remote.reviewVerify")}</p>
+                    {storedKeyNames.length > 0 && (
+                      <label className="hint arm-keys">
+                        <input
+                          type="checkbox"
+                          checked={armKeys}
+                          onChange={(event) => setArmKeys(event.target.checked)}
+                        />
+                        {t("settings.remote.reviewArmKeys", {
+                          host: pairPreview.host ?? "",
+                          keys: storedKeyNames.join(", "),
+                        })}
+                      </label>
+                    )}
+                    <div className="provider-row">
+                      <button
+                        className="btn-ghost"
+                        disabled={pairBusy}
+                        onClick={() => {
+                          setPairPreview(null);
+                          setArmKeys(false);
+                        }}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                      <button
+                        className="btn-primary"
+                        disabled={pairBusy}
+                        onClick={() => confirmPairing(armKeys)}
+                      >
+                        {pairBusy
+                          ? t("settings.remote.pairing")
+                          : t("settings.remote.reviewConfirm")}
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="provider-row">
                     <input
@@ -810,7 +943,7 @@ export function Settings() {
                       disabled={pairBusy || !pairingCode.trim()}
                       onClick={submitPairing}
                     >
-                      {pairBusy ? t("settings.remote.pairing") : t("settings.remote.pair")}
+                      {pairBusy ? t("settings.remote.checking") : t("settings.remote.pair")}
                     </button>
                   </div>
                 )}
@@ -874,6 +1007,11 @@ export function Settings() {
                       ? t("settings.backends.hintAuto")
                       : t("settings.backends.hintManual")}
                   </p>
+                  {assemblyUnrouted && (
+                    <p className="banner error" role="alert">
+                      {t("settings.backends.noFfmpeg")}
+                    </p>
+                  )}
                   <dl className="kv">
                     {system.backends.tasks.map((row) => {
                       const label = TASK_KIND_LABELS[row.kind]
@@ -951,7 +1089,15 @@ export function Settings() {
           onConfirm={() => {
             const target = confirmProject;
             setConfirmProject(null);
-            void deleteProject(target.id).then(() => refreshStorage());
+            // deleteProject RETURNS the failure message; discarding it left a
+            // failed delete completely silent — the project reappeared in the
+            // list on the next refresh with nothing said about why.
+            void deleteProject(target.id)
+              .then((error) => {
+                setStorageError(error);
+                return refreshStorage();
+              })
+              .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
           }}
           onCancel={() => setConfirmProject(null)}
         />
@@ -963,7 +1109,15 @@ export function Settings() {
           confirmLabel={t("settings.storage.clearCacheConfirm")}
           onConfirm={() => {
             setConfirmCache(false);
-            void cleanupStorage();
+            setStorageError(null);
+            // cleanupStorage resolves to null when the purge failed. Dropping
+            // that left a failed purge completely silent: the numbers simply
+            // did not move, with nothing said about why.
+            void cleanupStorage()
+              .then((freed) => {
+                if (freed === null) setStorageError(t("settings.storage.clearCacheFailed"));
+              })
+              .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
           }}
           onCancel={() => setConfirmCache(false)}
         />

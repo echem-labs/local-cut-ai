@@ -22,7 +22,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from .aspects import EXPORT_RESOLUTIONS, resolution_for
-from .otio import FPS, edl_to_otio, timeline_seconds
+from .otio import FPS, edl_to_otio
 
 _RATE = int(FPS)
 
@@ -46,10 +46,19 @@ def _xml_safe(text: str) -> str:
     )
 
 
-def _rt(seconds: float) -> str:
-    """Frame-aligned rational time ("41/24s"); FCP rejects mid-frame cuts."""
-    frames = round(seconds * _RATE)
+def _frames(seconds: float) -> int:
+    """Seconds to whole frames at the project rate."""
+    return round(seconds * _RATE)
+
+
+def _ft(frames: int) -> str:
+    """Frame count as an FCPXML rational time ("41/24s")."""
     return "0s" if frames == 0 else f"{frames}/{_RATE}s"
+
+
+def _rt(seconds: float) -> str:
+    """Frame-aligned rational time; FCP rejects mid-frame cuts."""
+    return _ft(_frames(seconds))
 
 
 def _node_seconds(node: dict) -> float:
@@ -87,89 +96,140 @@ def edl_to_fcpxml(edl: dict, resolve: Callable[[str], Path], name: str) -> str:
     # both flags — a video-only asset would import silent.
     assets: dict[str, ET.Element] = {}
 
+    # url -> the asset's duration in whole frames. Clip windows are clamped
+    # against this, so a clip can never claim a frame the asset doesn't have.
+    asset_frames: dict[str, int] = {}
+
     def asset_ref(clip: dict, audio: bool) -> str:
         media = clip["media_reference"]
         url = media["target_url"]
         asset = assets.get(url)
         if asset is None:
             available = media["available_range"]["duration"]
+            frames = _frames(available["value"] / available["rate"])
             asset = ET.SubElement(
                 resources,
                 "asset",
                 id=f"r{len(assets) + 2}",
                 name=_xml_safe(str(clip.get("name") or Path(url).name)),
                 start="0s",
-                duration=_rt(available["value"] / available["rate"]),
+                duration=_ft(frames),
             )
             ET.SubElement(asset, "media-rep", kind="original-media", src=url)
             assets[url] = asset
+            asset_frames[url] = frames
         asset.set("hasAudio" if audio else "hasVideo", "1")
         return asset.get("id")
+
+    def clip_window(clip: dict) -> tuple[int, int]:
+        """A clip's (start, duration) in frames, guaranteed to fit inside the
+        asset it references.
+
+        Rounding `start` and `duration` independently of the asset's own
+        duration lets a trimmed clip ask for one frame past the end of its
+        media — `<asset duration="89/24s">` with `<asset-clip start="30/24s"
+        duration="60/24s">` — and Final Cut rejects the whole document. The
+        clamp costs at most one frame of tail, always on a clip that was
+        already at the very end of its source.
+        """
+        start = max(0, _frames(_node_start(clip)))
+        duration = max(1, _frames(_node_seconds(clip)))
+        available = asset_frames.get(clip["media_reference"]["target_url"])
+        if available:
+            start = min(start, max(0, available - 1))
+            duration = min(duration, available - start)
+        return start, max(1, duration)
 
     library = ET.SubElement(root, "library")
     event = ET.SubElement(library, "event", name="LocalCut")
     project = ET.SubElement(event, "project", name=name)
     sequence = ET.SubElement(
-        project,
-        "sequence",
-        format="r1",
-        duration=_rt(timeline_seconds(doc)),
-        tcStart="0s",
-        tcFormat="NDF",
+        project, "sequence", format="r1", duration="0s", tcStart="0s", tcFormat="NDF"
     )
     spine = ET.SubElement(sequence, "spine")
 
     # Video: spine children lay out sequentially; transitions sit at seams.
     anchor: ET.Element | None = None  # first spine clip/gap — audio attaches here
-    anchor_start = 0.0  # its source in-point (parent time base for lanes)
+    anchor_start = 0  # its source in-point, in frames (parent time base for lanes)
+    spine_frames = 0  # what the spine ACTUALLY holds — see the duration note below
     for child in tracks["Video"]["children"]:
         match child["OTIO_SCHEMA"]:
             case "Clip.1":
+                # asset_ref FIRST: it is what registers the asset's frame
+                # count, and clip_window clamps against exactly that.
+                ref = asset_ref(child, audio=False)
+                start, duration = clip_window(child)
                 element = ET.SubElement(
                     spine,
                     "asset-clip",
-                    ref=asset_ref(child, audio=False),
+                    ref=ref,
                     name=_xml_safe(str(child.get("name") or "")),
-                    start=_rt(_node_start(child)),
-                    duration=_rt(_node_seconds(child)),
+                    start=_ft(start),
+                    duration=_ft(duration),
                 )
+                spine_frames += duration
             case "Gap.1":
+                # A zero-length gap is not a gap. Rounding a sub-frame span to
+                # 0 frames emits `duration="0s"`, which FCP treats as invalid
+                # rather than as "nothing to see here".
+                duration = max(1, _frames(_node_seconds(child)))
                 element = ET.SubElement(
-                    spine, "gap", name="Synthesized", start="0s", duration=_rt(_node_seconds(child))
+                    spine, "gap", name="Synthesized", start="0s", duration=_ft(duration)
                 )
+                spine_frames += duration
             case _:  # Transition.1
                 offsets = child["in_offset"], child["out_offset"]
+                # A transition overlaps its neighbours; it adds no length of
+                # its own, so it does not contribute to spine_frames.
                 ET.SubElement(
                     spine,
                     "transition",
                     name="Cross Dissolve",
-                    duration=_rt(sum(o["value"] / o["rate"] for o in offsets)),
+                    duration=_ft(max(1, _frames(sum(o["value"] / o["rate"] for o in offsets)))),
                 )
                 continue
         if anchor is None:
             anchor = element
-            anchor_start = _node_start(child) if child["OTIO_SCHEMA"] == "Clip.1" else 0.0
+            anchor_start = start if child["OTIO_SCHEMA"] == "Clip.1" else 0
 
     if anchor is None:
         raise ValueError("timeline EDL produced no spine elements")
 
+    # The sequence is exactly as long as its spine.
+    #
+    # Rounding the whole timeline once while rounding each element
+    # individually made the declared length drift from the content — 4 frames
+    # over 40 scenes, ~28 (1.2s) at the 20-minute cap — which left phantom
+    # black at the tail and pushed the connected narration and music past the
+    # last clip. It also contradicted this module's own stated invariant that
+    # the FCPXML, the OTIO timeline and the rendered MP4 are the same length.
+    # Summing the emitted frame counts is the only value that cannot drift.
+    sequence.set("duration", _ft(spine_frames))
+
     # Connected audio: offsets are in the parent's source time base, so a
     # clip at timeline t lands at anchor_start + t.
     def attach_audio(track_name: str, lane: str) -> None:
-        position = 0.0
+        # Frames, not seconds: accumulating float positions and rounding each
+        # one independently lets the lane drift away from the spine it is
+        # anchored to, exactly as the sequence duration used to.
+        position = 0
         for child in tracks.get(track_name, {}).get("children", []):
             if child["OTIO_SCHEMA"] == "Clip.1":
+                ref = asset_ref(child, audio=True)  # registers the frame count
+                start, duration = clip_window(child)
                 ET.SubElement(
                     anchor,
                     "asset-clip",
-                    ref=asset_ref(child, audio=True),
+                    ref=ref,
                     name=_xml_safe(str(child.get("name") or "")),
                     lane=lane,
-                    offset=_rt(anchor_start + position),
-                    start=_rt(_node_start(child)),
-                    duration=_rt(_node_seconds(child)),
+                    offset=_ft(anchor_start + position),
+                    start=_ft(start),
+                    duration=_ft(duration),
                 )
-            position += _node_seconds(child)
+                position += duration
+            else:
+                position += max(0, _frames(_node_seconds(child)))
 
     attach_audio("Narration", "-1")
     attach_audio("Music", "-2")

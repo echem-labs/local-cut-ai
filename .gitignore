@@ -4,6 +4,7 @@ dist/
 dist-electron/
 out/
 *.tsbuildinfo
+coverage/
 
 # Packaging output
 apps/desktop/release*/

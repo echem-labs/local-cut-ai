@@ -5,6 +5,8 @@ import base64
 import json
 import os
 
+import pytest
+
 from localcut_engine.tls import ensure_certificate
 
 
@@ -77,10 +79,17 @@ def test_private_key_is_never_world_readable(tmp_path, monkeypatch):
     which leaves the key world-readable in between (and permanently so if
     the process dies there). Neutralizing chmod is what pins the real
     invariant: the CREATE has to carry the mode."""
+    import os
     import stat
     from pathlib import Path
 
     from localcut_engine.tls import ensure_certificate
+
+    if os.name == "nt":
+        # POSIX mode bits are not the access-control mechanism on Windows —
+        # os.stat reports a synthetic 0o666 regardless of the ACL. The
+        # invariant this pins (the CREATE carries the mode) is POSIX-only.
+        pytest.skip("POSIX file modes; Windows uses ACLs")
 
     monkeypatch.setattr(Path, "chmod", lambda self, mode: None)
     _cert_path, key_path, _fingerprint = ensure_certificate(tmp_path, ["127.0.0.1"])

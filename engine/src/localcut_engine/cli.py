@@ -8,6 +8,7 @@ import argparse
 import json
 import logging
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -111,6 +112,26 @@ def main(argv: list[str] | None = None) -> int:
         ssl_args = {"ssl_certfile": str(cert_path), "ssl_keyfile": str(key_path)}
 
     scheme = "https" if ssl_args else "http"
+
+    # Claim the port BEFORE anything with side effects runs.
+    #
+    # create_app() builds the JobQueue, whose __init__ recovers interrupted
+    # jobs by flipping every RENDERING row back to QUEUED. Passing
+    # create_app(config) as an *argument* to uvicorn.run evaluated it before
+    # the bind that fails on a port clash — so a second engine that was about
+    # to exit with "address in use" had already resurrected the first
+    # engine's in-flight job, and both then rendered it. Binding first turns
+    # that into a clean exit that touches nothing.
+    try:
+        sockets = [_bind(config.host, config.port)]
+    except OSError as exc:
+        print(
+            f"cannot bind {config.host}:{config.port}: {exc}\n"
+            "Another engine is probably already running — quit it, or pass a different --port.",
+            file=sys.stderr,
+        )
+        return 1
+
     connection_info = json.dumps({"host": config.host, "port": config.port, "token": config.token})
     if args.announce_fd3:
         try:
@@ -122,18 +143,41 @@ def main(argv: list[str] | None = None) -> int:
     if network_bind:
         _print_pairing(scheme, config.host, config.port, config.token, fingerprint)
 
-    from .api.app import create_app
+    from .api.app import create_app, install_log_redaction
 
-    # access_log=False: request lines would log ?token=… query strings.
-    uvicorn.run(
-        create_app(config),
-        host=config.host,
-        port=config.port,
-        log_level="info",
-        access_log=False,
-        **ssl_args,
+    # access_log=False drops the HTTP request lines, but uvicorn logs the
+    # WebSocket handshake path on `uvicorn.error`, which it does NOT silence —
+    # so a client still using ?token= would write the live token to the log.
+    install_log_redaction()
+    config_kwargs = dict(
+        host=config.host, port=config.port, log_level="info", access_log=False, **ssl_args
     )
+    uvicorn_config = uvicorn.Config(create_app(config), **config_kwargs)
+    # Again, now that uvicorn has installed its own handlers: a filter on a
+    # Logger only sees records logged directly to it, so the handlers are
+    # what covers uvicorn's child loggers.
+    install_log_redaction()
+    server = uvicorn.Server(uvicorn_config)
+    server.run(sockets=sockets)
     return 0
+
+
+def _bind(host: str, port: int) -> socket.socket:
+    """A listening socket for (host, port), or OSError. Handed to uvicorn so
+    the bind happens before the app (and its job-queue recovery) is built."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        # No SO_REUSEADDR: a clashing engine must fail here, which is the
+        # whole point. (On Windows SO_REUSEADDR would even let two sockets
+        # share the port outright.)
+        sock.bind((host, port))
+        sock.listen(2048)
+        sock.set_inheritable(True)
+    except OSError:
+        sock.close()
+        raise
+    return sock
 
 
 def _lan_address(bind_host: str) -> str:
@@ -141,8 +185,6 @@ def _lan_address(bind_host: str) -> str:
     machine's primary outbound interface, best-effort."""
     if bind_host not in ("0.0.0.0", "::"):
         return bind_host
-    import socket
-
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("192.0.2.1", 1))  # TEST-NET: no packets actually sent

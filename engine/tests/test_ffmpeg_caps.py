@@ -84,8 +84,13 @@ def test_ffprobe_keeps_the_executable_extension():
     dies at the first probe, after every clip has already been generated."""
     from localcut_engine.backends.ffmpeg import FFmpegBackend
 
-    # Path is platform-native, so a Windows drive path is not a Windows path
-    # on this host — what matters is that the suffix survives at all.
+    # Path is platform-native, so separators differ by host — compare against
+    # a Path-derived string rather than a hardcoded POSIX one. What matters
+    # is that the sibling keeps the executable suffix.
+    from pathlib import Path
+
     assert FFmpegBackend("/opt/ffmpeg/bin/ffmpeg.exe").ffprobe_bin.endswith("ffprobe.exe")
-    assert FFmpegBackend("/opt/ffmpeg/bin/ffmpeg").ffprobe_bin == "/opt/ffmpeg/bin/ffprobe"
+    assert FFmpegBackend("/opt/ffmpeg/bin/ffmpeg").ffprobe_bin == str(
+        Path("/opt/ffmpeg/bin/ffprobe")
+    )
     assert FFmpegBackend("ffmpeg").ffprobe_bin == "ffprobe"  # bare name: resolve on PATH

@@ -3503,6 +3503,52 @@ button.link:hover {
   margin-top: var(--space-2);
 }
 
+/* The pairing review step: what host you are about to trust, shown before
+   anything is sent to it. Framed like a provider row so it reads as part of
+   the same panel, not as a modal interruption. */
+.pair-review {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-3);
+}
+
+.pair-review .kv {
+  margin: 0 0 var(--space-2);
+}
+
+.pair-review code {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+/* The fingerprint is compared by eye against another screen — keep the
+   colon-separated pairs together rather than wrapping mid-byte. */
+.pair-review code.fingerprint {
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.pair-review .arm-keys {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.pair-review .arm-keys input {
+  margin-top: 2px;
+  flex: none;
+}
+
+.pair-review .provider-row {
+  justify-content: flex-end;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
 .model-row .grow,
 .provider-row .grow {
   flex: 1;
@@ -4320,4 +4366,18 @@ button.link:hover {
 .tray-cancel:hover {
   background: var(--surface-2);
   color: var(--status-failed);
+}
+
+/* The render-crash fallback: an error the user can act on, not a dead end. */
+.error-boundary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
