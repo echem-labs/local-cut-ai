@@ -62,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    _survive_console_encoding()
 
     if args.command == "probe":
         from .hardware.probe import probe_hardware
@@ -127,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(
             f"cannot bind {config.host}:{config.port}: {exc}\n"
-            "Another engine is probably already running — quit it, or pass a different --port.",
+            "Another engine is probably already running - quit it, or pass a different --port.",
             file=sys.stderr,
         )
         return 1
@@ -160,6 +161,23 @@ def main(argv: list[str] | None = None) -> int:
     server = uvicorn.Server(uvicorn_config)
     server.run(sockets=sockets)
     return 0
+
+
+def _survive_console_encoding() -> None:
+    """Never let the console's code page be fatal.
+
+    A Windows console (and a piped stdout, which uses the ANSI code page)
+    defaults to cp1252, which cannot encode the arrow in the pairing block —
+    so `print()` raised UnicodeEncodeError and killed the engine at startup,
+    before uvicorn ever ran, on exactly the network bind the block exists to
+    document. The operator saw a traceback about a charmap codec instead of a
+    running engine. Degrade the un-encodable character, never the process.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")  # type: ignore[union-attr]
+        except (AttributeError, OSError, ValueError):
+            pass  # not a text stream we can retune — nothing to do
 
 
 def _bind(host: str, port: int) -> socket.socket:
@@ -195,7 +213,16 @@ def _lan_address(bind_host: str) -> str:
 
 def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: str | None) -> None:
     """The block a user copies to the frontend: human-readable connection
-    facts plus a single base64url pairing code carrying all of them."""
+    facts plus a single base64url pairing code carrying all of them.
+
+    ASCII only, deliberately. This block exists for the headless deployment —
+    stdout piped to a service manager or a log file — where Windows encodes
+    with the ANSI code page rather than UTF-8. `_survive_console_encoding`
+    keeps an un-encodable character from killing the engine, but it degrades
+    it to a `\\uXXXX` escape, and this is the one instruction the operator has
+    to be able to read. Say "Settings > Remote engine", not "Settings →",
+    so it renders on every console instead of surviving on most of them.
+    """
     import base64
 
     url = f"{scheme}://{_lan_address(host)}:{port}"
@@ -203,15 +230,28 @@ def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: s
     if fingerprint:
         payload["fingerprint"] = fingerprint
     code = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    lines = [
-        "",
-        "Remote engine ready — pair from Settings → Remote engine:",
-        f"  url:          {url}",
-    ]
+    headline = (
+        "Remote engine ready - pair from Settings > Remote engine:"
+        if fingerprint
+        else "Remote engine ready (cleartext http - TLS disabled):"
+    )
+    lines = ["", headline, f"  url:          {url}"]
     if fingerprint:
         pretty = ":".join(fingerprint[i : i + 2] for i in range(0, len(fingerprint), 2))
         lines.append(f"  fingerprint:  {pretty}")
     lines += [f"  pairing code: {code}", ""]
+    if not fingerprint:
+        # --no-tls. The desktop app refuses a cleartext pairing to anything
+        # but loopback (remote.ts parsePairingCode): the bearer token and
+        # every provider key would ride unencrypted with no pin to stop a
+        # MITM. Say so here rather than printing an instruction that ends in
+        # "a remote engine must use https" with no explanation.
+        lines += [
+            "  NOTE: TLS is off, so the desktop app will REFUSE this pairing code.",
+            "  Drop --no-tls to pair from the app, or reach this engine over an SSH",
+            "  tunnel (the app accepts http:// only to localhost) / from an API client.",
+            "",
+        ]
     print("\n".join(lines), flush=True)
 
 

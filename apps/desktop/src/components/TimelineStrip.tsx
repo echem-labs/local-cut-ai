@@ -386,7 +386,10 @@ export function TimelineStrip() {
                   aria-label={t("timeline.blockAria", {
                     n: sceneNo,
                     d: durations[index],
-                    status: clip.status,
+                    // Through the catalog, like every other status surface:
+                    // the raw id is a wire value ("skipped" reads "not
+                    // needed" everywhere else) and never translates.
+                    status: t(`status.${clip.status}`),
                   })}
                   onClick={() => {
                     select(clip.node_id);

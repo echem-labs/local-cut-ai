@@ -125,9 +125,22 @@ class ProjectService:
 
     def duplicate(self, project_id: str) -> Project:
         with self._lock:
+            # Job history is keyed by project id and does NOT travel with the
+            # copy, so `_distrusted_hashes` would have nothing to work from
+            # there: every placeholder in the copied generated/ would come
+            # back trusted, and export/package would hand a mock artifact over
+            # as the real cut. Decide distrust HERE, against the source's
+            # history, and drop those artifacts from the copy so they
+            # re-render under the backend that serves the kind today.
+            source_history = self.queue.list(project_id, 1000)
+            distrusted = self._distrusted_hashes(
+                source_history, self.store.cached_hashes(project_id)
+            )
             copy = self.store.duplicate(project_id)
             if copy is None:
                 raise KeyError(project_id)
+            for out_hash in distrusted:
+                self.store.delete_artifacts(copy.id, out_hash)
             # generated/ travels with the copy, so a fully-rendered source
             # duplicates into a fully-cached project and this enqueues
             # nothing. A source that was mid-render (or never finished)
@@ -813,7 +826,18 @@ class ProjectService:
     def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
         history = self.queue.list(project_id, 1000)
-        jobs = {job.spec.node_id: job for job in reversed(history)}
+        # Keyed by IDENTITY — (node, output hash) — not by node id alone. The
+        # newest job for a node id can belong to an output the graph has since
+        # moved past (edit, render, undo back onto the cached artifact), and
+        # that job does not describe the node: reporting it left the tile
+        # `failed` forever with a stale error and no job left to retry, and let
+        # a `final` job for an abandoned hash label a cached DRAFT as final.
+        # Keying by identity drops it *and* still finds the job that produced
+        # what the node is asking for now — so undoing an edit does not demote
+        # a finished `final` back to `draft` either. Quality is not part of the
+        # hash, so a draft/final pair for one identity still collapses here,
+        # newest winning.
+        jobs = {(job.spec.node_id, job.spec.output_hash): job for job in reversed(history)}
         # Trusted: a placeholder must read as work still to do, not as a
         # finished draft the user can ship.
         cached = self._trusted_cache(project_id, history)
@@ -828,8 +852,10 @@ class ProjectService:
             node = graph.nodes.get(node_id)
             if node is None:
                 return None  # removed via patch — the card shows what's left
-            job = jobs.get(node_id)
             out_hash = graph.output_hash(node_id, memo)
+            # Only a job for the node's CURRENT identity describes it (see the
+            # keying above).
+            job = jobs.get((node_id, out_hash))
             # In-flight work outranks a stale cached artifact: a queued
             # final re-render must not read as already 'final'.
             if node.pinned:
