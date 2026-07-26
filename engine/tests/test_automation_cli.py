@@ -345,3 +345,14 @@ def test_exporting_into_a_directory_that_does_not_exist_says_so(engine, capsys, 
     error = capsys.readouterr().err
     assert error.startswith("error: could not write")
     assert "no-dir" in error
+
+
+def test_importing_over_a_shipped_workflow_name_warns_before_it_lands(engine, capsys, tmp_path):
+    """`--check` has to be able to say it BEFORE the replacement happens: the
+    name decides which renders it takes over, and nothing afterwards shows
+    that a packaged workflow was swapped."""
+    path = _workflow_file(tmp_path, _WORKFLOW)
+
+    assert run(engine, "workflow", "import", path, "--name", "clip_default", "--check") == 0
+
+    assert "every project on this engine" in capsys.readouterr().out

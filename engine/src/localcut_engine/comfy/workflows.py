@@ -23,6 +23,7 @@ Two checks do the work:
 
 from __future__ import annotations
 
+import importlib.resources
 import json
 import re
 from pathlib import Path
@@ -195,6 +196,46 @@ def templates_dir(data_dir: Path) -> Path:
     """Where imported workflows live — the directory the ComfyUI backend
     already prefers over its packaged templates."""
     return data_dir / "comfy-templates"
+
+
+def packaged_names() -> frozenset[str]:
+    """Stems of the workflow templates this build ships.
+
+    Listing a package directory is not guaranteed on every loader a frozen
+    build can end up with, and this feeds a warning rather than a decision —
+    so a loader that cannot enumerate costs the note, never the import.
+    """
+    try:
+        directory = importlib.resources.files("localcut_engine.comfy_templates")
+        return frozenset(
+            entry.name.removesuffix(".json")
+            for entry in directory.iterdir()
+            if entry.name.endswith(".json")
+        )
+    except (OSError, NotADirectoryError, TypeError):
+        return frozenset()
+
+
+def shadow_warning(name: str) -> str | None:
+    """The note for an import that takes over a packaged template's name.
+
+    `_template_path` in the ComfyUI backend prefers the data dir over its own
+    package, so importing under a packaged stem replaces that render for every
+    project on this engine — not just the one the operator had in mind. That is
+    the override mechanism working as designed, and `clip_default` is a name
+    someone reaches for by accident. Worse, the override is invisible after the
+    fact: an output's identity is hashed from params, seed, model and inputs,
+    never from the template that produced it, so the cache does not turn over
+    and old and new artifacts sit side by side under one node id.
+    """
+    if name in packaged_names():
+        return (
+            f"{name!r} is the name of a workflow LocalCut AI ships, so this import replaces it "
+            "for every project on this engine. Already-rendered outputs keep their cached "
+            "artifacts; only new renders use the imported graph. Import under a different name "
+            "if you meant to add a workflow rather than replace one."
+        )
+    return None
 
 
 def store(data_dir: Path, name: str, workflow: dict) -> Path:

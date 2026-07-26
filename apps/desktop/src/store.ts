@@ -321,6 +321,11 @@ let openGen = 0;
 // Bumped on every refreshBoard, so a slow earlier response cannot land on
 // top of a newer one and re-show work that has since finished.
 let boardGen = 0;
+// The same guard for the graph. It used to be fetched only on the canvas's
+// mount and after its own patches, where two could barely overlap; now every
+// board refresh keeps it in step, so concurrent reads are routine and an
+// out-of-order landing would redraw a DAG the project has moved past.
+let graphGen = 0;
 // Called with the id of any project created while a refreshHome is in
 // flight — that request's snapshot predates it, so the tab prune must not
 // treat it as deleted.
@@ -527,7 +532,10 @@ export const useApp = create<AppState>((set, get) => {
     } catch (err) {
       return err instanceof Error ? err.message : String(err);
     }
-    await Promise.all([get().refreshGraph(), get().refreshBoard()]);
+    // refreshBoard pulls the graph with it, so one call covers both pictures
+    // — and awaiting it means the canvas has already redrawn by the time a
+    // caller decides whether to show a hint.
+    await get().refreshBoard();
     return null;
   };
 
@@ -1037,19 +1045,32 @@ export const useApp = create<AppState>((set, get) => {
       // a fresher response that already landed.
       if (generation !== boardGen || get().currentProject?.id !== projectId) return;
       set({ currentProject: project, board: withPending(board, projectId), jobs });
+      // The graph is a second read of the same project, and everything that
+      // moves the board can move it: a rendered screenplay expanding into a
+      // scene per beat, an LLM edit adding a node, a pin from the inspector.
+      // Refreshed HERE rather than at each of those call sites, because the
+      // canvas went stale exactly by their being enumerated — a first render
+      // grew the graph from one node to dozens while the flowchart kept
+      // drawing the one. Costs nothing until something holds a graph, and
+      // only the flowchart ever asks for one.
+      if (get().graph) await get().refreshGraph();
     },
 
     refreshGraph: async () => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
       const projectId = currentProject.id;
+      const generation = ++graphGen;
       try {
         const graph = await client.graph(projectId);
-        // Same guard as refreshBoard: a late response for a project the user
-        // has navigated away from must not paint the one they are looking at.
+        // Same guards as refreshBoard: a late response for a project the user
+        // has navigated away from must not paint the one they are looking at,
+        // and a superseded one must not clobber a fresher one that landed.
+        if (generation !== graphGen) return;
         if (get().client !== client || get().currentProject?.id !== projectId) return;
         set({ graph, graphError: null });
       } catch (err) {
+        if (generation !== graphGen) return;
         if (get().client !== client || get().currentProject?.id !== projectId) return;
         // Keep the last graph rather than blanking the canvas: a failed
         // refresh is a worse reason to lose the picture than to show a stale

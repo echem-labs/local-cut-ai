@@ -698,7 +698,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         name: str = Field(default="", max_length=64)
         workflow: dict
 
-    def _reviewed(document: dict) -> tuple[dict, workflows.WorkflowReview]:
+    def _reviewed(document: dict, name: str = "") -> tuple[dict, workflows.WorkflowReview]:
         """Parse and judge, or raise the HTTP error the client should see."""
         allowlist = _allowlist()
         try:
@@ -706,6 +706,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             verdict = workflows.review(parsed, allowlist)
         except workflows.WorkflowError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Carried on the verdict rather than raised: replacing a packaged
+        # workflow is a supported thing to do, and `--check` has to be able to
+        # say so BEFORE the replacement happens.
+        shadow = workflows.shadow_warning(name)
+        if shadow:
+            verdict.warnings.append(shadow)
         if not verdict.ok:
             # 409, not 422: the document is well-formed and this engine's
             # policy is what refuses it. Enabling a pack makes the same bytes
@@ -719,12 +725,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/comfy/workflows/review", dependencies=[Authed])
     async def review_workflow(body: WorkflowBody) -> dict:
         """Judge a workflow without storing it — what an import would say."""
-        _, verdict = await asyncio.to_thread(_reviewed, body.workflow)
+        _, verdict = await asyncio.to_thread(_reviewed, body.workflow, body.name)
         return verdict.model_dump()
 
     @app.post("/comfy/workflows", dependencies=[Authed])
     async def import_workflow(body: WorkflowBody) -> dict:
-        parsed, verdict = await asyncio.to_thread(_reviewed, body.workflow)
+        parsed, verdict = await asyncio.to_thread(_reviewed, body.workflow, body.name)
         try:
             path = await asyncio.to_thread(workflows.store, config.data_dir, body.name, parsed)
         except workflows.WorkflowError as exc:

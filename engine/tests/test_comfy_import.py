@@ -296,3 +296,20 @@ def test_the_size_cap_applies_to_a_parsed_workflow_too():
     # two answers now agree.
     with pytest.raises(workflows.WorkflowError, match="larger than"):
         workflows.parse_workflow(json.dumps(fat))
+
+
+def test_importing_over_a_packaged_workflow_name_says_what_it_replaces():
+    """The ComfyUI backend prefers the data dir over its own package, so an
+    import under a packaged stem takes over that render for every project on
+    the engine. `clip_default` is a name someone reaches for by accident, and
+    the override is invisible afterwards: an output's identity is hashed from
+    params, seed, model and inputs, never from the template that produced it,
+    so the cache does not turn over and nothing on screen changes."""
+    assert "clip_default" in workflows.packaged_names()
+
+    warning = workflows.shadow_warning("clip_default")
+
+    assert warning is not None
+    assert "every project on this engine" in warning
+    assert workflows.shadow_warning("my-own-clip") is None
+    assert workflows.shadow_warning("") is None
