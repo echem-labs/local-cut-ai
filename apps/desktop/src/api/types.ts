@@ -63,6 +63,35 @@ export interface NodeState {
   pinned: boolean;
 }
 
+/** The Story Graph itself, as GET /projects/{id}/graph returns it.
+ *
+ * The board is a *view* of this graph shaped for the storyboard — scenes with
+ * slots, aux nodes by name. The flowchart view needs the graph underneath:
+ * the board cannot express an edge, and an edge is the thing a node canvas
+ * exists to show and rewire. Mirrors StoryGraph in graph/model.py. */
+export interface GraphNode {
+  id: string;
+  kind: string;
+  params: Record<string, unknown>;
+  seed: number;
+  model: string | null;
+  pinned: boolean;
+  frozen_hash: string | null;
+}
+
+export interface GraphEdge {
+  src: string;
+  dst: string;
+  /** The named input on `dst`. One edge per port — connecting replaces. */
+  port: string;
+}
+
+export interface StoryGraph {
+  version: number;
+  nodes: Record<string, GraphNode>;
+  edges: GraphEdge[];
+}
+
 export interface SceneCardModel {
   scene_id: string;
   // keyframe/narration can be removed via remove_node patches; clip never is.

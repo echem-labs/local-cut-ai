@@ -4381,3 +4381,202 @@ button.link:hover {
   flex-wrap: wrap;
   gap: var(--space-2);
 }
+
+/* ---------------------------------------------------------------- canvas --
+ * The flowchart view. Positions come from lib/graphLayout (pure, derived —
+ * see that module for why), so everything here is presentation only: the
+ * stage is sized to the layout and nothing in CSS decides where a node goes.
+ */
+.canvas-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.canvas-empty {
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.canvas-error {
+  color: var(--status-failed);
+  max-width: 40ch;
+  text-align: center;
+}
+
+.canvas-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.canvas-hint {
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+.canvas-bar .panel-help {
+  margin-left: auto;
+}
+.canvas-hint ~ .panel-help {
+  margin-left: var(--space-2);
+}
+
+.canvas-surface {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* The drag that draws a wire would otherwise be read as a text selection,
+   * which leaves the whole graph highlighted behind the pointer. */
+  user-select: none;
+}
+
+.canvas-stage {
+  position: relative;
+}
+
+.canvas-wires {
+  position: absolute;
+  inset: 0;
+  /* The SVG covers the whole stage, so it would swallow every click meant
+   * for a node underneath it. */
+  pointer-events: none;
+}
+
+.canvas-wire {
+  fill: none;
+  stroke: var(--border-hi);
+  stroke-width: 1.5;
+}
+
+.canvas-wire.active {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.canvas-wire.pending {
+  stroke: var(--accent);
+  stroke-dasharray: 4 3;
+}
+
+.canvas-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2, 8px);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-node:hover {
+  border-color: var(--border-hi);
+}
+
+.canvas-node:focus-visible {
+  outline: none;
+  box-shadow: var(--accent-glow);
+}
+
+.canvas-node.selected {
+  border-color: var(--accent);
+  box-shadow: var(--accent-shadow);
+}
+
+.canvas-node-kind {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.canvas-node-id {
+  font-size: 12px;
+  /* A node id can be longer than the box; truncate rather than reflow, since
+   * the layout gave every node the same width on purpose. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-node-pin {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 8px;
+  color: var(--status-pinned);
+}
+
+/* Status accent down the left edge — the same colours the board's pills use,
+ * so a node reads the same in both views. */
+.canvas-node.status-rendering {
+  border-left: 3px solid var(--status-generating);
+}
+.canvas-node.status-draft {
+  border-left: 3px solid var(--status-draft);
+}
+.canvas-node.status-final {
+  border-left: 3px solid var(--status-final);
+}
+.canvas-node.status-failed {
+  border-left: 3px solid var(--status-failed);
+}
+.canvas-node.status-pinned,
+.canvas-node.status-skipped {
+  border-left: 3px solid var(--status-pinned);
+}
+
+.canvas-ports {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.canvas-ports.in {
+  left: -7px;
+}
+
+.canvas-port {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-hi);
+  background: var(--surface-0);
+  cursor: crosshair;
+}
+
+.canvas-port:hover,
+.canvas-port:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.canvas-port.filled {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.canvas-port.out {
+  position: absolute;
+  top: 50%;
+  right: -7px;
+  transform: translateY(-50%);
+}

@@ -15,7 +15,9 @@
     "storyboard": "Storyboard",
     "storyboardTitle": "Storyboard view — the board leads, monitor in the details panel",
     "player": "Player",
-    "playerTitle": "Player view — big monitor beside the board"
+    "playerTitle": "Player view — big monitor beside the board",
+    "flowchart": "Flowchart",
+    "flowchartTitle": "Flowchart view — the whole graph, every step and what feeds it"
   },
   "tileSize": {
     "aria": "Scene tile size",

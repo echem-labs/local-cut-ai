@@ -15,6 +15,7 @@ import { Composer } from "./Composer";
 import { PanelHelp } from "./Help";
 import { Inspector } from "./Inspector";
 import { Monitor } from "./Monitor";
+import { NodeCanvas } from "./NodeCanvas";
 import { SceneCard } from "./SceneCard";
 import { TimelineStrip } from "./TimelineStrip";
 
@@ -159,6 +160,12 @@ function InspectorPanel(_props: IDockviewPanelProps) {
   return <Inspector />;
 }
 
+/** The flowchart view's document panel. Like the board it is the center of
+ * its view, so it is registered the same way and locked the same way. */
+function CanvasPanel(_props: IDockviewPanelProps) {
+  return <NodeCanvas />;
+}
+
 function TimelinePanel(props: IDockviewPanelProps) {
   useGroupMinHeight(props.api, TIMELINE_MIN_H);
   return (
@@ -170,6 +177,7 @@ function TimelinePanel(props: IDockviewPanelProps) {
 
 const PANEL_COMPONENTS = {
   board: BoardPanel,
+  canvas: CanvasPanel,
   monitor: MonitorPanel,
   inspector: InspectorPanel,
   timeline: TimelinePanel,
@@ -186,6 +194,7 @@ function PanelTab(props: IDockviewPanelHeaderProps) {
  * title is resolved through t() at each call site (never at module load). */
 const PANEL_TITLE_KEYS = {
   board: "workspace.panels.board",
+  canvas: "workspace.panels.canvas",
   monitor: "workspace.panels.monitor",
   inspector: "workspace.panels.inspector",
   timeline: "workspace.panels.timeline",
@@ -193,6 +202,11 @@ const PANEL_TITLE_KEYS = {
 } as const satisfies Record<keyof typeof PANEL_COMPONENTS, MessageKey>;
 
 const panelTitle = (id: keyof typeof PANEL_TITLE_KEYS): string => t(PANEL_TITLE_KEYS[id]);
+
+/** The center document of a view — the one panel that is always present and
+ * never docks away, so everything else has something to dock against. */
+const documentPanel = (view: WorkspaceView): "board" | "canvas" =>
+  view === "flowchart" ? "canvas" : "board";
 
 /* ---------- workspace ---------- */
 
@@ -250,14 +264,23 @@ export function Workspace() {
     busyRef.current = true;
     try {
       api.clear();
-      const board = api.addPanel({ id: "board", component: "board", title: panelTitle("board") });
-      board.group.locked = true; // the center document never docks away
+      // Each view has ONE center document: the storyboard and player are
+      // built around the board, the flowchart around the canvas. Same lock,
+      // same role — a view whose document could be dragged away has no
+      // anchor for anything else to dock against.
+      const documentId = documentPanel(target);
+      const document = api.addPanel({
+        id: documentId,
+        component: documentId,
+        title: panelTitle(documentId),
+      });
+      document.group.locked = true;
       if (target === "player") {
         api.addPanel({
           id: "monitor",
           component: "monitor",
           title: panelTitle("monitor"),
-          position: { referencePanel: "board", direction: "left" },
+          position: { referencePanel: documentId, direction: "left" },
         });
       }
       addComposer(api);
@@ -272,7 +295,7 @@ export function Workspace() {
         initialHeight: 200,
       });
       enforceRowHeights(api);
-      board.api.setActive();
+      document.api.setActive();
     } finally {
       busyRef.current = false;
     }
@@ -284,10 +307,13 @@ export function Workspace() {
       try {
         const parsed = JSON.parse(raw);
         const ids = Object.keys(parsed?.panels ?? {});
+        // Per-view document check, not a fixed "board": a flowchart layout
+        // restored without its canvas would come up with no document at all,
+        // and every later dock would have nothing to reference.
         const valid =
           ids.length > 0 &&
           ids.every((id) => id in PANEL_COMPONENTS) &&
-          ids.includes("board");
+          ids.includes(documentPanel(target));
         if (valid) {
           busyRef.current = true;
           try {
