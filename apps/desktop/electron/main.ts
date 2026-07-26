@@ -325,7 +325,13 @@ ipcMain.handle("engine:connection", (event) => {
   // catch, so a rejection would strand the app on "Connecting…" forever with
   // nothing shown. The null connection + error is a shape it already renders.
   if (!trustedSender(event))
-    return { connection: null, error: "untrusted sender", remote: false, remotePaired: false };
+    return {
+      connection: null,
+      error: "untrusted sender",
+      remote: false,
+      remotePaired: false,
+      keysArmed: false,
+    };
   return {
     connection: activeConnection(),
     error: engineError,
@@ -333,6 +339,13 @@ ipcMain.handle("engine:connection", (event) => {
     // A pairing on disk even if the remote is currently unreachable — so the
     // UI can always offer Disconnect and isn't stranded on a dead box.
     remotePaired: remoteStore.exists(),
+    // Whether THIS engine is allowed the provider keys. A local engine always
+    // is (it is this machine, and the keys are already on it); a remote one
+    // only if the user said so. Without this the renderer cannot tell an
+    // unarmed remote from an armed one, so it cannot offer to arm it — which
+    // left the arm-keys path implemented on both sides and reachable from
+    // neither.
+    keysArmed: remoteConnection ? remoteConnection.armKeys === true : true,
   };
 });
 
@@ -398,16 +411,18 @@ ipcMain.handle("engine:pair", async (event, code: unknown, options: unknown) => 
 ipcMain.handle("providers:arm-keys", async (event) => {
   if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
   try {
-    // Record the agreement before sending, and against this exact pairing:
-    // the decision has to survive the next launch, or startup would ask
-    // again (or, worse, arm anyway).
+    // Send first, record second. Persisting the agreement ahead of a push
+    // that then failed left consent on disk while the pane still reported
+    // the engine unarmed: the user saw the refusal and believed nothing had
+    // been sent, and the next launch armed that host silently.
+    const stored = keyStore.load();
+    if (Object.keys(stored).length > 0) await pushKeysToEngine(stored);
+    // Against this exact pairing: the decision has to survive the next
+    // launch, or startup would ask again (or, worse, arm anyway).
     if (remoteConnection) {
       remoteConnection = { ...remoteConnection, armKeys: true };
       remoteStore.save(remoteConnection);
     }
-    const stored = keyStore.load();
-    if (Object.keys(stored).length === 0) return { ok: true, error: null };
-    await pushKeysToEngine(stored);
     return { ok: true, error: null };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

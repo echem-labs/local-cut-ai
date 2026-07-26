@@ -1,10 +1,11 @@
 """Bounds the desktop UI mirrors from the engine.
 
-There is no desktop test infrastructure, so numbers duplicated in the React
-app have nothing asserting they still match the engine — and DURATION_BOUNDS
-has already drifted once. These tests parse the TypeScript source and compare
-it against the Python constants, which costs nothing and fails loudly on the
-next drift.
+The desktop has its own suite now, but it runs against the TypeScript alone —
+nothing there can know what the engine actually sends. Values duplicated
+across the boundary therefore still have nothing asserting they agree, and
+DURATION_BOUNDS has already drifted once. These tests parse the TypeScript
+source and compare it against the Python constants, which costs nothing and
+fails loudly on the next drift.
 
 Skipped when the desktop app is not checked out beside the engine (an
 engine-only deployment is a supported layout).
@@ -79,3 +80,35 @@ def test_the_ws_token_subprotocol_matches_on_both_sides():
     match = re.search(r'const WS_TOKEN_SUBPROTOCOL = "([^"]+)"', client.read_text(encoding="utf-8"))
     assert match, "client.ts no longer declares WS_TOKEN_SUBPROTOCOL"
     assert match.group(1) == WS_TOKEN_SUBPROTOCOL
+
+
+def test_every_board_status_has_a_ui_case_and_a_label():
+    """A status the desktop does not know renders with no colour and no
+    label — the tile silently loses its meaning rather than failing. Three
+    places have to agree: the engine's set, the `NodeStatus` union, and the
+    status catalog the pill reads its word from."""
+    import json
+
+    from localcut_engine.service import SCENE_NODE_STATUSES
+
+    src = _FORMATS.parent.parent / "api" / "types.ts"
+    # Comments go first: the union carries several, and a single `;` inside
+    # one would truncate the non-greedy match to a partial member list — the
+    # test would then pass by comparing against nothing.
+    text = re.sub(r"//[^\n]*", "", src.read_text(encoding="utf-8"))
+    union = re.search(r"export type NodeStatus =(.*?);", text, re.S)
+    assert union, "types.ts no longer declares NodeStatus"
+    # Not `[a-z]+`: a status carrying a digit, dash or capital would be
+    # dropped silently, which is exactly the drift this test exists to catch.
+    declared = set(re.findall(r'"([^"]+)"', union.group(1)))
+    assert declared == set(SCENE_NODE_STATUSES), (
+        f"NodeStatus and SCENE_NODE_STATUSES disagree: "
+        f"only in UI {sorted(declared - set(SCENE_NODE_STATUSES))}, "
+        f"only in engine {sorted(set(SCENE_NODE_STATUSES) - declared)}"
+    )
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "status.json").read_text(encoding="utf-8")
+    )
+    missing = [s for s in SCENE_NODE_STATUSES if s not in catalog]
+    assert not missing, f"no label in status.json for: {missing}"
