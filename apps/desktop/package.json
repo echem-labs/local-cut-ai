@@ -17,11 +17,12 @@
     "package:dir": "npm run check:engine -- win && npm run build && electron-builder --win --dir",
     "package:linux": "npm run check:engine -- linux && npm run build && electron-builder --linux",
     "package:linux:dir": "npm run check:engine -- linux && npm run build && electron-builder --linux --dir",
-    "package:mac": "npm run check:engine -- mac && npm run build && electron-builder --mac",
-    "package:mac:dir": "npm run check:engine -- mac && npm run build && electron-builder --mac --dir",
+    "package:mac": "npm run check:engine -- mac-arm64 && npm run build && electron-builder --mac --arm64",
+    "package:mac:dir": "npm run check:engine -- mac-arm64 && npm run build && electron-builder --mac --arm64 --dir",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "package:mac:x64": "npm run check:engine -- mac-x64 && npm run build && electron-builder --mac --x64"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",
