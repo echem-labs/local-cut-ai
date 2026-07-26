@@ -8,8 +8,18 @@ export type ThemePref = "system" | "dark" | "light";
 const KEY = "localcut.theme";
 const media = () => window.matchMedia("(prefers-color-scheme: light)");
 
+/** Guarded, like every other persisted preference: initTheme() runs at module
+ * scope in main.tsx, BEFORE the ErrorBoundary mounts, so a throwing
+ * localStorage (blocked storage, a restrictive storage policy, a corrupt
+ * origin store) would escape module evaluation and leave a blank window with
+ * no error anywhere. Degrade to the default instead. */
 export function loadThemePref(): ThemePref {
-  const stored = localStorage.getItem(KEY);
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(KEY);
+  } catch {
+    /* storage unavailable — follow the system theme */
+  }
   return stored === "light" || stored === "dark" ? stored : "system";
 }
 
@@ -34,7 +44,11 @@ export function resolvedTheme(): "dark" | "light" {
 }
 
 export function applyTheme(pref: ThemePref): void {
-  localStorage.setItem(KEY, pref);
+  try {
+    localStorage.setItem(KEY, pref);
+  } catch {
+    /* storage full/disabled — the theme still applies for this session */
+  }
   stamp(resolve(pref));
 }
 

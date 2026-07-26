@@ -138,10 +138,22 @@ class DownloadManager:
             dest = resolve_dest(models_dir, file.dest)
             for path in (dest, dest.with_suffix(dest.suffix + ".part")):
                 try:
-                    freed += path.stat().st_size
+                    size = path.stat().st_size
                     path.unlink()
                 except FileNotFoundError:
-                    pass
+                    continue
+                except OSError as exc:
+                    # Windows refuses to unlink a file another process still
+                    # has mapped (a ComfyUI holding the weights). Counting the
+                    # bytes before the unlink reported them freed when they
+                    # were not, and letting the OSError escape turned a
+                    # partial delete into a 500 with a traceback and no
+                    # explanation of which file is stuck.
+                    raise RuntimeError(
+                        f"could not remove {file.dest} — it is still in use by another "
+                        "process; stop ComfyUI (or whatever loaded it) and try again"
+                    ) from exc
+                freed += size
         return freed
 
     async def shutdown(self) -> None:

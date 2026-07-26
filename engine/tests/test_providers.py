@@ -191,3 +191,61 @@ def test_cloud_model_never_falls_back_to_local():
         registry.resolve(NodeKind.KEYFRAME, "cloud:midjourney")
     # A local model on the same kind still resolves to the local backend.
     assert registry.resolve(NodeKind.KEYFRAME, "local:sdxl").name == "local"
+
+
+async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, monkeypatch):
+    """The keyframe port also accepts a USER asset, and upload_asset stores
+    .jpg/.jpeg/.webp under that suffix. Every conditioning image went out as
+    `data:image/png` regardless, so a scene the user conditioned on their own
+    photo submitted a payload whose declared type contradicted its bytes."""
+    import base64
+
+    import httpx
+
+    from localcut_engine.providers.video import _IMAGE_MIME_TYPES
+
+    sent: list[dict] = []
+
+    class _Rejected:
+        status_code = 500
+        text = "stop before the poll loop"
+
+    async def capture(self, url, headers=None, json=None):
+        sent.append(json["input"])
+        return _Rejected()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", capture)
+    gen = FalVideoGen("k", "kling-2.5")
+
+    for suffix, expected in sorted(_IMAGE_MIME_TYPES.items()):
+        image = tmp_path / f"frame{suffix}"
+        image.write_bytes(b"\x89PNG\r\n")
+        with pytest.raises(ProviderError):
+            await gen.generate("p", 4.0, str(image))
+        payload = sent[-1]["image_url"]
+        assert payload.startswith(f"data:{expected};base64,"), payload
+        # The bytes are unchanged — only the label was ever wrong.
+        assert payload.endswith(base64.b64encode(b"\x89PNG\r\n").decode())
+
+
+def test_the_mime_table_covers_every_image_asset_the_api_accepts():
+    """A contract, like test_ui_contract's: adding an extension to
+    _IMAGE_EXTENSIONS without adding it here would silently ship
+    `application/octet-stream` to fal and fail with an opaque provider error
+    rather than at the seam that knows why."""
+    import re
+    from pathlib import Path as _Path
+
+    from localcut_engine.providers.video import _IMAGE_MIME_TYPES
+
+    # Read as source: the set is a local inside create_app, so there is
+    # nothing to import — same approach test_ui_contract takes to types.ts.
+    app_py = _Path(__file__).parent.parent / "src" / "localcut_engine" / "api" / "app.py"
+    assert app_py.is_file(), app_py
+    literal = re.search(r"_IMAGE_EXTENSIONS = \{([^}]*)\}", app_py.read_text(encoding="utf-8"))
+    assert literal, "app.py no longer declares _IMAGE_EXTENSIONS"
+    accepted = set(re.findall(r'"([^"]+)"', literal.group(1)))
+    assert accepted, "the extension set parsed empty — the test would pass on nothing"
+    assert accepted <= set(_IMAGE_MIME_TYPES), (
+        f"no mime type for uploadable image assets: {sorted(accepted - set(_IMAGE_MIME_TYPES))}"
+    )
