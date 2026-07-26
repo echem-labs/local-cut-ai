@@ -241,22 +241,26 @@ def test_a_retuned_stream_degrades_an_impossible_character(monkeypatch):
     assert stream.buffer.getvalue().decode("cp1252") == "shutting down \\u2192 goodbye\n"
 
 
-def test_every_string_the_cli_can_print_is_ascii():
-    """The rule, rather than the two instances of it.
+@pytest.mark.parametrize("module", ["cli", "automation"])
+def test_every_string_the_cli_can_print_is_ascii(module):
+    """The rule, rather than the instances of it.
 
-    Everything this module puts in a string literal reaches a console: the
-    pairing block, the bind-failure advice, every argparse help line. On a
-    headless Windows box stdout is the ANSI code page (cp1252 piped, cp850 in
-    a bare cmd.exe), and `_survive_console_encoding` turns anything it cannot
-    encode into a `\\uXXXX` escape — so a non-ASCII character here does not
-    crash any more, it just makes an operator-facing message unreadable in
-    the deployment that needs it most. Docstrings are exempt: they are read in
-    the source, never printed.
+    Everything these modules put in a string literal reaches a console: the
+    pairing block, the bind-failure advice, every argparse help line, every
+    error the automation client raises. On a headless Windows box stdout is
+    the ANSI code page (cp1252 piped, cp850 in a bare cmd.exe), and
+    `_survive_console_encoding` turns anything it cannot encode into a
+    `\\uXXXX` escape — so a non-ASCII character here does not crash any more,
+    it just makes an operator-facing message unreadable in the deployment
+    that needs it most. Docstrings are exempt: they are read in the source,
+    never printed.
     """
     import ast
+    import importlib
     from pathlib import Path as _Path
 
-    source = _Path(cli.__file__).read_text(encoding="utf-8")
+    target = importlib.import_module(f"localcut_engine.{module}")
+    source = _Path(target.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     docstrings = {
         id(node.body[0].value)
