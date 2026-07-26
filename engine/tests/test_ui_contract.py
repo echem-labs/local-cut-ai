@@ -92,9 +92,15 @@ def test_every_board_status_has_a_ui_case_and_a_label():
     from localcut_engine.service import SCENE_NODE_STATUSES
 
     src = _FORMATS.parent.parent / "api" / "types.ts"
-    union = re.search(r"export type NodeStatus =(.*?);", src.read_text(encoding="utf-8"), re.S)
+    # Comments go first: the union carries several, and a single `;` inside
+    # one would truncate the non-greedy match to a partial member list — the
+    # test would then pass by comparing against nothing.
+    text = re.sub(r"//[^\n]*", "", src.read_text(encoding="utf-8"))
+    union = re.search(r"export type NodeStatus =(.*?);", text, re.S)
     assert union, "types.ts no longer declares NodeStatus"
-    declared = set(re.findall(r'"([a-z]+)"', union.group(1)))
+    # Not `[a-z]+`: a status carrying a digit, dash or capital would be
+    # dropped silently, which is exactly the drift this test exists to catch.
+    declared = set(re.findall(r'"([^"]+)"', union.group(1)))
     assert declared == set(SCENE_NODE_STATUSES), (
         f"NodeStatus and SCENE_NODE_STATUSES disagree: "
         f"only in UI {sorted(declared - set(SCENE_NODE_STATUSES))}, "

@@ -96,6 +96,12 @@ def orphaned_nodes(graph: StoryGraph) -> set[str]:
     transitive sweep, because a partially-wired graph mid-edit must not have
     its whole subtree silently stop rendering.
     """
+    # A graph with no deliverable of its own is a Quick Tool micro-project:
+    # its single node IS the output. The `image` tool is a bare KEYFRAME with
+    # no edges, so without this it read as orphaned, compiled to zero jobs,
+    # and the session reported itself settled with no artifact and no error.
+    if not any(node.kind in _TERMINAL_KINDS for node in graph.nodes.values()):
+        return set()
     has_consumer = {e.src for e in graph.edges}
     return {
         node_id
