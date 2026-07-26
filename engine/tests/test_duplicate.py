@@ -56,7 +56,7 @@ def _artifact(store: ProjectStore, project_id: str, out_hash: str) -> None:
     (generated / f"{out_hash}.script.json").write_text("{}", encoding="utf-8")
 
 
-def _record(queue: JobQueue, project_id: str, out_hash: str, backend: str) -> None:
+def _record(queue: JobQueue, project_id: str, out_hash: str, backend: str | None) -> None:
     job = Job(
         project_id=project_id,
         spec=JobSpec(
