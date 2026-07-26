@@ -20,9 +20,16 @@ class Recommendation(BaseModel):
 
 
 def _runs_on(model: ModelEntry, backend: str) -> bool:
-    """Whether this machine's GPU runtime is one the model can use at all.
-    A model declaring only `cpu` needs no GPU and runs anywhere."""
-    return backend in model.requirements.backends or model.requirements.backends == ["cpu"]
+    """Whether this machine's runtime is one the model can use at all.
+
+    `cpu` anywhere in the list means no GPU is required — matching it exactly
+    (`backends == ["cpu"]`) treated kokoro-82m and faster-whisper, which both
+    declare `["cuda", "mps", "cpu"]` and both run on CPU in this repo, as
+    GPU-only: every AMD box was told "no local model supports your GPU
+    runtime (rocm)" for text.llm and transcribe, and a machine with no GPU
+    was told "no local model runs on CPU alone" for all six tasks.
+    """
+    return backend in model.requirements.backends or "cpu" in model.requirements.backends
 
 
 def _fits(model: ModelEntry, profile: HardwareProfile) -> bool:
@@ -47,17 +54,25 @@ def _why_nothing_fits(models: list[ModelEntry], profile: HardwareProfile) -> str
     buying hardware, while short VRAM is."""
     if not models:
         return "no local model is published for this task yet — cloud recommended"
-    backend = profile.primary_gpu.backend if profile.primary_gpu else None
-    if backend and not any(_runs_on(m, backend) for m in models):
+    backend = profile.primary_gpu.backend if profile.primary_gpu else "none"
+    vram = profile.primary_gpu.vram_gb if profile.primary_gpu else 0.0
+    # One list, used for both the "nothing runs here" answer and the VRAM
+    # floor. Deriving the floor from a second, differently-guarded pass is how
+    # `min()` came to be reachable with an empty sequence (a GPU whose backend
+    # string is falsy skipped the guard and crashed /system outright).
+    runnable = [m for m in models if _runs_on(m, backend)]
+    if not runnable:
+        if profile.primary_gpu is None:
+            return "no GPU detected, and no local model runs on CPU alone — cloud recommended"
         return f"no local model supports your GPU runtime ({backend}) yet — cloud recommended"
-    if not profile.primary_gpu:
-        return "no GPU detected, and no local model runs on CPU alone — cloud recommended"
-    needed = min(m.requirements.vram_gb for m in models if _runs_on(m, backend or "none"))
-    if profile.primary_gpu.vram_gb < needed:
-        return (
-            f"needs {needed:g} GB VRAM, this GPU has "
-            f"{profile.primary_gpu.vram_gb:g} GB — cloud recommended"
-        )
+    needed = min(m.requirements.vram_gb for m in runnable)
+    if vram < needed:
+        # Checked before "no GPU detected": a task whose smallest model still
+        # wants VRAM has a blocker the user can act on, and saying "nothing
+        # runs on CPU" about a model that does is simply false.
+        if profile.primary_gpu is None:
+            return f"needs {needed:g} GB VRAM and no GPU was detected — cloud recommended"
+        return f"needs {needed:g} GB VRAM, this GPU has {vram:g} GB — cloud recommended"
     return "no local model fits this hardware — cloud recommended"
 
 
