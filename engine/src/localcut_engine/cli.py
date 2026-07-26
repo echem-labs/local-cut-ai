@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as exc:
         print(
             f"cannot bind {config.host}:{config.port}: {exc}\n"
-            "Another engine is probably already running — quit it, or pass a different --port.",
+            "Another engine is probably already running - quit it, or pass a different --port.",
             file=sys.stderr,
         )
         return 1
@@ -213,7 +213,16 @@ def _lan_address(bind_host: str) -> str:
 
 def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: str | None) -> None:
     """The block a user copies to the frontend: human-readable connection
-    facts plus a single base64url pairing code carrying all of them."""
+    facts plus a single base64url pairing code carrying all of them.
+
+    ASCII only, deliberately. This block exists for the headless deployment —
+    stdout piped to a service manager or a log file — where Windows encodes
+    with the ANSI code page rather than UTF-8. `_survive_console_encoding`
+    keeps an un-encodable character from killing the engine, but it degrades
+    it to a `\\uXXXX` escape, and this is the one instruction the operator has
+    to be able to read. Say "Settings > Remote engine", not "Settings →",
+    so it renders on every console instead of surviving on most of them.
+    """
     import base64
 
     url = f"{scheme}://{_lan_address(host)}:{port}"
@@ -222,9 +231,9 @@ def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: s
         payload["fingerprint"] = fingerprint
     code = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     headline = (
-        "Remote engine ready — pair from Settings → Remote engine:"
+        "Remote engine ready - pair from Settings > Remote engine:"
         if fingerprint
-        else "Remote engine ready (cleartext http — TLS disabled):"
+        else "Remote engine ready (cleartext http - TLS disabled):"
     )
     lines = ["", headline, f"  url:          {url}"]
     if fingerprint:
