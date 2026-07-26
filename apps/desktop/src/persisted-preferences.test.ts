@@ -38,7 +38,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unstub first: the real localStorage has to be back before it can be
+  // cleared, and clearing here rather than at the end of each test means a
+  // failing assertion cannot leak a key into the next one.
   vi.unstubAllGlobals();
+  localStorage.clear();
   vi.resetModules();
 });
 
@@ -68,7 +72,6 @@ describe("the theme, with storage blocked", () => {
     const { loadThemePref } = await import("./theme");
 
     expect(loadThemePref()).toBe("light");
-    localStorage.clear();
   });
 });
 
@@ -101,6 +104,5 @@ describe("the workspace layout, with storage blocked", () => {
 
     expect(useWorkspace.getState().view).toBe("player");
     expect(useWorkspace.getState().density).toBe("s");
-    localStorage.clear();
   });
 });

@@ -11,7 +11,12 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EngineManager } from "./engine";
-import { PROVIDER_KEY_IDS, type ProviderKeyId, ProviderKeyStore } from "./keys";
+import {
+  type KeyPresence,
+  PROVIDER_KEY_IDS,
+  type ProviderKeyId,
+  ProviderKeyStore,
+} from "./keys";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
 import { capturePinnedCert, engineRequest } from "./request";
 
@@ -455,7 +460,17 @@ ipcMain.handle("providers:set-keys", (event, input: unknown) => {
 // this and renders the all-false shape without a catch.
 ipcMain.handle("providers:key-presence", (event) => {
   if (!trustedSender(event)) {
-    return { anthropic: false, openai: false, gemini: false, fal: false, encrypted: false };
+    // Annotated, not a bare literal: adding a provider to KeyPresence has to
+    // fail the build here rather than leave this path answering `undefined`
+    // for the new one, which reads as false but is not typed as anything.
+    const denied: KeyPresence = {
+      anthropic: false,
+      openai: false,
+      gemini: false,
+      fal: false,
+      encrypted: false,
+    };
+    return denied;
   }
   return keyStore.presence();
 });
