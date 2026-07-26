@@ -1,0 +1,86 @@
+name: Package
+
+# Building an installer is slow and macOS runners bill at a premium, so this
+# does NOT run on every push. It runs when the packaging path itself changes
+# (which is the only time it can break without someone noticing), on demand,
+# and on a release tag.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "apps/desktop/electron-builder.yml"
+      - "apps/desktop/package.json"
+      - "apps/desktop/scripts/check-engine.mjs"
+      - "apps/desktop/build/**"
+      - "engine/localcut-engine.spec"
+      - "engine/packaging/**"
+      - ".github/workflows/package.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    # macos-latest is arm64. An Intel dmg needs this same job on an Intel
+    # runner with `package:mac:x64` — PyInstaller freezes for the machine it
+    # runs on, so the arch of the engine and the arch of the dmg are one
+    # decision, not two.
+    name: macOS dmg (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      # --group build pulls PyInstaller, which the test job does not need.
+      - name: Freeze the engine
+        working-directory: engine
+        run: |
+          uv sync --all-groups
+          uv run pyinstaller --noconfirm localcut-engine.spec
+
+      - name: The frozen engine actually runs
+        # A dmg whose engine cannot start is the exact failure this whole
+        # target exists to prevent, and it is invisible until someone
+        # installs the app. `--version` is the cheapest proof of life.
+        working-directory: engine
+        run: ./dist/localcut-engine/localcut-engine --version
+
+      - name: Build the dmg
+        working-directory: apps/desktop
+        env:
+          # No signing identity on CI. Left to auto-discovery, electron-builder
+          # hunts the keychain, finds nothing, and fails the build — rather
+          # than producing the unsigned artifact we actually want here.
+          # Signed builds set CSC_LINK/CSC_KEY_PASSWORD and drop this.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm ci
+          npm run package:mac
+
+      - name: Show what was produced
+        working-directory: apps/desktop
+        run: ls -lh release/*.dmg release/*.zip 2>/dev/null || ls -lh release/
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: localcut-macos-arm64-dmg
+          path: apps/desktop/release/*.dmg
+          if-no-files-found: error
+          retention-days: 14

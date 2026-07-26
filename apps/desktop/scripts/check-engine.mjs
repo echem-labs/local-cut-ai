@@ -47,13 +47,45 @@ const TARGETS = {
       return [0xcffaedfe, 0xfeedfacf, 0xcafebabe, 0xbebafeca].includes(magic);
     },
     describe: "a Mach-O executable",
+    // Mach-O carries its CPU type in the header, and the magic alone does
+    // not distinguish arm64 from x86_64. That distinction matters more here
+    // than anywhere else: `mac` in electron-builder.yml can emit a dmg per
+    // arch, but extraResources copies ONE PyInstaller output, and PyInstaller
+    // does not cross-compile — so building both arches from a single freeze
+    // silently stamps (say) an arm64 engine into the Intel dmg. It installs
+    // and launches, then sits permanently disconnected.
+    archOf: (b) => {
+      const magic = b.readUInt32BE(0);
+      if (magic === 0xcafebabe || magic === 0xbebafeca) return "universal";
+      // Thin 64-bit Mach-O. Byte order follows the magic; cputype is the
+      // word after it, and the 0x01000000 bit is the 64-bit flag.
+      const le = magic === 0xcffaedfe;
+      const cpu = (le ? b.readUInt32LE(4) : b.readUInt32BE(4)) & ~0x01000000;
+      if (cpu === 7) return "x64"; // CPU_TYPE_X86
+      if (cpu === 12) return "arm64"; // CPU_TYPE_ARM
+      return `unknown (cputype ${cpu})`;
+    },
   },
 };
 
-const target = process.argv[2];
+// `mac-arm64` / `mac-x64` — the arch half is required for macOS and ignored
+// elsewhere, because macOS is the only target that ships more than one.
+const [targetArg, archArg] = (process.argv[2] ?? "").split(/[-:]/);
+const target = targetArg;
 const spec = TARGETS[target];
 if (!spec) {
-  console.error(`check-engine: unknown target ${target ?? "(none)"} — use win, mac or linux`);
+  console.error(
+    `check-engine: unknown target ${process.argv[2] ?? "(none)"} — ` +
+      `use win, linux, mac-arm64 or mac-x64`,
+  );
+  process.exit(2);
+}
+if (target === "mac" && !["arm64", "x64"].includes(archArg ?? "")) {
+  console.error(
+    "check-engine: macOS needs an explicit arch — use mac-arm64 or mac-x64.\n" +
+      "  A single PyInstaller freeze is one architecture, so the dmg being built\n" +
+      "  has to say which one it is.",
+  );
   process.exit(2);
 }
 
@@ -80,15 +112,29 @@ if (size < 1024) {
   fail(`${spec.exe} is only ${size} bytes — that is not a frozen engine`);
 }
 
-const head = Buffer.alloc(4);
-const handle = readFileSync(binary).subarray(0, 4);
-head.set(handle);
+// 8 bytes: magic plus the Mach-O cputype word behind it.
+const head = Buffer.alloc(8);
+head.set(readFileSync(binary).subarray(0, 8));
 if (!spec.looksRight(head)) {
   fail(
     `${spec.exe} is not ${spec.describe} ` +
-      `(magic ${[...head].map((b) => b.toString(16).padStart(2, "0")).join(" ")}) — ` +
+      `(magic ${[...head.subarray(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join(" ")}) — ` +
       `it was frozen on a different OS`,
   );
 }
 
-console.log(`check-engine: ${spec.exe} is ${spec.describe} (${(size / 2 ** 20).toFixed(1)} MB) — ok`);
+let detail = spec.describe;
+if (spec.archOf) {
+  const actual = spec.archOf(head);
+  if (actual !== archArg && actual !== "universal") {
+    fail(
+      `${spec.exe} is ${actual}, but this is the ${archArg} package.\n` +
+        `  PyInstaller freezes for the machine it runs on, so an ${archArg} dmg\n` +
+        `  needs its engine frozen on an ${archArg} Mac. Shipping this one would\n` +
+        `  produce an app that installs, launches, and never connects.`,
+    );
+  }
+  detail = `${spec.describe} (${actual})`;
+}
+
+console.log(`check-engine: ${spec.exe} is ${detail}, ${(size / 2 ** 20).toFixed(1)} MB — ok`);
