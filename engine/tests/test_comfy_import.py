@@ -313,3 +313,35 @@ def test_importing_over_a_packaged_workflow_name_says_what_it_replaces():
     assert "every project on this engine" in warning
     assert workflows.shadow_warning("my-own-clip") is None
     assert workflows.shadow_warning("") is None
+
+
+def test_a_revoked_pack_does_not_come_back_when_another_is_enabled(tmp_path):
+    """Grants are one document, so every writer rewrites the whole map — which
+    makes enable and disable a read-modify-write, and both run on the server's
+    threadpool. Unlocked, a disable that read before an enable wrote had the
+    revoked pack still in its map and the enable's save put it back. A grant
+    IS the gate on running third-party code, so returning is the one direction
+    this must never fail in."""
+    import threading
+
+    allowlist.enable_pack(tmp_path, "video-helper-suite", "1.2.3", acknowledged=True)
+    start = threading.Barrier(2)
+
+    def revoke():
+        start.wait()
+        allowlist.disable_pack(tmp_path, "video-helper-suite")
+
+    def grant_another():
+        start.wait()
+        allowlist.enable_pack(tmp_path, "controlnet-aux", "0.4.0", acknowledged=True)
+
+    for _ in range(40):
+        allowlist.save_grants(tmp_path, {"video-helper-suite": "1.2.3"})
+        start = threading.Barrier(2)
+        threads = [threading.Thread(target=revoke), threading.Thread(target=grant_another)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert "video-helper-suite" not in allowlist.load_grants(tmp_path)
