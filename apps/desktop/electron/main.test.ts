@@ -325,6 +325,27 @@ describe("provider key updates", () => {
     expect(JSON.parse(put!.body)).toEqual({ openai_key: "sk-oai" });
   });
 
+  it("does not tell an untrusted caller which providers are configured", async () => {
+    // Which BYOK providers are set up — and whether a real keychain backs
+    // them — is reconnaissance, not public state. Reported rather than
+    // thrown: the settings pane awaits this with no catch, and the all-false
+    // shape is one it already renders.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN, keys: { anthropic: "sk-ant" } });
+
+    expect(electron.invokeIpc("providers:key-presence", trusted())).toMatchObject({
+      anthropic: true,
+    });
+    expect(
+      electron.invokeIpc("providers:key-presence", trusted("https://evil.example/")),
+    ).toEqual({
+      anthropic: false,
+      openai: false,
+      gemini: false,
+      fal: false,
+      encrypted: false,
+    });
+  });
+
   it("refuses an unknown provider id", async () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
     expect(() => electron.invokeIpc("providers:clear-key", trusted(), "constructor")).toThrow(

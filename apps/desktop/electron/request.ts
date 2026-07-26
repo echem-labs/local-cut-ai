@@ -66,7 +66,12 @@ export function capturePinnedCert(target: EngineTarget): Promise<string> {
       },
       () => {
         const cert = socket.getPeerCertificate();
-        socket.end();
+        // destroy(), not end(): end() only sends FIN, so the socket stays
+        // open (and its 10s timer armed) until the peer closes — and that
+        // timer then fires destroy() on a promise that already settled,
+        // emitting an error nobody is listening for. Nothing more is read
+        // from this connection, so tear it down outright.
+        socket.destroy();
         const fingerprint = (cert.fingerprint256 ?? "").replace(/:/g, "").toLowerCase();
         if (!cert.raw || !target.fingerprint || fingerprint !== target.fingerprint) {
           reject(new Error("engine certificate does not match the pairing — re-pair the engine"));
