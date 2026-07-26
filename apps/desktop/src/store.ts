@@ -393,13 +393,24 @@ export const useApp = create<AppState>((set, get) => {
         ? ({ ...node, progress: event.progress } as T)
         : node;
     set({
+      // Spread the board rather than rebuilding it from `scenes`/`aux`: it
+      // also carries `assembled_durations`, which every duration the UI shows
+      // (timeline strip, monitor clock, playhead, seek math) reads through
+      // lib/order.ts. Listing the fields dropped it on every progress tick, so
+      // the whole cut silently reverted to planned per-clip sums mid-render.
       board: board
         ? {
+            ...board,
             scenes: board.scenes.map((scene) => ({
               ...scene,
               keyframe: patch(scene.keyframe),
               clip: patch(scene.clip),
               narration: patch(scene.narration),
+              // A split scene's sequential takes render like any other node —
+              // without this their rings only move on the debounced refetch.
+              ...(scene.clip_takes
+                ? { clip_takes: scene.clip_takes.map((take) => patch(take)) }
+                : {}),
             })),
             aux: Object.fromEntries(
               Object.entries(board.aux).map(([name, node]) => [name, patch(node)]),
@@ -1104,7 +1115,12 @@ export const useApp = create<AppState>((set, get) => {
     refreshModels: async () => {
       const { client } = get();
       if (!client) return;
-      set({ models: reconcileModels(await client.listModels()) });
+      const rows = await client.listModels();
+      // Guard the write like refreshHome/refreshBoard do: a pair/unpair during
+      // the round trip already blanked `models`, and landing the OLD engine's
+      // catalog on the new one is exactly the bleed switchEngine prevents.
+      if (get().client !== client) return;
+      set({ models: reconcileModels(rows) });
     },
 
     startDownload: async (modelId) => {
@@ -1265,7 +1281,9 @@ export const useApp = create<AppState>((set, get) => {
       const { client } = get();
       if (!client) return;
       try {
-        set({ storage: await client.storage(), storageStale: false });
+        const info = await client.storage();
+        if (get().client !== client) return; // engine switched mid-flight
+        set({ storage: info, storageStale: false });
       } catch (err) {
         // Keep the last values (better than a blank pane) but mark them
         // stale so the pane can say so instead of passing them off as live.

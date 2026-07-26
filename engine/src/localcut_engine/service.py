@@ -125,9 +125,22 @@ class ProjectService:
 
     def duplicate(self, project_id: str) -> Project:
         with self._lock:
+            # Job history is keyed by project id and does NOT travel with the
+            # copy, so `_distrusted_hashes` would have nothing to work from
+            # there: every placeholder in the copied generated/ would come
+            # back trusted, and export/package would hand a mock artifact over
+            # as the real cut. Decide distrust HERE, against the source's
+            # history, and drop those artifacts from the copy so they
+            # re-render under the backend that serves the kind today.
+            source_history = self.queue.list(project_id, 1000)
+            distrusted = self._distrusted_hashes(
+                source_history, self.store.cached_hashes(project_id)
+            )
             copy = self.store.duplicate(project_id)
             if copy is None:
                 raise KeyError(project_id)
+            for out_hash in distrusted:
+                self.store.delete_artifacts(copy.id, out_hash)
             # generated/ travels with the copy, so a fully-rendered source
             # duplicates into a fully-cached project and this enqueues
             # nothing. A source that was mid-render (or never finished)
@@ -828,8 +841,18 @@ class ProjectService:
             node = graph.nodes.get(node_id)
             if node is None:
                 return None  # removed via patch — the card shows what's left
-            job = jobs.get(node_id)
             out_hash = graph.output_hash(node_id, memo)
+            job = jobs.get(node_id)
+            # Only a job for the node's CURRENT identity describes it. The
+            # newest job for a node id can belong to an output the graph has
+            # since moved past (edit, then undo back onto a cached hash):
+            # reporting its status made a node with a perfectly good cached
+            # artifact read `failed` forever, with a stale error and no job
+            # left to retry — and let a final job for an abandoned hash label
+            # a cached DRAFT artifact as `final`. Quality is not part of the
+            # hash, so a draft/final pair for the same identity still matches.
+            if job is not None and job.spec.output_hash != out_hash:
+                job = None
             # In-flight work outranks a stale cached artifact: a queued
             # final re-render must not read as already 'final'.
             if node.pinned:

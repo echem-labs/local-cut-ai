@@ -108,3 +108,87 @@ def test_every_status_the_board_emits_is_declared(tmp_path):
     assert seen <= set(SCENE_NODE_STATUSES), (
         f"undeclared: {sorted(seen - set(SCENE_NODE_STATUSES))}"
     )
+
+
+def _put_job(service, project_id, node_id, out_hash, status, error=None, quality="draft"):
+    """A history row for `node_id` claiming to have produced `out_hash`."""
+    from localcut_engine.graph.compiler import JobSpec
+    from localcut_engine.jobs.models import Job
+
+    job = Job(
+        project_id=project_id,
+        spec=JobSpec(
+            node_id=node_id,
+            kind=NodeKind.KEYFRAME,
+            output_hash=out_hash,
+            params={},
+            model=None,
+            seed=0,
+            input_hashes={},
+            quality=quality,
+        ),
+    )
+    service.queue.put(job)
+    job.status = status
+    job.error = error
+    service.queue.update(job)
+    return job
+
+
+def test_a_job_for_an_abandoned_hash_does_not_describe_the_node(tmp_path):
+    """Edit a node, let the render fail, undo back onto the cached artifact.
+    The newest job for that node id belongs to the identity the graph has
+    since moved past — reporting it left the tile `failed` forever, with a
+    stale error and no job left to retry, while `artifact_hash` simultaneously
+    served a perfectly good artifact."""
+    from localcut_engine.jobs.models import JobStatus
+
+    service, project_id = _service(tmp_path)
+    graph = service.store.load_graph(project_id)
+    current = graph.output_hash("s1.keyframe", {})
+
+    # The artifact for the node's CURRENT identity exists and is cacheable.
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{current}.keyframe.png").write_bytes(b"x")
+
+    # …and a failed job survives for the hash the graph briefly had.
+    _put_job(service, project_id, "s1.keyframe", "f" * 64, JobStatus.FAILED, error="boom")
+
+    state = _keyframe(service.scene_board(project_id))
+    assert state["status"] == "draft", state
+    assert state["error"] is None
+    assert state["artifact_hash"] == current
+
+
+def test_a_job_for_the_current_hash_still_describes_the_node(tmp_path):
+    """The identity check must not silence real state: a failure for the hash
+    the graph is actually asking for is the node's status."""
+    from localcut_engine.jobs.models import JobStatus
+
+    service, project_id = _service(tmp_path)
+    graph = service.store.load_graph(project_id)
+    current = graph.output_hash("s1.keyframe", {})
+    _put_job(service, project_id, "s1.keyframe", current, JobStatus.FAILED, error="boom")
+
+    state = _keyframe(service.scene_board(project_id))
+    assert state["status"] == "failed"
+    assert state["error"] == "boom"
+
+
+def test_a_cached_draft_is_not_labelled_final_by_an_abandoned_job(tmp_path):
+    """Quality is not part of the hash, so a `final` job for a DIFFERENT
+    identity used to promote a cached draft's label to 'final' — a draft
+    artifact presented as a finished render."""
+    from localcut_engine.jobs.models import JobStatus
+
+    service, project_id = _service(tmp_path)
+    graph = service.store.load_graph(project_id)
+    current = graph.output_hash("s1.keyframe", {})
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{current}.keyframe.png").write_bytes(b"x")
+
+    _put_job(service, project_id, "s1.keyframe", "e" * 64, JobStatus.DONE, quality="final")
+
+    assert _keyframe(service.scene_board(project_id))["status"] == "draft"

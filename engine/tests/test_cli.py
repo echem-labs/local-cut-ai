@@ -146,3 +146,91 @@ def test_a_network_bind_without_a_token_is_refused(tmp_path, monkeypatch):
     monkeypatch.delenv("LOCALCUT_TOKEN", raising=False)
     with pytest.raises(SystemExit):
         cli.main(["serve", "--host", "0.0.0.0", "--token", "", "--data-dir", str(tmp_path)])
+
+
+def _cp1252_stream():
+    """A stdout exactly like the one Windows hands a piped/service process:
+    cp1252, strict. A real console gets UTF-8 via WriteConsoleW, so this only
+    ever bites headless — which is the deployment the pairing block is for."""
+    import io
+
+    return io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", newline="")
+
+
+def test_a_network_bind_starts_on_a_cp1252_console(tmp_path, monkeypatch):
+    """`→` and `—` are not in cp1252, so printing the pairing block raised
+    UnicodeEncodeError and killed the engine at startup — before uvicorn ever
+    ran — on exactly the network bind the block exists to document. The
+    operator saw a charmap traceback instead of a running engine.
+
+    Driven through main() rather than the helper: the bug was fatal because
+    nothing retuned the streams on the startup path, so that wiring is the
+    thing under test."""
+    import uvicorn
+
+    from localcut_engine import tls
+    from localcut_engine.api import app as app_module
+
+    monkeypatch.setattr(app_module, "create_app", lambda config=None: None)
+    monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: None)
+    # Real key generation is seconds of CPU and proves nothing here; the
+    # fingerprint is only needed so the TLS headline is the one printed.
+    cert = tmp_path / "c.pem"
+    cert.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(tls, "ensure_certificate", lambda *a, **k: (cert, cert, "a" * 64))
+
+    stream = _cp1252_stream()
+    monkeypatch.setattr(cli.sys, "stdout", stream)
+
+    # The TLS headline is the one carrying `→`; cp1252 has the em dash but
+    # not the arrow, so only this path reproduces the crash.
+    code = cli.main(
+        [
+            "serve",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(_free_port()),
+            "--token",
+            "shell-token",
+            "--data-dir",
+            str(tmp_path),
+            "--backend",
+            "mock",
+        ]
+    )
+
+    assert code == 0
+    stream.flush()
+    printed = stream.buffer.getvalue().decode("cp1252")
+    assert "pairing code:" in printed
+    assert "LOCALCUT_ENGINE " in printed
+
+
+def test_survive_console_encoding_is_safe_on_a_stream_it_cannot_retune(monkeypatch):
+    """Never turn a logging concern into a startup failure of its own."""
+    import io
+
+    monkeypatch.setattr(cli.sys, "stdout", io.StringIO())
+    monkeypatch.setattr(cli.sys, "stderr", None)
+    cli._survive_console_encoding()  # must not raise
+
+
+def test_a_cleartext_pairing_block_says_the_app_will_refuse_it(capsys):
+    """--no-tls prints a pairing code the desktop rejects outright
+    (parsePairingCode allows http only to loopback). Printing it with no
+    explanation sends the operator to an error message in a different
+    codebase."""
+    cli._print_pairing("http", "192.168.1.50", 7830, "tok", None)
+
+    printed = capsys.readouterr().out
+    assert "REFUSE" in printed
+    assert "--no-tls" in printed
+
+
+def test_a_tls_pairing_block_does_not_carry_the_warning(capsys):
+    cli._print_pairing("https", "192.168.1.50", 7830, "tok", "a" * 64)
+
+    printed = capsys.readouterr().out
+    assert "REFUSE" not in printed
+    assert "fingerprint:" in printed
