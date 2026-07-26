@@ -38,11 +38,13 @@ const write = (key: string, value: string): void => {
   }
 };
 
+/** Read once, then validate: two calls would take the guarded path twice and
+ * could disagree if anything wrote between them. */
+const storedDensity = read(DENSITY_KEY);
+
 export const useWorkspace = create<WorkspaceState>((set) => ({
   view: read(VIEW_KEY) === "player" ? "player" : "storyboard",
-  density: (["s", "m", "l"].includes(read(DENSITY_KEY) ?? "")
-    ? read(DENSITY_KEY)
-    : "m") as Density,
+  density: (["s", "m", "l"].includes(storedDensity ?? "") ? storedDensity : "m") as Density,
   resetNonce: 0,
   setView: (view) => {
     write(VIEW_KEY, view);

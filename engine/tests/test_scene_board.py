@@ -192,3 +192,33 @@ def test_a_cached_draft_is_not_labelled_final_by_an_abandoned_job(tmp_path):
     _put_job(service, project_id, "s1.keyframe", "e" * 64, JobStatus.DONE, quality="final")
 
     assert _keyframe(service.scene_board(project_id))["status"] == "draft"
+
+
+def test_an_abandoned_job_does_not_demote_the_final_that_matches(tmp_path):
+    """The other half of the identity check, and the reason it cannot just
+    drop the newest job and stop looking.
+
+    Finalize a scene, edit it, let the re-render fail, undo back onto the
+    finished artifact. The newest job for the node describes the abandoned
+    hash — but a `final` job for the hash the node is asking for *now* is
+    still in history, and it is the one that made the artifact. Discarding
+    the whole node's history relabelled that finished render as a `draft`,
+    inviting the user to pay for a final they had already run."""
+    from localcut_engine.jobs.models import JobStatus
+
+    service, project_id = _service(tmp_path)
+    graph = service.store.load_graph(project_id)
+    current = graph.output_hash("s1.keyframe", {})
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{current}.keyframe.png").write_bytes(b"x")
+
+    # The final that produced the cached artifact, then the failed re-render
+    # of an edit the user has since undone.
+    _put_job(service, project_id, "s1.keyframe", current, JobStatus.DONE, quality="final")
+    _put_job(service, project_id, "s1.keyframe", "f" * 64, JobStatus.FAILED, error="boom")
+
+    state = _keyframe(service.scene_board(project_id))
+    assert state["status"] == "final", state
+    assert state["error"] is None
+    assert state["artifact_hash"] == current

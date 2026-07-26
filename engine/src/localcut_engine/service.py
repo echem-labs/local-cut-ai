@@ -826,7 +826,18 @@ class ProjectService:
     def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
         history = self.queue.list(project_id, 1000)
-        jobs = {job.spec.node_id: job for job in reversed(history)}
+        # Keyed by IDENTITY — (node, output hash) — not by node id alone. The
+        # newest job for a node id can belong to an output the graph has since
+        # moved past (edit, render, undo back onto the cached artifact), and
+        # that job does not describe the node: reporting it left the tile
+        # `failed` forever with a stale error and no job left to retry, and let
+        # a `final` job for an abandoned hash label a cached DRAFT as final.
+        # Keying by identity drops it *and* still finds the job that produced
+        # what the node is asking for now — so undoing an edit does not demote
+        # a finished `final` back to `draft` either. Quality is not part of the
+        # hash, so a draft/final pair for one identity still collapses here,
+        # newest winning.
+        jobs = {(job.spec.node_id, job.spec.output_hash): job for job in reversed(history)}
         # Trusted: a placeholder must read as work still to do, not as a
         # finished draft the user can ship.
         cached = self._trusted_cache(project_id, history)
@@ -842,17 +853,9 @@ class ProjectService:
             if node is None:
                 return None  # removed via patch — the card shows what's left
             out_hash = graph.output_hash(node_id, memo)
-            job = jobs.get(node_id)
-            # Only a job for the node's CURRENT identity describes it. The
-            # newest job for a node id can belong to an output the graph has
-            # since moved past (edit, then undo back onto a cached hash):
-            # reporting its status made a node with a perfectly good cached
-            # artifact read `failed` forever, with a stale error and no job
-            # left to retry — and let a final job for an abandoned hash label
-            # a cached DRAFT artifact as `final`. Quality is not part of the
-            # hash, so a draft/final pair for the same identity still matches.
-            if job is not None and job.spec.output_hash != out_hash:
-                job = None
+            # Only a job for the node's CURRENT identity describes it (see the
+            # keying above).
+            job = jobs.get((node_id, out_hash))
             # In-flight work outranks a stale cached artifact: a queued
             # final re-render must not read as already 'final'.
             if node.pinned:

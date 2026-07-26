@@ -155,3 +155,78 @@ describe("refreshBoard ordering (FE-5)", () => {
     expect(useApp.getState().currentProject?.id).toBe("p2");
   });
 });
+
+describe("a response that outlives the engine it was asked of", () => {
+  /**
+   * Pairing a remote engine (or unpairing back to the local one) swaps
+   * `client` and blanks what the old engine told us. Every refresher has to
+   * re-check the client it started with before it writes, or the OLD engine's
+   * answer lands on the NEW one — the model catalog showing weights that are
+   * not on this box, the storage pane reporting another machine's disk.
+   * refreshHome/refreshBoard already guarded; these two did not.
+   */
+  const otherEngine = () => useApp.setState({ client: fakeClient({}) });
+
+  it("does not paint the old engine's model catalog", async () => {
+    const pending = deferred<unknown>();
+    const client = fakeClient({ listModels: vi.fn().mockReturnValue(pending.promise) });
+    useApp.setState({ client, models: [] });
+
+    const inFlight = useApp.getState().refreshModels();
+    otherEngine(); // the user pairs a GPU box mid-request
+    pending.resolve([{ id: "wan2.2", downloaded: true }]);
+    await inFlight;
+
+    expect(useApp.getState().models).toEqual([]);
+  });
+
+  it("still paints it when the engine has not changed", async () => {
+    const client = fakeClient({
+      listModels: vi.fn().mockResolvedValue([{ id: "wan2.2", downloaded: true }]),
+    });
+    useApp.setState({ client, models: [] });
+
+    await useApp.getState().refreshModels();
+
+    expect(useApp.getState().models.map((row) => row.id)).toEqual(["wan2.2"]);
+  });
+
+  it("does not report the old engine's disk", async () => {
+    const pending = deferred<unknown>();
+    const client = fakeClient({ storage: vi.fn().mockReturnValue(pending.promise) });
+    useApp.setState({ client, storage: null, storageStale: true });
+
+    const inFlight = useApp.getState().refreshStorage();
+    otherEngine();
+    pending.resolve({
+      projects: [],
+      models_bytes: 1,
+      cache_bytes: 0,
+      disk_free_bytes: 3,
+      disk_total_bytes: 9,
+    });
+    await inFlight;
+
+    expect(useApp.getState().storage).toBeNull();
+    // …and the pane is not told the blank it is showing is live.
+    expect(useApp.getState().storageStale).toBe(true);
+  });
+
+  it("still reports it when the engine has not changed", async () => {
+    const client = fakeClient({
+      storage: vi.fn().mockResolvedValue({
+        projects: [],
+        models_bytes: 1,
+        cache_bytes: 0,
+        disk_free_bytes: 3,
+        disk_total_bytes: 9,
+      }),
+    });
+    useApp.setState({ client, storage: null, storageStale: true });
+
+    await useApp.getState().refreshStorage();
+
+    expect(useApp.getState().storage?.disk_free_bytes).toBe(3);
+    expect(useApp.getState().storageStale).toBe(false);
+  });
+});

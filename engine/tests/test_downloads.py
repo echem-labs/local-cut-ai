@@ -516,3 +516,52 @@ def test_escaping_dest_is_never_reported_installed(tmp_path):
     # A contained dest still reports normally.
     (models_dir / "real.bin").write_bytes(b"y" * 8)
     assert is_downloaded(entry_for("real.bin", 8), models_dir) is True
+
+
+async def test_a_locked_weight_file_is_reported_not_traced(tmp_path, monkeypatch):
+    """Windows refuses to unlink a file another process still has mapped — a
+    ComfyUI holding the weights is the ordinary case. The OSError escaped as
+    an unhandled 500 with a traceback and no hint at which file was stuck,
+    and the bytes had already been counted as freed before the failed unlink.
+    The route maps RuntimeError to a 409, so this is what makes the answer
+    actionable."""
+    import json
+
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.events import EventBus
+    from localcut_engine.manifest.manager import DownloadManager
+
+    manifest = {
+        "models": [
+            {
+                "id": "m1",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [{"url": "http://x/a", "dest": "checkpoints/a.bin", "size": 100}],
+            }
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest))
+    config = EngineConfig(data_dir=tmp_path)
+    manager = DownloadManager(config, EventBus())
+    weights = config.resolved_models_dir / "checkpoints" / "a.bin"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"x" * 100)
+
+    def refuse(self, missing_ok=False):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(pathlib.Path, "unlink", refuse)
+
+    with pytest.raises(RuntimeError) as caught:
+        manager.delete("m1")
+
+    message = str(caught.value)
+    assert "checkpoints/a.bin" in message, message  # says WHICH file is stuck
+    assert "in use" in message
+    # And nothing was reported freed: the file is still there.
+    monkeypatch.undo()
+    assert weights.exists()
+    assert manager.delete("m1") == 100  # unlocked, it deletes and counts normally
