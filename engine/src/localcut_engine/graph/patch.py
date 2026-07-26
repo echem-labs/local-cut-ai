@@ -20,6 +20,11 @@ from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 # definition, so a param added here is covered on both paths at once.
 RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
 
+# By id, not by kind: expand_screenplay looks the node up as graph.nodes[...],
+# so this string is the contract the rebuild depends on, and a script-kind
+# node under any other id is not the one it will find.
+SCRIPT_NODE_ID = "script"
+
 
 class PatchOp(BaseModel):
     op: Literal[
@@ -94,6 +99,24 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 }
                 graph.add_node(op.node)
             case "remove_node":
+                # The script node is the one removal with no way back, and it
+                # is one-way twice over.
+                #
+                # Every other pipeline node — timeline, export, captions,
+                # music, and the scene subgraphs themselves — is rebuilt by
+                # expand_screenplay the next time the script renders, because
+                # _ensure_node is idempotent on purpose. So deleting one of
+                # those is recoverable. But that repair runs FROM the script
+                # node and expand_screenplay raises without one, so removing
+                # the script does not merely delete a node: it deletes the
+                # mechanism that made every other deletion recoverable. And
+                # nothing in the app adds a node back — the LLM editor's whole
+                # vocabulary is update and remove_scene.
+                if op.node_id == SCRIPT_NODE_ID and op.node_id in graph.nodes:
+                    raise ValueError(
+                        f"{SCRIPT_NODE_ID!r} cannot be removed — the rest of the pipeline is "
+                        "rebuilt from it, and nothing can add it back"
+                    )
                 dirty |= graph.downstream_of(op.node_id)
                 graph.edges = [e for e in graph.edges if op.node_id not in (e.src, e.dst)]
                 graph.nodes.pop(op.node_id, None)

@@ -49,6 +49,7 @@
   "nodes_other": "{count} nodes",
   "edges_one": "{count} connection",
   "edges_other": "{count} connections",
+  "cannotRemove": "The script node stays — the rest of the pipeline is rebuilt from it",
   "pinned": "Pinned — held at its current render",
   "reload": "Reload the graph"
 }
