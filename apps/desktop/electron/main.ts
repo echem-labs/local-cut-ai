@@ -449,7 +449,16 @@ ipcMain.handle("providers:set-keys", (event, input: unknown) => {
   return applyKeyUpdates(sanitizeKeyUpdates(input));
 });
 
-ipcMain.handle("providers:key-presence", () => keyStore.presence());
+// Gated like engine:connection and the mutators: which BYOK providers are
+// configured (and whether a keychain actually backs them) is reconnaissance,
+// not public state. Reported rather than thrown — the settings pane awaits
+// this and renders the all-false shape without a catch.
+ipcMain.handle("providers:key-presence", (event) => {
+  if (!trustedSender(event)) {
+    return { anthropic: false, openai: false, gemini: false, fal: false, encrypted: false };
+  }
+  return keyStore.presence();
+});
 
 ipcMain.handle("providers:clear-key", (event, id: unknown) => {
   if (!trustedSender(event)) throw new Error("untrusted sender");
