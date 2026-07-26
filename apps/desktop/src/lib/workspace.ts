@@ -1,6 +1,10 @@
 import { create } from "zustand";
 
-export type WorkspaceView = "storyboard" | "player";
+/** The code-defined views. `flowchart` is doc 01's node canvas: the same
+ * graph as the storyboard, shown as the DAG it is. */
+export type WorkspaceView = "storyboard" | "player" | "flowchart";
+
+const VIEWS: readonly WorkspaceView[] = ["storyboard", "player", "flowchart"];
 export type Density = "s" | "m" | "l";
 
 const VIEW_KEY = "localcut.workspace.view";
@@ -40,10 +44,14 @@ const write = (key: string, value: string): void => {
 
 /** Read once, then validate: two calls would take the guarded path twice and
  * could disagree if anything wrote between them. */
+const storedView = read(VIEW_KEY);
 const storedDensity = read(DENSITY_KEY);
 
 export const useWorkspace = create<WorkspaceState>((set) => ({
-  view: read(VIEW_KEY) === "player" ? "player" : "storyboard",
+  // Validated against the list rather than compared to one value: a stored
+  // view this build no longer has must fall back, not persist as a broken
+  // layout key nothing renders.
+  view: (VIEWS.includes(storedView as WorkspaceView) ? storedView : "storyboard") as WorkspaceView,
   density: (["s", "m", "l"].includes(storedDensity ?? "") ? storedDensity : "m") as Density,
   resetNonce: 0,
   setView: (view) => {
