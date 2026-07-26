@@ -70,12 +70,36 @@ describe("laying out a story graph", () => {
     // Object.keys follows insertion, which differs between a project just
     // created and the same project reloaded from disk. A layout that moved
     // on reload would look like the graph had changed.
-    const reordered: StoryGraph = {
-      ...CHAIN,
-      nodes: { clip: node("clip"), script: node("script"), keyframe: node("keyframe") },
+    //
+    // The fixture is a FAN, not the chain: siblings fed by the same source
+    // share a barycentre, and Array sort is stable, so a tie is exactly where
+    // insertion order would leak through. A chain has one node per column and
+    // would pass this whatever the ordering rule was.
+    const fan = (...ids: string[]): StoryGraph => ({
+      version: 1,
+      nodes: Object.fromEntries([["root", node("root")], ...ids.map((id) => [id, node(id)])]),
+      edges: ids.map((id) => ({ src: "root", dst: id, port: "default" })),
+    });
+
+    expect(layoutGraph(fan("c", "a", "b"))).toEqual(layoutGraph(fan("a", "b", "c")));
+  });
+
+  it("orders tied siblings by id, not by however they arrived", () => {
+    // The property underneath the one above, asserted directly so a failure
+    // says which rule broke rather than just "the two differ".
+    const fan: StoryGraph = {
+      version: 1,
+      nodes: { root: node("root"), zebra: node("zebra"), apple: node("apple") },
+      edges: [
+        { src: "root", dst: "zebra", port: "default" },
+        { src: "root", dst: "apple", port: "default" },
+      ],
     };
 
-    expect(layoutGraph(reordered)).toEqual(layoutGraph(CHAIN));
+    const layout = layoutGraph(fan);
+
+    expect(layout.byId.apple!.row).toBe(0);
+    expect(layout.byId.zebra!.row).toBe(1);
   });
 
   it("sizes the stage to hold every node", () => {
