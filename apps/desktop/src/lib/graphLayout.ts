@@ -102,10 +102,18 @@ function depths(nodeIds: string[], inputs: Map<string, string[]>): Map<string, n
 /**
  * Place every node of `graph` on a grid.
  *
- * Node ids are sorted before anything else so the result depends only on the
- * graph's content: `Object.keys` order follows insertion, which differs
- * between a freshly created project and the same project reloaded from disk,
- * and a layout that changed on reload would look like the graph had changed.
+ * The result depends only on the graph's CONTENT, never on the order its keys
+ * happen to be in: `Object.keys` follows insertion, which differs between a
+ * freshly created project and the same project reloaded from disk, and a
+ * layout that changed on reload would look like the graph had changed.
+ *
+ * Two things enforce that, and they overlap on purpose — sorting the ids here,
+ * and the id tie-break in the column ordering below. Either alone is enough
+ * today (removing one leaves the other holding it, which is why no single-line
+ * change breaks graphLayout.test's stability cases; removing both does). They
+ * are kept together because they fail in different directions: the sort covers
+ * any traversal that grows an order dependence later, the tie-break covers a
+ * future ordering pass that does not inherit this array's order.
  */
 export function layoutGraph(graph: StoryGraph | null): GraphLayout {
   const empty: GraphLayout = { nodes: [], byId: {}, width: 0, height: 0 };
@@ -139,8 +147,10 @@ export function layoutGraph(graph: StoryGraph | null): GraphLayout {
       if (sources.length === 0) return Number.POSITIVE_INFINITY;
       return sources.reduce((sum, row) => sum + row, 0) / sources.length;
     };
-    // Tie-break on the id, which is already sorted — two nodes with the same
-    // barycentre must not swap between renders.
+    // Tie-break by id: two nodes fed by the same source have the SAME
+    // barycentre, and Array sort is stable, so without a tie-break their
+    // order is whatever order they arrived in. See the note on layoutGraph
+    // for why this and the id sort there are deliberately redundant.
     const ordered = [...ids].sort((a, b) => weight(a) - weight(b) || a.localeCompare(b));
     ordered.forEach((id, row) => rowOf.set(id, row));
     columns.set(column, ordered);
