@@ -45,7 +45,11 @@ export type NodeStatus =
   | "final"
   | "failed"
   | "cancelled"
-  | "pinned";
+  | "pinned"
+  // Deliberately not rendered: the compiler skips a node that feeds nothing,
+  // e.g. the keyframe of a scene conditioned on an uploaded image. Mirrors
+  // SCENE_NODE_STATUSES in the engine — test_ui_contract compares the two.
+  | "skipped";
 
 export interface NodeState {
   node_id: string;

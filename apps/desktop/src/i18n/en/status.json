@@ -6,6 +6,7 @@
   "failed": "failed",
   "cancelled": "cancelled",
   "pinned": "pinned",
+  "skipped": "not needed",
   "renderingPct": "rendering · {pct}%",
   "renderingLong": "rendering, {pct}%"
 }

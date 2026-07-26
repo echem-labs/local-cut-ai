@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import type { Screenplay } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
+import { isSettled } from "../lib/status";
 import { StatusRing } from "./StatusRing";
-
-const READY = ["draft", "final", "pinned"];
 
 export function useScreenplay(url: string | null): Screenplay | null {
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
@@ -71,9 +70,11 @@ export function ToolSession() {
   // and its error, which would otherwise be hidden behind the clip's
   // secondary "missing upstream artifact" failure.
   const upstream = tool === "clip" ? board?.aux.keyframe : undefined;
-  const progressNode =
-    upstream && !READY.includes(upstream.status) ? upstream : node;
-  const done = node ? READY.includes(node.status) : false;
+  // A skipped keyframe is not the long pole — it is not being rendered at
+  // all — so the display falls through to the tool node rather than pinning
+  // itself to a stage that will never progress.
+  const progressNode = upstream && !isSettled(upstream.status) ? upstream : node;
+  const done = node ? isSettled(node.status) : false;
   const artifactUrl =
     node?.artifact_hash && client && currentProject
       ? client.artifactUrl(currentProject.id, node.artifact_hash)
