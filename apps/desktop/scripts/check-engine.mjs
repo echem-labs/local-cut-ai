@@ -15,7 +15,7 @@
  *
  * Usage: node scripts/check-engine.mjs <win|mac|linux>
  */
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -112,9 +112,16 @@ if (size < 1024) {
   fail(`${spec.exe} is only ${size} bytes — that is not a frozen engine`);
 }
 
-// 8 bytes: magic plus the Mach-O cputype word behind it.
+// 8 bytes: magic plus the Mach-O cputype word behind it. Read through a
+// handle rather than readFileSync — the frozen engine is ~16 MB and there is
+// no reason to pull all of it into memory to look at the header.
 const head = Buffer.alloc(8);
-head.set(readFileSync(binary).subarray(0, 8));
+const fd = openSync(binary, "r");
+try {
+  readSync(fd, head, 0, 8, 0);
+} finally {
+  closeSync(fd);
+}
 if (!spec.looksRight(head)) {
   fail(
     `${spec.exe} is not ${spec.describe} ` +

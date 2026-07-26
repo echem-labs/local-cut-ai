@@ -104,6 +104,8 @@ def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path,
     """The shell reads `LOCALCUT_ENGINE {json}` off stdout to learn the url
     and token. Moving the bind ahead of it must not have moved it after the
     blocking run, or the app would never connect."""
+    import contextlib
+    import io
     import json
 
     import uvicorn
@@ -113,26 +115,9 @@ def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path,
     monkeypatch.setattr(app_module, "create_app", lambda config=None: None)
     monkeypatch.setattr(uvicorn.Server, "run", lambda self, sockets=None: None)
 
-    port = _free_port()
-    cli.main(
-        [
-            "serve",
-            "--port",
-            str(port),
-            "--data-dir",
-            str(tmp_path),
-            "--backend",
-            "mock",
-            "--token",
-            "shell-token",
-        ]
-    )
-
-    import contextlib
-    import io
-
-    # Re-run capturing stdout, since capsys and the fixtures above interleave
-    # awkwardly with argparse's own writes.
+    # redirect_stdout rather than capsys: argparse and logging both write
+    # during main(), and capsys interleaves them awkwardly with the one line
+    # under test.
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         cli.main(

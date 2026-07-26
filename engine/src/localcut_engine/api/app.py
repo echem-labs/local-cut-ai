@@ -119,13 +119,32 @@ class _RedactTokens(logging.Filter):
 
 
 def install_log_redaction() -> None:
-    """Attach the token filter to the loggers that can carry a request line.
-    Called from the CLI before uvicorn starts, and idempotent so tests and
-    embedders can call it too."""
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "websockets.server"):
-        target = logging.getLogger(name)
+    """Attach the token filter to everything that can carry a request line.
+
+    Loggers AND their handlers, because the two see different records. A
+    filter on a Logger runs only for records logged directly to it —
+    propagation calls the ancestors' HANDLERS, not their filters — so
+    attaching to `uvicorn` alone does nothing for `uvicorn.*` children, and a
+    token logged by, say, `uvicorn.protocols.websockets` would sail straight
+    past. Handler filters do run on propagated records, so covering the
+    handlers is what makes this hold for loggers not named here.
+
+    Idempotent, and worth calling twice: uvicorn installs its handlers when
+    its Config is constructed, so an early call catches the loggers and a
+    later one catches the handlers.
+    """
+
+    def attach(target: logging.Logger | logging.Handler) -> None:
         if not any(isinstance(f, _RedactTokens) for f in target.filters):
             target.addFilter(_RedactTokens())
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "websockets.server"):
+        logger_ = logging.getLogger(name)
+        attach(logger_)
+        for handler in logger_.handlers:
+            attach(handler)
+    for handler in logging.getLogger().handlers:
+        attach(handler)
 
 
 # Path params are identifiers, never paths: reject anything that could act

@@ -18,9 +18,13 @@ on:
       - "engine/packaging/**"
       - ".github/workflows/package.yml"
 
+# Only a pull_request run is safe to cancel. A tag push is a release build —
+# `github.ref` is refs/tags/v… there, so a "not main" test would treat it as
+# cancellable and let a second tag (or a re-tag) kill the build that produces
+# the artifact people install.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
