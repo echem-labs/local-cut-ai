@@ -8,11 +8,15 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+import httpx
 import pytest
 
+from localcut_engine.manifest import downloads as downloads_module
 from localcut_engine.manifest.downloads import (
     ChecksumMismatch,
     DownloadError,
+    UnsafeURL,
+    assert_public_url,
     download_file,
     is_downloaded,
     partial_bytes,
@@ -53,7 +57,11 @@ class RangeHandler(SimpleHTTPRequestHandler):
 
 
 @pytest.fixture
-def server(tmp_path):
+def server(tmp_path, monkeypatch):
+    """A loopback weight server. The SSRF guard exists precisely to refuse
+    loopback (see the assert_public_url tests below), so these mechanics
+    tests neutralize it — they are about resume/checksum/limits, not policy."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
     (tmp_path / "weights.bin").write_bytes(PAYLOAD)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), partial(RangeHandler, directory=str(tmp_path)))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -129,6 +137,164 @@ async def test_stream_larger_than_manifest_size_is_aborted(server, tmp_path):
 async def test_http_error_raises(server, tmp_path):
     with pytest.raises(DownloadError, match="404"):
         await download_file(model_file(f"{server}/missing.bin"), tmp_path / "models")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://example.com/w.bin",  # cleartext at all
+        "https://127.0.0.1/w.bin",  # loopback
+        "https://localhost/w.bin",
+        "https://10.0.0.5/w.bin",  # RFC1918
+        "https://192.168.1.10/w.bin",
+        "https://172.16.4.4/w.bin",
+        "https://169.254.169.254/latest/meta-data/",  # cloud metadata
+        "https://[::1]/w.bin",
+        "https://100.64.0.1/w.bin",  # CGNAT
+        "ftp://example.com/w.bin",
+        "https:///w.bin",  # no host
+    ],
+)
+def test_ssrf_guard_refuses_non_public_targets(url):
+    """A catalog entry's URL is user-supplied and fetched from the engine's
+    network position — on the remote topology that is a box inside someone's
+    LAN, or a cloud instance with a metadata endpoint. Anything not plain
+    https-to-public must be refused before a request goes out."""
+    with pytest.raises(UnsafeURL):
+        assert_public_url(url)
+
+
+def test_ssrf_guard_allows_a_public_https_host(monkeypatch):
+    monkeypatch.setattr(
+        downloads_module.socket,
+        "getaddrinfo",
+        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))],
+    )
+    assert_public_url("https://weights.example.com/model.safetensors")  # no raise
+
+
+def test_ssrf_guard_refuses_a_host_that_resolves_to_any_private_address(monkeypatch):
+    """Split-horizon DNS: one public answer must not launder a private one —
+    httpx would be free to dial either."""
+    monkeypatch.setattr(
+        downloads_module.socket,
+        "getaddrinfo",
+        lambda *a, **k: [
+            (2, 1, 6, "", ("93.184.216.34", 443)),
+            (2, 1, 6, "", ("169.254.169.254", 443)),
+        ],
+    )
+    with pytest.raises(UnsafeURL, match="169.254.169.254"):
+        assert_public_url("https://sneaky.example.com/model.safetensors")
+
+
+async def test_redirect_into_a_private_host_is_refused(tmp_path, monkeypatch):
+    """httpx's own follow_redirects would only have checked the URL we passed,
+    so a public host could bounce the engine onto the metadata endpoint."""
+    seen = []
+
+    def fake_guard(url: str) -> None:
+        seen.append(url)
+        if "169.254" in url:
+            raise UnsafeURL("non-public address")
+
+    monkeypatch.setattr(downloads_module, "assert_public_url", fake_guard)
+
+    def handler(request):
+        if "start" in str(request.url):
+            return httpx.Response(302, headers={"location": "https://169.254.169.254/w.bin"})
+        return httpx.Response(200, content=PAYLOAD)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(UnsafeURL):
+        await download_file(
+            model_file("https://cdn.example.com/start.bin"), tmp_path / "models", client=client
+        )
+    await client.aclose()
+    assert seen == ["https://cdn.example.com/start.bin", "https://169.254.169.254/w.bin"]
+
+
+async def test_checksumless_download_rejects_a_login_page(tmp_path, monkeypatch):
+    """A manifest entry with no sha256 has nothing verifying the bytes. A
+    captive portal's HTML would otherwise be saved as .safetensors and report
+    installed forever, so the real weights never download and the failure
+    surfaces much later as an opaque load error."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                content=b"<html><body>Sign in to the hotel wifi</body></html>",
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        )
+    )
+    with pytest.raises(DownloadError, match="not a weight file"):
+        await download_file(
+            model_file("https://cdn.example.com/w.bin"), tmp_path / "models", client=client
+        )
+    await client.aclose()
+    assert not (tmp_path / "models/checkpoints/weights.bin").exists()
+    assert not (tmp_path / "models/checkpoints/weights.bin.part").exists()
+
+
+async def test_checksumless_download_rejects_an_implausibly_small_body(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, content=b"not found", headers={"content-type": "application/octet-stream"}
+            )
+        )
+    )
+    with pytest.raises(DownloadError, match="too small"):
+        await download_file(
+            model_file("https://cdn.example.com/w.bin"), tmp_path / "models", client=client
+        )
+    await client.aclose()
+
+
+async def test_checksumless_download_of_real_weights_still_succeeds(tmp_path, monkeypatch):
+    """The heuristics must not block the legitimate case they exist beside."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, content=PAYLOAD, headers={"content-type": "application/octet-stream"}
+            )
+        )
+    )
+    path = await download_file(
+        model_file("https://cdn.example.com/w.bin"), tmp_path / "models", client=client
+    )
+    await client.aclose()
+    assert path.read_bytes() == PAYLOAD
+
+
+async def test_a_complete_partial_resumes_past_a_416_error_page(tmp_path, monkeypatch):
+    """416 means the .part is already complete — the response carries an error
+    page, not the file, so its content-type says nothing about the bytes on
+    disk. Reading the type off it condemned a finished multi-GB download as a
+    login page and deleted it, on the one path resume exists to protect."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    part = tmp_path / "models" / "checkpoints" / "weights.bin.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(PAYLOAD)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                416,
+                content=b"<html><body>Range Not Satisfiable</body></html>",
+                headers={"content-type": "text/html; charset=utf-8"},
+            )
+        )
+    )
+    path = await download_file(
+        model_file("https://cdn.example.com/w.bin"), tmp_path / "models", client=client
+    )
+    await client.aclose()
+    assert path.read_bytes() == PAYLOAD
+    assert not part.exists()  # promoted, not abandoned
 
 
 def test_is_downloaded(tmp_path):

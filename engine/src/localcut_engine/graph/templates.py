@@ -281,7 +281,12 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
                 "duration_s": take_s if takes > 1 else scene.duration_s,
                 "aspect": aspect,
                 "mode": "i2v",  # I2V from the approved keyframe
-                "onscreen_text": scene.onscreen_text,
+                # NO onscreen_text here. It is presentation-time data: the
+                # title is burned at assembly from the timeline node's
+                # `overlays`, and no clip backend reads it. Carrying it in the
+                # clip's params put it in the clip's output hash, so a script
+                # re-run that changed a title re-rendered the video for a
+                # change the video never contained.
             }
             if takes > 1:
                 params["take"] = take  # single-take params stay hash-stable

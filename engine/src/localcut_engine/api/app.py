@@ -10,10 +10,12 @@ Rules enforced here, not by convention:
 import asyncio
 import json
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
+from urllib.parse import unquote
 
 import httpx
 from fastapi import (
@@ -39,7 +41,7 @@ from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
 from ..backends.kokoro import KokoroBackend
-from ..backends.llm import LLMScriptBackend
+from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..config import EngineConfig
 from ..events import EventBus
@@ -57,11 +59,101 @@ from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
-from ..project.store import PROJECT_ID_PATTERN, ProjectStore
+from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
 from ..service import ConflictError, ProjectService
 from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
+
+# The WebSocket subprotocol that carries the bearer token. Browsers cannot set
+# headers on a WebSocket, and a ?token= query parameter gets logged (see the
+# /ws route and install_log_redaction). The client offers two protocols —
+# this marker and then the token — and the server echoes the marker back.
+WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1"
+
+# Any `token=…` in a log record, whatever the surrounding text. Applied to
+# uvicorn's loggers, where the WebSocket handshake line lands.
+_TOKEN_IN_TEXT = re.compile(r"(token=)[^&\s\"']+")
+
+
+class _RedactTokens(logging.Filter):
+    """Scrub `token=…` out of log records rather than trusting every emitter
+    not to include one. uvicorn logs `"WebSocket /ws?token=… [accepted]"` at
+    INFO on `uvicorn.error` — which `access_log=False` does not silence — so
+    without this the live engine token is written to journald, Docker logs,
+    and any log a user is asked to attach to a bug report."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # This filter is installed on loggers we do not own, so it must never
+        # be able to break a record: a raising or malformed record is dropped
+        # by logging with a traceback of its own, which is both noisy and a
+        # silent hole in the very output we are trying to sanitize.
+        #
+        # The token can be in either half. uvicorn's real handshake line puts
+        # it in the args (`'%s - "WebSocket %s"'`, path), but an emitter is
+        # free to bake it into the format string instead.
+        # Tuple args only. `%`-style dict args (`log.info("%(a)s", {...})`)
+        # are stored as the bare dict, and wrapping one in a tuple makes
+        # getMessage() raise "format requires a mapping".
+        #
+        # The `any(...)` pre-check keeps this off the hot path: the filter is
+        # installed on the ROOT handlers, so it sees every record the process
+        # emits, and rebuilding the args tuple through a regex for all of them
+        # costs far more than the substring scan that proves it unnecessary.
+        if isinstance(record.args, tuple) and any(
+            isinstance(a, str) and "token=" in a for a in record.args
+        ):
+            record.args = tuple(
+                _TOKEN_IN_TEXT.sub(r"\1[redacted]", a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        if not isinstance(record.msg, str) or "token=" not in record.msg:
+            return True
+        if not record.args:
+            record.msg = _TOKEN_IN_TEXT.sub(r"\1[redacted]", record.msg)
+            return True
+        # A token in the format string AND args to interpolate. Redacting the
+        # format string in place can swallow a `%s` that sits inside the token
+        # run ("…token=%s"), leaving more args than placeholders — so render
+        # first, then redact the result. Only records that actually carry a
+        # token take this path; everything else keeps its lazy formatting.
+        try:
+            rendered = record.getMessage()
+        except Exception:  # noqa: BLE001 — a bad record is the emitter's problem
+            return True
+        record.msg = _TOKEN_IN_TEXT.sub(r"\1[redacted]", rendered)
+        record.args = ()
+        return True
+
+
+def install_log_redaction() -> None:
+    """Attach the token filter to everything that can carry a request line.
+
+    Loggers AND their handlers, because the two see different records. A
+    filter on a Logger runs only for records logged directly to it —
+    propagation calls the ancestors' HANDLERS, not their filters — so
+    attaching to `uvicorn` alone does nothing for `uvicorn.*` children, and a
+    token logged by, say, `uvicorn.protocols.websockets` would sail straight
+    past. Handler filters do run on propagated records, so covering the
+    handlers is what makes this hold for loggers not named here.
+
+    Idempotent, and worth calling twice: uvicorn installs its handlers when
+    its Config is constructed, so an early call catches the loggers and a
+    later one catches the handlers.
+    """
+
+    def attach(target: logging.Logger | logging.Handler) -> None:
+        if not any(isinstance(f, _RedactTokens) for f in target.filters):
+            target.addFilter(_RedactTokens())
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "websockets.server"):
+        logger_ = logging.getLogger(name)
+        attach(logger_)
+        for handler in logger_.handlers:
+            attach(handler)
+    for handler in logging.getLogger().handlers:
+        attach(handler)
+
 
 # Path params are identifiers, never paths: reject anything that could act
 # as a filesystem component or glob before it reaches the store layer.
@@ -121,10 +213,16 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
     """Build the backend chain from config; first registered wins per node
     kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
     registry = BackendRegistry()
-    for name in config.backend_chain:
+    chain = config.backend_chain
+    # Mock may stand in for a real assembly backend ONLY in an explicit
+    # all-mock chain (the demo/test configuration). In any hybrid chain it
+    # would be covering for a missing ffmpeg, and a placeholder MP4 handed
+    # over as a finished export is worse than a clear failure.
+    mock_assembly = chain == ["mock"]
+    for name in chain:
         match name:
             case "mock":
-                registry.register(MockBackend())
+                registry.register(MockBackend(assembly=mock_assembly))
             case "llm":
                 registry.register(
                     LLMScriptBackend(
@@ -157,13 +255,20 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         model_templates=model_templates,
                         capability=(
                             (
-                                lambda: installed_comfy_kinds(config)
-                                if comfy_probe.available()
-                                else set()
+                                lambda: (
+                                    installed_comfy_kinds(config)
+                                    if comfy_probe.available()
+                                    else set()
+                                )
                             )
                             if auto_kinds
                             else None
                         ),
+                        # Same source the capability claim reads: the template
+                        # substituted into must belong to a model that is
+                        # actually installed, or the kind is claimed on one
+                        # model's weights and rendered with another's graph.
+                        installed_models=lambda: installed_comfy_models(config),
                     )
                 )
             case "chatterbox":
@@ -218,6 +323,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # Reclaim directories a previous delete could not finish (engine
+        # exited mid-sweep, or a backend held a file open). Nothing can be
+        # writing into them now, and they are invisible to the project list,
+        # so they would otherwise be disk the user can never see or reclaim.
+        reclaimed = await asyncio.to_thread(service.sweep_deleted)
+        if reclaimed:
+            logger.info("reclaimed %d partially-deleted project(s)", reclaimed)
         scheduler.start()
         yield
         await downloads.shutdown()
@@ -225,6 +337,113 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         queue.close()
 
     app = FastAPI(title="LocalCut Engine", version=__version__, lifespan=lifespan)
+
+    # -- body cap (must run BEFORE auth) --------------------------------------
+    #
+    # FastAPI parses the request body before route dependencies run, so an
+    # unauthenticated client — any LAN peer, or any web page that can reach
+    # the loopback port — could stream an arbitrarily large body into memory
+    # and never present a token: the 401 is decided after the damage. This is
+    # raw ASGI, ahead of the app, so it sees bytes before any parsing.
+    #
+    # Two limits: a tight one for anyone who has not presented the token, and
+    # a generous one for authenticated uploads (`upload_asset` streams with
+    # its own 50 MB cap, so this only has to stop the pathological case).
+    _UNAUTH_MAX_BODY = 64 << 10  # 64 KiB — larger than any legitimate route body
+    _AUTHED_MAX_BODY = 256 << 20  # 256 MiB
+
+    def _presented_token(scope) -> str | None:
+        for raw_key, raw_value in scope.get("headers", []):
+            if raw_key == b"authorization":
+                value = raw_value.decode("latin-1")
+                if value.startswith("Bearer "):
+                    return value.removeprefix("Bearer ")
+        query = scope.get("query_string", b"").decode("latin-1")
+        for pair in query.split("&"):
+            key, _, value = pair.partition("=")
+            if key == "token":
+                return unquote(value)
+        return None
+
+    class BodyLimitMiddleware:
+        def __init__(self, app) -> None:
+            self.app = app
+
+        async def __call__(self, scope, receive, send) -> None:
+            if scope["type"] != "http":
+                await self.app(scope, receive, send)
+                return
+            limit = _AUTHED_MAX_BODY if token_ok(_presented_token(scope)) else _UNAUTH_MAX_BODY
+            # Trust content-length when it is present and already over: reject
+            # before reading a single byte.
+            declared = 0
+            for raw_key, raw_value in scope.get("headers", []):
+                if raw_key == b"content-length":
+                    try:
+                        declared = int(raw_value)
+                    except ValueError:
+                        declared = 0
+            if declared > limit:
+                await _reject(send, limit)
+                return
+
+            received = 0
+            over = False
+
+            async def guarded_receive():
+                nonlocal received, over
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        over = True
+                        # Starve the app: hand it an empty final chunk so it
+                        # unwinds instead of awaiting a body that never ends.
+                        return {"type": "http.request", "body": b"", "more_body": False}
+                return message
+
+            sent_start = False
+
+            async def guarded_send(message):
+                nonlocal sent_start
+                if over and not sent_start:
+                    # The app produced a response for a body we truncated;
+                    # replace it with the honest 413.
+                    if message["type"] == "http.response.start":
+                        sent_start = True
+                        await _reject(send, limit)
+                    return
+                if over:
+                    return  # swallow the app's body for the response we replaced
+                if message["type"] == "http.response.start":
+                    sent_start = True
+                await send(message)
+
+            await self.app(scope, guarded_receive, guarded_send)
+
+    async def _reject(send, limit: int) -> None:
+        body = json.dumps({"detail": f"request body exceeds the {limit} byte limit"}).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    app.add_middleware(BodyLimitMiddleware)
+
+    @app.exception_handler(ProjectTooNew)
+    async def _project_too_new(request: Request, exc: ProjectTooNew) -> JSONResponse:
+        """A project written by a newer engine is a conflict the user can fix
+        (update), not a server fault. Surfacing it as a 500 would read as
+        corruption and invite exactly the wrong recovery."""
+        del request
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     # -- auth ---------------------------------------------------------------
 
@@ -344,8 +563,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
         name: str = Field(min_length=1, max_length=80)
         task: Literal[
-            "video.i2v", "video.t2v", "image.gen", "text.llm",
-            "speech.tts", "music.gen", "transcribe",
+            "video.i2v",
+            "video.t2v",
+            "image.gen",
+            "text.llm",
+            "speech.tts",
+            "music.gen",
+            "transcribe",
         ]
         source: Literal["url", "file"]
         ref: str = Field(min_length=1, max_length=2000)
@@ -499,13 +723,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/projects/{project_id}/approve", dependencies=[Authed])
     async def approve(project_id: ProjectId, body: ApproveBody) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         enqueued = await asyncio.to_thread(service.approve, project_id, body.checkpoint)
         return {"ok": True, "enqueued": enqueued}
 
     @app.post("/projects/{project_id}/promote", dependencies=[Authed])
     async def promote(project_id: ProjectId) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             project = await asyncio.to_thread(service.promote_tool, project_id)
         except ValueError as exc:
@@ -514,10 +738,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects", dependencies=[Authed])
     async def list_projects() -> list[dict]:
-        return [p.model_dump() for p in store.list()]
+        # Off the loop: a Home poll with 60 projects globs, reads and
+        # validates 60 files, and _read_text_retry's backoff is a literal
+        # time.sleep (up to 0.15s per contended file — and meta rewrites are
+        # frequent during a render). On the loop that stalls the /ws progress
+        # fan-out and every other in-flight request.
+        projects = await asyncio.to_thread(store.list)
+        return [p.model_dump() for p in projects]
 
-    def _get_project(project_id: str):
-        project = store.get(project_id)
+    async def _get_project(project_id: str):
+        # Same reason: this reads meta.json through the retrying reader, and
+        # nearly every route calls it.
+        project = await asyncio.to_thread(store.get, project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="project not found")
         return project
@@ -546,7 +778,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}", dependencies=[Authed])
     async def get_project(project_id: ProjectId) -> dict:
-        project = _get_project(project_id)
+        project = await _get_project(project_id)
         # Board building reads sqlite + scans generated/ — keep it off the
         # loop that serves /ws progress fan-out.
         board = await asyncio.to_thread(service.scene_board, project_id)
@@ -554,8 +786,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/graph", dependencies=[Authed])
     async def get_graph(project_id: ProjectId) -> dict:
-        _get_project(project_id)
-        return store.load_graph(project_id).model_dump()
+        await _get_project(project_id)
+        graph = await asyncio.to_thread(store.load_graph, project_id)
+        return graph.model_dump()
 
     _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a"}
@@ -573,7 +806,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         voice sample for cloning and REQUIRES the consent affirmation.
         Consent is enforced here, at the only door a sample can enter
         through, so no unconsented voice can ever reach the TTS backend."""
-        _get_project(project_id)
+        await _get_project(project_id)
         name = PurePosixPath(filename.replace("\\", "/")).name  # basename only, no paths
         suffix = PurePosixPath(name).suffix.lower()
         if suffix not in _IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS:
@@ -608,7 +841,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/projects/{project_id}/patch", dependencies=[Authed])
     async def patch_project(project_id: ProjectId, body: PatchBody) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             dirty = await asyncio.to_thread(service.patch, project_id, body.ops)
         except KeyError as exc:
@@ -631,7 +864,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     async def edit_project(project_id: ProjectId, body: EditBody) -> dict:
         """Natural-language edit: the LLM sees the whitelisted graph view,
         returns an edit plan, and the plan compiles into ordinary patch ops."""
-        _get_project(project_id)
+        await _get_project(project_id)
         if body.model is not None and not body.model.startswith("cloud:"):
             raise HTTPException(status_code=422, detail="edit model must be a cloud:* text model")
         try:
@@ -648,8 +881,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             except ProviderError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
+            # Same explicit cap on both paths: an edit plan is a short list of
+            # ops, and a silent truncation here surfaces as "the model
+            # returned an invalid edit plan" rather than "it ran out of room".
             if body.model:
-                raw = await cloud_gen.complete(system=EDIT_SYSTEM_PROMPT, prompt=prompt)
+                raw = await cloud_gen.complete(
+                    system=EDIT_SYSTEM_PROMPT, prompt=prompt, max_tokens=EDIT_MAX_TOKENS
+                )
             else:
                 # Interactive path onto the same local server as script jobs,
                 # with the same VRAM-yield discipline (Ollama serializes
@@ -658,7 +896,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                     base_url=config.llm_url,
                     model=config.llm_model,
                     timeout_s=config.llm_timeout_s,
-                ).complete(prompt, system=EDIT_SYSTEM_PROMPT)
+                ).complete(prompt, system=EDIT_SYSTEM_PROMPT, max_tokens=EDIT_MAX_TOKENS)
             plan = parse_edit_plan(raw)
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
             # The model or its transport failed us, not the client.
@@ -676,7 +914,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/projects/{project_id}/nodes/{node_id}/regenerate", dependencies=[Authed])
     async def regenerate(project_id: ProjectId, node_id: NodeId, body: RegenerateBody) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             await asyncio.to_thread(service.regenerate, project_id, node_id, body.seed)
         except KeyError as exc:
@@ -694,13 +932,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId, body: FinalizeBody | None = None) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         clip_model = (body.clip_model if body else None) or config.final_clip_model
         return {"enqueued": await asyncio.to_thread(service.finalize, project_id, clip_model)}
 
     @app.post("/projects/{project_id}/package", dependencies=[Authed])
     async def package(project_id: ProjectId) -> dict:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             nodes = await asyncio.to_thread(service.package, project_id)
         except LookupError as exc:
@@ -709,7 +947,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/export/otio", dependencies=[Authed])
     async def export_otio(project_id: ProjectId) -> JSONResponse:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             document = await asyncio.to_thread(service.export_otio, project_id)
         except (LookupError, ValueError) as exc:
@@ -721,7 +959,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/export/fcpxml", dependencies=[Authed])
     async def export_fcpxml(project_id: ProjectId) -> Response:
-        _get_project(project_id)
+        await _get_project(project_id)
         try:
             document = await asyncio.to_thread(service.export_fcpxml, project_id)
         except (LookupError, ValueError) as exc:
@@ -757,8 +995,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/artifacts/{output_hash}", dependencies=[Authed])
     async def artifact(project_id: ProjectId, output_hash: OutputHash) -> FileResponse:
-        _get_project(project_id)
-        path = store.resolve_artifact(project_id, output_hash)
+        await _get_project(project_id)
+        # A directory scan per call, and the player issues one of these for
+        # every range request while scrubbing.
+        path = await asyncio.to_thread(store.resolve_artifact, project_id, output_hash)
         if path is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         return FileResponse(path)
@@ -767,14 +1007,34 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.websocket("/ws")
     async def ws_events(websocket: WebSocket, token: str | None = None) -> None:
+        # Preference order: subprotocol, then Authorization, then ?token=.
+        #
+        # The subprotocol carries the token for browser clients, which cannot
+        # set request headers on a WebSocket. A query parameter can: uvicorn
+        # logs the handshake path at INFO on the `uvicorn.error` logger — a
+        # logger `access_log=False` does not silence — so a ?token= lands in
+        # journald, in Docker logs, and in any log a user attaches to a bug
+        # report. `install_log_redaction()` scrubs it for clients still on the
+        # query form; new clients never put it there in the first place.
         presented = token
-        authorization = websocket.headers.get("authorization", "")
-        if authorization.startswith("Bearer "):
-            presented = authorization.removeprefix("Bearer ")
+        offered = [
+            part.strip()
+            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
+            if part.strip()
+        ]
+        subprotocol: str | None = None
+        if len(offered) == 2 and offered[0] == WS_TOKEN_SUBPROTOCOL:
+            presented, subprotocol = offered[1], WS_TOKEN_SUBPROTOCOL
+        else:
+            authorization = websocket.headers.get("authorization", "")
+            if authorization.startswith("Bearer "):
+                presented = authorization.removeprefix("Bearer ")
         if not token_ok(presented):
             await websocket.close(code=4401)
             return
-        await websocket.accept()
+        # A server that does not echo a subprotocol the client offered makes
+        # the browser fail the handshake, so echo it back when it was used.
+        await websocket.accept(subprotocol=subprotocol)
         subscription = events.subscribe()
         try:
             while True:

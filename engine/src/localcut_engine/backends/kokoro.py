@@ -60,11 +60,7 @@ class KokoroBackend(ExecutionBackend):
         # Claim narration only while the voice weights are on disk, live —
         # a finished download flips this without a restart, and a fresh
         # machine falls through to mock instead of failing jobs.
-        return (
-            kind is NodeKind.NARRATION
-            and self.model_path.exists()
-            and self.voices_path.exists()
-        )
+        return kind is NodeKind.NARRATION and self.model_path.exists() and self.voices_path.exists()
 
     def serves_model(self, model: str | None) -> bool:
         # A voice-clone request must never silently land on stock voices —

@@ -201,11 +201,17 @@ class BackendRegistry:
             # and hand back local output the user believes came from the cloud.
             if self._cloud is not None and self._cloud.supports(kind):
                 return self._cloud
-            raise GenerationError(
-                f"cloud model {model!r} is not available for {kind.value} nodes"
-            )
+            raise GenerationError(f"cloud model {model!r} is not available for {kind.value} nodes")
         for backend in self._backends:
             if backend.supports(kind) and backend.serves_model(model):
                 return backend
+        if kind in (NodeKind.TIMELINE, NodeKind.EXPORT):
+            # The overwhelmingly likely cause, and one the user can fix. The
+            # generic message below would send them hunting through backend
+            # config for what is really a missing system dependency.
+            raise GenerationError(
+                f"cannot assemble the {kind.value}: no working ffmpeg was found. Install "
+                "ffmpeg and restart, or point LOCALCUT_FFMPEG_BIN at it."
+            )
         detail = f" with model {model!r}" if model else ""
         raise GenerationError(f"no backend registered for node kind: {kind}{detail}")

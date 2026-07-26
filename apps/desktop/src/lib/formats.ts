@@ -16,5 +16,20 @@ export const DURATIONS = [
 ] as const;
 
 /** The engine's target_duration_s bounds (api/app.py) — custom entries
- * clamp to these so the UI can never submit a value the API rejects. */
+ * clamp to these so the UI can never submit a value the API rejects.
+ *
+ * These mirror engine constants and are asserted against them by
+ * engine/tests/test_ui_contract.py, which parses this file. Change one side
+ * and that test fails; there is no other check, because there is no desktop
+ * test infrastructure. */
 export const DURATION_BOUNDS = { min: 5, max: 1200 } as const;
+
+/** Per-clip duration bounds — graph/editor.py `_CLIP_MIN_S`/`_CLIP_MAX_S`.
+ * The Inspector clamps to these before sending: a number input does not stop
+ * a typed or pasted value from leaving its min/max. */
+export const CLIP_MIN_S = 1.0;
+export const CLIP_MAX_S = 15.0;
+
+/** Narration speed bounds — graph/editor.py `_SPEED_MIN`/`_SPEED_MAX`. */
+export const SPEED_MIN = 0.5;
+export const SPEED_MAX = 1.5;

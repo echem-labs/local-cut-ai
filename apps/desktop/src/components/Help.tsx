@@ -131,6 +131,51 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
     return () => window.removeEventListener(OPEN_GLOSSARY_EVENT, onOpen);
   }, []);
 
+  // Modal focus management: trap Tab, own Escape, and hand focus back where
+  // it came from on close. Without this, Escape only worked while focus
+  // happened to be inside the modal (the close button's autoFocus put it
+  // there, but one click anywhere else lost it), and Tab walked straight out
+  // into the page behind — so the "modal" was only visually modal.
+  const modalRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (panel === null) {
+      // Closing: restore focus to whatever opened us, so keyboard users are
+      // not dumped back at the top of the document.
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+      return;
+    }
+    returnFocusRef.current = document.activeElement as HTMLElement | null;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setPanel(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !modalRef.current?.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [panel]);
+
   const glossary = m().terms.glossary.filter(
     (entry) =>
       !search.trim() ||
@@ -187,13 +232,12 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
         >
           <div
             className="modal help-modal"
+            ref={modalRef}
             role="dialog"
+            aria-modal="true"
             aria-label={
               panel === "shortcuts" ? t("help.modal.shortcutsTitle") : t("help.modal.glossaryTitle")
             }
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setPanel(null);
-            }}
           >
             <div className="help-modal-head">
               <h2>

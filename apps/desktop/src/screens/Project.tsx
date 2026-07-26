@@ -232,6 +232,14 @@ export function Project() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
+      // Settings is an OVERLAY: it does not unmount the project, so this
+      // handler stays live underneath it. Without the check, Space in
+      // Settings started playback of a video the user cannot even see, and
+      // the arrow keys moved a selection on a hidden board. Same for the
+      // command palette and any modal — whatever is on top owns the
+      // keyboard. Checked against the DOM rather than store state so a
+      // layer that manages its own visibility is covered too.
+      if (document.querySelector(".settings-layer, .modal-backdrop, .cmdk")) return;
       const formOwned =
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
       if (event.code === "Space") {

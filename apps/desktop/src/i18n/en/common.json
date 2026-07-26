@@ -19,5 +19,9 @@
   "duplicate": "Duplicate",
   "open": "Open",
   "sizeGb": "{value} GB",
-  "sizeMb": "{value} MB"
+  "sizeMb": "{value} MB",
+  "keys": {
+    "escape": "esc",
+    "rename": "F2"
+  }
 }

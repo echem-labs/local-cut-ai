@@ -174,6 +174,14 @@ export function TimelineStrip() {
     // click) — prev/next while paused must not force the draft to start.
     if (playing) play(order[next], true);
     else seek(order[next], 0);
+    // seek() sets the scene and the in-scene offset but NOT `elapsed`, which
+    // is what the time readout and the playhead marker both render. Without
+    // this the transport jumped to another scene while the clock and the
+    // playhead stayed where they were, disagreeing with the picture.
+    tick(
+      durations.slice(0, next).reduce((sum, value) => sum + value, 0),
+      totalDuration,
+    );
   };
 
   return (

@@ -31,6 +31,32 @@ nsis:
   oneClick: true
   perMachine: false
   deleteAppDataOnUninstall: false
+mac:
+  # NO arch list here on purpose. extraResources copies ONE PyInstaller
+  # output, and PyInstaller does not cross-compile — so listing both arches
+  # would build two dmgs from a single freeze and stamp (say) the arm64
+  # engine into the Intel one. That dmg installs, launches, and never
+  # connects. The arch comes from the CLI instead (`--arm64` / `--x64`, see
+  # the package:mac* scripts), so each build states which freeze it is
+  # packaging and check-engine.mjs verifies the Mach-O cputype matches.
+  icon: build/icon.icns
+  category: public.app-category.video
+  target:
+    - dmg
+  # Hardened runtime + entitlements, or Gatekeeper refuses to exec the
+  # bundled PyInstaller engine at all — the app would launch and then sit
+  # permanently disconnected, with the real cause buried in Console.app.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Signing identity comes from the environment (CSC_LINK / CSC_KEY_PASSWORD)
+  # so no developer certificate is baked into the repo. An unsigned local
+  # build still works for `--dir` testing.
+  notarize: false
+dmg:
+  writeUpdateInfo: false
+
 linux:
   icon: build/icon.png
   category: AudioVideo

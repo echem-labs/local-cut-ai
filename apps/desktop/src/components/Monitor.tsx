@@ -63,7 +63,17 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
     const video = videoRef.current;
     if (!video || videoBroken) return;
     if (playing && sceneId === shown?.scene_id) {
-      void video.play().catch(() => setVideoBroken(true));
+      void video.play().catch((err: unknown) => {
+        // play() rejects with AbortError whenever a pause() or a new load
+        // interrupts it — which is the NORMAL result of scrubbing, switching
+        // scenes, or a board refresh swapping the src. Treating that as a
+        // broken clip permanently fell back to the still image and stuck
+        // there, because videoBroken only resets when clipUrl changes.
+        // NotAllowedError is autoplay policy, also not a broken file.
+        const name = err instanceof DOMException ? err.name : "";
+        if (name === "AbortError" || name === "NotAllowedError") return;
+        setVideoBroken(true);
+      });
     } else {
       video.pause();
     }
@@ -76,7 +86,12 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
     const video = videoRef.current;
     if (!video || videoBroken) return;
     const apply = () => {
-      video.currentTime = Math.min(seekOffset, video.duration || seekOffset);
+      // seekOffset is in TIMELINE seconds within this scene's slot; convert
+      // it back to media time so the same scale applies in both directions.
+      const slot = durations[shownIndex] ?? video.duration ?? 0;
+      const source = video.duration || slot;
+      const media = slot > 0 && source > 0 ? (seekOffset / slot) * source : seekOffset;
+      video.currentTime = Math.max(0, Math.min(media, source || seekOffset));
     };
     if (video.readyState >= 1) apply();
     else video.addEventListener("loadedmetadata", apply, { once: true });
@@ -151,9 +166,20 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
             muted={false}
             playsInline
             onError={() => setVideoBroken(true)}
-            onTimeUpdate={(event) =>
-              tick(offsetBefore + event.currentTarget.currentTime, totalDuration)
-            }
+            onTimeUpdate={(event) => {
+              // The monitor plays the RAW per-scene clip, but the timeline is
+              // measured in assembled durations — narration stretches a scene
+              // at assembly, so the clip is usually shorter than the segment
+              // it becomes. Reporting raw media time meant the playhead never
+              // reached the end of the scene's slot, the readout never reached
+              // the total, and the tail of the timeline could not be seeked.
+              // Scale the clip's own progress across the slot it occupies.
+              const media = event.currentTarget;
+              const slot = durations[shownIndex] ?? media.duration ?? 0;
+              const source = media.duration || slot;
+              const fraction = source > 0 ? Math.min(1, media.currentTime / source) : 0;
+              tick(offsetBefore + fraction * slot, totalDuration);
+            }}
             onEnded={advance}
           />
         ) : stillUrl ? (

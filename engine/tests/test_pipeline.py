@@ -446,7 +446,7 @@ async def test_fifo_survives_equal_timestamps(tmp_path):
     )
     queue.put(first)
     queue.put(second)
-    assert queue.next_queued().id == first.id
+    assert queue.claim_next().id == first.id
     queue.close()
 
 
@@ -520,9 +520,7 @@ async def test_meta_duration_prefers_assembled_timeline(rig):
 
     board = service.scene_board(project.id)
     path = store.resolve_artifact(project.id, board["aux"]["timeline"]["artifact_hash"])
-    path.write_text(
-        json.dumps({"duration": 123.4, "video": [{"scene": "s1", "duration": 41.5}]})
-    )
+    path.write_text(json.dumps({"duration": 123.4, "video": [{"scene": "s1", "duration": 41.5}]}))
     service.patch(project.id, [])  # meta refresh path
     assert store.get(project.id).duration_s == 123.4
     # The board carries the per-scene actuals so the timeline strip can
@@ -602,13 +600,13 @@ async def test_replan_supersedes_stale_queued_jobs(tmp_path):
 
 def test_requeue_moves_a_job_to_the_back_of_the_fifo(tmp_path):
     """The scheduler re-stamps a job whose inputs aren't ready yet so the
-    producer can run first. next_queued orders by the created_at COLUMN, so
+    producer can run first. claim_next orders by the created_at COLUMN, so
     the upsert has to carry it — otherwise the same job is re-selected
     forever, and that requeue path has no await: the run loop spins and
     starves the event loop for the whole process."""
     from conftest import make_spec
     from localcut_engine.graph.model import NodeKind
-    from localcut_engine.jobs.models import Job
+    from localcut_engine.jobs.models import Job, JobStatus
 
     queue = JobQueue(tmp_path / "queue.db")
     waiting = queue.put(
@@ -617,11 +615,13 @@ def test_requeue_moves_a_job_to_the_back_of_the_fifo(tmp_path):
     producer = queue.put(
         Job(project_id="p", spec=make_spec(NodeKind.TIMELINE, output_hash="t" * 64), created_at=2.0)
     )
-    assert queue.next_queued().id == waiting.id
+    claimed = queue.claim_next()
+    assert claimed.id == waiting.id
 
     waiting.created_at = 3.0  # what the scheduler does when inputs are missing
+    waiting.status = JobStatus.QUEUED
     queue.update(waiting)
-    assert queue.next_queued().id == producer.id
+    assert queue.claim_next().id == producer.id
 
 
 async def test_healing_never_deletes_a_pinned_artifact(rig):
@@ -643,9 +643,9 @@ async def test_healing_never_deletes_a_pinned_artifact(rig):
     await wait_for(lambda: bool(export_hash()))
 
     graph = store.load_graph(project.id)
-    assert any(
-        e.port == CAPTIONS_PORT and e.dst == "export" for e in graph.edges
-    ), "fixture assumption: captions feeds export through the optional port"
+    assert any(e.port == CAPTIONS_PORT and e.dst == "export" for e in graph.edges), (
+        "fixture assumption: captions feeds export through the optional port"
+    )
 
     service.patch(project.id, [PatchOp(op="pin", node_id="export")])
     graph = store.load_graph(project.id)

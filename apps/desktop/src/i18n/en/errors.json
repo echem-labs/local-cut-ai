@@ -3,5 +3,9 @@
   "engineLost": "connection to engine lost — reconnecting…",
   "engineUnavailable": "engine unavailable",
   "pairingFailed": "pairing failed",
-  "disconnectFailed": "disconnect failed"
+  "disconnectFailed": "disconnect failed",
+  "homeRefreshFailed": "Could not load your videos. The engine answered but the list request failed — retrying.",
+  "tryAgain": "Try again",
+  "reloadApp": "Reload",
+  "copyDetails": "Copy details"
 }

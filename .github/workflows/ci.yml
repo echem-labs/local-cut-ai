@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a PR makes the previous run's result irrelevant — cancel it.
+# NOT on main: every commit there needs its own verdict. All pushes to main
+# share one ref, so blanket cancellation means two PRs merging a minute apart
+# leave the first merge with no result at all, and a commit that broke the
+# build carries no red mark.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege. This workflow only reads the tree; nothing here publishes,
+# comments, or writes back. Matters more once the repo is public, where the
+# default token grant is the difference between a compromised dependency
+# being able to push and not.
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    # Every supported OS, because the suite is otherwise only ever run on
+    # whichever one the author happens to be using — and a platform
+    # assumption in a test reads exactly like a product defect until someone
+    # checks. Two tests in this repo hardcoded POSIX behaviour (an
+    # extensionless `ffmpeg`, POSIX mode bits) and looked like broken code
+    # on Windows for exactly that reason.
+    name: engine (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # The suite runs in ~90s locally; brew/choco installing ffmpeg is the
+    # slow part. Well clear of a normal run, but far below the 6h default —
+    # a wedged render backend would otherwise burn a whole runner-day.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # No floating v8/v9 major tag is published for this action, so the
+        # exact release is pinned; bump it deliberately.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      # ONE ffmpeg source for every OS.
+      #
+      # Installing per-platform (apt / brew / choco) gave three builds with
+      # three different feature sets, and Homebrew's ffmpeg formula carries
+      # no libass, freetype, harfbuzz or fontconfig at all — so macOS had
+      # neither `drawtext` nor a working `ass` filter, and burned-in captions
+      # and on-screen titles failed there while passing everywhere else.
+      # That is a property of the runner, not of this code, and it should
+      # never have been able to differ by platform.
+      #
+      # This action serves BtbN builds on Linux/Windows and OSXExperts on
+      # macOS arm64 — all full builds. Pinned to a commit SHA rather than a
+      # tag: it is third-party, and a tag can be moved.
+      - name: Install ffmpeg (identical build on every OS)
+        uses: AnimMouse/setup-ffmpeg@0633f1f6ad34ac671f07224b3c89b00386f0c717 # v1.2.5
+
+      - run: uv sync --all-groups
+
+      - name: Verify ffmpeg has the filters the suite needs
+        # Not just "is ffmpeg present". 18 assembly tests SKIP without ffmpeg
+        # rather than failing, so a broken install reads as a green run that
+        # quietly tested no assembly at all — and a build missing libass or
+        # libfreetype fails three of them with errors that look like product
+        # bugs. Assert the capability here, where the message can name it.
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ffmpeg: $(command -v ffmpeg)"
+          ffmpeg -hide_banner -version | head -1
+          missing=()
+          for filter in drawtext ass subtitles; do
+            ffmpeg -hide_banner -filters 2>/dev/null | grep -qE "^ *[A-Z.]+ +${filter} " || missing+=("$filter")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::this ffmpeg lacks required filters: ${missing[*]} — it was built without libass/libfreetype/libharfbuzz, so burned-in captions and on-screen titles cannot render"
+            exit 1
+          fi
+          echo "drawtext, ass and subtitles all present"
+
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      # -rs prints the reason for every skip. A skip is a test that did not
+      # run, and this suite skips rather than fails when a dependency is
+      # absent — which is exactly how a runner with a crippled ffmpeg once
+      # looked green while testing no assembly at all. What is NOT running
+      # should be readable from the log without re-running anything.
+      - run: uv run pytest -q -rs
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # `build` also runs both tsc projects, so a renderer that typechecks
+      # but cannot bundle still fails here.
+      - run: npm run build

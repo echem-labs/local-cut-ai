@@ -117,7 +117,7 @@ async def test_cloud_metadata_task_produces_publish_kit(tmp_path, monkeypatch):
     from localcut_engine.backends.base import ExecutionContext
 
     class StubTextGen:
-        async def complete(self, system, prompt):
+        async def complete(self, system, prompt, max_tokens=4096):
             assert "publish" in system.lower()  # metadata prompt, not screenwriter
             return '{"title": "T", "description": "D", "hashtags": ["#a", "b"]}'
 

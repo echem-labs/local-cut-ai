@@ -1,0 +1,21 @@
+{
+  // Typecheck for the main-process tests and their electron stub.
+  //
+  // Separate from tsconfig.json because that one is a BUILD config: its
+  // explicit file list is what `tsc -p electron` emits into dist-electron, and
+  // adding tests to it would ship them in the installer. This config emits
+  // nothing and exists only so `npm run typecheck` covers the test files too.
+  //
+  // `module: ESNext` overrides the build config's NodeNext: the app itself is
+  // CommonJS, but vitest ships ESM-only, so importing it under NodeNext's CJS
+  // resolution is an error. Vitest transforms these files anyway — the module
+  // format here only governs how imports are resolved for typechecking.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

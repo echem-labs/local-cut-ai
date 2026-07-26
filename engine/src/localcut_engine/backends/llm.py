@@ -32,6 +32,30 @@ Title under 70 characters, hook first, no all-caps clickbait. Description is 2-3
 5-10 hashtags, lowercase, without the # symbol."""
 
 
+# Output-token budget for a screenplay. A scene costs roughly 120 tokens of
+# JSON (narration + visual + motion + the field names), and the graph caps a
+# project at 20 minutes — call it ~240 scenes worst case. The default 4096
+# truncated anything past a couple of minutes, at HTTP 200, and the failure
+# surfaced as "the model returned invalid JSON" after the tokens were paid
+# for. Sized from the actual target so a short video does not reserve (or
+# get billed for a provider that charges on reserved) a huge ceiling.
+_SCRIPT_TOKENS_PER_SCENE = 160
+_SCRIPT_TOKENS_MIN = 4096
+_SCRIPT_TOKENS_MAX = 32000
+# The publish kit is a title, a description and ~10 hashtags.
+METADATA_MAX_TOKENS = 1024
+# A natural-language edit compiles to a short list of ops, not prose.
+EDIT_MAX_TOKENS = 4096
+
+
+def script_max_tokens(params: dict) -> int:
+    """Output cap for one screenplay request, derived from its target
+    duration the same way the scene-count floor in script_prompt is."""
+    target_s = int(params.get("target_duration_s", 60) or 60)
+    scenes = max(2, -(-target_s // 5))  # the shortest scenes the schema allows
+    return max(_SCRIPT_TOKENS_MIN, min(_SCRIPT_TOKENS_MAX, scenes * _SCRIPT_TOKENS_PER_SCENE))
+
+
 def script_prompt(params: dict) -> str:
     """The user-turn prompt for a screenplay, shared by the local and cloud
     script backends — they also share _SYSTEM_PROMPT and _parse_screenplay,
@@ -91,11 +115,17 @@ class LLMScriptBackend(ExecutionBackend):
         if spec.params.get("task") == "metadata":
             # Publish kit (title/description/hashtags) from the script — a
             # second LLM task on the same backend, not a new node kind.
-            raw = await self.complete(str(spec.params.get("prompt", "")), system=_METADATA_PROMPT)
+            raw = await self.complete(
+                str(spec.params.get("prompt", "")),
+                system=_METADATA_PROMPT,
+                max_tokens=METADATA_MAX_TOKENS,
+            )
             return ctx.publish_text(
                 spec.output_hash, ".metadata.json", json.dumps(self._parse_metadata(raw), indent=2)
             )
-        raw = await self.complete(prompt, system=_SYSTEM_PROMPT)
+        raw = await self.complete(
+            prompt, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
+        )
         await ctx.progress(0.9)
 
         screenplay = self._parse_screenplay(raw)
@@ -103,16 +133,21 @@ class LLMScriptBackend(ExecutionBackend):
             spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
         )
 
-    async def complete(self, prompt: str, system: str) -> str:
+    async def complete(self, prompt: str, system: str, max_tokens: int = _SCRIPT_TOKENS_MAX) -> str:
         """One-shot completion with the same VRAM-yield discipline as jobs:
         interactive tasks (graph edits) share the server with script jobs and
         must release the model for image/video work afterwards."""
-        raw = await self._local_complete(prompt, system=system)
+        raw = await self._local_complete(prompt, system=system, max_tokens=max_tokens)
         if self.unload_after:
             await self._unload()
         return raw
 
-    async def _local_complete(self, prompt: str, system: str = _SYSTEM_PROMPT) -> str:
+    async def _local_complete(
+        self,
+        prompt: str,
+        system: str = _SYSTEM_PROMPT,
+        max_tokens: int = _SCRIPT_TOKENS_MAX,
+    ) -> str:
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
@@ -124,6 +159,11 @@ class LLMScriptBackend(ExecutionBackend):
                     ],
                     "response_format": {"type": "json_object"},
                     "temperature": 0.7,
+                    # Explicit, matching the cloud path. Sending no cap left
+                    # the server's own default in charge, so an over-long
+                    # screenplay came back truncated with no way to tell that
+                    # apart from a model that emits bad JSON.
+                    "max_tokens": max_tokens,
                 },
             )
             if response.status_code != 200:
@@ -131,9 +171,20 @@ class LLMScriptBackend(ExecutionBackend):
             # A 200 with an unexpected shape (empty choices, error object) must
             # fail as a classified GenerationError, not a raw KeyError/IndexError.
             try:
-                return response.json()["choices"][0]["message"]["content"]
+                choice = response.json()["choices"][0]
+                text = choice["message"]["content"]
             except (ValueError, KeyError, IndexError, TypeError) as exc:
                 raise GenerationError(f"local LLM returned an unreadable body: {exc}") from exc
+            if choice.get("finish_reason") == "length":
+                # Task-neutral wording: this path also serves the publish kit
+                # and the natural-language edit, where "the screenplay" and
+                # "target duration" name nothing the user can act on.
+                raise GenerationError(
+                    f"the local model stopped at the {max_tokens}-token output cap before "
+                    "finishing — the response is incomplete. Try a shorter target duration, "
+                    "or a model with a larger output limit."
+                )
+            return text
 
     async def _unload(self) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and
@@ -165,7 +216,14 @@ class LLMScriptBackend(ExecutionBackend):
             data = json.loads(text)
         except json.JSONDecodeError as exc:
             raise GenerationError(f"LLM returned an invalid publish kit: {exc}") from exc
-        hashtags = data.get("hashtags") or []
+        # Valid JSON is not necessarily an object: a model that answers with a
+        # list or a bare string parses fine and then AttributeErrors on .get,
+        # surfacing as a traceback instead of a classified generation error.
+        if not isinstance(data, dict):
+            raise GenerationError(f"LLM returned a {type(data).__name__}, not a publish-kit object")
+        hashtags = data.get("hashtags")
+        if not isinstance(hashtags, list):
+            hashtags = []  # a string or object here is not a tag list
         return {
             "title": str(data.get("title", ""))[:120],
             "description": str(data.get("description", "")),
