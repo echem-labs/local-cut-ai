@@ -71,8 +71,13 @@ describe("a timeline block's accessible name", () => {
   it("announces a skipped clip the way the rest of the UI reads it", () => {
     mount("skipped");
 
+    // The premise, asserted rather than assumed: `skipped` is the one status
+    // whose label is not its own id, which is what makes this observable at
+    // all. Checked as "differs from the id" instead of pinned to the current
+    // wording, so rephrasing the label is not a test failure.
+    expect(status.skipped).not.toBe("skipped");
+
     expect(blockName()).toContain(status.skipped);
-    expect(status.skipped).toBe("not needed"); // the word the pill shows
     expect(blockName()).not.toContain("skipped"); // …not the wire value
   });
 
