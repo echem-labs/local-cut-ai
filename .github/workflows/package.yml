@@ -30,14 +30,48 @@ permissions:
   contents: read
 
 jobs:
-  macos:
-    # macos-latest is arm64. An Intel dmg needs this same job on an Intel
-    # runner with `package:mac:x64` — PyInstaller freezes for the machine it
-    # runs on, so the arch of the engine and the arch of the dmg are one
-    # decision, not two.
-    name: macOS dmg (arm64)
-    runs-on: macos-latest
+  build:
+    # One installer per platform, each frozen on the platform it targets.
+    # PyInstaller does not cross-compile, so the engine and the installer
+    # around it are a single decision — which is also why macOS names an
+    # arch: macos-latest is arm64, and an Intel dmg needs this same job on an
+    # Intel runner with `package:mac:x64`.
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    strategy:
+      # One platform failing must not hide the state of the other two — the
+      # whole point of packaging in CI is to see every target at once.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS dmg (arm64)
+            script: package:mac
+            engine_bin: dist/localcut-engine/localcut-engine
+            artifact: localcut-macos-arm64
+            glob: |
+              apps/desktop/release/*.dmg
+          - os: windows-latest
+            label: Windows installer (x64)
+            script: package
+            engine_bin: dist/localcut-engine/localcut-engine.exe
+            artifact: localcut-windows-x64
+            glob: |
+              apps/desktop/release/*.exe
+          - os: ubuntu-latest
+            label: Linux AppImage + deb (x64)
+            script: package:linux
+            engine_bin: dist/localcut-engine/localcut-engine
+            artifact: localcut-linux-x64
+            glob: |
+              apps/desktop/release/*.AppImage
+              apps/desktop/release/*.deb
+    # bash everywhere, including Windows, so the steps below are one script
+    # rather than three dialects.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -60,13 +94,13 @@ jobs:
           uv run pyinstaller --noconfirm localcut-engine.spec
 
       - name: The frozen engine actually runs
-        # A dmg whose engine cannot start is the exact failure this whole
+        # An installer whose engine cannot start is the exact failure this
         # target exists to prevent, and it is invisible until someone
         # installs the app. `--version` is the cheapest proof of life.
         working-directory: engine
-        run: ./dist/localcut-engine/localcut-engine --version
+        run: ./${{ matrix.engine_bin }} --version
 
-      - name: Build the dmg
+      - name: Build the installer
         working-directory: apps/desktop
         env:
           # No signing identity on CI. Left to auto-discovery, electron-builder
@@ -76,15 +110,15 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           npm ci
-          npm run package:mac
+          npm run ${{ matrix.script }}
 
       - name: Show what was produced
         working-directory: apps/desktop
-        run: ls -lh release/*.dmg release/*.zip 2>/dev/null || ls -lh release/
+        run: ls -lh release/ | grep -vE "^total|builder-debug|\.blockmap$" || ls -lh release/
 
       - uses: actions/upload-artifact@v7
         with:
-          name: localcut-macos-arm64-dmg
-          path: apps/desktop/release/*.dmg
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.glob }}
           if-no-files-found: error
           retention-days: 14
