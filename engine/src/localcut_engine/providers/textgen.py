@@ -19,6 +19,21 @@ class ProviderError(RuntimeError):
     pass
 
 
+class TruncatedCompletion(ProviderError):
+    """The model hit its output cap mid-answer. Distinct because the caller
+    can act on it (raise the cap, ask for fewer scenes) and because the
+    generic parse error it otherwise surfaces as blames the model for
+    "invalid JSON" when the JSON was merely cut off."""
+
+
+def _truncation_error(label: str, cap: int) -> TruncatedCompletion:
+    return TruncatedCompletion(
+        f"{label} stopped at the {cap}-token output cap before finishing — "
+        "the response is incomplete. Try a shorter target duration, or a model "
+        "with a larger output limit."
+    )
+
+
 class AnthropicTextGen(TextGen):
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
@@ -47,10 +62,17 @@ class AnthropicTextGen(TextGen):
         # A 200 with an unexpected body must still fail as a provider error,
         # not a raw KeyError the caller can't classify.
         try:
-            blocks = response.json().get("content", [])
-            return "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            body = response.json()
+            blocks = body.get("content", [])
+            text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         except (ValueError, AttributeError, TypeError) as exc:
             raise ProviderError(f"anthropic returned an unreadable body: {exc}") from exc
+        # Truncation is an HTTP 200. Without this check a long screenplay
+        # comes back cut off, fails JSON parsing, and reports as the model
+        # emitting invalid JSON — after the tokens are already paid for.
+        if body.get("stop_reason") == "max_tokens":
+            raise _truncation_error("anthropic", max_tokens)
+        return text
 
     def quote(self, prompt_chars: int) -> PriceQuote:
         return PriceQuote(estimate=0.03, unit="per request", detail=self.model)
@@ -91,9 +113,16 @@ class OpenAICompatTextGen(TextGen):
         if response.status_code != 200:
             raise ProviderError(f"{self.label}: {response.text[:300]}")
         try:
-            return response.json()["choices"][0]["message"]["content"]
+            choice = response.json()["choices"][0]
+            text = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"{self.label} returned an unreadable body: {exc}") from exc
+        # "length" is OpenAI's truncation signal, and it arrives on a 200 —
+        # the parse failure downstream would otherwise blame the model for
+        # invalid JSON when the JSON was merely cut off.
+        if choice.get("finish_reason") == "length":
+            raise _truncation_error(self.label, max_tokens)
+        return text
 
     def quote(self, prompt_chars: int) -> PriceQuote:
         return PriceQuote(estimate=0.02, unit="per request", detail=self.model)

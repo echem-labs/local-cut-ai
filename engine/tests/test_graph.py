@@ -345,7 +345,9 @@ def test_unpin_dirties_node_and_its_cone():
             scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
         ),
     )
-    assert apply_patch(graph, [PatchOp(op="pin", node_id="s1.clip")]) == set()  # pin dirties nothing
+    assert (
+        apply_patch(graph, [PatchOp(op="pin", node_id="s1.clip")]) == set()
+    )  # pin dirties nothing
     dirty = apply_patch(graph, [PatchOp(op="unpin", node_id="s1.clip")])
     assert "s1.clip" in dirty
     assert graph.downstream_of("s1.clip") <= dirty  # the whole cone re-renders

@@ -74,3 +74,38 @@ console.log(`wrote ${out} — ${entries.length} sizes, ${offset} bytes`);
 const png = path.join(here, "..", "build", "icon.png");
 writeFileSync(png, render(512).asPng());
 console.log(`wrote ${png} — 512px`);
+
+// build/icon.icns — the macOS app icon (Dock, Finder, the About panel).
+// electron-builder can convert a PNG on macOS via iconutil, but not when the
+// build runs anywhere else, so the .icns is generated here and committed with
+// its siblings. ICNS is a flat container: an 8-byte magic + length header
+// followed by typed entries, and PNG payloads are accepted from OS X 10.7 on.
+const ICNS_TYPES = [
+  ["icp4", 16],
+  ["icp5", 32],
+  ["ic07", 128],
+  ["ic08", 256],
+  ["ic09", 512],
+  // Retina variants: same pixels, the "@2x" types the system picks on HiDPI.
+  ["ic11", 32], // 16pt @2x
+  ["ic12", 64], // 32pt @2x
+  ["ic13", 256], // 128pt @2x
+  ["ic14", 512], // 256pt @2x
+];
+
+const icnsEntries = ICNS_TYPES.map(([type, size]) => {
+  const data = render(size).asPng();
+  const header = Buffer.alloc(8);
+  header.write(type, 0, 4, "ascii");
+  header.writeUInt32BE(data.length + 8, 4); // length INCLUDES the header
+  return Buffer.concat([header, data]);
+});
+
+const icnsBody = Buffer.concat(icnsEntries);
+const icnsHeader = Buffer.alloc(8);
+icnsHeader.write("icns", 0, 4, "ascii");
+icnsHeader.writeUInt32BE(icnsBody.length + 8, 4);
+
+const icns = path.join(here, "..", "build", "icon.icns");
+writeFileSync(icns, Buffer.concat([icnsHeader, icnsBody]));
+console.log(`wrote ${icns} — ${icnsEntries.length} sizes, ${icnsBody.length + 8} bytes`);

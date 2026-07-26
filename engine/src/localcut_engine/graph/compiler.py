@@ -27,7 +27,22 @@ EXECUTABLE_KINDS = {
 
 # Kinds whose output differs between draft and final quality: finalize
 # re-renders these even when a draft artifact is cached.
-QUALITY_SENSITIVE_KINDS = {NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT}
+#
+# Every *generated* kind belongs here, not just the video ones. The ComfyUI
+# backend scales sampler steps by quality for keyframes, thumbnails and music
+# exactly as it does for clips, so leaving them out meant a "final" export
+# was assembled from draft-quality stills, a draft thumbnail and draft music —
+# the one thing finalize exists to prevent. SCRIPT and CAPTIONS stay out on
+# purpose: their output is text, identical at either tier, and re-running the
+# script would re-roll the screenplay the user already approved.
+QUALITY_SENSITIVE_KINDS = {
+    NodeKind.KEYFRAME,
+    NodeKind.THUMBNAIL,
+    NodeKind.CLIP,
+    NodeKind.MUSIC,
+    NodeKind.TIMELINE,
+    NodeKind.EXPORT,
+}
 
 
 class JobSpec(BaseModel):
@@ -45,6 +60,46 @@ class CompiledPlan(BaseModel):
     jobs: list[JobSpec]
     cached: list[str]  # node ids satisfied from cache
     order: list[str]
+
+
+# Kinds that are worth rendering even with nothing downstream: the user asked
+# for them directly and views them through the artifact routes. Everything
+# else exists only to feed something else.
+_TERMINAL_KINDS = {
+    NodeKind.SCRIPT,
+    NodeKind.EXPORT,
+    NodeKind.TIMELINE,
+    NodeKind.THUMBNAIL,
+    NodeKind.NARRATION,
+    NodeKind.MUSIC,
+    NodeKind.CAPTIONS,
+    NodeKind.CLIP,
+}
+
+
+def _orphaned(graph: StoryGraph) -> set[str]:
+    """Nodes that feed nothing and are not themselves a deliverable.
+
+    The case this exists for: conditioning a scene on an uploaded image
+    rewires the clip's keyframe port to the asset, which leaves the generated
+    keyframe node in the graph with no outgoing edge. It is an input to
+    nothing, but it was still compiled and rendered — a full image generation
+    per conditioned scene, every time, for a picture nobody will ever see.
+
+    Deliberately narrow: only non-terminal kinds with no outgoing edge at
+    all. A clip is never orphaned (it is the thing being made), and a node
+    whose only consumer is itself orphaned still renders — one hop, not a
+    transitive sweep, because a partially-wired graph mid-edit must not have
+    its whole subtree silently stop rendering.
+    """
+    has_consumer = {e.src for e in graph.edges}
+    return {
+        node_id
+        for node_id, node in graph.nodes.items()
+        if node.kind in EXECUTABLE_KINDS
+        and node.kind not in _TERMINAL_KINDS
+        and node_id not in has_consumer
+    }
 
 
 def compile_graph(
@@ -71,11 +126,14 @@ def compile_graph(
     order = graph.topological_order()
     jobs: list[JobSpec] = []
     cached: list[str] = []
+    orphans = _orphaned(graph)
 
     for node_id in order:
         node = graph.nodes[node_id]
         if node.kind not in EXECUTABLE_KINDS:
             continue
+        if node_id in orphans:
+            continue  # nothing consumes it — see _orphaned
         if node.pinned and node_id in frozen:
             cached.append(node_id)
             continue

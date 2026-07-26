@@ -58,6 +58,22 @@ _FINAL_RES_SCALE = 1.5  # clips only: drafts render small for pacing review
 # Generous because cold model loads emit no progress events.
 INACTIVITY_TIMEOUT_S = 600
 
+# How long to keep polling /history after the workflow REPORTED completion.
+#
+# ComfyUI sends the "executing: node=None" message and commits the history
+# entry a moment later, so there is always a gap. The old 1.0s budget was
+# smaller than two round trips plus the poll sleep on a LAN or a busy server,
+# which threw away an expensive render that had already succeeded as
+# "produced no history". 30s costs nothing in the normal case (the loop exits
+# on the first successful poll) and is far below the scheduler's own patience.
+HISTORY_GRACE_S = 30.0
+# Poll cadence while waiting for the history entry to appear.
+_HISTORY_POLL_S = 0.2
+# Above this deadline we are in socket-drop recovery, where a slower poll and
+# the "is it still queued?" check are both appropriate.
+_RECOVERY_THRESHOLD_S = 60.0
+_RECOVERY_POLL_S = 2.0
+
 
 class ComfyUIBackend(ExecutionBackend):
     name = "comfyui"
@@ -69,6 +85,7 @@ class ComfyUIBackend(ExecutionBackend):
         kinds: str = "keyframe,thumbnail,clip",
         model_templates: dict[str, str] | None = None,
         capability: Callable[[], set[NodeKind]] | None = None,
+        installed_models: Callable[[], dict[NodeKind, list[str]]] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.templates_dir = templates_dir
@@ -80,6 +97,10 @@ class ComfyUIBackend(ExecutionBackend):
         # weights able to serve it are on disk, so it flips as downloads
         # land or models are deleted. None = static claims.
         self.capability = capability
+        # Kind → installed model ids that can serve it. Same source the
+        # capability claim reads, so the template we substitute into is the
+        # one belonging to a model that is actually on disk.
+        self.installed_models = installed_models
         self.client_id = uuid.uuid4().hex
 
     def supports(self, kind: NodeKind) -> bool:
@@ -87,10 +108,34 @@ class ComfyUIBackend(ExecutionBackend):
             return False
         return self.capability is None or kind in self.capability()
 
+    def _template_for_installed(self, kind: NodeKind) -> str | None:
+        """The workflow template of an INSTALLED model that can serve `kind`.
+
+        Without this the capability claim and the template were chosen
+        independently: `supports()` says CLIP because some video model is on
+        disk, while `_template_path` falls back to `clip_default.json` — the
+        LTX graph. Install Wan and nothing else, and every clip failed with an
+        opaque ComfyUI validation error about a checkpoint that was never
+        downloaded. Whatever made the kind claimable has to be what renders it.
+        """
+        if self.installed_models is None:
+            return None
+        for model_id in self.installed_models().get(kind, []):
+            template = self.model_templates.get(model_id)
+            if template:
+                return template
+        return None
+
     def _template_path(self, spec: JobSpec) -> Path:
         by_model = self.model_templates.get((spec.model or "").removeprefix("local:"))
+        # Order: an explicit per-node template, then the node's pinned model,
+        # then whatever installed model made this kind claimable, and only
+        # then the packaged default.
         template_name = str(
-            spec.params.get("comfy_template") or by_model or f"{spec.kind.value}_default.json"
+            spec.params.get("comfy_template")
+            or by_model
+            or self._template_for_installed(spec.kind)
+            or f"{spec.kind.value}_default.json"
         )
         # Template names are bare filenames from the model manifest; params
         # are user-editable, so a path-shaped value must never leave the dir.
@@ -138,11 +183,26 @@ class ComfyUIBackend(ExecutionBackend):
         # LTX frame counts must be 8n+1 (24 fps); Wan's must be 4n+1 (16 fps).
         frames = max(9, round(duration_s * 24 / 8) * 8 + 1)
         frames16 = max(5, round(duration_s * 16 / 4) * 4 + 1)
+        # An I2V template has nowhere to get its source image from without a
+        # keyframe. Substituting "" writes `"image": ""` into the workflow,
+        # which ComfyUI rejects with an error that reads as a server fault
+        # rather than what it is — and that state IS reachable, because the
+        # `disconnect` patch op will happily unwire a clip's keyframe port.
+        # Fail here, where the message can say which node and why.
+        if "%%KEYFRAME%%" in text and not keyframe_name:
+            raise GenerationError(
+                f"{spec.node_id}: this workflow generates video from a source image, but the "
+                "scene has no keyframe. Re-connect the scene's still (or an uploaded image) "
+                "to the clip's keyframe input."
+            )
         values = {
             "%%SEED%%": str(spec.seed),
             "%%WIDTH%%": str(width),
             "%%HEIGHT%%": str(height),
-            "%%KEYFRAME%%": keyframe_name or "",
+            # JSON-escaped like %%PROMPT%%: the name comes back from
+            # ComfyUI's upload endpoint, and a `"` or `\` in it would
+            # otherwise break the surrounding JSON document.
+            "%%KEYFRAME%%": json.dumps(keyframe_name or "")[1:-1],
             "%%FRAMES%%": str(frames),
             "%%FRAMES16%%": str(frames16),
             "%%SECONDS%%": str(duration_s),
@@ -192,7 +252,7 @@ class ComfyUIBackend(ExecutionBackend):
         # A dropped socket is not a failed render: keep polling history for
         # as long as the inactivity watchdog would have allowed.
         return await self._collect_output(
-            prompt_id, spec, ctx, deadline_s=1.0 if finished else INACTIVITY_TIMEOUT_S
+            prompt_id, spec, ctx, deadline_s=HISTORY_GRACE_S if finished else INACTIVITY_TIMEOUT_S
         )
 
     async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> bool:
@@ -281,11 +341,12 @@ class ComfyUIBackend(ExecutionBackend):
                     break
                 if asyncio.get_running_loop().time() >= deadline:
                     raise GenerationError("ComfyUI produced no history for the workflow")
-                if deadline_s > 10.0 and await self._queue_state(prompt_id) is None:
+                recovering = deadline_s > _RECOVERY_THRESHOLD_S
+                if recovering and await self._queue_state(prompt_id) is None:
                     # Socket-drop recovery: the prompt is neither queued nor
                     # running and produced no history — it is genuinely gone.
                     raise GenerationError("ComfyUI dropped the workflow without producing output")
-                await asyncio.sleep(0.2 if deadline_s <= 10.0 else 2.0)
+                await asyncio.sleep(_RECOVERY_POLL_S if recovering else _HISTORY_POLL_S)
 
             # Previews/temps are not artifacts; video kinds prefer video
             # containers, music prefers audio.

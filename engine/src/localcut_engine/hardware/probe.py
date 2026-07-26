@@ -5,6 +5,7 @@ primary = largest-VRAM CUDA device, user-overridable.
 
 from __future__ import annotations
 
+import json
 import platform
 import shutil
 import subprocess
@@ -22,10 +23,13 @@ class Tier(StrEnum):
 
 
 class GPU(BaseModel):
-    vendor: str
+    vendor: str  # nvidia | apple | amd | intel
     name: str
     vram_gb: float
-    backend: str  # cuda | mps | rocm | none
+    # The compute backend this card runs on. Every value here is produced by
+    # one of the _detect_* probes below — an unproduced value would tier real
+    # hardware as "no GPU" and recommend cloud for every task.
+    backend: str  # cuda | mps | rocm | xpu
 
 
 class HardwareProfile(BaseModel):
@@ -77,6 +81,84 @@ def _detect_apple() -> list[GPU]:
     ]
 
 
+def _detect_amd() -> list[GPU]:
+    """AMD via rocm-smi. Reported as backend "rocm", which the GPU model has
+    always listed but nothing produced — so every Radeon read as "no GPU",
+    tiered the machine to S, and recommended cloud for every task on hardware
+    that runs the top tier."""
+    if shutil.which("rocm-smi") is None:
+        return []
+    try:
+        output = subprocess.run(
+            ["rocm-smi", "--showproductname", "--showmeminfo", "vram", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
+    try:
+        payload = json.loads(output)
+    except ValueError:
+        return []
+    gpus = []
+    for card, info in sorted(payload.items()):
+        if not isinstance(info, dict):
+            continue
+        name = str(
+            info.get("Card Series") or info.get("Card Model") or info.get("Card SKU") or card
+        ).strip()
+        total = next(
+            (v for k, v in info.items() if "vram" in k.lower() and "total" in k.lower()),
+            None,
+        )
+        try:
+            vram_gb = round(int(str(total).strip()) / 2**30, 1)
+        except (TypeError, ValueError):
+            continue
+        if vram_gb > 0:
+            gpus.append(GPU(vendor="amd", name=name, vram_gb=vram_gb, backend="rocm"))
+    return gpus
+
+
+def _detect_intel() -> list[GPU]:
+    """Intel Arc / Xe via xpu-smi. Same rationale as _detect_amd; the backend
+    value matches PyTorch's device string for these parts."""
+    if shutil.which("xpu-smi") is None:
+        return []
+    try:
+        output = subprocess.run(
+            ["xpu-smi", "discovery", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return []
+    try:
+        payload = json.loads(output)
+    except ValueError:
+        return []
+    devices = payload.get("device_list", payload) if isinstance(payload, dict) else payload
+    if not isinstance(devices, list):
+        return []
+    gpus = []
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        name = str(device.get("device_name", "Intel GPU")).strip()
+        raw = device.get("memory_physical_size_byte") or device.get("memory_physical_size")
+        try:
+            vram_gb = round(float(raw) / 2**30, 1)
+        except (TypeError, ValueError):
+            continue
+        if vram_gb > 0:
+            gpus.append(GPU(vendor="intel", name=name, vram_gb=vram_gb, backend="xpu"))
+    return gpus
+
+
 def _tier_for(vram_gb: float) -> Tier:
     if vram_gb >= 24:
         return Tier.C
@@ -88,7 +170,13 @@ def _tier_for(vram_gb: float) -> Tier:
 
 
 def probe_hardware(disk_path: str = "/") -> HardwareProfile:
-    gpus = _detect_nvidia() or _detect_apple()
+    # Vendor precedence, first hit wins: NVIDIA (the best-supported path),
+    # then Apple, then AMD, then Intel. Deliberately NOT a union — each probe
+    # shells out to a vendor tool, and a machine with a discrete NVIDIA card
+    # alongside an integrated Intel one would otherwise pay for both on every
+    # call while the integrated part could never be the primary anyway (the
+    # primary is the largest-VRAM device below).
+    gpus = _detect_nvidia() or _detect_apple() or _detect_amd() or _detect_intel()
     primary = max(gpus, key=lambda g: g.vram_gb) if gpus else None
     return HardwareProfile(
         os=platform.system().lower(),

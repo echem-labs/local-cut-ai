@@ -339,7 +339,7 @@ export function Home() {
             </button>
             <button role="menuitem" onClick={() => startRename(project)}>
               {t("common.rename")}
-              <small>F2</small>
+              <small>{shortcutLabel(t("common.keys.rename"))}</small>
             </button>
             <button
               role="menuitem"

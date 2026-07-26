@@ -31,6 +31,21 @@ export interface ProviderKeyPresence {
   encrypted: boolean;
 }
 
+/** A pairing code decoded but NOT acted on, so the user can see the host
+ * before anything is sent to it. A code is an opaque blob; without this the
+ * only way to learn what it names is to accept it. */
+export interface PairingPreview {
+  ok: boolean;
+  error: string | null;
+  host?: string;
+  url?: string;
+  /** Colon-grouped SHA-256 of the engine's certificate, to read back against
+   * what the GPU box printed. Null for a loopback/SSH-forwarded pairing. */
+  fingerprint?: string | null;
+  /** Which provider keys are stored and would be sent if armed. */
+  keys?: ProviderKeyPresence;
+}
+
 declare global {
   interface Window {
     localcut: {
@@ -40,8 +55,13 @@ declare global {
         remote?: boolean;
         remotePaired?: boolean;
       }>;
-      pairEngine: (code: string) => Promise<{ ok: boolean; error: string | null }>;
+      inspectPairing: (code: string) => Promise<PairingPreview>;
+      pairEngine: (
+        code: string,
+        options?: { armKeys?: boolean },
+      ) => Promise<{ ok: boolean; error: string | null; keysArmed?: boolean }>;
       unpairEngine: () => Promise<{ ok: boolean; error: string | null }>;
+      armProviderKeys: () => Promise<{ ok: boolean; error: string | null }>;
       setProviderKeys: (
         keys: Partial<Record<ProviderKeyId, string>>,
       ) => Promise<{ presence: ProviderKeyPresence; error: string | null }>;
@@ -163,7 +183,14 @@ interface AppState {
   startDownload: (modelId: string) => Promise<void>;
   cancelDownload: (modelId: string) => Promise<void>;
   deleteModel: (modelId: string) => Promise<void>;
-  pairRemote: (code: string) => Promise<string | null>;
+  /** Decode a pairing code for review — nothing is sent, nothing is stored. */
+  inspectPairing: (code: string) => Promise<PairingPreview>;
+  /** Pair with a remote engine. `armKeys` is a separate, explicit decision:
+   * connecting to a GPU box and handing it every provider key are not the
+   * same act, and the pairing code alone cannot be reviewed by eye. */
+  pairRemote: (code: string, armKeys?: boolean) => Promise<string | null>;
+  /** Send the stored provider keys to the currently paired engine. */
+  armRemoteKeys: () => Promise<string | null>;
   unpairRemote: () => Promise<string | null>;
   finishFirstRun: () => void;
   resetFirstRun: () => void;
@@ -272,6 +299,19 @@ let establishing: Promise<void> | null = null;
 // switch mid-flight) sees the mismatch and bails instead of pointing the
 // store back at the old engine.
 let establishGen = 0;
+// Bumped on every openProject (and on closeProject); a superseded load sees
+// the mismatch and drops its result instead of navigating backwards.
+let openGen = 0;
+// Bumped on every refreshBoard, so a slow earlier response cannot land on
+// top of a newer one and re-show work that has since finished.
+let boardGen = 0;
+// Called with the id of any project created while a refreshHome is in
+// flight — that request's snapshot predates it, so the tab prune must not
+// treat it as deleted.
+const newProjectListeners = new Set<(id: string) => void>();
+const announceNewProject = (id: string) => {
+  for (const listener of newProjectListeners) listener(id);
+};
 const pendingPatches = new Map<string, PendingPatch>();
 // Download bookkeeping — the WS is fresher than any /models snapshot.
 // wsProgress holds the latest bytes per model; terminalDownloads marks
@@ -533,12 +573,27 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "project.error") {
+          // The engine reports a failed expansion (a screenplay that would
+          // not parse, a post-completion hook that threw). Nothing handled
+          // this, so the project simply stopped progressing with no message
+          // — the single worst way for work to fail.
+          set({
+            actionError: { scope: "create", message: event.error },
+          });
+          scheduleRefresh();
         } else if (
           event.type.startsWith("job.") ||
           event.type === "project.expanded" ||
           event.type === "project.edited"
         ) {
           scheduleRefresh();
+        } else if (event.type === "project.deleted") {
+          // A delete from somewhere else — a second window, curl, another
+          // client against a shared remote engine. The local delete path
+          // refreshes on its own; this covers everything that isn't it, and
+          // the tab prune in refreshHome closes the tab if it was open.
+          void get().refreshHome();
         }
       },
       () => {
@@ -554,13 +609,31 @@ export const useApp = create<AppState>((set, get) => {
     }
     unsubscribe = sub;
 
-    await get().refreshHome();
+    // Guarded, like everything below it. An unguarded rejection here aborted
+    // the whole of the rest of setup — no board, no system info, no version
+    // handshake — and left an EMPTY Home with no error and no retry, because
+    // `client` was already set so the reconnect loop saw a live connection.
+    try {
+      await get().refreshHome();
+    } catch (err) {
+      console.warn("home refresh failed during setup:", err);
+      if (gen === establishGen) {
+        set({ engineError: t("errors.homeRefreshFailed") });
+      }
+      scheduleReconnect(); // the engine answered once; it may answer again
+    }
     // Models too: the queue tray must be able to say "downloads paused"
     // right on Home after a relaunch, not only once Settings mounts.
     void get()
       .refreshModels()
       .catch((err) => console.warn("models refresh failed:", err));
-    if (get().currentProject) await get().refreshBoard();
+    if (get().currentProject) {
+      try {
+        await get().refreshBoard();
+      } catch (err) {
+        console.warn("board refresh failed during setup:", err);
+      }
+    }
     try {
       // Guard the set: `client` here is this establish's own closure, so a
       // superseded establish must not write the old engine's hardware over
@@ -669,31 +742,51 @@ export const useApp = create<AppState>((set, get) => {
     refreshHome: async () => {
       const { client } = get();
       if (!client) return;
-      // Jobs ride along for the tile status dots; a jobs failure must not
-      // take the project list down with it.
-      const [projects, allJobs] = await Promise.all([
-        client.listProjects(),
-        client.listJobs().catch(() => get().allJobs),
-      ]);
-      // Guard against a switchEngine/disconnect during the fetch: a late
-      // response from the old engine must not overwrite the new one's list
-      // (refreshBoard guards the same way via the project id).
-      if (get().client !== client) return;
-      set({ projects, allJobs });
-      // Prune rail tabs whose projects no longer exist — a delete from
-      // another surface, or an engine switch (this list belongs to the new
-      // engine, so foreign ids fall away here).
-      const known = new Set(projects.map((project) => project.id));
-      const pruned = get().openProjects.filter((id) => known.has(id));
-      if (pruned.length !== get().openProjects.length) {
-        set({ openProjects: pruned });
-        saveOpenTabs(pruned);
+      // Ids that appear while this request is in flight — see the prune below.
+      const createdSince = new Set<string>();
+      const track = (id: string) => createdSince.add(id);
+      newProjectListeners.add(track);
+      try {
+        // Jobs ride along for the tile status dots; a jobs failure must not
+        // take the project list down with it.
+        const [projects, allJobs] = await Promise.all([
+          client.listProjects(),
+          client.listJobs().catch(() => get().allJobs),
+        ]);
+        // Guard against a switchEngine/disconnect during the fetch: a late
+        // response from the old engine must not overwrite the new one's list
+        // (refreshBoard guards the same way via the project id).
+        if (get().client !== client) return;
+        set({ projects, allJobs });
+        // Prune rail tabs whose projects no longer exist — a delete from
+        // another surface, or an engine switch (this list belongs to the new
+        // engine, so foreign ids fall away here).
+        //
+        // A project created DURING this round trip is not in `projects` but is
+        // not deleted either, so pruning against the snapshot alone would close
+        // the tab of the project the user just made. Anything created since the
+        // request went out is off-limits to the prune.
+        const known = new Set(projects.map((project) => project.id));
+        const pruned = get().openProjects.filter(
+          (id) => known.has(id) || createdSince.has(id),
+        );
+        if (pruned.length !== get().openProjects.length) {
+          set({ openProjects: pruned });
+          saveOpenTabs(pruned);
+        }
+      } finally {
+        newProjectListeners.delete(track);
       }
     },
 
     openProject: async (id: string) => {
       const { client } = get();
       if (!client) return;
+      // Claim this navigation. `establish` guards a superseded call with a
+      // generation counter and this path had nothing: a slow response for a
+      // project the user has since navigated away from would yank them back
+      // to it, mid-typing, with a board they did not ask for.
+      const generation = ++openGen;
       // The GET must observe the flushed edits, not race them.
       await flushPatches();
       // Fetch jobs alongside the board: without this the jobs slice keeps
@@ -706,6 +799,9 @@ export const useApp = create<AppState>((set, get) => {
         // a board refresh (scheduleRefresh) that repopulates the list.
         client.listJobs(id).catch(() => [] as Job[]),
       ]);
+      // Superseded while we awaited (another openProject, or a closeProject):
+      // drop this result rather than navigating backwards into it.
+      if (generation !== openGen || get().client !== client) return;
       // Stop playback before the swap — the transport holds scene ids and a
       // playhead from the previous project, meaningless against this board.
       usePlayback.getState().stop();
@@ -724,6 +820,7 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     closeProject: () => {
+      openGen++; // an openProject still in flight must not land after this
       void flushPatches(); // nothing reads the project after this — fire and forget
       usePlayback.getState().stop();
       set({ currentProject: null, board: null, jobs: [], selectedNode: null });
@@ -760,6 +857,9 @@ export const useApp = create<AppState>((set, get) => {
           aspect,
           mode,
         });
+        // Tell any refreshHome already in flight that this id is new, not
+        // deleted — its project list snapshot predates the create.
+        announceNewProject(project.id);
         await get().openProject(project.id);
         await get().refreshHome();
       } catch (err) {
@@ -774,6 +874,9 @@ export const useApp = create<AppState>((set, get) => {
       set({ actionError: null });
       try {
         const project = await client.createTool({ tool, ...input });
+        // Tell any refreshHome already in flight that this id is new, not
+        // deleted — its project list snapshot predates the create.
+        announceNewProject(project.id);
         await get().openProject(project.id);
         await get().refreshHome();
       } catch (err) {
@@ -788,6 +891,9 @@ export const useApp = create<AppState>((set, get) => {
       set({ actionError: null });
       try {
         const project = await client.promote(currentProject.id);
+        // Tell any refreshHome already in flight that this id is new, not
+        // deleted — its project list snapshot predates the create.
+        announceNewProject(project.id);
         await get().openProject(project.id);
         await get().refreshHome();
       } catch (err) {
@@ -844,13 +950,21 @@ export const useApp = create<AppState>((set, get) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
       const projectId = currentProject.id;
+      // Sequence number, not just a project-id check. Two refreshes for the
+      // SAME project can be in flight at once (scheduleRefresh fires on the
+      // leading edge and again on the trailing one), and responses arrive in
+      // whatever order the engine finishes them — so a slow earlier response
+      // could overwrite a newer one and leave the board showing "rendering"
+      // for work that had already finished.
+      const generation = ++boardGen;
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(projectId),
         client.listJobs(projectId),
       ]);
       // A late response for a previously open project must not clobber the
-      // one the user has since opened.
-      if (get().currentProject?.id !== projectId) return;
+      // one the user has since opened, and a superseded one must not clobber
+      // a fresher response that already landed.
+      if (generation !== boardGen || get().currentProject?.id !== projectId) return;
       set({ currentProject: project, board: withPending(board, projectId), jobs });
     },
 
@@ -1030,11 +1144,18 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshModels();
     },
 
-    pairRemote: async (code) => {
-      const { ok, error } = await window.localcut.pairEngine(code);
+    inspectPairing: (code) => window.localcut.inspectPairing(code),
+
+    pairRemote: async (code, armKeys = false) => {
+      const { ok, error } = await window.localcut.pairEngine(code, { armKeys });
       if (!ok) return error ?? t("errors.pairingFailed");
       await switchEngine(); // the engine changed under us — reset and reconnect
       return null;
+    },
+
+    armRemoteKeys: async () => {
+      const { ok, error } = await window.localcut.armProviderKeys();
+      return ok ? null : (error ?? t("errors.pairingFailed"));
     },
 
     unpairRemote: async () => {

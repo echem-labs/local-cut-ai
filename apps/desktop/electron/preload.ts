@@ -9,8 +9,13 @@ import { contextBridge, ipcRenderer, webFrame } from "electron";
  */
 contextBridge.exposeInMainWorld("localcut", {
   getEngineConnection: () => ipcRenderer.invoke("engine:connection"),
-  pairEngine: (code: string) => ipcRenderer.invoke("engine:pair", code),
+  // Decode a pairing code without acting on it, so the user can see which
+  // host they are about to trust before anything is sent to it.
+  inspectPairing: (code: string) => ipcRenderer.invoke("engine:inspect-pairing", code),
+  pairEngine: (code: string, options?: { armKeys?: boolean }) =>
+    ipcRenderer.invoke("engine:pair", code, options ?? {}),
   unpairEngine: () => ipcRenderer.invoke("engine:unpair"),
+  armProviderKeys: () => ipcRenderer.invoke("providers:arm-keys"),
   setProviderKeys: (keys: Record<string, string>) =>
     ipcRenderer.invoke("providers:set-keys", keys),
   getProviderKeyPresence: () => ipcRenderer.invoke("providers:key-presence"),

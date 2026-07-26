@@ -86,3 +86,76 @@ def test_narration_and_music_ride_connected_lanes():
 def test_empty_edl_raises():
     with pytest.raises(ValueError):
         edl_to_fcpxml({"node": "mock"}, RESOLVE, "x")
+
+
+def _frames_of(rational: str) -> int:
+    return 0 if rational == "0s" else int(rational.removesuffix("s").partition("/")[0])
+
+
+def _sweep_documents(trials: int = 400):
+    """Randomised EDLs across the shapes that made rounding disagree: short
+    sources, trims, over- and under-length segments, every transition."""
+    import random
+
+    random.seed(20260725)
+    for _ in range(trials):
+        segments, start = [], 0.0
+        for index in range(random.randint(1, 6)):
+            source = round(random.uniform(1.0, 8.0), 3)
+            duration = round(random.uniform(0.4, source + 2.0), 3)
+            segments.append(
+                seg(
+                    f"s{index + 1}",
+                    duration,
+                    round(start, 3),
+                    transition=random.choice(["cut", "cut", "crossfade", "dip"]),
+                    src_durations=(source,),
+                    trim_in=round(random.uniform(0.0, max(0.0, source - 0.2)), 3),
+                )
+            )
+            start += duration
+        yield parse(edl_to_fcpxml(edl(segments), RESOLVE, "sweep"))
+
+
+def test_no_clip_ever_requests_a_frame_past_its_own_asset():
+    """start and duration were rounded to frames independently of the
+    asset's duration, so a trimmed clip could ask for one frame past the end
+    of the media it references — e.g. <asset duration="89/24s"> with
+    <asset-clip start="30/24s" duration="60/24s">. Final Cut rejects the
+    whole document."""
+    for root in _sweep_documents():
+        assets = {
+            asset.get("id"): _frames_of(asset.get("duration"))
+            for asset in root.findall(".//resources/asset")
+        }
+        # .iter(): connected narration/music lanes are asset-clips too.
+        for clip in root.find(".//sequence/spine").iter("asset-clip"):
+            start = _frames_of(clip.get("start"))
+            duration = _frames_of(clip.get("duration"))
+            assert duration >= 1, "a zero-length clip is not a clip"
+            assert start + duration <= assets[clip.get("ref")], (
+                f"clip runs {start + duration - assets[clip.get('ref')]} frame(s) past its asset"
+            )
+
+
+def test_the_sequence_is_exactly_as_long_as_its_spine():
+    """The sequence duration was rounded from the whole timeline while each
+    element was rounded individually, so the declared length exceeded the
+    content it held — leaving phantom black at the tail and pushing the
+    connected narration and music past the last clip."""
+    for root in _sweep_documents():
+        spine = root.find(".//sequence/spine")
+        held = sum(
+            _frames_of(child.get("duration"))
+            for child in spine
+            if child.tag in ("asset-clip", "gap")
+        )
+        assert _frames_of(root.find(".//sequence").get("duration")) == held
+
+
+def test_no_element_is_emitted_with_a_zero_duration():
+    """A sub-frame span rounds to 0 frames and emits duration="0s", which FCP
+    treats as invalid rather than as "nothing to see here"."""
+    for root in _sweep_documents():
+        for child in root.find(".//sequence/spine"):
+            assert _frames_of(child.get("duration")) >= 1, f"{child.tag} has zero duration"

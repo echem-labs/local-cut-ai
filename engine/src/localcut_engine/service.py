@@ -114,6 +114,13 @@ class ProjectService:
             copy = self.store.duplicate(project_id)
             if copy is None:
                 raise KeyError(project_id)
+            # generated/ travels with the copy, so a fully-rendered source
+            # duplicates into a fully-cached project and this enqueues
+            # nothing. A source that was mid-render (or never finished)
+            # copies its gaps too — and without this the duplicate has no
+            # jobs at all, so every unrendered node sits reading "queued"
+            # forever with nothing running.
+            self._enqueue_dirty(copy.id, self.store.load_graph(copy.id))
         return copy
 
     def promote_tool(self, project_id: str) -> Project:
@@ -132,21 +139,29 @@ class ProjectService:
             # after a regenerate (seed bump) the older screenplay must not be
             # promoted as if it were the new seed's output.
             current_hash = graph.output_hash("script")
-            job = next(
-                (
-                    j
-                    for j in self.queue.list(project_id, 1000)
-                    if j.spec.node_id == "script"
-                    and j.spec.output_hash == current_hash
-                    and j.status is JobStatus.DONE
-                    and j.artifact
-                    and Path(j.artifact).exists()
-                ),
-                None,
-            )
-            if job is None:
+            artifact: Path | None = None
+            for candidate in self.queue.list(project_id, 1000):
+                if (
+                    candidate.spec.node_id == "script"
+                    and candidate.spec.output_hash == current_hash
+                    and candidate.status is JobStatus.DONE
+                ):
+                    # Through the store, not Path(job.artifact): the record is
+                    # generated/-relative, and older records may be absolute
+                    # paths from a machine this project no longer lives on.
+                    artifact = self.store.resolve_job_artifact(project_id, candidate.artifact)
+                    if artifact is not None:
+                        break
+            if artifact is None:
+                # Fall back to the content-addressed artifact itself: job
+                # history can be trimmed and a record can be stale, but the
+                # file is named by the hash we just computed. Without this,
+                # promotion after a data-dir move reports "the script has not
+                # finished generating yet" forever.
+                artifact = self.store.resolve_artifact(project_id, current_hash)
+            if artifact is None:
                 raise ValueError("the script has not finished generating yet")
-            screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
+            screenplay = Screenplay.model_validate_json(artifact.read_text(encoding="utf-8"))
 
             params = script.params
             new_graph = prompt_template_graph(
@@ -168,7 +183,7 @@ class ProjectService:
             out_hash = new_graph.output_hash("script", {})
             dest = self.store.generated_dir(project.id)
             dest.mkdir(parents=True, exist_ok=True)
-            shutil.copy(job.artifact, dest / f"{out_hash}.screenplay.json")
+            shutil.copy(artifact, dest / f"{out_hash}.screenplay.json")
             self._enqueue_dirty(project.id, new_graph)
         return project
 
@@ -329,11 +344,43 @@ class ProjectService:
             return enqueued
 
     def delete(self, project_id: str) -> bool:
-        """Remove the project and stop its in-flight work — otherwise the
-        scheduler keeps rendering into (and recreating) the deleted dir."""
+        """Remove the project and stop its in-flight work.
+
+        Cancelling the queue rows is not enough on its own: the backend for a
+        RENDERING job keeps writing into generated/ until it notices, so a
+        bare rmtree either raises "Directory not empty" (leaving meta gone but
+        multi-GB of artifacts behind) or loses a race with the render's next
+        output_path() call, which re-creates the directory after deletion.
+        Either orphan has no meta.json, so it never appears in the project
+        list and is never counted by Settings → Storage — disk the user can
+        neither see nor reclaim.
+
+        So: rename the directory out of the way FIRST (atomic, and instantly
+        invisible to the project list), then cancel, then remove the renamed
+        copy with retries — and finally the skeleton a still-writing backend
+        may have re-created under the ORIGINAL name, which is an orphan of
+        exactly the kind described above (no meta.json, so invisible, so
+        never reclaimed). sweep_pending_deletions catches anything that
+        appears after this returns, on the next start.
+        """
         with self._lock:
+            project_dir = self.store.project_dir(project_id)
+            if not project_dir.exists():
+                return False
+            doomed = self.store.reserve_for_deletion(project_id)
             self.queue.cancel_project(project_id)
-            return self.store.delete(project_id)
+        # Outside the lock: the sweep can take a moment on a large project,
+        # and nothing else needs to wait for it.
+        self.store.purge(doomed)
+        self.store.purge_recreated(project_id)
+        self.events.publish("project.deleted", project_id=project_id)
+        return True
+
+    def sweep_deleted(self) -> int:
+        """Remove any directories a previous delete could not finish (the
+        engine exited mid-sweep, or a backend held a file open). Called at
+        startup; returns how many were reclaimed."""
+        return self.store.sweep_pending_deletions()
 
     def package(self, project_id: str) -> list[str]:
         """On-demand publish kit: a thumbnail conditioned on the screenplay
@@ -346,14 +393,19 @@ class ProjectService:
             if script is None or script.kind is not NodeKind.SCRIPT:
                 raise LookupError("project has no script to package from")
             history = self.queue.list(project_id, 1000)
-            cached = self.store.cached_hashes(project_id)
+            # Trusted: a mock placeholder screenplay must not become the
+            # source for a real publish kit.
+            cached = self._trusted_cache(project_id, history)
             memo = dict(self._frozen_pins(graph, history, cached))
-            script_artifact = self.store.resolve_artifact(
-                project_id, graph.output_hash("script", memo)
+            script_hash = graph.output_hash("script", memo)
+            script_artifact = (
+                self.store.resolve_artifact(project_id, script_hash)
+                if script_hash in cached
+                else None
             )
             if script_artifact is None:
                 raise LookupError("script has not rendered yet")
-            screenplay = Screenplay.model_validate_json(script_artifact.read_text())
+            screenplay = Screenplay.model_validate_json(script_artifact.read_text(encoding="utf-8"))
 
             summary = " ".join(
                 [screenplay.title, screenplay.hook] + [s.narration for s in screenplay.scenes]
@@ -390,13 +442,20 @@ class ProjectService:
             if "timeline" not in graph.nodes:
                 raise LookupError("project has no timeline")
             history = self.queue.list(project_id, 1000)
-            cached = self.store.cached_hashes(project_id)
+            # Trusted: a mock placeholder EDL must never be handed to an NLE
+            # as if it were the real cut.
+            cached = self._trusted_cache(project_id, history)
             memo = dict(self._frozen_pins(graph, history, cached))
-            edl_path = self.store.resolve_artifact(project_id, graph.output_hash("timeline", memo))
+            timeline_hash = graph.output_hash("timeline", memo)
+            edl_path = (
+                self.store.resolve_artifact(project_id, timeline_hash)
+                if timeline_hash in cached
+                else None
+            )
             if edl_path is None:
                 raise LookupError("timeline is not rendered for the current edit")
             project = self.store.get(project_id)
-            edl = json.loads(edl_path.read_text())
+            edl = json.loads(edl_path.read_text(encoding="utf-8"))
         return edl, edl_path.parent, project.title if project else project_id
 
     def export_otio(self, project_id: str) -> dict:
@@ -443,6 +502,19 @@ class ProjectService:
                 frozen[job.spec.node_id] = job.spec.output_hash
         return frozen
 
+    def _trusted_cache(self, project_id: str, history: list[Job]) -> set[str]:
+        """The project's cached hashes with placeholder output removed.
+
+        Every consumer of the artifact cache has to go through here, not just
+        the enqueue path: an artifact produced by a backend that has since
+        been replaced (typically the mock, standing in while ffmpeg or the
+        weights were missing) is exactly as wrong when export or package
+        resolves it as when the compiler does. Filtering only on enqueue lets
+        a placeholder be assembled into a real deliverable.
+        """
+        cached = self.store.cached_hashes(project_id)
+        return cached - self._distrusted_hashes(history, cached)
+
     def _distrusted_hashes(self, history: list[Job], cached: set[str]) -> set[str]:
         """Cached hashes whose newest producer is no longer the backend that
         would render that kind today (e.g. mock placeholders after switching
@@ -470,9 +542,8 @@ class ProjectService:
         return distrusted
 
     def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
-        cached = self.store.cached_hashes(project_id)
         history = self.queue.list(project_id, 1000)
-        cached -= self._distrusted_hashes(history, cached)
+        cached = self._trusted_cache(project_id, history)
         frozen = self._frozen_pins(graph, history, cached)
         if quality == "final":
             # Finals re-render generation nodes even when a draft is cached;
@@ -565,7 +636,27 @@ class ProjectService:
                 return  # tool sessions stay one node; promotion expands
             with self._lock:
                 graph = self.store.load_graph(job.project_id)
-                screenplay = Screenplay.model_validate_json(Path(job.artifact).read_text())
+                # Refuse a screenplay the graph has already moved past.
+                #
+                # _enqueue_dirty cancels superseded jobs that are still
+                # QUEUED, but deliberately lets a RENDERING one finish — its
+                # output is meant to be merely unused. Without this check it
+                # is not unused: it expands into the graph and enqueues a
+                # full pipeline of keyframes and clips for a screenplay the
+                # user already replaced, which is hours of GPU spent on
+                # discarded content before the newer script even lands.
+                if graph.output_hash("script") != job.spec.output_hash:
+                    logger.info(
+                        "discarding superseded script job %s for project %s",
+                        job.id,
+                        job.project_id,
+                    )
+                    return
+                artifact = self.store.resolve_job_artifact(job.project_id, job.artifact)
+                if artifact is None:
+                    logger.warning("script job %s completed but its artifact is gone", job.id)
+                    return
+                screenplay = Screenplay.model_validate_json(artifact.read_text(encoding="utf-8"))
                 # Idempotent: first run builds the subgraphs, re-runs patch
                 # the new screenplay into the existing nodes.
                 expand_screenplay(graph, screenplay)
@@ -602,8 +693,8 @@ class ProjectService:
         ]
         if not optional_dsts:
             return
-        cached = self.store.cached_hashes(job.project_id)
         history = self.queue.list(job.project_id, 1000)
+        cached = self._trusted_cache(job.project_id, history)
         frozen = self._frozen_pins(graph, history, cached)
         memo = dict(frozen)
         stale: set[str] = set()
@@ -642,8 +733,8 @@ class ProjectService:
                 graph = None
         project.updated_at = time.time()
         if graph is not None:
-            cached = self.store.cached_hashes(project_id)
             history = self.queue.list(project_id, 1000)
+            cached = self._trusted_cache(project_id, history)
             memo = dict(self._frozen_pins(graph, history, cached))
             scene_ids = sorted(
                 {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")},
@@ -709,7 +800,9 @@ class ProjectService:
         graph = self.store.load_graph(project_id)
         history = self.queue.list(project_id, 1000)
         jobs = {job.spec.node_id: job for job in reversed(history)}
-        cached = self.store.cached_hashes(project_id)
+        # Trusted: a placeholder must read as work still to do, not as a
+        # finished draft the user can ship.
+        cached = self._trusted_cache(project_id, history)
         # Frozen pins hash against their existing artifact (see compiler).
         memo: dict[str, str] = dict(self._frozen_pins(graph, history, cached))
 

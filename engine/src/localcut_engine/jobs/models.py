@@ -33,7 +33,13 @@ class Job(BaseModel):
     progress: float = 0.0  # 0..1
     attempt: int = 0
     error: str | None = None
-    artifact: str | None = None  # engine-relative path of the produced artifact
+    # Path of the produced artifact, RELATIVE to the project's generated/
+    # dir. Never absolute: the data dir moves, apps get reinstalled under
+    # another account, and backups get restored onto other machines — an
+    # absolute path survives none of that, while the artifact itself (named
+    # by its hash) survives all of it. Resolve through
+    # ProjectStore.resolve_job_artifact, never by Path(job.artifact).
+    artifact: str | None = None
     backend: str | None = None  # which backend rendered it — cache trust boundary
     created_at: float = Field(default_factory=time.time)
     started_at: float | None = None
