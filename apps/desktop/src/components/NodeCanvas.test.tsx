@@ -159,6 +159,22 @@ describe("the canvas", () => {
     expect(removeNode).toHaveBeenCalledWith("s1.keyframe");
   });
 
+  it("says why the script node stays instead of offering to delete it", async () => {
+    // The engine refuses this one (the rest of the pipeline is rebuilt from
+    // it), so a dialog here would ask a question whose only answer is a 422 a
+    // round trip later. Same split as the cycle check: the engine's refusal
+    // makes it safe, this one makes it explicable while the key is still down.
+    const removeNode = vi.fn().mockResolvedValue(null);
+    mount({ removeNode });
+    nodeBox("script").focus();
+
+    await userEvent.keyboard("{Delete}");
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(removeNode).not.toHaveBeenCalled();
+    expect(screen.getByText(/rebuilt from it/)).toBeTruthy();
+  });
+
   it("keeps every port reachable by exposing it outside the node's own button", async () => {
     // ARIA specifies the children of a `button` as presentational, so a port
     // nested inside one is hidden from assistive technology however reachable

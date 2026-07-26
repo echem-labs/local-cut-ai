@@ -405,3 +405,51 @@ def test_a_displaced_keyframe_is_still_orphaned_inside_a_clip_tool():
     apply_patch(g, [PatchOp(op="connect", node_id="clip", src="asset-abc", port="keyframe")])
 
     assert [job.node_id for job in compile_graph(g).jobs] == ["clip"]
+
+
+def test_the_script_node_cannot_be_removed():
+    """The one removal with no way back, and one-way twice over.
+
+    Every other pipeline node — timeline, export, captions, music, the scene
+    subgraphs — is rebuilt by expand_screenplay next time the script renders,
+    because _ensure_node is idempotent on purpose. That repair runs FROM the
+    script node and expand_screenplay raises without one, so removing it does
+    not merely delete a node: it deletes the mechanism that made every other
+    deletion recoverable. Nothing in the app adds a node back — the LLM
+    editor's whole vocabulary is update and remove_scene.
+    """
+    g = small_graph()
+
+    with pytest.raises(ValueError, match="cannot be removed"):
+        apply_patch(g, [PatchOp(op="remove_node", node_id="script")])
+
+    assert "script" in g.nodes
+
+
+def test_every_other_node_still_removes():
+    """The guard is one node, not a policy about structural nodes: the rest
+    are recoverable, so refusing them would be inventing a rule the advanced
+    and flowchart modes have not asked for."""
+    g = small_graph()
+
+    apply_patch(g, [PatchOp(op="remove_node", node_id="kf")])
+
+    assert set(g.nodes) == {"script", "clip"}
+
+
+def test_removing_the_script_is_refused_even_mid_patch():
+    """Ops apply in order and mutate as they go, so a refusal on op 3 has
+    already let ops 1 and 2 through. The point is that the script survives,
+    which is what makes the rest rebuildable."""
+    g = small_graph()
+
+    with pytest.raises(ValueError, match="cannot be removed"):
+        apply_patch(
+            g,
+            [
+                PatchOp(op="set_params", node_id="kf", params={"prompt": "x"}),
+                PatchOp(op="remove_node", node_id="script"),
+            ],
+        )
+
+    assert "script" in g.nodes

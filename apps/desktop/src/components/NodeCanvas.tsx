@@ -43,6 +43,13 @@ import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PanelHelp } from "./Help";
 
+/** The one node the engine refuses to remove (see graph/patch.py): the rest
+ * of the pipeline is rebuilt from it, so deleting it would make every other
+ * deletion permanent. Checked here as well as there for the same reason the
+ * cycle check is — the engine's refusal is what makes it safe, this one is
+ * what makes it explicable at the moment the key was pressed. */
+const SCRIPT_NODE_ID = "script";
+
 /** A wire being dragged, from the moment a source port is grabbed. */
 interface PendingWire {
   src: string;
@@ -258,7 +265,13 @@ export function NodeCanvas() {
                 onStartWire={(event) => startWire(placed.id, event)}
                 onDropWire={(port) => void dropWire(placed.id, port)}
                 onDisconnect={(port) => void disconnectPort(placed.id, port)}
-                onRemove={() => setPendingDelete(placed.id)}
+                onRemove={() => {
+                  if (placed.id === SCRIPT_NODE_ID) {
+                    setHint(t("canvas.cannotRemove"));
+                    return;
+                  }
+                  setPendingDelete(placed.id);
+                }}
               />
             );
           })}

@@ -29,6 +29,7 @@ from __future__ import annotations
 import importlib.resources
 import json
 import re
+import threading
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -45,6 +46,17 @@ CLASS_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,79}$")
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 _STATE_FILE = "comfy-node-packs.json"
+
+# Grants live in ONE document, so every writer rewrites the whole map — which
+# makes enable and disable a read-modify-write, and both run on the server's
+# threadpool where two in flight at once is ordinary. Unlocked, a disable that
+# read before an enable wrote had the revoked pack still in its map, and the
+# enable's save put it back. A revoked grant returning is the one direction
+# this must never fail in: the grant IS the gate on running third-party code.
+#
+# A thread lock is the whole story because one process owns the data dir —
+# that is what the `serve` bind ordering exists to guarantee.
+_GRANTS_LOCK = threading.Lock()
 
 # The sentence an operator has to be shown before third-party node code is
 # allowed to run. Kept here rather than in the UI so every client — desktop,
@@ -175,17 +187,19 @@ def enable_pack(data_dir: Path, pack_id: str, version: str, *, acknowledged: boo
     if not any(pack.id == pack_id for pack in packs):
         known = ", ".join(sorted(pack.id for pack in packs)) or "none"
         raise KeyError(f"unknown node pack {pack_id!r} — catalogued packs: {known}")
-    grants = load_grants(data_dir)
-    grants[pack_id] = version
-    save_grants(data_dir, grants)
+    with _GRANTS_LOCK:
+        grants = load_grants(data_dir)
+        grants[pack_id] = version
+        save_grants(data_dir, grants)
     return PackGrant(pack_id=pack_id, version=version)
 
 
 def disable_pack(data_dir: Path, pack_id: str) -> bool:
     """Revoke a grant. True if one was there to revoke."""
-    grants = load_grants(data_dir)
-    if pack_id not in grants:
-        return False
-    grants.pop(pack_id)
-    save_grants(data_dir, grants)
+    with _GRANTS_LOCK:
+        grants = load_grants(data_dir)
+        if pack_id not in grants:
+            return False
+        grants.pop(pack_id)
+        save_grants(data_dir, grants)
     return True
