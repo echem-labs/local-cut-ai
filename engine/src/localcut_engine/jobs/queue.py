@@ -75,7 +75,7 @@ class JobQueue:
     def _write(self, job: Job) -> None:
         # created_at is part of the update: the scheduler re-stamps a job to
         # send it to the back of the FIFO when its inputs aren't ready yet,
-        # and next_queued orders by the COLUMN. Leaving the column behind
+        # and claim_next orders by the COLUMN. Leaving the column behind
         # re-selects the same job immediately, and that requeue path has no
         # await in it — the run loop spins on one job and starves the event
         # loop for the whole process.
@@ -244,7 +244,7 @@ class JobQueue:
                 except ValidationError:
                     # An unreadable row must not abort the whole deletion (which
                     # would leave jobs rendering into a deleted project) — fail
-                    # it in place, like next_queued/_recover_interrupted do.
+                    # it in place, like claim_next/_recover_interrupted do.
                     self._poison(job_id)
                     continue
                 job.status = JobStatus.CANCELLED

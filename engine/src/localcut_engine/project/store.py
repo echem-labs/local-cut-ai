@@ -216,11 +216,30 @@ class ProjectStore:
         logger.warning("could not fully remove %s; will retry on next start", doomed)
         return False
 
+    def purge_recreated(self, project_id: str) -> bool:
+        """Remove a project dir a still-running render re-created after the
+        real one was reserved away (`output_path()` does mkdir(parents=True)).
+
+        Identified by the absence of meta.json: without it the directory never
+        appears in `list()`, so nothing else would ever reclaim it, and the
+        artifacts inside it are disk the user can neither see nor free — the
+        exact orphan the reserve/purge pair exists to avoid."""
+        leftover = self._dir(project_id)
+        if not leftover.is_dir() or (leftover / "meta.json").exists():
+            return False
+        return self.purge(leftover, attempts=3)
+
     def sweep_pending_deletions(self) -> int:
-        """Reclaim `.deleting-*` directories left behind by an interrupted
-        delete. Nothing can be writing into them now — the process that was
-        is gone."""
+        """Reclaim directories left behind by an interrupted delete:
+        `.deleting-*` reservations, and `*.lcut` skeletons a render re-created
+        under the original name. Nothing can be writing into either now — the
+        process that was is gone, and a project dir with no meta.json is not a
+        project this build could ever open."""
         reclaimed = 0
+        for path in self.root.glob("*.lcut"):
+            if path.is_dir() and not (path / "meta.json").exists() and self.purge(path, attempts=2):
+                logger.info("reclaimed orphaned project directory %s", path)
+                reclaimed += 1
         for path in self.root.glob(".deleting-*"):
             if path.is_dir() and self.purge(path, attempts=2):
                 reclaimed += 1

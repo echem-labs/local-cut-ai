@@ -283,6 +283,54 @@ def test_interrupted_deletions_are_reclaimed_on_the_next_start(tmp_path):
     assert store.sweep_pending_deletions() == 0  # nothing left to do
 
 
+def test_a_directory_recreated_under_the_original_name_is_reclaimed(tmp_path):
+    """The reservation renames the project away, but a backend that has not
+    stopped yet calls output_path(), whose mkdir(parents=True) re-creates the
+    ORIGINAL path and writes artifacts into it. Purging only the reserved copy
+    leaves that behind — and with no meta.json it never appears in list(), so
+    nothing would ever reclaim it: the precise orphan reserve/purge exists to
+    prevent, reintroduced one directory over."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph())
+    doomed = store.reserve_for_deletion(project.id)
+
+    recreated = store.project_dir(project.id)
+    (recreated / "generated").mkdir(parents=True, exist_ok=True)
+    (recreated / "generated" / "late.mp4").write_bytes(b"x" * 4096)
+    assert store.purge(doomed) is True
+
+    assert store.purge_recreated(project.id) is True
+    assert not recreated.exists()
+    assert store.purge_recreated(project.id) is False  # idempotent
+
+
+def test_a_live_project_is_never_mistaken_for_an_orphan(tmp_path):
+    """The whole test above turns on 'no meta.json means nobody can open it'.
+    If that ever stops being true the sweep deletes real projects, so the
+    negative case is asserted next to the positive one."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="keep me", graph=_seed_graph())
+
+    assert store.purge_recreated(project.id) is False
+    assert store.sweep_pending_deletions() == 0
+    assert store.get(project.id) is not None
+    assert store.project_dir(project.id).exists()
+
+
+def test_a_skeleton_from_a_killed_delete_is_reclaimed_on_the_next_start(tmp_path):
+    """Same orphan, but created after ProjectService.delete already returned —
+    a render killed with the engine. Only the next start can catch it."""
+    store = ProjectStore(tmp_path / "projects")
+    keep = store.create(title="keep me", graph=_seed_graph())
+    orphan = store.root / "deadbeef.lcut"
+    (orphan / "generated").mkdir(parents=True)
+    (orphan / "generated" / "late.mp4").write_bytes(b"x" * 4096)
+
+    assert store.sweep_pending_deletions() == 1
+    assert not orphan.exists()
+    assert [p.id for p in store.list()] == [keep.id]
+
+
 # -- DUR-4: shutdown cancels the running job ---------------------------------
 
 

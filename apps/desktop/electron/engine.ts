@@ -16,6 +16,11 @@ const HEALTH_INTERVAL_MS = 250;
 const TERM_GRACE_MS = 3_000;
 /** How long to wait for a killed orphan to release the port before retrying. */
 const PORT_RELEASE_MS = 4_000;
+/** The loopback port the local engine binds. ONE definition: `command()` and
+ * orphan recovery must never disagree about which port to reclaim, or a stale
+ * engine survives and the retry fails for a reason nobody can see. */
+const DEFAULT_ENGINE_PORT = "7830";
+const enginePort = (): string => process.env.LOCALCUT_ENGINE_PORT ?? DEFAULT_ENGINE_PORT;
 
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
@@ -38,7 +43,7 @@ export class EngineManager {
     connection: EngineConnection;
   } {
     const custom = process.env.LOCALCUT_ENGINE_CMD;
-    const port = process.env.LOCALCUT_ENGINE_PORT ?? "7830";
+    const port = enginePort();
     // Hybrid by default: real backends claim only what they can currently
     // serve (weights installed, companion servers up), mock catches the
     // rest — so a fresh machine behaves like the old all-mock default and
@@ -103,7 +108,7 @@ export class EngineManager {
       return await this.spawnAndWait();
     } catch (error) {
       if (!(error instanceof EngineConflictError)) throw error;
-      const port = Number(process.env.LOCALCUT_ENGINE_PORT ?? "7830");
+      const port = Number(enginePort());
       console.warn(`[engine] port ${port} held by a stale engine; reclaiming it`);
       if (!(await reclaimPort(port))) throw error; // not ours to kill — report it
       return this.spawnAndWait();

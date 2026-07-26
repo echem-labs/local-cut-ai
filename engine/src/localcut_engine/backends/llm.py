@@ -176,9 +176,13 @@ class LLMScriptBackend(ExecutionBackend):
             except (ValueError, KeyError, IndexError, TypeError) as exc:
                 raise GenerationError(f"local LLM returned an unreadable body: {exc}") from exc
             if choice.get("finish_reason") == "length":
+                # Task-neutral wording: this path also serves the publish kit
+                # and the natural-language edit, where "the screenplay" and
+                # "target duration" name nothing the user can act on.
                 raise GenerationError(
                     f"the local model stopped at the {max_tokens}-token output cap before "
-                    "finishing — the screenplay is incomplete. Try a shorter target duration."
+                    "finishing — the response is incomplete. Try a shorter target duration, "
+                    "or a model with a larger output limit."
                 )
             return text
 

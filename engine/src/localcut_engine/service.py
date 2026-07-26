@@ -357,8 +357,11 @@ class ProjectService:
 
         So: rename the directory out of the way FIRST (atomic, and instantly
         invisible to the project list), then cancel, then remove the renamed
-        copy with retries. A still-writing backend then re-creates a path
-        under a name nothing will ever look at, and the retry sweeps it.
+        copy with retries — and finally the skeleton a still-writing backend
+        may have re-created under the ORIGINAL name, which is an orphan of
+        exactly the kind described above (no meta.json, so invisible, so
+        never reclaimed). sweep_pending_deletions catches anything that
+        appears after this returns, on the next start.
         """
         with self._lock:
             project_dir = self.store.project_dir(project_id)
@@ -369,6 +372,7 @@ class ProjectService:
         # Outside the lock: the sweep can take a moment on a large project,
         # and nothing else needs to wait for it.
         self.store.purge(doomed)
+        self.store.purge_recreated(project_id)
         self.events.publish("project.deleted", project_id=project_id)
         return True
 
