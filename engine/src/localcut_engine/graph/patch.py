@@ -14,7 +14,11 @@ from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 # Params the server owns and a client patch may never set — otherwise the
 # consent affirmation stamped by the asset-upload route (voice_consent) could
 # be forged onto any node, defeating the voice_ref guard below.
-_RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
+#
+# Public because template import is a second route by which node params
+# arrive from outside, and it has to strip exactly the same keys. One
+# definition, so a param added here is covered on both paths at once.
+RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
 
 
 class PatchOp(BaseModel):
@@ -51,7 +55,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # Client patches never touch server-owned params (e.g. the
                 # consent flag): drop them so the value on the node is only
                 # ever what the server itself stamped.
-                incoming = {k: v for k, v in (op.params or {}).items() if k not in _RESERVED_PARAMS}
+                incoming = {k: v for k, v in (op.params or {}).items() if k not in RESERVED_PARAMS}
                 node.params = {**node.params, **incoming}
             case "set_seed":
                 graph.nodes[op.node_id].seed = op.seed if op.seed is not None else 0
@@ -86,7 +90,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # not be able to smuggle a server-owned flag (e.g.
                 # voice_consent) in on a freshly added node either.
                 op.node.params = {
-                    k: v for k, v in op.node.params.items() if k not in _RESERVED_PARAMS
+                    k: v for k, v in op.node.params.items() if k not in RESERVED_PARAMS
                 }
                 graph.add_node(op.node)
             case "remove_node":
