@@ -54,6 +54,7 @@ declare global {
         error: string | null;
         remote?: boolean;
         remotePaired?: boolean;
+        keysArmed?: boolean;
       }>;
       inspectPairing: (code: string) => Promise<PairingPreview>;
       pairEngine: (
@@ -142,6 +143,10 @@ interface AppState {
   // True when a pairing exists on disk even if the remote is unreachable —
   // so the UI can always offer Disconnect rather than stranding on a dead box.
   remotePaired: boolean;
+  // Whether the connected engine may hold the provider keys. Always true for
+  // the local engine; for a remote one it is the user's per-host consent, and
+  // false is what the Settings pane offers to change.
+  remoteKeysArmed: boolean;
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
@@ -512,7 +517,7 @@ export const useApp = create<AppState>((set, get) => {
     const gen = ++establishGen;
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
-    const { connection, error, remote, remotePaired } =
+    const { connection, error, remote, remotePaired, keysArmed } =
       await window.localcut.getEngineConnection();
     // A newer establish (an engine switch) superseded us while we awaited —
     // bail so we never point the store back at the old engine.
@@ -523,6 +528,7 @@ export const useApp = create<AppState>((set, get) => {
         engineError: error ?? t("errors.engineUnavailable"),
         remoteEngine: false,
         remotePaired: remotePaired === true,
+        remoteKeysArmed: keysArmed !== false,
       });
       return;
     }
@@ -532,6 +538,7 @@ export const useApp = create<AppState>((set, get) => {
       engineError: null,
       remoteEngine: remote === true,
       remotePaired: remotePaired === true,
+      remoteKeysArmed: keysArmed !== false,
     });
 
     const sub = client.subscribe(
@@ -724,6 +731,7 @@ export const useApp = create<AppState>((set, get) => {
     editBusy: false,
     remoteEngine: false,
     remotePaired: false,
+    remoteKeysArmed: true,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1155,6 +1163,9 @@ export const useApp = create<AppState>((set, get) => {
 
     armRemoteKeys: async () => {
       const { ok, error } = await window.localcut.armProviderKeys();
+      // Re-read rather than assume: the main process persists the consent on
+      // the pairing, and the pane must reflect what was actually recorded.
+      if (ok) set({ remoteKeysArmed: true });
       return ok ? null : (error ?? t("errors.pairingFailed"));
     },
 
