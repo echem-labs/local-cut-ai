@@ -1,0 +1,48 @@
+{
+  "title": "Flowchart",
+  "empty": "This project has no graph yet.",
+  "loading": "Reading the graph…",
+  "help": "Every node is one step of the render. Drag from a node's right edge onto another node's input to rewire it; select a node to edit it in Details.",
+  "nodeAria": "{kind} node {id}, {status}",
+  "portAria": "{port} input of {id}",
+  "outputAria": "output of {id}",
+  "edgeAria": "{src} feeds the {port} input of {dst}",
+  "kinds": {
+    "script": "Script",
+    "scene": "Scene",
+    "keyframe": "Keyframe",
+    "clip": "Clip",
+    "narration": "Narration",
+    "music": "Music",
+    "captions": "Captions",
+    "asset": "Upload",
+    "timeline": "Timeline",
+    "export": "Export",
+    "thumbnail": "Thumbnail"
+  },
+  "ports": {
+    "default": "main",
+    "keyframe": "keyframe",
+    "music": "music",
+    "timing": "timing",
+    "captions": "captions",
+    "voice_ref": "voice"
+  },
+  "actions": {
+    "disconnect": "Disconnect {port}",
+    "remove": "Delete node",
+    "cancelWire": "Cancel"
+  },
+  "wiring": {
+    "prompt": "Drop on a node to wire it in",
+    "replace": "Replaces what feeds {port}",
+    "cycle": "That would loop back into itself",
+    "self": "A node cannot feed itself"
+  },
+  "nodes_one": "{count} node",
+  "nodes_other": "{count} nodes",
+  "edges_one": "{count} connection",
+  "edges_other": "{count} connections",
+  "pinned": "Pinned — held at its current render",
+  "reload": "Reload the graph"
+}
