@@ -2,9 +2,8 @@ import { useState } from "react";
 import type { Checkpoint } from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
+import { isSettled } from "../lib/status";
 import { ScriptTable, useScreenplay } from "./ToolSession";
-
-const READY = ["draft", "final", "pinned"];
 
 /** Beginner-mode gate above the scene board: one message + one accent
  * approve button per checkpoint, gone once both are passed. */
@@ -15,11 +14,14 @@ export function CheckpointBanner() {
 
   const approvals = currentProject?.approvals ?? [];
   const script = board?.aux.script;
-  const scriptReady = script ? READY.includes(script.status) : false;
+  const scriptReady = script ? isSettled(script.status) : false;
+  // A skipped keyframe counts as ready: the scene is conditioned on an
+  // uploaded image, so no keyframe is coming. Waiting for one leaves the
+  // storyboard checkpoint — and with it all of beginner mode — unreachable.
   const keyframesReady =
     !!board &&
     board.scenes.length > 0 &&
-    board.scenes.every((scene) => !scene.keyframe || READY.includes(scene.keyframe.status));
+    board.scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
 
   const stage: Checkpoint | null = !approvals.includes("script")
     ? scriptReady

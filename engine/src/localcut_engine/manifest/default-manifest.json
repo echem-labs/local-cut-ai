@@ -13,7 +13,8 @@
         "ram_gb": 32,
         "disk_gb": 36,
         "backends": [
-          "cuda"
+          "cuda",
+          "rocm"
         ]
       },
       "perf_class": {
@@ -72,7 +73,8 @@
         "disk_gb": 10,
         "backends": [
           "cuda",
-          "mps"
+          "mps",
+          "rocm"
         ]
       },
       "perf_class": {
@@ -119,7 +121,8 @@
         "disk_gb": 7,
         "backends": [
           "cuda",
-          "mps"
+          "mps",
+          "rocm"
         ]
       },
       "quality_score": 7.5,
@@ -156,7 +159,8 @@
         "disk_gb": 12,
         "backends": [
           "cuda",
-          "mps"
+          "mps",
+          "rocm"
         ]
       },
       "quality_score": 8.4,
@@ -282,7 +286,8 @@
         "disk_gb": 4,
         "backends": [
           "cuda",
-          "mps"
+          "mps",
+          "rocm"
         ]
       },
       "quality_score": 8.5,
@@ -309,7 +314,8 @@
         "disk_gb": 8,
         "backends": [
           "cuda",
-          "mps"
+          "mps",
+          "rocm"
         ]
       },
       "quality_score": 7.8,

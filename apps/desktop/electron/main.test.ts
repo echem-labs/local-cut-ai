@@ -212,6 +212,7 @@ describe("who may call the IPC handlers", () => {
       error: "untrusted sender",
       remote: false,
       remotePaired: false,
+      keysArmed: false,
     });
   });
 
@@ -222,6 +223,25 @@ describe("who may call the IPC handlers", () => {
       error: null,
       remote: false,
       remotePaired: false,
+      // The local engine is this machine; the keys are already on it.
+      keysArmed: true,
+    });
+  });
+
+  it.each([
+    ["an unarmed remote", false],
+    ["an armed remote", true],
+  ])("tells the renderer about %s", async (_label, armKeys) => {
+    // Without this the renderer cannot tell the two apart, so it cannot offer
+    // to arm one — which is how the arm-keys path came to be implemented on
+    // both sides and reachable from neither.
+    const { electron } = await loadMain({
+      devUrl: DEV_ORIGIN,
+      pairing: { url: engineUrl, token: "remote-token", armKeys },
+    });
+    expect(electron.invokeIpc("engine:connection", trusted())).toMatchObject({
+      remote: true,
+      keysArmed: armKeys,
     });
   });
 

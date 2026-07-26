@@ -77,8 +77,12 @@ _TERMINAL_KINDS = {
 }
 
 
-def _orphaned(graph: StoryGraph) -> set[str]:
+def orphaned_nodes(graph: StoryGraph) -> set[str]:
     """Nodes that feed nothing and are not themselves a deliverable.
+
+    Public because the scene board needs the same answer: these nodes are
+    never enqueued, so a board that does not know about them shows the tile
+    as `queued` forever, waiting on work that will never be created.
 
     The case this exists for: conditioning a scene on an uploaded image
     rewires the clip's keyframe port to the asset, which leaves the generated
@@ -126,14 +130,14 @@ def compile_graph(
     order = graph.topological_order()
     jobs: list[JobSpec] = []
     cached: list[str] = []
-    orphans = _orphaned(graph)
+    orphans = orphaned_nodes(graph)
 
     for node_id in order:
         node = graph.nodes[node_id]
         if node.kind not in EXECUTABLE_KINDS:
             continue
         if node_id in orphans:
-            continue  # nothing consumes it — see _orphaned
+            continue  # nothing consumes it — see orphaned_nodes
         if node.pinned and node_id in frozen:
             cached.append(node_id)
             continue
