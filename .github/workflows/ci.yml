@@ -43,34 +43,54 @@ jobs:
       run:
         working-directory: engine
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        # No floating v8/v9 major tag is published for this action, so the
+        # exact release is pinned; bump it deliberately.
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: engine/uv.lock
 
-      # ffmpeg gates 18 assembly tests — the entire timeline/export layer.
-      # Without it they SKIP rather than fail, so a CI run with no ffmpeg is
-      # quietly not testing assembly at all.
-      - name: Install ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
-      - name: Install ffmpeg (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-
-      - name: Install ffmpeg (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
+      # ONE ffmpeg source for every OS.
+      #
+      # Installing per-platform (apt / brew / choco) gave three builds with
+      # three different feature sets, and Homebrew's ffmpeg formula carries
+      # no libass, freetype, harfbuzz or fontconfig at all — so macOS had
+      # neither `drawtext` nor a working `ass` filter, and burned-in captions
+      # and on-screen titles failed there while passing everywhere else.
+      # That is a property of the runner, not of this code, and it should
+      # never have been able to differ by platform.
+      #
+      # This action serves BtbN builds on Linux/Windows and OSXExperts on
+      # macOS arm64 — all full builds. Pinned to a commit SHA rather than a
+      # tag: it is third-party, and a tag can be moved.
+      - name: Install ffmpeg (identical build on every OS)
+        uses: AnimMouse/setup-ffmpeg@0633f1f6ad34ac671f07224b3c89b00386f0c717 # v1.2.5
 
       - run: uv sync --all-groups
 
-      - name: Verify ffmpeg is discoverable
-        # Fail loudly here rather than silently skipping the assembly suite.
-        run: uv run python -c "import shutil,sys; p=shutil.which('ffmpeg'); print('ffmpeg:',p); sys.exit(0 if p else 1)"
+      - name: Verify ffmpeg has the filters the suite needs
+        # Not just "is ffmpeg present". 18 assembly tests SKIP without ffmpeg
+        # rather than failing, so a broken install reads as a green run that
+        # quietly tested no assembly at all — and a build missing libass or
+        # libfreetype fails three of them with errors that look like product
+        # bugs. Assert the capability here, where the message can name it.
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ffmpeg: $(command -v ffmpeg)"
+          ffmpeg -hide_banner -version | head -1
+          missing=()
+          for filter in drawtext ass subtitles; do
+            ffmpeg -hide_banner -filters 2>/dev/null | grep -qE "^ *[A-Z.]+ +${filter} " || missing+=("$filter")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::this ffmpeg lacks required filters: ${missing[*]} — it was built without libass/libfreetype/libharfbuzz, so burned-in captions and on-screen titles cannot render"
+            exit 1
+          fi
+          echo "drawtext, ass and subtitles all present"
 
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -88,9 +108,9 @@ jobs:
       run:
         working-directory: apps/desktop
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
