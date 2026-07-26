@@ -163,11 +163,19 @@ class EngineClient:
                 # same script would pick up.
                 partial = destination.with_name(destination.name + ".part")
                 written = 0
-                with partial.open("wb") as sink:
-                    for chunk in response.iter_bytes():
-                        sink.write(chunk)
-                        written += len(chunk)
-                partial.replace(destination)
+                try:
+                    with partial.open("wb") as sink:
+                        for chunk in response.iter_bytes():
+                            sink.write(chunk)
+                            written += len(chunk)
+                    partial.replace(destination)
+                except OSError as exc:
+                    # A missing directory or a full disk is something the
+                    # operator fixes, not a traceback to decode. Every other
+                    # failure this CLI can hit reports a sentence and an exit
+                    # status, and `export --out build/cut.mp4` before `build/`
+                    # exists is the ordinary way to reach this one.
+                    raise EngineError(f"could not write {destination}: {exc}") from exc
                 return written
         except httpx.HTTPError as exc:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc

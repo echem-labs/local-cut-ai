@@ -275,3 +275,24 @@ def test_removing_a_workflow_reports_whether_there_was_one(tmp_path):
 
 def test_listing_an_engine_that_never_imported_anything_is_empty(tmp_path):
     assert workflows.installed(tmp_path) == []
+
+
+def test_the_size_cap_applies_to_a_parsed_workflow_too():
+    """The API route takes a dict (FastAPI already parsed the body) and the
+    CLI parses the file before posting it, so a cap that only measured
+    `str | bytes` never ran in production. The node count does not catch it:
+    four nodes whose inputs are megabytes of text pass it, and the document is
+    then written into the templates directory, where the ComfyUI backend
+    re-reads it on every render."""
+    fat = {
+        **_BUILTIN_WORKFLOW,
+        "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "x" * (1 << 20)}},
+    }
+
+    with pytest.raises(workflows.WorkflowError, match="larger than"):
+        workflows.parse_workflow(fat)
+
+    # The same document as a string was always refused; the point is that the
+    # two answers now agree.
+    with pytest.raises(workflows.WorkflowError, match="larger than"):
+        workflows.parse_workflow(json.dumps(fat))

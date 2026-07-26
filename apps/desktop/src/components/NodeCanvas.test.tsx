@@ -131,14 +131,47 @@ describe("the canvas", () => {
     expect(useApp.getState().selectedNode).toBe("script");
   });
 
-  it("deletes a node with the Delete key, through a graph patch", async () => {
+  it("asks before deleting a node, and does nothing if the answer is no", async () => {
+    // `add_node` has no UI at all, so a node deleted here cannot be put back:
+    // delete `export` and the project can never finish a cut. Backspace on a
+    // focused element is a reflex key, which is precisely why the app reserves
+    // ConfirmDialog for acts like this one.
+    const removeNode = vi.fn().mockResolvedValue(null);
+    mount({ removeNode });
+    nodeBox("s1.keyframe").focus();
+
+    await userEvent.keyboard("{Backspace}");
+
+    expect(removeNode).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /keep it/i }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(removeNode).not.toHaveBeenCalled();
+  });
+
+  it("deletes through a graph patch once the deletion is confirmed", async () => {
     const removeNode = vi.fn().mockResolvedValue(null);
     mount({ removeNode });
     nodeBox("s1.keyframe").focus();
 
     await userEvent.keyboard("{Delete}");
+    await userEvent.click(screen.getByRole("button", { name: /delete node/i }));
 
     expect(removeNode).toHaveBeenCalledWith("s1.keyframe");
+  });
+
+  it("keeps every port reachable by exposing it outside the node's own button", async () => {
+    // ARIA specifies the children of a `button` as presentational, so a port
+    // nested inside one is hidden from assistive technology however reachable
+    // it is by Tab — and the ports are the only way to disconnect an edge and
+    // the only drop target for a wire.
+    mount();
+    const port = screen.getByRole("button", { name: /keyframe input of s1\.clip/ });
+    const output = screen.getByRole("button", { name: "output of s1.clip" });
+
+    for (const control of [port, output]) {
+      expect(control.closest("button")).toBe(control);
+      expect(control.closest('[role="button"]')).toBeNull();
+    }
   });
 
   it("frees an occupied input when its port is clicked", async () => {
