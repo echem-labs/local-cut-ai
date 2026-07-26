@@ -170,10 +170,12 @@ def _tier_for(vram_gb: float) -> Tier:
 
 
 def probe_hardware(disk_path: str = "/") -> HardwareProfile:
-    # NVIDIA first (the best-supported path), then Apple, then AMD and Intel.
-    # All four are tried rather than stopping at the first hit: a box can
-    # have a discrete card alongside an integrated one, and the primary is
-    # picked by VRAM below.
+    # Vendor precedence, first hit wins: NVIDIA (the best-supported path),
+    # then Apple, then AMD, then Intel. Deliberately NOT a union — each probe
+    # shells out to a vendor tool, and a machine with a discrete NVIDIA card
+    # alongside an integrated Intel one would otherwise pay for both on every
+    # call while the integrated part could never be the primary anyway (the
+    # primary is the largest-VRAM device below).
     gpus = _detect_nvidia() or _detect_apple() or _detect_amd() or _detect_intel()
     primary = max(gpus, key=lambda g: g.vram_gb) if gpus else None
     return HardwareProfile(

@@ -74,7 +74,8 @@
     "modelsHeading": "Models",
     "modelsHint": "Downloaded model weights are managed in the model library.",
     "loading": "Measuring disk usage…",
-    "failed": "Could not measure disk usage — the engine did not answer. Reopen this tab to try again."
+    "failed": "Could not measure disk usage — the engine did not answer. Reopen this tab to try again.",
+    "clearCacheFailed": "Could not clear the cache — the engine did not answer. Nothing was removed; try again."
   },
   "remote": {
     "heading": "Remote engine",

@@ -15,6 +15,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
+from urllib.parse import unquote
 
 import httpx
 from fastapi import (
@@ -91,10 +92,17 @@ class _RedactTokens(logging.Filter):
         # The token can be in either half. uvicorn's real handshake line puts
         # it in the args (`'%s - "WebSocket %s"'`, path), but an emitter is
         # free to bake it into the format string instead.
-        if isinstance(record.args, tuple):
-            # Tuple args only. `%`-style dict args (`log.info("%(a)s", {...})`)
-            # are stored as the bare dict, and wrapping one in a tuple makes
-            # getMessage() raise "format requires a mapping".
+        # Tuple args only. `%`-style dict args (`log.info("%(a)s", {...})`)
+        # are stored as the bare dict, and wrapping one in a tuple makes
+        # getMessage() raise "format requires a mapping".
+        #
+        # The `any(...)` pre-check keeps this off the hot path: the filter is
+        # installed on the ROOT handlers, so it sees every record the process
+        # emits, and rebuilding the args tuple through a regex for all of them
+        # costs far more than the substring scan that proves it unnecessary.
+        if isinstance(record.args, tuple) and any(
+            isinstance(a, str) and "token=" in a for a in record.args
+        ):
             record.args = tuple(
                 _TOKEN_IN_TEXT.sub(r"\1[redacted]", a) if isinstance(a, str) else a
                 for a in record.args
@@ -354,8 +362,6 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         for pair in query.split("&"):
             key, _, value = pair.partition("=")
             if key == "token":
-                from urllib.parse import unquote
-
                 return unquote(value)
         return None
 

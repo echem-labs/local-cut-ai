@@ -349,6 +349,9 @@ export function Settings() {
         if (!error) {
           setPairingCode("");
           setPairPreview(null);
+          // Back to opt-in for the NEXT pairing: a checkbox left ticked from
+          // the last host would pre-arm a different one.
+          setArmKeys(false);
         }
       })
       .finally(() => setPairBusy(false));
@@ -1106,7 +1109,15 @@ export function Settings() {
           confirmLabel={t("settings.storage.clearCacheConfirm")}
           onConfirm={() => {
             setConfirmCache(false);
-            void cleanupStorage();
+            setStorageError(null);
+            // cleanupStorage resolves to null when the purge failed. Dropping
+            // that left a failed purge completely silent: the numbers simply
+            // did not move, with nothing said about why.
+            void cleanupStorage()
+              .then((freed) => {
+                if (freed === null) setStorageError(t("settings.storage.clearCacheFailed"));
+              })
+              .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
           }}
           onCancel={() => setConfirmCache(false)}
         />

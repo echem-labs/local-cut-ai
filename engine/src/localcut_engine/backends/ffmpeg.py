@@ -678,6 +678,23 @@ class FFmpegBackend(ExecutionBackend):
                 if window + (_MAX_LOOPS - 1) * step < target:
                     loop_hard = True
             else:
+                if window < clip_duration - trim_in - 1e-3:
+                    # A hard loop reads its input to EOF — `-ss`/`-t` on the
+                    # input would cap the whole looped stream, not each
+                    # repetition — so a trim-out has to be baked into the
+                    # source first. Without this, every repeat past the first
+                    # plays exactly the footage the user cut, which is the
+                    # failure trim_window exists to prevent.
+                    clip = str(
+                        await self._trimmed_source(
+                            clip,
+                            trim_in,
+                            window,
+                            workdir / f"{out.stem}-win.mp4",
+                            encoder,
+                        )
+                    )
+                    trim_in = 0.0
                 loop_hard = True
 
         args: list[str] = []
@@ -770,6 +787,28 @@ class FFmpegBackend(ExecutionBackend):
             ";".join(filters),
             "-map",
             "[v]",
+            "-an",
+            "-c:v",
+            encoder,
+            "-b:v",
+            "12M",
+            str(out),
+        )
+        return out
+
+    async def _trimmed_source(
+        self, clip: str, trim_in: float, window: float, out: Path, encoder: str
+    ) -> Path:
+        """Bake a user trim into its own file: exactly `window` seconds from
+        `trim_in`. Needed before `-stream_loop`, which reads to EOF and would
+        otherwise reveal the footage past the trim-out on every repeat."""
+        await self._run(
+            "-ss",
+            f"{trim_in:.3f}",
+            "-t",
+            f"{window:.3f}",
+            "-i",
+            clip,
             "-an",
             "-c:v",
             encoder,

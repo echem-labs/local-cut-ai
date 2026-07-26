@@ -162,9 +162,13 @@ async def _stream_checked(client: httpx.AsyncClient, url: str, headers: dict):
     httpx's own `follow_redirects=True` would check only the URL we passed,
     so a public host could bounce us to 169.254.169.254 or a LAN box after
     the guard had already run. Weight hosts do redirect (HuggingFace hands
-    off to a CDN), so redirects have to be followed — just not blindly."""
+    off to a CDN), so redirects have to be followed — just not blindly.
+
+    On a thread: the guard resolves the host with a blocking getaddrinfo, and
+    a download runs alongside renders — a stalled loop is a stalled /ws
+    progress fan-out and every other in-flight request with it."""
     for _ in range(_MAX_REDIRECTS):
-        assert_public_url(url)
+        await asyncio.to_thread(assert_public_url, url)
         response = await client.send(client.build_request("GET", url, headers=headers), stream=True)
         if response.is_redirect and response.has_redirect_location:
             location = str(response.next_request.url)

@@ -164,11 +164,14 @@ export function Inspector() {
     if (!sceneId) return;
     const trims = { ...((timelineParams?.trims ?? {}) as Record<string, unknown>) };
     const trim: Record<string, number> = {};
-    // Fall back to the SERVER value when a field is empty: an empty box may
-    // mean "cleared", but it also means "not loaded yet", and the two used to
-    // be indistinguishable — so editing one bound wiped the other.
-    const inNum = Number.parseFloat(inValue !== "" ? inValue : storedIn);
-    const outNum = Number.parseFloat(outValue !== "" ? outValue : storedOut);
+    // An empty box means CLEARED, and only that. The "not loaded yet" reading
+    // — which used to make editing one bound wipe the other — is gone: the
+    // seeding effect above re-runs on `storedIn`/`storedOut`, so both fields
+    // hold the server's values from the moment the board arrives. Falling back
+    // to the stored value here instead would make a trim impossible to remove:
+    // emptying the field would silently re-send the value it just erased.
+    const inNum = Number.parseFloat(inValue);
+    const outNum = Number.parseFloat(outValue);
     // Negative trims are meaningless; the engine clamps them anyway.
     if (Number.isFinite(inNum) && inNum >= 0) trim.in = inNum;
     if (Number.isFinite(outNum) && outNum > 0) trim.out = outNum;

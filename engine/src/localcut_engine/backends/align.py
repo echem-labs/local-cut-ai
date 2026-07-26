@@ -72,10 +72,15 @@ class AlignBackend(ExecutionBackend):
             a loop that has already closed during shutdown) must never take
             down an otherwise-complete captions job before it writes its SRT.
             """
+            coro = ctx.progress(fraction)
             try:
-                future = asyncio.run_coroutine_threadsafe(ctx.progress(fraction), loop)
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
             except RuntimeError:
-                return  # loop closed under us (shutdown) — the SRT still lands
+                # Loop closed under us (shutdown) — the SRT still lands. Close
+                # the coroutine explicitly: an un-awaited one warns at GC time,
+                # in an unrelated stack, about a shutdown that was orderly.
+                coro.close()
+                return
             try:
                 future.result(timeout=_PROGRESS_TIMEOUT_S)
             except TimeoutError:

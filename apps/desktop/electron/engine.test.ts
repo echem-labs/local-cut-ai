@@ -58,6 +58,11 @@ const envKeys = [
   "LOCALCUT_TOKEN",
 ];
 let savedEnv: Record<string, string | undefined>;
+// Typed by what is actually read rather than with vitest's MockInstance,
+// whose generic arity has moved between versions.
+let warnSpy: { mock: { calls: unknown[][] } };
+/** Everything logged to console.warn this test, joined. */
+const warned = (): string => warnSpy.mock.calls.map((call) => call.join(" ")).join("\n");
 
 beforeEach(() => {
   spawned.calls.length = 0;
@@ -66,7 +71,7 @@ beforeEach(() => {
   // killTree signals a process GROUP by negative pid. The fake child reports
   // pid 4242, which on this machine belongs to something real.
   vi.spyOn(process, "kill").mockReturnValue(true);
-  vi.spyOn(console, "warn").mockImplementation(() => {});
+  warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.stubGlobal("fetch", healthyEngine());
@@ -259,6 +264,28 @@ describe("when startup does not work out", () => {
     expect(spawned.calls.map((call) => call.cmd)).toContain(
       process.platform === "win32" ? "netstat" : "lsof",
     );
+  });
+
+  it("reclaims the port the engine was actually told to bind", async () => {
+    // The port is decided once and used twice: the spawn args and orphan
+    // recovery. If those ever disagree, reclaimPort targets a port nothing is
+    // listening on, returns false, and the user is told to hunt for a
+    // windowless process by hand — the dead end recovery exists to remove,
+    // failing silently. Asserted through the port each side reports, because
+    // `netstat -ano` takes no port argument and filters its own output.
+    process.env.LOCALCUT_ENGINE_PORT = "7999";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => ({
+        ok: true,
+        status: input.endsWith("/health") ? 200 : 401,
+      })),
+    );
+
+    await expect(new EngineManager().start()).rejects.toBeInstanceOf(EngineConflictError);
+
+    expect(serveArgs()).toEqual(["serve", "--port", "7999", "--backend", "local,mock"]);
+    expect(warned()).toContain("port 7999 held by a stale engine");
   });
 
   it.each(["exit", "error"])("does not let a dead child's late '%s' detach a newer one", async (
