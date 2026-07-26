@@ -377,3 +377,31 @@ def test_music_tool_honours_the_request_up_to_the_generator_ceiling():
 
     g = tool_graph("music", {"prompt": "lofi", "target_duration_s": 1200})
     assert g.nodes["music"].params["target_duration_s"] == templates.GENERATOR_MAX_MUSIC_S
+
+
+def test_every_quick_tool_compiles_to_at_least_one_job():
+    """A Quick Tool's node IS its deliverable, so nothing in the graph is
+    orphaned. The `image` tool is a bare KEYFRAME with no outgoing edge, and
+    KEYFRAME is not a terminal kind — it compiled to zero jobs, so the tool
+    produced nothing, forever, with no error anywhere to say so."""
+    for tool, extra in (
+        ("script", {}),
+        ("thumbnail", {}),
+        ("voiceover", {"text": "hello"}),
+        ("image", {}),
+        ("music", {}),
+        ("clip", {}),
+    ):
+        plan = compile_graph(tool_graph(tool, {"prompt": "a subject", **extra}))
+        assert plan.jobs, f"{tool} tool compiled to no jobs at all"
+
+
+def test_a_displaced_keyframe_is_still_orphaned_inside_a_clip_tool():
+    """The exemption is for graphs with no deliverable, not a blanket pass:
+    conditioning the clip tool on an uploaded image must still stop the
+    generated keyframe from rendering a picture nobody will see."""
+    g = tool_graph("clip", {"prompt": "a subject"})
+    g.add_node(Node(id="asset-abc", kind=NodeKind.ASSET, params={"sha256": "x"}))
+    apply_patch(g, [PatchOp(op="connect", node_id="clip", src="asset-abc", port="keyframe")])
+
+    assert [job.node_id for job in compile_graph(g).jobs] == ["clip"]

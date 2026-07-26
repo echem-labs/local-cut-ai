@@ -17,7 +17,7 @@ from pathlib import Path
 from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
 from .fcpxml import edl_to_fcpxml
-from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph
+from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
@@ -30,6 +30,20 @@ from .project.store import Project, ProjectStore
 from .schema import Screenplay
 
 logger = logging.getLogger(__name__)
+
+# Every status a scene-board node can report. This is a wire contract: the
+# desktop mirrors it as the `NodeStatus` union, and a status the UI does not
+# know renders with no colour and no label. test_ui_contract compares the two.
+SCENE_NODE_STATUSES = (
+    "queued",
+    "rendering",
+    "draft",
+    "final",
+    "failed",
+    "cancelled",
+    "pinned",
+    "skipped",
+)
 
 
 class ConflictError(RuntimeError):
@@ -805,6 +819,10 @@ class ProjectService:
         cached = self._trusted_cache(project_id, history)
         # Frozen pins hash against their existing artifact (see compiler).
         memo: dict[str, str] = dict(self._frozen_pins(graph, history, cached))
+        # The compiler skips these, so no job will ever exist for them. The
+        # board has to agree, or the tile spins on "queued" forever waiting
+        # for work that was deliberately never enqueued.
+        skipped = orphaned_nodes(graph)
 
         def node_state(node_id: str) -> dict | None:
             node = graph.nodes.get(node_id)
@@ -828,6 +846,13 @@ class ProjectService:
                 status = "failed"
             elif job and job.status is JobStatus.CANCELLED:
                 status = "cancelled"
+            elif node_id in skipped:
+                # Deliberately not rendered — a scene conditioned on an
+                # uploaded image rewires the clip's keyframe port to the
+                # asset, leaving this node feeding nothing. Ranked below a
+                # live job so a render already in flight when the user
+                # conditioned the scene still reports itself honestly.
+                status = "skipped"
             elif out_hash in cached:
                 status = "final" if (job and job.spec.quality == "final") else "draft"
             else:

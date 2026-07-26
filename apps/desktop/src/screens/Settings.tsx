@@ -139,8 +139,10 @@ export function Settings() {
     setDefaults,
     remoteEngine,
     remotePaired,
+    remoteKeysArmed,
     inspectPairing,
     pairRemote,
+    armRemoteKeys,
     unpairRemote,
   } = useApp();
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -148,6 +150,7 @@ export function Settings() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [keyError, setKeyError] = useState<string | null>(null);
+  const [armBusy, setArmBusy] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
   const [pairBusy, setPairBusy] = useState(false);
   const [pairError, setPairError] = useState<string | null>(null);
@@ -286,9 +289,18 @@ export function Settings() {
 
   // The provider keys a pairing would hand over, by name. "3 keys" is not
   // something anyone can weigh; "Anthropic, OpenAI" is.
+  const labelFor = (providerId: string) =>
+    providers.find((p) => p.id === providerId)?.label ?? providerId;
   const storedKeyNames = Object.entries(KEY_IDS)
     .filter(([, keyId]) => pairPreview?.keys?.[keyId])
-    .map(([providerId]) => providers.find((p) => p.id === providerId)?.label ?? providerId);
+    .map(([providerId]) => labelFor(providerId));
+  // The same list, but for an engine already paired: `pairPreview` only
+  // exists while a code is being reviewed, and the arm control lives on the
+  // other side of that flow entirely.
+  const storedKeyLabels = Object.entries(KEY_IDS)
+    .filter(([, keyId]) => presence?.[keyId])
+    .map(([providerId]) => labelFor(providerId));
+  const anyKeyStored = storedKeyLabels.length > 0;
 
   // Assembly with no backend means no working ffmpeg. The engine deliberately
   // refuses to let the mock stand in here — a placeholder MP4 handed over as
@@ -841,6 +853,7 @@ export function Settings() {
                   {t("settings.remote.hintAfter")}
                 </p>
                 {remotePaired ? (
+                  <>
                   <div className="provider-row">
                     <div className="grow">
                       <div className="name">
@@ -872,6 +885,39 @@ export function Settings() {
                         : t("settings.remote.disconnect")}
                     </button>
                   </div>
+                  {/* Arming is a second decision, so it needs a second
+                      control. Declining at pair time used to be final: the
+                      consent is stored per host and re-read on every launch,
+                      and nothing in the UI could ever change it — a user who
+                      later wanted cloud generation on their GPU box had to
+                      unpair and pair again to be re-asked. */}
+                  {remoteEngine && !remoteKeysArmed && anyKeyStored && (
+                    <div className="provider-row">
+                      <div className="grow">
+                        <div className="name">{t("settings.remote.armHeading")}</div>
+                        <div className="meta">
+                          {t("settings.remote.armHint", { keys: storedKeyLabels.join(", ") })}
+                        </div>
+                      </div>
+                      <button
+                        className="btn-ghost"
+                        disabled={armBusy}
+                        onClick={() => {
+                          setArmBusy(true);
+                          setPairError(null);
+                          void armRemoteKeys()
+                            .then(setPairError)
+                            .finally(() => setArmBusy(false));
+                        }}
+                      >
+                        {armBusy ? t("settings.remote.arming") : t("settings.remote.arm")}
+                      </button>
+                    </div>
+                  )}
+                  {remoteEngine && remoteKeysArmed && anyKeyStored && (
+                    <p className="hint">{t("settings.remote.armed")}</p>
+                  )}
+                  </>
                 ) : pairPreview ? (
                   /* Review before trust. The code is decoded but nothing has
                      been sent yet: the host, its certificate fingerprint and

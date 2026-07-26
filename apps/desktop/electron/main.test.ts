@@ -212,6 +212,7 @@ describe("who may call the IPC handlers", () => {
       error: "untrusted sender",
       remote: false,
       remotePaired: false,
+      keysArmed: false,
     });
   });
 
@@ -222,6 +223,25 @@ describe("who may call the IPC handlers", () => {
       error: null,
       remote: false,
       remotePaired: false,
+      // The local engine is this machine; the keys are already on it.
+      keysArmed: true,
+    });
+  });
+
+  it.each([
+    ["an unarmed remote", false],
+    ["an armed remote", true],
+  ])("tells the renderer about %s", async (_label, armKeys) => {
+    // Without this the renderer cannot tell the two apart, so it cannot offer
+    // to arm one — which is how the arm-keys path came to be implemented on
+    // both sides and reachable from neither.
+    const { electron } = await loadMain({
+      devUrl: DEV_ORIGIN,
+      pairing: { url: engineUrl, token: "remote-token", armKeys },
+    });
+    expect(electron.invokeIpc("engine:connection", trusted())).toMatchObject({
+      remote: true,
+      keysArmed: armKeys,
     });
   });
 
@@ -511,10 +531,29 @@ describe("arming keys as a separate decision", () => {
       ok: true,
       error: null,
     });
-    // Recorded before sending, and against this exact pairing — otherwise
-    // startup would ask again, or arm anyway.
+    // Against this exact pairing — otherwise startup would ask again, or arm
+    // anyway.
     expect(storedPairing()).toMatchObject({ armKeys: true });
     expect(JSON.parse(keyPuts()[0]!.body)).toEqual({ anthropic_key: "sk-ant" });
+  });
+
+  it("records nothing when the send is refused", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN, keys: { anthropic: "sk-ant" } });
+    await electron.invokeIpc(
+      "engine:pair",
+      trusted(),
+      codeFor({ url: engineUrl, token: "remote-token" }),
+      { armKeys: false },
+    );
+    engineStatus = 500;
+
+    await expect(electron.invokeIpc("providers:arm-keys", trusted())).resolves.toMatchObject({
+      ok: false,
+    });
+    // The user saw the refusal and believes nothing was sent. Consent left on
+    // disk here would arm that host silently on the next launch, with the
+    // pane still showing the engine as unarmed.
+    expect(storedPairing()).toMatchObject({ armKeys: false });
   });
 
   it("skips the push when there is nothing stored", async () => {

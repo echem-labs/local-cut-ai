@@ -9,6 +9,8 @@ const COLORS: Record<NodeStatus, string> = {
   failed: "var(--status-failed)",
   cancelled: "var(--text-tertiary)",
   pinned: "var(--status-pinned)",
+  // The same muted tone as cancelled: nothing is wrong, and nothing is coming.
+  skipped: "var(--text-tertiary)",
 };
 
 /** The status word in the reserved colors, translated. */
