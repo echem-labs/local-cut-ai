@@ -24,10 +24,13 @@ import json
 import ssl
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+from .jobs.models import JobStatus
 
 # The engine's own default. Kept here rather than imported from config so a
 # `--engine` default never silently follows a change meant for the server.
@@ -43,7 +46,11 @@ EXIT_UNREACHABLE = 2
 # GPU, and a tighter loop only adds requests to a machine that is busy.
 _POLL_INTERVAL_S = 2.0
 
-_TERMINAL = {"done", "failed", "cancelled"}
+# Derived from the engine's own enum rather than re-typed as literals: a
+# status added there (a gated or expired job is the obvious next one) would
+# otherwise never count as terminal here, and `render` would block for the
+# whole --timeout on a render that had actually finished.
+_TERMINAL = frozenset({JobStatus.DONE.value, JobStatus.FAILED.value, JobStatus.CANCELLED.value})
 
 
 class EngineError(RuntimeError):
@@ -76,6 +83,16 @@ class EngineClient:
         self.token = token
         verify: Any = True
         if cert is not None:
+            # httpx ignores `verify` entirely for an http:// base url, so a
+            # pin against a cleartext engine is not a weaker check — it is no
+            # check, with the token and every provider key going out in the
+            # clear and nothing on screen saying so. Refuse the combination
+            # rather than honour half of it.
+            if not self.url.lower().startswith("https://"):
+                raise EngineError(
+                    f"--cert pins a certificate, but {self.url} is not https - "
+                    "either use the https url the engine printed at startup, or drop --cert"
+                )
             if not cert.is_file():
                 raise EngineError(f"certificate not found: {cert}")
             context = ssl.create_default_context(cafile=str(cert))
@@ -104,6 +121,17 @@ class EngineClient:
         try:
             response = self._client.request(method, path, **kwargs)
         except httpx.ConnectError as exc:
+            # A handshake failure arrives WRAPPED: httpx maps ssl.SSLError to
+            # httpx.ConnectError, so `except ssl.SSLError` never fires and a
+            # rejected certificate reported itself as "no engine here, start
+            # one" - advice that sends the operator to restart a server that
+            # is running and answering.
+            if _is_tls_failure(exc):
+                raise EngineError(
+                    f"TLS failed talking to {self.url}: {exc}. A remote engine serves a "
+                    "self-signed certificate - pass --cert with the PEM it printed at startup.",
+                    unreachable=True,
+                ) from exc
             raise EngineError(
                 f"no engine at {self.url} - start one with `localcut-engine serve`, "
                 "or pass --engine",
@@ -126,6 +154,18 @@ class EngineClient:
         if response.status_code >= 400:
             raise EngineError(
                 f"{method} {path} failed ({response.status_code}): {_detail(response)}"
+            )
+        # A 3xx is NOT success. httpx does not follow redirects by default, so
+        # a proxy that upgrades http→https or canonicalises the host returned a
+        # bodyless 302 that fell through to `return None` — and the caller read
+        # that as "the request worked". A `render` would then wait on a queue
+        # nothing was ever added to and report success.
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            raise EngineError(
+                f"{method} {path} was redirected to {location or 'elsewhere'} - point --engine "
+                "at the engine's own url rather than a proxy that rewrites it",
+                unreachable=True,
             )
         if not response.content:
             return None
@@ -157,6 +197,18 @@ class EngineClient:
                     raise EngineError(
                         f"GET {path} failed ({response.status_code}): {_detail(response)}"
                     )
+                # Same reason as in `request`, and worse here: an unfollowed
+                # redirect's empty body would be streamed into the .part file
+                # and renamed over the destination, so the atomic rename that
+                # exists to stop a truncated file wearing a finished export's
+                # name would deliver exactly that, at 0 bytes, and exit 0.
+                if response.is_redirect:
+                    location = response.headers.get("location", "")
+                    raise EngineError(
+                        f"GET {path} was redirected to {location or 'elsewhere'} - point "
+                        "--engine at the engine's own url rather than a proxy that rewrites it",
+                        unreachable=True,
+                    )
                 # Write to a neighbour and rename: an interrupted download
                 # must not leave a truncated file wearing the name of a
                 # finished export, which is exactly what a later step in the
@@ -181,6 +233,22 @@ class EngineClient:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc
 
 
+def _is_tls_failure(exc: BaseException) -> bool:
+    """Did this transport error come from the TLS handshake?
+
+    Walks `__cause__`/`__context__` because httpx (and httpcore under it) wrap
+    the original ssl.SSLError rather than re-raising it.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _detail(response: httpx.Response) -> str:
     """The engine's own explanation, or the body, or the status."""
     try:
@@ -197,7 +265,12 @@ def _detail(response: httpx.Response) -> str:
 
 def active_jobs(client: EngineClient, project_id: str) -> list[dict]:
     """Jobs still to finish for a project."""
-    jobs = client.get("/jobs", params={"project_id": project_id}) or []
+    return _outstanding(client.get("/jobs", params={"project_id": project_id}) or [])
+
+
+def _outstanding(jobs: list[dict]) -> list[dict]:
+    """Jobs not in a terminal state. One definition, so the --no-wait count
+    and the waiting loop can never disagree about what is outstanding."""
     return [job for job in jobs if str(job.get("status")) not in _TERMINAL]
 
 
@@ -218,13 +291,30 @@ def wait_for_render(
     unfinished render will do something worse a step later.
     """
     deadline = time.monotonic() + timeout_s
+    # /jobs is the project's whole history, not this render's jobs — nothing
+    # deletes rows, and the query has no status or time bound. Without this
+    # snapshot, one clip that failed weeks ago is reported as a failure of
+    # every render since, so `render` exits 1 forever and a CI job can never
+    # go green again. Anything already finished before the first poll is not
+    # ours; anything still pending then, or new after it, is.
+    settled_before: set[str] = set()
+    first_poll = True
     while True:
         jobs = client.get("/jobs", params={"project_id": project_id}) or []
-        pending = [job for job in jobs if str(job.get("status")) not in _TERMINAL]
+        pending = _outstanding(jobs)
+        if first_poll:
+            settled_before = {
+                str(job.get("id")) for job in jobs if str(job.get("status")) in _TERMINAL
+            }
+            first_poll = False
         if on_progress is not None:
             on_progress(jobs, pending)
         if not pending:
-            return [job for job in jobs if str(job.get("status")) == "failed"]
+            return [
+                job
+                for job in jobs
+                if str(job.get("status")) == "failed" and str(job.get("id")) not in settled_before
+            ]
         if time.monotonic() >= deadline:
             raise EngineError(
                 f"still rendering after {timeout_s:.0f}s ({len(pending)} job(s) outstanding) - "
@@ -244,10 +334,7 @@ def export_hash(board: dict) -> str | None:
 
 def render_summary(jobs: list[dict]) -> dict[str, int]:
     """Job counts by status, for a one-line report."""
-    counts: dict[str, int] = {}
-    for job in jobs:
-        counts[str(job.get("status"))] = counts.get(str(job.get("status")), 0) + 1
-    return counts
+    return dict(Counter(str(job.get("status")) for job in jobs))
 
 
 def emit(payload: Any, *, as_json: bool, lines: list[str] | None = None) -> None:

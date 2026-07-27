@@ -26,6 +26,7 @@ live in one ComfyUI install, so the grant belongs to the machine that runs it.
 
 from __future__ import annotations
 
+import functools
 import importlib.resources
 import json
 import re
@@ -33,6 +34,8 @@ import threading
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+from ..project.store import _write_atomic
 
 # A ComfyUI class_type as it appears in a workflow. Deliberately permissive
 # about spaces (real nodes are named "RIFE VFI") and deliberately not
@@ -106,22 +109,40 @@ class Allowlist(BaseModel):
                 return pack
         return None
 
-    def allows(self, class_type: str) -> bool:
+    def verdict(self, class_type: str) -> str:
+        """ "allowed", "needs-grant" (catalogued but not enabled), or
+        "unknown". ONE statement of the rule that decides whether
+        third-party ComfyUI code may run — `workflows.review` used to
+        re-implement it inline, which left the tested copy and the copy
+        production actually ran as two different things."""
         if class_type in self.builtin:
-            return True
+            return "allowed"
         pack = self.pack_for(class_type)
-        return pack is not None and pack.id in self.grants
+        if pack is None:
+            return "unknown"
+        return "allowed" if pack.id in self.grants else "needs-grant"
+
+    def allows(self, class_type: str) -> bool:
+        return self.verdict(class_type) == "allowed"
 
 
-def load_catalog() -> tuple[frozenset[str], list[NodePack]]:
-    """The shipped builtin set and pack catalog."""
+@functools.lru_cache(maxsize=1)
+def load_catalog() -> tuple[frozenset[str], tuple[NodePack, ...]]:
+    """The shipped builtin set and pack catalog.
+
+    Cached: the file is a packaged build artifact that cannot change while the
+    process runs, and this is on the path of every workflow review, every
+    import and every GET /comfy/node-packs — each of which was re-reading the
+    resource and re-validating every NodePack model to get the same answer."""
     raw = json.loads(
         (importlib.resources.files("localcut_engine.comfy") / "node_packs.json").read_text(
             encoding="utf-8"
         )
     )
     builtin = frozenset(str(name) for name in raw.get("builtin", []))
-    packs = [NodePack.model_validate(entry) for entry in raw.get("packs", [])]
+    # A tuple, not a list: the result is shared by every caller now that it
+    # is cached, so it must not be something one of them can mutate.
+    packs = tuple(NodePack.model_validate(entry) for entry in raw.get("packs", []))
     return builtin, packs
 
 
@@ -149,19 +170,20 @@ def load_grants(data_dir: Path) -> dict[str, str]:
     return {
         str(pack_id): str(version)
         for pack_id, version in grants.items()
-        if isinstance(version, str) and _VERSION_PATTERN.match(version)
+        if isinstance(version, str) and _VERSION_PATTERN.fullmatch(version)
     }
 
 
 def save_grants(data_dir: Path, grants: dict[str, str]) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
     path = _state_path(data_dir)
-    # Same atomic-rename discipline the project store uses: a half-written
-    # grants file reads as "nothing enabled", which would silently break
-    # every workflow using a pack the operator had already allowed.
-    temp = path.with_suffix(".json.tmp")
-    temp.write_text(json.dumps({"enabled": grants}, indent=2), encoding="utf-8")
-    temp.replace(path)
+    # The project store's writer, not a local copy of it: this file decides
+    # whether third-party ComfyUI code may run, and the two things the copy
+    # left out are exactly the ones that matter for it — the fsync (without
+    # which a power loss can journal the rename but not the data, leaving an
+    # empty file that reads as "nothing enabled") and the PermissionError
+    # retry (without which a concurrent read on Windows fails the write).
+    _write_atomic(path, json.dumps({"enabled": grants}, indent=2))
 
 
 def current(data_dir: Path) -> Allowlist:
@@ -178,7 +200,7 @@ def enable_pack(data_dir: Path, pack_id: str, version: str, *, acknowledged: boo
     """
     if not acknowledged:
         raise ValueError(CODE_EXECUTION_WARNING)
-    if not _VERSION_PATTERN.match(version or ""):
+    if not _VERSION_PATTERN.fullmatch(version or ""):
         raise ValueError(
             "give the version of the pack you installed (e.g. 1.2.3 or a commit sha) — "
             "the allowlist pins what is on this machine, not a version we guessed"

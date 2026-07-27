@@ -150,6 +150,13 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")
+                # Same "unknown node" answer every other op gives. Without it
+                # a disconnect naming a node that is not there succeeded
+                # silently and reported the phantom id back as dirty, so a
+                # caller working from a stale graph got a 200 for an edit
+                # that changed nothing.
+                if op.node_id not in graph.nodes:
+                    raise KeyError(op.node_id)
                 graph.edges = [
                     e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
                 ]
