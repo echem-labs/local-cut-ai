@@ -15,7 +15,11 @@ const POP_WIDTH = 264;
 /** A small "What am I looking at?" popover for a workspace panel: three
  * plain bullets + a jump into the glossary (review 3 §5). Fixed-positioned
  * from the button so a dockview panel's overflow can never clip it. */
-export function PanelHelp({ panel }: { panel: "board" | "timeline" | "inspector" }) {
+export function PanelHelp({
+  panel,
+}: {
+  panel: "board" | "timeline" | "inspector" | "canvas";
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);

@@ -14,6 +14,7 @@ import type {
   Project,
   Provider,
   StorageInfo,
+  StoryGraph,
   SystemInfo,
   ToolKind,
 } from "./types";
@@ -124,6 +125,13 @@ export class EngineClient {
     });
   }
 
+  /** The Story Graph behind the board — nodes AND edges. The flowchart view
+   * reads this; nothing else needs it, so it is fetched on demand rather
+   * than folded into the board every refresh. */
+  graph(projectId: string): Promise<StoryGraph> {
+    return this.request(`/projects/${projectId}/graph`);
+  }
+
   patch(
     projectId: string,
     ops: {
@@ -132,6 +140,10 @@ export class EngineClient {
       params?: Record<string, unknown>;
       seed?: number;
       model?: string | null;
+      /** connect/disconnect: `node_id` is the DESTINATION, `src` the
+       * upstream node, `port` the input being rewired. */
+      src?: string;
+      port?: string;
     }[],
   ): Promise<{ dirty: string[] }> {
     return this.request(`/projects/${projectId}/patch`, {

@@ -15,6 +15,7 @@ import { Composer } from "./Composer";
 import { PanelHelp } from "./Help";
 import { Inspector } from "./Inspector";
 import { Monitor } from "./Monitor";
+import { NodeCanvas } from "./NodeCanvas";
 import { SceneCard } from "./SceneCard";
 import { TimelineStrip } from "./TimelineStrip";
 
@@ -159,6 +160,12 @@ function InspectorPanel(_props: IDockviewPanelProps) {
   return <Inspector />;
 }
 
+/** The flowchart view's document panel. Like the board it is the center of
+ * its view, so it is registered the same way and locked the same way. */
+function CanvasPanel(_props: IDockviewPanelProps) {
+  return <NodeCanvas />;
+}
+
 function TimelinePanel(props: IDockviewPanelProps) {
   useGroupMinHeight(props.api, TIMELINE_MIN_H);
   return (
@@ -170,6 +177,7 @@ function TimelinePanel(props: IDockviewPanelProps) {
 
 const PANEL_COMPONENTS = {
   board: BoardPanel,
+  canvas: CanvasPanel,
   monitor: MonitorPanel,
   inspector: InspectorPanel,
   timeline: TimelinePanel,
@@ -186,6 +194,7 @@ function PanelTab(props: IDockviewPanelHeaderProps) {
  * title is resolved through t() at each call site (never at module load). */
 const PANEL_TITLE_KEYS = {
   board: "workspace.panels.board",
+  canvas: "workspace.panels.canvas",
   monitor: "workspace.panels.monitor",
   inspector: "workspace.panels.inspector",
   timeline: "workspace.panels.timeline",
@@ -193,6 +202,12 @@ const PANEL_TITLE_KEYS = {
 } as const satisfies Record<keyof typeof PANEL_COMPONENTS, MessageKey>;
 
 const panelTitle = (id: keyof typeof PANEL_TITLE_KEYS): string => t(PANEL_TITLE_KEYS[id]);
+
+/** The center document of a view — the one panel that is always present and
+ * never docks away, so everything else has something to dock against. */
+type DocumentPanel = "board" | "canvas";
+const documentPanel = (view: WorkspaceView): DocumentPanel =>
+  view === "flowchart" ? "canvas" : "board";
 
 /* ---------- workspace ---------- */
 
@@ -220,11 +235,11 @@ export function Workspace() {
   // excess between them — the board never absorbs it. Instead size the
   // board itself to (workspace − composer − timeline) and let the two
   // fixed rows claim their share from what's left.
-  const enforceRowHeights = (api: DockviewApi) => {
+  const enforceRowHeights = (api: DockviewApi, documentId: DocumentPanel) => {
     const size = () => {
       const total = api.height;
       if (total > COMPOSER_H + TIMELINE_H + 200) {
-        api.getPanel("board")?.api.setSize({ height: total - COMPOSER_H - TIMELINE_H });
+        api.getPanel(documentId)?.api.setSize({ height: total - COMPOSER_H - TIMELINE_H });
       }
       api.getPanel("composer")?.api.setSize({ height: COMPOSER_H });
       api.getPanel("timeline")?.api.setSize({ height: TIMELINE_H });
@@ -237,12 +252,16 @@ export function Workspace() {
     });
   };
 
-  const addComposer = (api: DockviewApi) => {
+  /** The composer docks under the view's DOCUMENT, which is the canvas in the
+   * flowchart view — dockview throws for a referencePanel that is not in the
+   * layout, so a hardcoded "board" here took the whole flowchart build down
+   * with it and left the view holding nothing but the canvas. */
+  const addComposer = (api: DockviewApi, documentId: DocumentPanel) => {
     api.addPanel({
       id: "composer",
       component: "composer",
       title: panelTitle("composer"),
-      position: { referencePanel: "board", direction: "below" },
+      position: { referencePanel: documentId, direction: "below" },
     });
   };
 
@@ -250,17 +269,29 @@ export function Workspace() {
     busyRef.current = true;
     try {
       api.clear();
-      const board = api.addPanel({ id: "board", component: "board", title: panelTitle("board") });
-      board.group.locked = true; // the center document never docks away
+      // Each view has ONE center document: the storyboard and player are
+      // built around the board, the flowchart around the canvas. Same lock,
+      // same role — a view whose document could be dragged away has no
+      // anchor for anything else to dock against.
+      const documentId = documentPanel(target);
+      // Not named `document`: this is a dockview panel, and shadowing the
+      // global in the one function that already reaches for element heights
+      // is a trap for the next DOM call added below it.
+      const documentPane = api.addPanel({
+        id: documentId,
+        component: documentId,
+        title: panelTitle(documentId),
+      });
+      documentPane.group.locked = true;
       if (target === "player") {
         api.addPanel({
           id: "monitor",
           component: "monitor",
           title: panelTitle("monitor"),
-          position: { referencePanel: "board", direction: "left" },
+          position: { referencePanel: documentId, direction: "left" },
         });
       }
-      addComposer(api);
+      addComposer(api, documentId);
       // No reference panel: dock against the root edge so the timeline
       // spans the full workspace width in every view. The strip only needs
       // chip-height blocks; the board gets the room.
@@ -271,23 +302,27 @@ export function Workspace() {
         position: { direction: "below" },
         initialHeight: 200,
       });
-      enforceRowHeights(api);
-      board.api.setActive();
+      enforceRowHeights(api, documentId);
+      documentPane.api.setActive();
     } finally {
       busyRef.current = false;
     }
   };
 
   const restore = (api: DockviewApi, target: WorkspaceView) => {
+    const documentId = documentPanel(target);
     const raw = localStorage.getItem(layoutKey(target));
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
         const ids = Object.keys(parsed?.panels ?? {});
+        // Per-view document check, not a fixed "board": a flowchart layout
+        // restored without its canvas would come up with no document at all,
+        // and every later dock would have nothing to reference.
         const valid =
           ids.length > 0 &&
           ids.every((id) => id in PANEL_COMPONENTS) &&
-          ids.includes("board");
+          ids.includes(documentId);
         if (valid) {
           busyRef.current = true;
           try {
@@ -309,11 +344,11 @@ export function Workspace() {
           if (!api.getPanel("composer")) {
             busyRef.current = true;
             try {
-              addComposer(api);
+              addComposer(api, documentId);
             } finally {
               busyRef.current = false;
             }
-            enforceRowHeights(api);
+            enforceRowHeights(api, documentId);
           }
           return;
         }
@@ -348,9 +383,10 @@ export function Workspace() {
         busyRef.current = false;
       }
       // The root-edge split occasionally hoists the composer out of the
-      // board's column into its own full-height column (a dockview
+      // document's column into its own full-height column (a dockview
       // re-orientation edge case) — and a save would then make that
       // permanent. If the composer just BECAME full-height, re-dock it.
+      const documentId = documentPanel(viewRef.current);
       requestAnimationFrame(() => {
         const hoisted = api.getPanel("composer");
         if (
@@ -361,11 +397,11 @@ export function Workspace() {
           busyRef.current = true;
           try {
             api.removePanel(hoisted);
-            addComposer(api);
+            addComposer(api, documentId);
           } finally {
             busyRef.current = false;
           }
-          enforceRowHeights(api);
+          enforceRowHeights(api, documentId);
         }
       });
     } else if (!selected && panel) {
