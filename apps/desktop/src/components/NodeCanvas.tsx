@@ -31,12 +31,11 @@ import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { GraphNode, NodeState } from "../api/types";
 import { m, plural, t } from "../i18n";
 import {
-  CANVAS_PADDING,
   NODE_HEIGHT,
   NODE_WIDTH,
   edgePath,
   layoutGraph,
-  occupiedPorts,
+  occupiedPortIndex,
   wouldCycle,
 } from "../lib/graphLayout";
 import { useApp } from "../store";
@@ -49,6 +48,11 @@ import { PanelHelp } from "./Help";
  * cycle check is — the engine's refusal is what makes it safe, this one is
  * what makes it explicable at the moment the key was pressed. */
 const SCRIPT_NODE_ID = "script";
+
+/** Shared, so a node with no incoming edge does not allocate a fresh object
+ * on every render (and can be compared by identity by a memoized child). */
+const EMPTY_PORTS: Record<string, string> = {};
+const NO_VACATED: string[] = [];
 
 /** A wire being dragged, from the moment a source port is grabbed. */
 interface PendingWire {
@@ -111,16 +115,32 @@ export function NodeCanvas() {
   // is what the app already puts in front of acts like that, and Backspace on
   // a focused element is a reflex key, not a decision.
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  // Ports emptied by a click here, kept as drop targets afterwards.
+  //
+  // A node's ports are derived from the edges it HAS (see portsFor), which
+  // made disconnect a one-way door: unwire a clip's `keyframe` and the
+  // keyframe port stops being drawn, so the only remaining target is
+  // `default` — which the clip backends ignore, leaving the scene rendering
+  // with no conditioning image and no error. Remembering what was just
+  // vacated is what makes the unwire undoable in the session that did it.
+  const [vacated, setVacated] = useState<Record<string, string[]>>({});
   const surfaceRef = useRef<HTMLDivElement>(null);
 
   // Fetch on mount and whenever the project changes. The storyboard never
   // needs the graph, so this is the only thing that asks for it.
   useEffect(() => {
     if (projectId) void refreshGraph();
+    // A vacated port belongs to the project it was vacated in; carrying the
+    // set across would draw ports on nodes of a graph that never had them.
+    setVacated({});
   }, [projectId, refreshGraph]);
 
   const layout = useMemo(() => layoutGraph(graph), [graph]);
   const statuses = useMemo(() => statusIndex(board), [board]);
+  // One pass over the edges for the whole graph, not one pass per node
+  // inside the render loop: that was O(nodes x edges) redone on every
+  // pointermove of a drag and every progress tick of a live render.
+  const occupied = useMemo(() => occupiedPortIndex(graph), [graph]);
 
   /** Pointer position in canvas coordinates, accounting for scroll. */
   const toCanvas = (event: { clientX: number; clientY: number }) => {
@@ -168,6 +188,51 @@ export function NodeCanvas() {
     }
   };
 
+  // Keyed on whether a wire exists rather than on the wire itself: the live
+  // end is rewritten on every pointermove, so depending on the object would
+  // rebind the listener below at pointer-event frequency.
+  const wiring = wire !== null;
+
+  // The surface's own pointerup only sees a release INSIDE it. Let go over
+  // the toolbar, over the Details panel, or outside the window entirely and
+  // the wire never ended — it kept following the pointer, and the next
+  // release over any port then completed a connection nobody was drawing.
+  useEffect(() => {
+    if (!wiring) return;
+    const abandon = (event: Event) => {
+      // A release on an input port is a DROP, and that port's own handler
+      // owns it — including the hint it leaves behind. This is only the
+      // backstop for a release that landed nowhere at all.
+      const target = event.target;
+      if (target instanceof Element && target.closest(".canvas-ports.in")) return;
+      setWire(null);
+      setHint(null);
+    };
+    // Escape belongs here too, for the same reason. The surface's own
+    // onKeyDown can only fire for a focused descendant, and startWire calls
+    // preventDefault on the port's pointerdown — which suppresses the
+    // compatibility mousedown that would have focused it. So during a
+    // mouse-drawn wire focus is still wherever it was, and the one key that
+    // cancels never reached the handler. Window-level, like every other
+    // Escape in the app (Palette, Inspector, ConfirmDialog, Help).
+    const onEscape = (event: KeyboardEvent) => {
+      // Not via `abandon`: its port check is about where a POINTER was
+      // released, and would swallow Escape whenever a port happens to hold
+      // focus.
+      if (event.key !== "Escape") return;
+      setWire(null);
+      setHint(null);
+    };
+    window.addEventListener("pointerup", abandon);
+    window.addEventListener("pointercancel", abandon);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("pointerup", abandon);
+      window.removeEventListener("pointercancel", abandon);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [wiring]);
+
   if (graphError && !graph) {
     return (
       <div className="canvas-panel canvas-empty">
@@ -214,7 +279,13 @@ export function NodeCanvas() {
         <div
           className="canvas-stage"
           style={{ width: layout.width, height: layout.height }}
-          role="application"
+          // A GROUP, not `application`. `application` takes a screen reader
+          // out of browse mode for everything inside — which would undo the
+          // reason NodeBox is a group rather than a button (keeping the port
+          // buttons individually reachable). Every control here is a real
+          // button already, so there is no custom key handling to protect,
+          // and `group` is the container role the rest of the app uses.
+          role="group"
           aria-label={t("canvas.title")}
         >
           <svg className="canvas-wires" width={layout.width} height={layout.height} aria-hidden>
@@ -235,9 +306,6 @@ export function NodeCanvas() {
               <path
                 className="canvas-wire pending"
                 d={edgePath(layout.byId[wire.src]!, {
-                  id: "",
-                  depth: 0,
-                  row: 0,
                   // The live end follows the pointer: shift back by half a box
                   // so the curve terminates AT the cursor, not past it.
                   x: wire.x,
@@ -250,7 +318,7 @@ export function NodeCanvas() {
           {layout.nodes.map((placed) => {
             const node = graph.nodes[placed.id]!;
             const state = statuses[placed.id];
-            const held = occupiedPorts(graph, placed.id);
+            const held = occupied[placed.id] ?? EMPTY_PORTS;
             return (
               <NodeBox
                 key={placed.id}
@@ -259,12 +327,30 @@ export function NodeCanvas() {
                 x={placed.x}
                 y={placed.y}
                 selected={selectedNode === placed.id}
-                wiring={wire !== null}
+                wiring={wiring}
                 heldPorts={held}
+                vacatedPorts={vacated[placed.id] ?? NO_VACATED}
                 onSelect={() => select(placed.id)}
                 onStartWire={(event) => startWire(placed.id, event)}
                 onDropWire={(port) => void dropWire(placed.id, port)}
-                onDisconnect={(port) => void disconnectPort(placed.id, port)}
+                // Same reporting as a wire and a delete: an unwire the engine
+                // refuses has to say so, or the edge simply stays on screen
+                // with nothing to explain why the click did nothing.
+                onDisconnect={(port) =>
+                  void disconnectPort(placed.id, port).then((error) => {
+                    if (error) {
+                      setHint(error);
+                      return;
+                    }
+                    // Only once the engine agreed it is gone: keeping the
+                    // port drawn is what lets the same click be undone.
+                    setVacated((previous) => {
+                      const held = previous[placed.id] ?? [];
+                      if (held.includes(port)) return previous;
+                      return { ...previous, [placed.id]: [...held, port] };
+                    });
+                  })
+                }
                 onRemove={() => {
                   if (placed.id === SCRIPT_NODE_ID) {
                     setHint(t("canvas.cannotRemove"));
@@ -305,6 +391,8 @@ interface NodeBoxProps {
   selected: boolean;
   wiring: boolean;
   heldPorts: Record<string, string>;
+  /** Ports this session emptied — still offered, so the unwire is undoable. */
+  vacatedPorts: string[];
   onSelect: () => void;
   onStartWire: (event: React.PointerEvent) => void;
   onDropWire: (port: string) => void;
@@ -319,22 +407,29 @@ interface NodeBoxProps {
  * template builder and the backends share the port constants), and a second
  * copy here would drift silently: a port added engine-side would simply not
  * appear, with nothing to fail.
+ *
+ * `vacated` is what this session emptied. Without it the derivation makes
+ * disconnect irreversible — the port disappears with its edge, and the only
+ * target left is `default`, which is not the port the backend reads.
  */
-function portsFor(node: GraphNode, held: Record<string, string>): string[] {
-  const ports = new Set<string>(Object.keys(held));
+function portsFor(node: GraphNode, held: Record<string, string>, vacated: string[]): string[] {
+  const ports = new Set<string>([...Object.keys(held), ...vacated]);
   if (node.kind !== "asset" && node.kind !== "script") ports.add("default");
   return [...ports].sort();
 }
 
 function NodeBox(props: NodeBoxProps) {
   const { node, state, heldPorts } = props;
-  const ports = portsFor(node, heldPorts);
+  const ports = portsFor(node, heldPorts, props.vacatedPorts);
   const status = state?.status;
   return (
     <div
+      // A pin shows as the dot below and as `status-pinned` from the board;
+      // there is no third rule keyed on the node's own flag, so emitting one
+      // would only be a class nothing styles.
       className={`canvas-node${props.selected ? " selected" : ""}${
-        node.pinned ? " pinned" : ""
-      }${status ? ` status-${status}` : ""}`}
+        status ? ` status-${status}` : ""
+      }`}
       style={{ left: props.x, top: props.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
       // A GROUP, not a button, even though the whole box is clickable. The
       // ports below are real buttons, and ARIA specifies the children of a
@@ -354,7 +449,9 @@ function NodeBox(props: NodeBoxProps) {
           id: node.id,
           // Through the catalog like every other status surface — the raw
           // value is a wire id ("skipped" reads "not needed" everywhere else).
-          status: status ? t(`status.${status}`) : t("canvas.kinds.scene"),
+          // Structural nodes (the script, a scene container) never appear on
+          // the board and so have no render state of their own to report.
+          status: status ? t(`status.${status}`) : t("canvas.noStatus"),
         })}
         onClick={props.onSelect}
         // Enter and Space are the button's own; only the delete keys need
@@ -396,10 +493,15 @@ function NodeBox(props: NodeBoxProps) {
               event.stopPropagation();
               if (!props.wiring && heldPorts[port]) props.onDisconnect(port);
             }}
+            // While a wire is out, a filled port is a REPLACEMENT, not a
+            // disconnect — say so on the hover before the release rather
+            // than leaving the displaced edge to be noticed afterwards.
             title={
-              heldPorts[port]
-                ? t("canvas.actions.disconnect", { port: portLabel(port) })
-                : portLabel(port)
+              !heldPorts[port]
+                ? portLabel(port)
+                : props.wiring
+                  ? t("canvas.wiring.replace", { port: portLabel(port) })
+                  : t("canvas.actions.disconnect", { port: portLabel(port) })
             }
           />
         ))}

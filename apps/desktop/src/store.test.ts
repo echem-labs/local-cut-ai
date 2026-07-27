@@ -298,3 +298,34 @@ describe("keeping the flowchart in step with the board", () => {
     expect(Object.keys(useApp.getState().graph!.nodes)).toEqual(["newest"]);
   });
 });
+
+describe("a graph patch from the canvas", () => {
+  it("does not report success for an edit it never sent", async () => {
+    // `null` is this function's "it applied", and the canvas reads it that
+    // way: `if (error) setHint(error)`. Returning it when there is no client
+    // meant a wire drawn against a dropped engine landed visually — the last
+    // known graph is deliberately kept on screen — with nothing to say the
+    // patch never left. removeNode goes further and clears the selection.
+    useApp.setState({ client: null, currentProject: PROJECT("p1") as never });
+
+    const error = await useApp.getState().connectNodes("a", "b", "keyframe");
+
+    expect(error).toBeTruthy();
+  });
+
+  it("returns the failure of the refresh that follows the patch", async () => {
+    // refreshBoard has no catch of its own, so a patch that landed followed
+    // by a refresh that did not used to reject this promise — and every
+    // caller invokes it as `void`, making that an unhandled rejection rather
+    // than the hint the canvas shows.
+    const client = fakeClient({
+      patch: vi.fn().mockResolvedValue(undefined),
+      getProject: vi.fn().mockRejectedValue(new Error("engine went away")),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    const error = await useApp.getState().disconnectPort("s1.clip", "keyframe");
+
+    expect(error).toBe("engine went away");
+  });
+});

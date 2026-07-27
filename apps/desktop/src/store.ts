@@ -526,16 +526,28 @@ export const useApp = create<AppState>((set, get) => {
     ops: Parameters<EngineClient["patch"]>[1],
   ): Promise<string | null> => {
     const { client, currentProject } = get();
-    if (!client || !currentProject) return null;
+    // NOT null: null is this function's "it applied", so returning it for an
+    // edit that was never sent told the canvas a wire had landed. Same answer
+    // every other action here gives when the engine is gone.
+    if (!client || !currentProject) return t("errors.engineUnavailable");
     try {
       await client.patch(currentProject.id, ops);
     } catch (err) {
-      return err instanceof Error ? err.message : String(err);
+      return messageOf(err);
     }
     // refreshBoard pulls the graph with it, so one call covers both pictures
     // — and awaiting it means the canvas has already redrawn by the time a
     // caller decides whether to show a hint.
-    await get().refreshBoard();
+    //
+    // Inside the try, because refreshBoard has no catch of its own: a patch
+    // that landed followed by a refresh that did not would otherwise reject
+    // this promise, and every caller invokes it as `void` — an unhandled
+    // rejection instead of the hint this function exists to return.
+    try {
+      await get().refreshBoard();
+    } catch (err) {
+      return messageOf(err);
+    }
     return null;
   };
 
@@ -1036,6 +1048,22 @@ export const useApp = create<AppState>((set, get) => {
       // could overwrite a newer one and leave the board showing "rendering"
       // for work that had already finished.
       const generation = ++boardGen;
+      // The graph is a third read of the same project, and everything that
+      // moves the board can move it: a rendered screenplay expanding into a
+      // scene per beat, an LLM edit adding a node, a pin from the inspector.
+      // Refreshed HERE rather than at each of those call sites, because the
+      // canvas went stale exactly by their being enumerated — a first render
+      // grew the graph from one node to dozens while the flowchart kept
+      // drawing the one. Costs nothing until something holds a graph, and
+      // only the flowchart ever asks for one.
+      //
+      // Started ALONGSIDE the other two rather than after them: it needs
+      // nothing they return, and this runs on every progress tick of a live
+      // render — chaining it would put a whole extra round trip in that loop,
+      // which on a remote engine is the difference the topology is felt in.
+      // It guards its own staleness (see refreshGraph), so it is safe to have
+      // in flight across the checks below.
+      const graphRefresh = get().graph ? get().refreshGraph() : null;
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(projectId),
         client.listJobs(projectId),
@@ -1045,15 +1073,10 @@ export const useApp = create<AppState>((set, get) => {
       // a fresher response that already landed.
       if (generation !== boardGen || get().currentProject?.id !== projectId) return;
       set({ currentProject: project, board: withPending(board, projectId), jobs });
-      // The graph is a second read of the same project, and everything that
-      // moves the board can move it: a rendered screenplay expanding into a
-      // scene per beat, an LLM edit adding a node, a pin from the inspector.
-      // Refreshed HERE rather than at each of those call sites, because the
-      // canvas went stale exactly by their being enumerated — a first render
-      // grew the graph from one node to dozens while the flowchart kept
-      // drawing the one. Costs nothing until something holds a graph, and
-      // only the flowchart ever asks for one.
-      if (get().graph) await get().refreshGraph();
+      // Awaited, not fired and forgotten: a caller that patched the graph is
+      // waiting for both pictures to have redrawn before it decides what to
+      // say about the edit.
+      await graphRefresh;
     },
 
     refreshGraph: async () => {
@@ -1075,7 +1098,7 @@ export const useApp = create<AppState>((set, get) => {
         // Keep the last graph rather than blanking the canvas: a failed
         // refresh is a worse reason to lose the picture than to show a stale
         // one alongside the error.
-        set({ graphError: err instanceof Error ? err.message : String(err) });
+        set({ graphError: messageOf(err) });
       }
     },
 
