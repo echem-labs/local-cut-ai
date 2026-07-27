@@ -150,11 +150,11 @@ def review(workflow: dict, allowlist: Allowlist) -> WorkflowReview:
         # this is the decision about whether third-party Python may run, and
         # it should have exactly one implementation.
         match allowlist.verdict(class_type):
-            case "unknown":
+            case "unknown", _:
                 unknown.append(class_type)
-            case "needs-grant":
-                missing.add(allowlist.pack_for(class_type).id)  # type: ignore[union-attr]
-            case _ if (pack := allowlist.pack_for(class_type)) is not None:
+            case "needs-grant", pack if pack is not None:
+                missing.add(pack.id)
+            case "allowed", pack if pack is not None:
                 required.add(pack.id)
 
     body = json.dumps(workflow)

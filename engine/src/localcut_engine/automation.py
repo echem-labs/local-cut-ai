@@ -274,12 +274,21 @@ def _outstanding(jobs: list[dict]) -> list[dict]:
     return [job for job in jobs if str(job.get("status")) not in _TERMINAL]
 
 
+def settled_jobs(client: EngineClient, project_id: str) -> frozenset[str]:
+    """Ids of jobs already in a terminal state, for `wait_for_render`'s
+    `not_mine`. Call this BEFORE triggering a render — see there for why the
+    snapshot cannot be taken by the wait itself."""
+    jobs = client.get("/jobs", params={"project_id": project_id}) or []
+    return frozenset(str(job.get("id")) for job in jobs if str(job.get("status")) in _TERMINAL)
+
+
 def wait_for_render(
     client: EngineClient,
     project_id: str,
     *,
     timeout_s: float,
     on_progress=None,
+    not_mine: frozenset[str] = frozenset(),
 ) -> list[dict]:
     """Block until nothing is queued or rendering. Returns the failed jobs.
 
@@ -289,31 +298,28 @@ def wait_for_render(
 
     A timeout raises, because a script that silently proceeds past an
     unfinished render will do something worse a step later.
+
+    `not_mine` is what `settled_jobs` saw before the render was triggered.
+    /jobs is the project's whole history — nothing deletes rows, and the query
+    has no status or time bound — so without it one clip that failed weeks ago
+    is reported as a failure of every render since, and `render` exits 1
+    forever. It has to be captured by the CALLER, ahead of the trigger: taken
+    here, at the first poll, it would also swallow a job of THIS render that
+    failed in the moment between the trigger and that poll — reporting a real
+    failure as success, which is the worse of the two directions to be wrong
+    in.
     """
     deadline = time.monotonic() + timeout_s
-    # /jobs is the project's whole history, not this render's jobs — nothing
-    # deletes rows, and the query has no status or time bound. Without this
-    # snapshot, one clip that failed weeks ago is reported as a failure of
-    # every render since, so `render` exits 1 forever and a CI job can never
-    # go green again. Anything already finished before the first poll is not
-    # ours; anything still pending then, or new after it, is.
-    settled_before: set[str] = set()
-    first_poll = True
     while True:
         jobs = client.get("/jobs", params={"project_id": project_id}) or []
         pending = _outstanding(jobs)
-        if first_poll:
-            settled_before = {
-                str(job.get("id")) for job in jobs if str(job.get("status")) in _TERMINAL
-            }
-            first_poll = False
         if on_progress is not None:
             on_progress(jobs, pending)
         if not pending:
             return [
                 job
                 for job in jobs
-                if str(job.get("status")) == "failed" and str(job.get("id")) not in settled_before
+                if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
             ]
         if time.monotonic() >= deadline:
             raise EngineError(

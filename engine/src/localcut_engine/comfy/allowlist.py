@@ -32,6 +32,7 @@ import json
 import re
 import threading
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -47,6 +48,9 @@ CLASS_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,79}$")
 # real project uses (v1.2.3, 1.2.3, a commit sha) is fine; the point is that
 # it is recorded, short and inert.
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+
+# What the allowlist can say about one node.
+Verdict = Literal["allowed", "needs-grant", "unknown"]
 
 _STATE_FILE = "comfy-node-packs.json"
 
@@ -109,21 +113,27 @@ class Allowlist(BaseModel):
                 return pack
         return None
 
-    def verdict(self, class_type: str) -> str:
-        """ "allowed", "needs-grant" (catalogued but not enabled), or
-        "unknown". ONE statement of the rule that decides whether
-        third-party ComfyUI code may run — `workflows.review` used to
-        re-implement it inline, which left the tested copy and the copy
-        production actually ran as two different things."""
+    def verdict(self, class_type: str) -> tuple[Verdict, NodePack | None]:
+        """Whether this node may run, and the pack it came from if any.
+
+        ONE statement of the rule that decides whether third-party ComfyUI
+        code may run — `workflows.review` used to re-implement it inline,
+        which left the tested copy and the copy production actually ran as
+        two different things.
+
+        The pack rides along because every caller that acts on "needs-grant"
+        immediately needs it, and looking it up again is both a second scan
+        and a second place to assume it is there.
+        """
         if class_type in self.builtin:
-            return "allowed"
+            return "allowed", None
         pack = self.pack_for(class_type)
         if pack is None:
-            return "unknown"
-        return "allowed" if pack.id in self.grants else "needs-grant"
+            return "unknown", None
+        return ("allowed" if pack.id in self.grants else "needs-grant"), pack
 
     def allows(self, class_type: str) -> bool:
-        return self.verdict(class_type) == "allowed"
+        return self.verdict(class_type)[0] == "allowed"
 
 
 @functools.lru_cache(maxsize=1)
