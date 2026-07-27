@@ -189,16 +189,23 @@ export function layoutGraph(graph: StoryGraph | null): GraphLayout {
   return { nodes, byId, width, height };
 }
 
+/** Just the corner an edge is drawn from or to. */
+interface Point {
+  x: number;
+  y: number;
+}
+
 /**
  * An SVG path from one node's output edge to another's input edge.
  *
  * A cubic with horizontal control points: the curve leaves the source going
  * right and arrives at the target going right, which reads as flow direction
  * even where a long edge skips several columns.
+ *
+ * Takes only the two points it reads. Typed as PlacedNode, the live-wire
+ * caller had to invent `id: ""`, `depth: 0`, `row: 0` for every drag frame —
+ * three fields nothing here looks at, and `depth: 0` reads as a layout claim.
  */
-// Takes only what it reads. Typed as PlacedNode, the live-wire caller had
-// to invent `id: ""`, `depth: 0`, `row: 0` for every drag frame — three
-// fields nothing here looks at, and `depth: 0` reads as a layout claim.
 export function edgePath(from: Point, to: Point): string {
   const x1 = from.x + NODE_WIDTH;
   const y1 = from.y + NODE_HEIGHT / 2;
@@ -211,29 +218,13 @@ export function edgePath(from: Point, to: Point): string {
   return `M ${x1} ${y1} C ${x1 + reach} ${y1}, ${x2 - reach} ${y2}, ${x2} ${y2}`;
 }
 
-/** Ports that already hold an edge on `nodeId` — connecting to one replaces
- * it, which the canvas warns about before it happens. */
-/** Just the corner an edge is drawn from or to. */
-interface Point {
-  x: number;
-  y: number;
-}
-
-export function occupiedPorts(graph: StoryGraph | null, nodeId: string): Record<string, string> {
-  const held: Record<string, string> = {};
-  for (const edge of graph?.edges ?? []) {
-    if (edge.dst === nodeId) held[edge.port] = edge.src;
-  }
-  return held;
-}
-
-/** Every node's occupied ports, in one pass over the edges.
+/** Every node's occupied ports, as `dst -> port -> src`.
  *
- * The per-node call above is O(edges) each, and the canvas needs it for every
- * node it draws — so used in the render loop it is O(nodes x edges), redone
- * on every pointermove of a wire drag and every job-progress tick of a live
- * render. This is the same answer for the whole graph at once, memoizable on
- * `graph` beside the layout.
+ * Connecting to an occupied port replaces what is there, which is why the
+ * canvas needs to know. Built for the whole graph in one pass rather than
+ * per node: the canvas needs it for every node it draws, so a per-node scan
+ * is O(nodes x edges) — redone on every pointermove of a wire drag and every
+ * job-progress tick of a live render. Memoized on `graph` beside the layout.
  */
 export function occupiedPortIndex(
   graph: StoryGraph | null,

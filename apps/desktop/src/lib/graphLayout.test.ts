@@ -16,7 +16,7 @@ import {
   NODE_WIDTH,
   edgePath,
   layoutGraph,
-  occupiedPorts,
+  occupiedPortIndex,
   wouldCycle,
 } from "./graphLayout";
 
@@ -196,12 +196,13 @@ describe("drawing an edge", () => {
 
 describe("what a port already holds", () => {
   it("reports the source feeding each occupied input", () => {
-    expect(occupiedPorts(CHAIN, "clip")).toEqual({ keyframe: "keyframe" });
-    expect(occupiedPorts(CHAIN, "script")).toEqual({});
+    expect(occupiedPortIndex(CHAIN).clip).toEqual({ keyframe: "keyframe" });
+    // A node with no incoming edge has no entry at all — callers fall back.
+    expect(occupiedPortIndex(CHAIN).script).toBeUndefined();
   });
 
   it("answers for a null graph", () => {
-    expect(occupiedPorts(null, "clip")).toEqual({});
+    expect(occupiedPortIndex(null)).toEqual({});
   });
 });
 

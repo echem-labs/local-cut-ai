@@ -401,18 +401,21 @@ class _JobsStub:
         return self._polls.pop(0) if len(self._polls) > 1 else self._polls[0]
 
 
+OLD = {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}}
+MINE = {"id": "mine", "status": "queued", "spec": {"node_id": "s1.clip"}}
+BROKE = {**MINE, "status": "failed", "error": "out of memory"}
+
+
 def test_a_failure_from_an_earlier_render_is_not_reported_as_this_one():
     """/jobs is the project's whole history — nothing deletes rows and the
     query has no status or time bound. Reporting every FAILED row as this
     render's failure meant one clip that failed once made `render` exit 1
     forever, so a CI job could never go green again."""
-    old = {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}}
-    mine = {"id": "mine", "status": "queued", "spec": {"node_id": "s1.clip"}}
-
     failed = automation.wait_for_render(
-        _JobsStub([old, mine], [old, {**mine, "status": "done"}]),
+        _JobsStub([OLD, MINE], [OLD, {**MINE, "status": "done"}]),
         "p1",
         timeout_s=30,
+        not_mine=frozenset({"old"}),
     )
 
     assert failed == []
@@ -420,12 +423,26 @@ def test_a_failure_from_an_earlier_render_is_not_reported_as_this_one():
 
 def test_a_failure_from_this_render_is_still_reported():
     """The bound above must not swallow the failures the command exists to
-    report — a job that was pending at the first poll is this render's."""
-    old = {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}}
-    mine = {"id": "mine", "status": "queued", "spec": {"node_id": "s1.clip"}}
-    broke = {**mine, "status": "failed", "error": "out of memory"}
+    report."""
+    failed = automation.wait_for_render(
+        _JobsStub([OLD, MINE], [OLD, BROKE]), "p1", timeout_s=30, not_mine=frozenset({"old"})
+    )
 
-    failed = automation.wait_for_render(_JobsStub([old, mine], [old, broke]), "p1", timeout_s=30)
+    assert [job["id"] for job in failed] == ["mine"]
+
+
+def test_a_job_that_fails_before_the_first_poll_is_still_this_render_s():
+    """Why the snapshot is the CALLER's and not the wait's.
+
+    Taken at the first poll, it would classify anything already terminal as
+    somebody else's — including a job of this render that failed in the
+    moment between the trigger and that poll. The command would then print
+    "render finished" and exit 0 over a render that failed, which is the
+    worse of the two directions to be wrong in.
+    """
+    failed = automation.wait_for_render(
+        _JobsStub([BROKE]), "p1", timeout_s=30, not_mine=frozenset({"old"})
+    )
 
     assert [job["id"] for job in failed] == ["mine"]
 
