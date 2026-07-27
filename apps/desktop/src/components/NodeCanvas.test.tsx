@@ -7,7 +7,7 @@
  * this component knowing about any of them. A canvas with its own mutation
  * path would quietly bypass all three, and nothing on screen would say so.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -209,6 +209,42 @@ describe("the canvas", () => {
     await userEvent.click(screen.getByRole("button", { name: /keyframe input of s1\.clip/ }));
 
     expect(useApp.getState().selectedNode).toBeNull();
+  });
+
+  it("keeps a freed port as a drop target so the unwire can be undone", async () => {
+    // Ports are derived from the edges a node HAS, which made this a one-way
+    // door: unwire s1.clip's `keyframe` and the port stops being drawn, so
+    // the only target left is `default` — which the clip backends ignore, and
+    // the scene then renders with no conditioning image and no error.
+    const disconnectPort = vi.fn().mockResolvedValue(null);
+    const withoutEdge: StoryGraph = {
+      ...GRAPH,
+      edges: GRAPH.edges.filter((edge) => edge.port !== "keyframe"),
+    };
+    mount({ disconnectPort });
+
+    await userEvent.click(screen.getByRole("button", { name: /keyframe input of s1\.clip/ }));
+    // The engine agreed, so the next refresh brings back a graph without it.
+    await act(async () => {
+      useApp.setState({ graph: withoutEdge } as never);
+    });
+
+    expect(screen.getByRole("button", { name: /keyframe input of s1\.clip/ })).toBeTruthy();
+  });
+
+  it("does not keep a port the engine refused to free", async () => {
+    // Only a disconnect the engine accepted is remembered — otherwise a
+    // refused unwire would leave a port drawn that no edge ever vacated.
+    const disconnectPort = vi.fn().mockResolvedValue("nope");
+    const barePorts: StoryGraph = { ...GRAPH, nodes: GRAPH.nodes, edges: [] };
+    mount({ disconnectPort });
+
+    await userEvent.click(screen.getByRole("button", { name: /keyframe input of s1\.clip/ }));
+    await act(async () => {
+      useApp.setState({ graph: barePorts } as never);
+    });
+
+    expect(screen.queryByRole("button", { name: /keyframe input of s1\.clip/ })).toBeNull();
   });
 
   it("fetches the graph on mount", () => {
