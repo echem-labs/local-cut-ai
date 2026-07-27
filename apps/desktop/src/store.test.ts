@@ -230,3 +230,102 @@ describe("a response that outlives the engine it was asked of", () => {
     expect(useApp.getState().storageStale).toBe(false);
   });
 });
+
+describe("keeping the flowchart in step with the board", () => {
+  const BOARD = { scenes: [], aux: {} };
+  const graphOf = (...ids: string[]) => ({
+    version: 1,
+    nodes: Object.fromEntries(
+      ids.map((id) => [
+        id,
+        { id, kind: "keyframe", params: {}, seed: 0, model: null, pinned: false, frozen_hash: null },
+      ]),
+    ),
+    edges: [],
+  });
+
+  it("refetches the graph whenever the board is refreshed", async () => {
+    // The canvas fetches once on mount and after its own patches — which left
+    // it stale for every OTHER way the graph moves. A first render is the
+    // worst of them: the screenplay lands, the graph grows from one node to a
+    // scene per beat, the board redraws, and the flowchart keeps showing one.
+    const graph = vi.fn().mockResolvedValue(graphOf("script", "s1.keyframe", "s1.clip"));
+    const client = fakeClient({
+      graph,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: BOARD }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never, graph: graphOf("script") });
+
+    await useApp.getState().refreshBoard();
+
+    expect(graph).toHaveBeenCalledWith("p1");
+    expect(Object.keys(useApp.getState().graph!.nodes)).toHaveLength(3);
+  });
+
+  it("does not ask for a graph nobody is holding", async () => {
+    // Only the flowchart ever wants one. The storyboard refreshes on every
+    // job event, and paying for a second request there would be pure cost.
+    const graph = vi.fn().mockResolvedValue(graphOf("script"));
+    const client = fakeClient({
+      graph,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: BOARD }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never, graph: null });
+
+    await useApp.getState().refreshBoard();
+
+    expect(graph).not.toHaveBeenCalled();
+  });
+
+  it("lets the newest graph response win, whatever order they land in", async () => {
+    // Now that every board refresh pulls a graph, two are routinely in flight
+    // at once — and without a sequence number a slow earlier response repaints
+    // a DAG the project has already moved past.
+    const first = deferred<ReturnType<typeof graphOf>>();
+    const second = deferred<ReturnType<typeof graphOf>>();
+    const client = fakeClient({
+      graph: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never, graph: graphOf("script") });
+
+    const early = useApp.getState().refreshGraph();
+    const late = useApp.getState().refreshGraph();
+    second.resolve(graphOf("newest"));
+    await late;
+    first.resolve(graphOf("stale"));
+    await early;
+
+    expect(Object.keys(useApp.getState().graph!.nodes)).toEqual(["newest"]);
+  });
+});
+
+describe("a graph patch from the canvas", () => {
+  it("does not report success for an edit it never sent", async () => {
+    // `null` is this function's "it applied", and the canvas reads it that
+    // way: `if (error) setHint(error)`. Returning it when there is no client
+    // meant a wire drawn against a dropped engine landed visually — the last
+    // known graph is deliberately kept on screen — with nothing to say the
+    // patch never left. removeNode goes further and clears the selection.
+    useApp.setState({ client: null, currentProject: PROJECT("p1") as never });
+
+    const error = await useApp.getState().connectNodes("a", "b", "keyframe");
+
+    expect(error).toBeTruthy();
+  });
+
+  it("returns the failure of the refresh that follows the patch", async () => {
+    // refreshBoard has no catch of its own, so a patch that landed followed
+    // by a refresh that did not used to reject this promise — and every
+    // caller invokes it as `void`, making that an unhandled rejection rather
+    // than the hint the canvas shows.
+    const client = fakeClient({
+      patch: vi.fn().mockResolvedValue(undefined),
+      getProject: vi.fn().mockRejectedValue(new Error("engine went away")),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    const error = await useApp.getState().disconnectPort("s1.clip", "keyframe");
+
+    expect(error).toBe("engine went away");
+  });
+});

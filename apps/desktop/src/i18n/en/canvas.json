@@ -1,0 +1,52 @@
+{
+  "title": "Flowchart",
+  "empty": "This project has no graph yet.",
+  "loading": "Reading the graph…",
+  "nodeAria": "{kind} node {id}, {status}",
+  "noStatus": "no render of its own",
+  "nodeGroupAria": "node {id} and its connections",
+  "portAria": "{port} input of {id}",
+  "outputAria": "output of {id}",
+  "kinds": {
+    "script": "Script",
+    "scene": "Scene",
+    "keyframe": "Keyframe",
+    "clip": "Clip",
+    "narration": "Narration",
+    "music": "Music",
+    "captions": "Captions",
+    "asset": "Upload",
+    "timeline": "Timeline",
+    "export": "Export",
+    "thumbnail": "Thumbnail"
+  },
+  "ports": {
+    "default": "main",
+    "keyframe": "keyframe",
+    "music": "music",
+    "timing": "timing",
+    "captions": "captions",
+    "voice_ref": "voice"
+  },
+  "actions": {
+    "disconnect": "Disconnect {port}"
+  },
+  "confirmDelete": {
+    "title": "Delete {id}?",
+    "message": "The node goes, and so does every connection to it. There is no undo, and nothing in the canvas can add a node back.",
+    "confirm": "Delete node"
+  },
+  "wiring": {
+    "prompt": "Drop on a node to wire it in",
+    "replace": "Replaces what feeds {port}",
+    "cycle": "That would loop back into itself",
+    "self": "A node cannot feed itself"
+  },
+  "nodes_one": "{count} node",
+  "nodes_other": "{count} nodes",
+  "edges_one": "{count} connection",
+  "edges_other": "{count} connections",
+  "cannotRemove": "The script node stays — the rest of the pipeline is rebuilt from it",
+  "pinned": "Pinned — held at its current render",
+  "reload": "Reload the graph"
+}

@@ -21,6 +21,7 @@ from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nod
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
 from .graph.patch import PatchOp, apply_patch
+from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
@@ -150,6 +151,42 @@ class ProjectService:
             self._enqueue_dirty(copy.id, self.store.load_graph(copy.id))
         return copy
 
+    def export_template(self, project_id: str, *, name: str = "", description: str = "") -> dict:
+        """This project's shape as a portable template document."""
+        with self._lock:
+            project = self.store.get(project_id)
+            if project is None:
+                raise KeyError(project_id)
+            graph = self.store.load_graph(project_id)
+        template = to_template(
+            graph,
+            name=name or project.title,
+            description=description,
+            mode=project.mode,
+            aspect=project.aspect,
+            duration_s=project.duration_s,
+        )
+        return template.model_dump(mode="json")
+
+    def create_from_template(self, template: GraphTemplate, *, title: str = "") -> Project:
+        """A new project with the template's graph.
+
+        The template is already validated (see graph.template_io) — this only
+        turns it into a project. Nothing is cached, so `_enqueue_dirty` plans
+        the whole graph, exactly as a fresh prompt-mode project does.
+        """
+        graph = build_graph(template)
+        with self._lock:
+            project = self.store.create(
+                title=title or template.name,
+                graph=graph,
+                mode=template.mode,
+                aspect=template.aspect,
+                duration_s=template.duration_s,
+            )
+            self._enqueue_dirty(project.id, graph)
+        return project
+
     def promote_tool(self, project_id: str) -> Project:
         """Script tool session → full prompt-mode project seeded with the
         already-generated screenplay (the script node arrives pre-cached, so
@@ -229,6 +266,25 @@ class ProjectService:
                 self.store.save_meta(project)
             self.events.publish("project.approved", project_id=project_id, checkpoint=checkpoint)
             return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
+
+    def render(self, project_id: str) -> int:
+        """Plan whatever is stale, at draft quality. Returns jobs enqueued.
+
+        `patch` only re-plans when an op actually dirtied something, so an
+        empty patch — the obvious way to say "just render what is pending" —
+        enqueues nothing at all. That is fine for an editor, which patches
+        because something changed, and wrong for a headless caller whose
+        queue was drained by a restart or a cancellation: it would be told
+        the render finished without a single job having run.
+
+        `_enqueue_dirty` already works from the cache rather than a dirty
+        set, so this is the draft-quality twin of `finalize`.
+        """
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            enqueued = self._enqueue_dirty(project_id, graph)
+            self._refresh_meta_locked(project_id, graph)
+            return enqueued
 
     # -- editing -----------------------------------------------------------
 

@@ -4,6 +4,7 @@
     "monitor": "Monitor",
     "inspector": "Details",
     "timeline": "Timeline",
-    "composer": "Prompt"
+    "composer": "Prompt",
+    "canvas": "Flowchart"
   }
 }

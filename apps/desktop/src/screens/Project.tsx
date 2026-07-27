@@ -7,6 +7,7 @@ import {
   MoreHorizontal,
   Sparkles,
   Square,
+  Workflow,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
@@ -439,6 +440,14 @@ export function Project() {
               >
                 <MonitorPlay size={12} strokeWidth={1.8} />
                 {t("project.view.player")}
+              </button>
+              <button
+                className={view === "flowchart" ? "active" : ""}
+                onClick={() => setView("flowchart")}
+                title={t("project.view.flowchartTitle")}
+              >
+                <Workflow size={12} strokeWidth={1.8} />
+                {t("project.view.flowchart")}
               </button>
             </div>
             <Dropdown

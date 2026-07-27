@@ -13,6 +13,7 @@ import type {
   NodeState,
   Project,
   StorageInfo,
+  StoryGraph,
   SystemInfo,
   ToolKind,
 } from "./api/types";
@@ -170,6 +171,16 @@ interface AppState {
   promote: () => Promise<void>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
+  /** The Story Graph behind the board, for the flowchart view. Null until
+   * that view asks for it — the storyboard never needs edges. */
+  graph: StoryGraph | null;
+  graphError: string | null;
+  refreshGraph: () => Promise<void>;
+  /** Wire `src` into `dst`'s `port`, replacing whatever held it. */
+  connectNodes: (src: string, dst: string, port: string) => Promise<string | null>;
+  /** Free an input port. The node stays; only the edge goes. */
+  disconnectPort: (dst: string, port: string) => Promise<string | null>;
+  removeNode: (nodeId: string) => Promise<string | null>;
   regenerate: (nodeId: string) => Promise<void>;
   applyNode: (
     nodeId: string,
@@ -310,6 +321,11 @@ let openGen = 0;
 // Bumped on every refreshBoard, so a slow earlier response cannot land on
 // top of a newer one and re-show work that has since finished.
 let boardGen = 0;
+// The same guard for the graph. It used to be fetched only on the canvas's
+// mount and after its own patches, where two could barely overlap; now every
+// board refresh keeps it in step, so concurrent reads are routine and an
+// out-of-order landing would redraw a DAG the project has moved past.
+let graphGen = 0;
 // Called with the id of any project created while a refreshHome is in
 // flight — that request's snapshot predates it, so the tab prune must not
 // treat it as deleted.
@@ -492,6 +508,48 @@ export const useApp = create<AppState>((set, get) => {
   // the flushed state (finalize, project switch) must await it.
   const flushPatches = (): Promise<void> =>
     Promise.all([...pendingPatches.keys()].map(sendPatch)).then(() => undefined);
+
+  /**
+   * A structural patch from the flowchart canvas, then a re-read of both the
+   * graph and the board.
+   *
+   * Returns the engine's rejection rather than throwing. Every caller here is
+   * a direct manipulation — a dragged wire, a deleted node — and the useful
+   * response to "that would create a cycle" is to say so next to the wire,
+   * not to unwind a promise chain. `null` means it applied.
+   *
+   * Both refreshes, because a structural edit changes both pictures: the
+   * canvas has a new edge and the board has new work (a rewired port re-plans
+   * the whole downstream cone).
+   */
+  const patchGraph = async (
+    ops: Parameters<EngineClient["patch"]>[1],
+  ): Promise<string | null> => {
+    const { client, currentProject } = get();
+    // NOT null: null is this function's "it applied", so returning it for an
+    // edit that was never sent told the canvas a wire had landed. Same answer
+    // every other action here gives when the engine is gone.
+    if (!client || !currentProject) return t("errors.engineUnavailable");
+    try {
+      await client.patch(currentProject.id, ops);
+    } catch (err) {
+      return messageOf(err);
+    }
+    // refreshBoard pulls the graph with it, so one call covers both pictures
+    // — and awaiting it means the canvas has already redrawn by the time a
+    // caller decides whether to show a hint.
+    //
+    // Inside the try, because refreshBoard has no catch of its own: a patch
+    // that landed followed by a refresh that did not would otherwise reject
+    // this promise, and every caller invokes it as `void` — an unhandled
+    // rejection instead of the hint this function exists to return.
+    try {
+      await get().refreshBoard();
+    } catch (err) {
+      return messageOf(err);
+    }
+    return null;
+  };
 
   const applyAuxParams = (nodeId: string, params: Record<string, unknown>) => {
     const { board, client, currentProject } = get();
@@ -733,6 +791,8 @@ export const useApp = create<AppState>((set, get) => {
     engineVersions: null,
     defaults: loadPersisted(DEFAULTS_KEY, FALLBACK_DEFAULTS),
     homeDraft: loadPersisted(DRAFT_KEY, EMPTY_DRAFT),
+    graph: null,
+    graphError: null,
     selectedNode: null,
     models: [],
     downloadErrors: {},
@@ -835,6 +895,11 @@ export const useApp = create<AppState>((set, get) => {
         board: withPending(board, id),
         jobs,
         selectedNode: null,
+        // Cleared, not refetched: only the flowchart view needs it, and it
+        // asks on mount. Carrying the previous project's graph over would
+        // draw the wrong DAG for however long the fetch takes.
+        graph: null,
+        graphError: null,
       });
     },
 
@@ -842,7 +907,14 @@ export const useApp = create<AppState>((set, get) => {
       openGen++; // an openProject still in flight must not land after this
       void flushPatches(); // nothing reads the project after this — fire and forget
       usePlayback.getState().stop();
-      set({ currentProject: null, board: null, jobs: [], selectedNode: null });
+      set({
+        currentProject: null,
+        board: null,
+        jobs: [],
+        selectedNode: null,
+        graph: null,
+        graphError: null,
+      });
     },
 
     closeOpenProject: (id: string) => {
@@ -976,6 +1048,22 @@ export const useApp = create<AppState>((set, get) => {
       // could overwrite a newer one and leave the board showing "rendering"
       // for work that had already finished.
       const generation = ++boardGen;
+      // The graph is a third read of the same project, and everything that
+      // moves the board can move it: a rendered screenplay expanding into a
+      // scene per beat, an LLM edit adding a node, a pin from the inspector.
+      // Refreshed HERE rather than at each of those call sites, because the
+      // canvas went stale exactly by their being enumerated — a first render
+      // grew the graph from one node to dozens while the flowchart kept
+      // drawing the one. Costs nothing until something holds a graph, and
+      // only the flowchart ever asks for one.
+      //
+      // Started ALONGSIDE the other two rather than after them: it needs
+      // nothing they return, and this runs on every progress tick of a live
+      // render — chaining it would put a whole extra round trip in that loop,
+      // which on a remote engine is the difference the topology is felt in.
+      // It guards its own staleness (see refreshGraph), so it is safe to have
+      // in flight across the checks below.
+      const graphRefresh = get().graph ? get().refreshGraph() : null;
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(projectId),
         client.listJobs(projectId),
@@ -985,6 +1073,45 @@ export const useApp = create<AppState>((set, get) => {
       // a fresher response that already landed.
       if (generation !== boardGen || get().currentProject?.id !== projectId) return;
       set({ currentProject: project, board: withPending(board, projectId), jobs });
+      // Awaited, not fired and forgotten: a caller that patched the graph is
+      // waiting for both pictures to have redrawn before it decides what to
+      // say about the edit.
+      await graphRefresh;
+    },
+
+    refreshGraph: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      const projectId = currentProject.id;
+      const generation = ++graphGen;
+      try {
+        const graph = await client.graph(projectId);
+        // Same guards as refreshBoard: a late response for a project the user
+        // has navigated away from must not paint the one they are looking at,
+        // and a superseded one must not clobber a fresher one that landed.
+        if (generation !== graphGen) return;
+        if (get().client !== client || get().currentProject?.id !== projectId) return;
+        set({ graph, graphError: null });
+      } catch (err) {
+        if (generation !== graphGen) return;
+        if (get().client !== client || get().currentProject?.id !== projectId) return;
+        // Keep the last graph rather than blanking the canvas: a failed
+        // refresh is a worse reason to lose the picture than to show a stale
+        // one alongside the error.
+        set({ graphError: messageOf(err) });
+      }
+    },
+
+    connectNodes: async (src, dst, port) => patchGraph([{ op: "connect", node_id: dst, src, port }]),
+
+    disconnectPort: async (dst, port) => patchGraph([{ op: "disconnect", node_id: dst, port }]),
+
+    removeNode: async (nodeId) => {
+      const error = await patchGraph([{ op: "remove_node", node_id: nodeId }]);
+      // A removed node cannot stay selected: the Details panel would render
+      // an inspector for something the graph no longer has.
+      if (!error && get().selectedNode === nodeId) set({ selectedNode: null });
+      return error;
     },
 
     regenerate: async (nodeId) => {

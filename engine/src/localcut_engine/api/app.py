@@ -43,11 +43,14 @@ from ..backends.ffmpeg import FFmpegBackend
 from ..backends.kokoro import KokoroBackend
 from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
+from ..comfy import allowlist as comfy_allowlist
+from ..comfy import workflows
 from ..config import EngineConfig
 from ..events import EventBus
 from ..graph.editor import EDIT_SYSTEM_PROMPT, parse_edit_plan
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
+from ..graph.template_io import TemplateError, cloud_models, from_template
 from ..hardware.probe import probe_hardware
 from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
@@ -248,7 +251,12 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
-                        templates_dir=config.data_dir / "comfy-templates",
+                        # The same function the import routes write through.
+                        # A repeated literal was the only thing joining "where
+                        # an import lands" to "where the backend looks", so
+                        # moving one would have sent every import somewhere
+                        # renders never read, with nothing failing.
+                        templates_dir=workflows.templates_dir(config.data_dir),
                         kinds=(
                             "keyframe,thumbnail,clip,music" if auto_kinds else config.comfy_kinds
                         ),
@@ -618,6 +626,144 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown custom model") from None
         return {"ok": True, "freed_bytes": freed}
 
+    # -- ComfyUI workflow import (Phase 3) ------------------------------------
+    #
+    # Two resources, deliberately separate: the node-pack grants are a
+    # machine-level trust decision, and the workflows are documents judged
+    # against it. Collapsing them into one "import" call would make enabling
+    # third-party code a side effect of importing a file.
+
+    WorkflowName = Annotated[str, PathParam(pattern=workflows.NAME_PATTERN.pattern)]
+    PackId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")]
+
+    def _allowlist():
+        return comfy_allowlist.current(config.data_dir)
+
+    @app.get("/comfy/node-packs", dependencies=[Authed])
+    async def list_node_packs() -> dict:
+        allowlist = await asyncio.to_thread(_allowlist)
+        return {
+            # Shipped with every response so no client can present the enable
+            # action without the sentence that has to accompany it.
+            "warning": comfy_allowlist.CODE_EXECUTION_WARNING,
+            "builtin_nodes": sorted(allowlist.builtin),
+            "packs": [
+                {
+                    **pack.model_dump(),
+                    "enabled": pack.id in allowlist.grants,
+                    "version": allowlist.grants.get(pack.id),
+                }
+                for pack in allowlist.packs
+            ],
+        }
+
+    class EnablePackBody(BaseModel):
+        # The version installed on THIS machine. See allowlist.py: a pin to a
+        # version the engine guessed would be a pin to nothing.
+        version: str = Field(min_length=1, max_length=64)
+        # The explicit opt-in doc 07 risk 9 requires. Named for what it
+        # admits, so no client can set it without reading it.
+        acknowledge_code_execution: bool = False
+
+    @app.post("/comfy/node-packs/{pack_id}/enable", dependencies=[Authed])
+    async def enable_node_pack(pack_id: PackId, body: EnablePackBody) -> dict:
+        try:
+            grant = await asyncio.to_thread(
+                comfy_allowlist.enable_pack,
+                config.data_dir,
+                pack_id,
+                body.version,
+                acknowledged=body.acknowledge_code_execution,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            logger.warning("could not record node-pack grant: %s", exc)
+            raise HTTPException(
+                status_code=500, detail="could not record the grant — check engine logs"
+            ) from exc
+        return {"ok": True, **grant.model_dump()}
+
+    @app.delete("/comfy/node-packs/{pack_id}", dependencies=[Authed])
+    async def disable_node_pack(pack_id: PackId) -> dict:
+        try:
+            removed = await asyncio.to_thread(
+                comfy_allowlist.disable_pack, config.data_dir, pack_id
+            )
+        except OSError as exc:
+            logger.warning("could not revoke node-pack grant: %s", exc)
+            raise HTTPException(
+                status_code=500, detail="could not revoke the grant — check engine logs"
+            ) from exc
+        return {"ok": True, "was_enabled": removed}
+
+    class WorkflowBody(BaseModel):
+        name: str = Field(default="", max_length=64)
+        workflow: dict
+
+    def _reviewed(document: dict, name: str = "") -> tuple[dict, workflows.WorkflowReview]:
+        """Parse and judge, or raise the HTTP error the client should see."""
+        allowlist = _allowlist()
+        try:
+            parsed = workflows.parse_workflow(document)
+            verdict = workflows.review(parsed, allowlist)
+        except workflows.WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Carried on the verdict rather than raised: replacing a packaged
+        # workflow is a supported thing to do, and `--check` has to be able to
+        # say so BEFORE the replacement happens.
+        shadow = workflows.shadow_warning(name)
+        if shadow:
+            verdict.warnings.append(shadow)
+        if not verdict.ok:
+            # 409, not 422: the document is well-formed and this engine's
+            # policy is what refuses it. Enabling a pack makes the same bytes
+            # acceptable, which is a conflict of state, not of syntax.
+            raise HTTPException(
+                status_code=409,
+                detail=workflows.rejection(verdict, allowlist),
+            )
+        return parsed, verdict
+
+    @app.post("/comfy/workflows/review", dependencies=[Authed])
+    async def review_workflow(body: WorkflowBody) -> dict:
+        """Judge a workflow without storing it — what an import would say."""
+        _, verdict = await asyncio.to_thread(_reviewed, body.workflow, body.name)
+        return verdict.model_dump()
+
+    @app.post("/comfy/workflows", dependencies=[Authed])
+    async def import_workflow(body: WorkflowBody) -> dict:
+        parsed, verdict = await asyncio.to_thread(_reviewed, body.workflow, body.name)
+        try:
+            path = await asyncio.to_thread(workflows.store, config.data_dir, body.name, parsed)
+        except workflows.WorkflowError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            logger.warning("could not store workflow %r: %s", body.name, exc)
+            raise HTTPException(
+                status_code=500, detail="could not write the workflow — check engine logs"
+            ) from exc
+        return {"ok": True, "name": path.stem, **verdict.model_dump()}
+
+    @app.get("/comfy/workflows", dependencies=[Authed])
+    async def list_workflows() -> list[dict]:
+        return await asyncio.to_thread(workflows.installed, config.data_dir)
+
+    @app.delete("/comfy/workflows/{name}", dependencies=[Authed])
+    async def delete_workflow(name: WorkflowName) -> dict:
+        try:
+            removed = await asyncio.to_thread(workflows.remove, config.data_dir, name)
+        except OSError as exc:
+            logger.warning("could not remove workflow %r: %s", name, exc)
+            raise HTTPException(
+                status_code=500, detail="could not remove the workflow — check engine logs"
+            ) from exc
+        if not removed:
+            raise HTTPException(status_code=404, detail="unknown workflow")
+        return {"ok": True}
+
     # -- storage (Settings → Storage, review 4) -------------------------------
 
     _STORAGE_TTL_S = 30.0
@@ -776,6 +922,54 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="project not found") from None
         return project.model_dump()
 
+    # -- templates: a project's shape, portable (Phase 3) ---------------------
+    #
+    # Declared before the /projects/{project_id} routes so "from-template" is
+    # never read as a project id. FastAPI matches in declaration order, and a
+    # literal segment losing to a path param is the classic version of this
+    # bug — harmless today (only POST is declared here) and not worth relying
+    # on if a GET is ever added.
+
+    class TemplateBody(BaseModel):
+        """The document plus what the importer chooses about it."""
+
+        template: dict
+        title: str = Field(default="", max_length=120)
+
+    @app.post("/projects/from-template", dependencies=[Authed])
+    async def create_from_template(body: TemplateBody) -> dict:
+        try:
+            # Off the loop like every other heavy call here: validating a
+            # 500-node document re-encodes it to measure its size and then
+            # runs an O(nodes x edges) topological sort, which is long enough
+            # to stall the /ws progress fan-out and every in-flight request.
+            template = await asyncio.to_thread(from_template, body.template)
+        except TemplateError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        project = await asyncio.to_thread(service.create_from_template, template, title=body.title)
+        return {
+            "project": project.model_dump(),
+            # Surfaced, never blocked on: rendering these spends the
+            # importer's money on the author's choice of provider, so it has
+            # to be visible before the first render rather than on the bill.
+            "cloud_models": cloud_models(template),
+            "dropped_assets": template.dropped_assets,
+        }
+
+    @app.get("/projects/{project_id}/template", dependencies=[Authed])
+    async def export_template(
+        project_id: ProjectId,
+        name: Annotated[str, Query(max_length=120)] = "",
+        description: Annotated[str, Query(max_length=2000)] = "",
+    ) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(
+                service.export_template, project_id, name=name, description=description
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="project not found") from None
+
     @app.get("/projects/{project_id}", dependencies=[Authed])
     async def get_project(project_id: ProjectId) -> dict:
         project = await _get_project(project_id)
@@ -929,6 +1123,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         clip_model: str | None = Field(
             default=None, max_length=128, pattern=r"^$|^(local:|cloud:)?[\w.\-]+$"
         )
+
+    @app.post("/projects/{project_id}/render", dependencies=[Authed])
+    async def render(project_id: ProjectId) -> dict:
+        """Enqueue whatever the graph still owes, at draft quality — the
+        draft-side counterpart of /finalize, and what a headless caller
+        means by "render this". An empty /patch does NOT do this: it
+        re-plans only when an op dirtied something."""
+        await _get_project(project_id)
+        return {"enqueued": await asyncio.to_thread(service.render, project_id)}
 
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId, body: FinalizeBody | None = None) -> dict:

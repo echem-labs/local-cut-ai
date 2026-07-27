@@ -73,6 +73,14 @@
         "Apply & regenerate re-renders only this scene with your changes.",
         "Pin keeps the scene exactly as it is; New take tries again with fresh randomness."
       ]
+    },
+    "canvas": {
+      "title": "The flowchart",
+      "bullets": [
+        "The same project as the storyboard, shown as what it really is — every step of the render and what feeds it.",
+        "Drag from a node's right edge onto another node's input dot to rewire it; a filled dot means that input is already taken.",
+        "Click a filled input dot to disconnect it. Select a node to edit it in Details, or press Delete to remove it — it will ask first, because a node cannot be added back here."
+      ]
     }
   },
   "panelHelp": {

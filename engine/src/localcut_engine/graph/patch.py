@@ -14,7 +14,16 @@ from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 # Params the server owns and a client patch may never set — otherwise the
 # consent affirmation stamped by the asset-upload route (voice_consent) could
 # be forged onto any node, defeating the voice_ref guard below.
-_RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
+#
+# Public because template import is a second route by which node params
+# arrive from outside, and it has to strip exactly the same keys. One
+# definition, so a param added here is covered on both paths at once.
+RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
+
+# By id, not by kind: expand_screenplay looks the node up as graph.nodes[...],
+# so this string is the contract the rebuild depends on, and a script-kind
+# node under any other id is not the one it will find.
+SCRIPT_NODE_ID = "script"
 
 
 class PatchOp(BaseModel):
@@ -51,7 +60,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # Client patches never touch server-owned params (e.g. the
                 # consent flag): drop them so the value on the node is only
                 # ever what the server itself stamped.
-                incoming = {k: v for k, v in (op.params or {}).items() if k not in _RESERVED_PARAMS}
+                incoming = {k: v for k, v in (op.params or {}).items() if k not in RESERVED_PARAMS}
                 node.params = {**node.params, **incoming}
             case "set_seed":
                 graph.nodes[op.node_id].seed = op.seed if op.seed is not None else 0
@@ -86,10 +95,28 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # not be able to smuggle a server-owned flag (e.g.
                 # voice_consent) in on a freshly added node either.
                 op.node.params = {
-                    k: v for k, v in op.node.params.items() if k not in _RESERVED_PARAMS
+                    k: v for k, v in op.node.params.items() if k not in RESERVED_PARAMS
                 }
                 graph.add_node(op.node)
             case "remove_node":
+                # The script node is the one removal with no way back, and it
+                # is one-way twice over.
+                #
+                # Every other pipeline node — timeline, export, captions,
+                # music, and the scene subgraphs themselves — is rebuilt by
+                # expand_screenplay the next time the script renders, because
+                # _ensure_node is idempotent on purpose. So deleting one of
+                # those is recoverable. But that repair runs FROM the script
+                # node and expand_screenplay raises without one, so removing
+                # the script does not merely delete a node: it deletes the
+                # mechanism that made every other deletion recoverable. And
+                # nothing in the app adds a node back — the LLM editor's whole
+                # vocabulary is update and remove_scene.
+                if op.node_id == SCRIPT_NODE_ID and op.node_id in graph.nodes:
+                    raise ValueError(
+                        f"{SCRIPT_NODE_ID!r} cannot be removed — the rest of the pipeline is "
+                        "rebuilt from it, and nothing can add it back"
+                    )
                 dirty |= graph.downstream_of(op.node_id)
                 graph.edges = [e for e in graph.edges if op.node_id not in (e.src, e.dst)]
                 graph.nodes.pop(op.node_id, None)
@@ -123,6 +150,13 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")
+                # Same "unknown node" answer every other op gives. Without it
+                # a disconnect naming a node that is not there succeeded
+                # silently and reported the phantom id back as dirty, so a
+                # caller working from a stale graph got a 200 for an edit
+                # that changed nothing.
+                if op.node_id not in graph.nodes:
+                    raise KeyError(op.node_id)
                 graph.edges = [
                     e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
                 ]
