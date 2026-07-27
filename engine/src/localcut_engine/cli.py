@@ -481,6 +481,13 @@ def _create_command(args: argparse.Namespace, client) -> int:
 def _render_command(args: argparse.Namespace, client) -> int:
     from . import automation
 
+    # BEFORE the trigger, so a job of this render that fails between the
+    # trigger and the first poll is still reported as ours. Skipped for
+    # --no-wait, which reports a count and never looks at failures — that
+    # path exists to enqueue and leave, and against a remote engine this
+    # would be a round trip spent on an answer nobody reads.
+    not_mine = frozenset() if args.no_wait else automation.settled_jobs(client, args.project_id)
+
     if args.final:
         client.post(f"/projects/{args.project_id}/finalize")
     else:
@@ -509,7 +516,11 @@ def _render_command(args: argparse.Namespace, client) -> int:
             print(f"  {state}  ({len(pending)} outstanding)", flush=True)
 
     failed = automation.wait_for_render(
-        client, args.project_id, timeout_s=args.timeout_s, on_progress=progress
+        client,
+        args.project_id,
+        timeout_s=args.timeout_s,
+        on_progress=progress,
+        not_mine=not_mine,
     )
     payload = {
         "project_id": args.project_id,

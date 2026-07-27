@@ -1076,3 +1076,46 @@ def test_probe_survives_a_refresh_thread_that_cannot_start(monkeypatch):
     monkeypatch.undo()
     # Not latched: the next call is free to refresh again.
     assert probe.available() is True
+
+
+async def test_render_is_a_route_of_its_own_not_an_empty_patch(client):
+    """The draft-quality twin of /finalize, and what a headless caller means
+    by "render this".
+
+    An empty /patch does NOT do this: `patch` re-plans only when an op
+    dirtied something, so on a project whose queue had been drained it
+    enqueued nothing and the CLI reported "render finished" over a queue it
+    had never filled. That end of it — a drained queue actually refilling —
+    is asserted in test_automation_cli, which can wait for the screenplay to
+    expand and cancel jobs while they are still queued; here the mock
+    backend finishes them first, so the count is a race rather than a fact.
+    What this pins is the route's own contract.
+    """
+    project_id = (await client.post("/projects", json={"prompt": "a route"})).json()["id"]
+
+    rendered = await client.post(f"/projects/{project_id}/render")
+
+    assert rendered.status_code == 200
+    assert isinstance(rendered.json()["enqueued"], int)
+
+
+async def test_render_does_not_double_enqueue_work_already_in_flight(client):
+    """A script may call it twice, or call it during a render. Neither may
+    queue a second copy of a node that already has an identical job in
+    flight — `_enqueue_dirty` skips those, and this route inherits it."""
+    project_id = (await client.post("/projects", json={"prompt": "twice"})).json()["id"]
+    await client.post(f"/projects/{project_id}/render")
+
+    before = len((await client.get("/jobs", params={"project_id": project_id})).json())
+    await client.post(f"/projects/{project_id}/render")
+    after = (await client.get("/jobs", params={"project_id": project_id})).json()
+
+    planned = [job for job in after if job["status"] in ("queued", "rendering")]
+    assert len({(job["spec"]["node_id"], job["spec"]["output_hash"]) for job in planned}) == len(
+        planned
+    ), "the same node was queued twice"
+    assert len(after) >= before
+
+
+async def test_render_404s_for_a_project_that_is_not_there(client):
+    assert (await client.post("/projects/aaaaaaaaaa/render")).status_code == 404
