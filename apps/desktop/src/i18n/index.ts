@@ -17,6 +17,7 @@ import pipeline from "./en/pipeline.json";
 import scene from "./en/scene.json";
 import inspector from "./en/inspector.json";
 import timeline from "./en/timeline.json";
+import canvas from "./en/canvas.json";
 import composer from "./en/composer.json";
 import monitor from "./en/monitor.json";
 import workspace from "./en/workspace.json";
@@ -62,6 +63,7 @@ const en = {
   inspector,
   timeline,
   composer,
+  canvas,
   monitor,
   workspace,
   help,

@@ -10,7 +10,9 @@ import logging
 import os
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -60,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     download.add_argument("model_id")
     download.add_argument("--models-dir", default=None)
 
+    _add_automation_commands(subcommands)
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     _survive_console_encoding()
@@ -74,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command in ("models", "download"):
         return _models_command(args)
+
+    if args.command in _AUTOMATION_COMMANDS:
+        return _automation_command(args)
 
     overrides = {
         key: value
@@ -292,6 +299,387 @@ def _models_command(args: argparse.Namespace) -> int:
     for path in paths:
         print(f"ok: {path}")
     return 0
+
+
+# -- automation: a client of the headless engine (Phase 3) -------------------
+#
+# Every command here talks HTTP to a running engine rather than opening the
+# data directory. See automation.py for why that is not merely tidier.
+
+# One list, used both to route into the automation path and to dispatch
+# within it. Written three times (parser registration, this gate, and a
+# `match` in the dispatcher) it had two silent failure modes: a command
+# missing here falls through to the `serve` branch below and dies reading
+# `args.host`, which the automation subparsers deliberately never define;
+# a command missing from the dispatcher exits 1 with no output. Neither
+# failed a test or a type check.
+# The dispatch table itself is built at the bottom of this section, from the
+# functions it names — see _AUTOMATION_COMMANDS there.
+
+
+def _add_connection_flags(parser: argparse.ArgumentParser) -> None:
+    """Where to find the engine. Env defaults so a CI job sets them once."""
+    parser.add_argument(
+        "--engine",
+        default=None,
+        help="engine base url (default $LOCALCUT_ENGINE_URL, else http://127.0.0.1:7830)",
+    )
+    parser.add_argument(
+        "--token", default=None, help="bearer token (default $LOCALCUT_TOKEN)", dest="api_token"
+    )
+    parser.add_argument(
+        "--cert",
+        default=None,
+        help="PEM of a remote engine's self-signed certificate, pinned as the only trusted CA",
+    )
+    parser.add_argument("--json", action="store_true", help="print the raw JSON result")
+
+
+def _add_automation_commands(subcommands) -> None:
+    projects = subcommands.add_parser("projects", help="list projects on the engine")
+    _add_connection_flags(projects)
+
+    create = subcommands.add_parser("create", help="create a project from a prompt")
+    create.add_argument("prompt")
+    create.add_argument("--aspect", default="9:16")
+    create.add_argument("--duration", type=int, default=60, dest="duration_s")
+    create.add_argument("--mode", default="prompt")
+    _add_connection_flags(create)
+
+    render = subcommands.add_parser("render", help="render a project and wait for it to finish")
+    render.add_argument("project_id")
+    render.add_argument(
+        "--final", action="store_true", help="run the final-quality pass, not a draft"
+    )
+    render.add_argument(
+        "--timeout",
+        type=float,
+        default=3600.0,
+        dest="timeout_s",
+        help="seconds to wait before giving up (default 3600)",
+    )
+    render.add_argument("--no-wait", action="store_true", help="enqueue and return without waiting")
+    _add_connection_flags(render)
+
+    export = subcommands.add_parser("export", help="write a finished cut or an NLE handoff to disk")
+    export.add_argument("project_id")
+    export.add_argument(
+        "--format", default="mp4", choices=("mp4", "otio", "fcpxml"), dest="export_format"
+    )
+    export.add_argument("--out", required=True, type=Path, help="file to write")
+    _add_connection_flags(export)
+
+    template = subcommands.add_parser("template", help="export or import a project template")
+    template_actions = template.add_subparsers(dest="action", required=True)
+    template_export = template_actions.add_parser("export", help="write a project's template")
+    template_export.add_argument("project_id")
+    template_export.add_argument("--out", required=True, type=Path)
+    template_export.add_argument("--name", default="")
+    template_export.add_argument("--description", default="")
+    _add_connection_flags(template_export)
+    template_import = template_actions.add_parser(
+        "import", help="create a project from a template file"
+    )
+    template_import.add_argument("file", type=Path)
+    template_import.add_argument("--title", default="")
+    _add_connection_flags(template_import)
+
+    workflow = subcommands.add_parser("workflow", help="manage imported ComfyUI workflows")
+    workflow_actions = workflow.add_subparsers(dest="action", required=True)
+    workflow_import = workflow_actions.add_parser(
+        "import", help="import a ComfyUI API-format workflow"
+    )
+    workflow_import.add_argument("file", type=Path)
+    workflow_import.add_argument("--name", required=True, help="template name (a-z, 0-9, - and _)")
+    workflow_import.add_argument(
+        "--check", action="store_true", help="review it without storing anything"
+    )
+    _add_connection_flags(workflow_import)
+    workflow_list = workflow_actions.add_parser("list", help="list imported workflows")
+    _add_connection_flags(workflow_list)
+    workflow_remove = workflow_actions.add_parser("remove", help="delete an imported workflow")
+    workflow_remove.add_argument("name")
+    _add_connection_flags(workflow_remove)
+
+    packs = subcommands.add_parser("packs", help="ComfyUI custom-node packs this engine allows")
+    pack_actions = packs.add_subparsers(dest="action", required=True)
+    packs_list = pack_actions.add_parser("list", help="show the catalog and what is enabled")
+    _add_connection_flags(packs_list)
+    packs_enable = pack_actions.add_parser("enable", help="allow one pack, at one version")
+    packs_enable.add_argument("pack_id")
+    packs_enable.add_argument(
+        "--version", required=True, help="the version you installed on the ComfyUI host"
+    )
+    packs_enable.add_argument(
+        "--i-understand-the-risk",
+        action="store_true",
+        dest="acknowledged",
+        help="required: node packs are third-party code that runs inside ComfyUI",
+    )
+    _add_connection_flags(packs_enable)
+    packs_disable = pack_actions.add_parser("disable", help="revoke a pack")
+    packs_disable.add_argument("pack_id")
+    _add_connection_flags(packs_disable)
+
+
+def _automation_command(args: argparse.Namespace) -> int:
+    from .automation import DEFAULT_ENGINE_URL, EXIT_FAILED, EngineClient, EngineError
+
+    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
+    token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
+    try:
+        with EngineClient(url, token, cert=Path(args.cert) if args.cert else None) as client:
+            return _dispatch_automation(args, client)
+    except EngineError as exc:
+        from .automation import fail
+
+        return fail(str(exc), unreachable=exc.unreachable)
+    except KeyboardInterrupt:
+        # NOT 0. An interrupted `render` has not rendered anything, and 0 is
+        # the one status a script reads as "carry on" - it would go straight
+        # to `export` and ship whatever the last complete run left behind.
+        print("interrupted", file=sys.stderr)
+        return EXIT_FAILED
+
+
+def _dispatch_automation(args: argparse.Namespace, client) -> int:
+    # No fallback return: _AUTOMATION_COMMANDS is what let us in here, so a
+    # key that is missing is a programming error worth the KeyError rather
+    # than a silent exit 1.
+    return _AUTOMATION_COMMANDS[args.command](args, client)
+
+
+def _projects_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    rows = client.get("/projects") or []
+    automation.emit(
+        rows,
+        as_json=args.json,
+        lines=[f"{row['id']}  {row.get('mode', ''):10}  {row['title']}" for row in rows]
+        or ["no projects"],
+    )
+    return automation.EXIT_OK
+
+
+def _create_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    project = client.post(
+        "/projects",
+        json={
+            "prompt": args.prompt,
+            "aspect": args.aspect,
+            "target_duration_s": args.duration_s,
+            "mode": args.mode,
+        },
+    )
+    automation.emit(project, as_json=args.json, lines=[project["id"]])
+    return automation.EXIT_OK
+
+
+def _render_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    # BEFORE the trigger, so a job of this render that fails between the
+    # trigger and the first poll is still reported as ours. Skipped for
+    # --no-wait, which reports a count and never looks at failures — that
+    # path exists to enqueue and leave, and against a remote engine this
+    # would be a round trip spent on an answer nobody reads.
+    not_mine = frozenset() if args.no_wait else automation.settled_jobs(client, args.project_id)
+
+    if args.final:
+        client.post(f"/projects/{args.project_id}/finalize")
+    else:
+        # NOT an empty patch: `patch` re-plans only when an op dirtied
+        # something, so `{"ops": []}` enqueued nothing and this command
+        # reported "render finished" over a queue it had never filled.
+        client.post(f"/projects/{args.project_id}/render")
+
+    if args.no_wait:
+        pending = automation.active_jobs(client, args.project_id)
+        automation.emit(
+            {"pending": len(pending)}, as_json=args.json, lines=[f"{len(pending)} job(s) queued"]
+        )
+        return automation.EXIT_OK
+
+    seen: dict[str, int] = {}
+
+    def progress(jobs: list[dict], pending: list[dict]) -> None:
+        # One line per change, not per poll: a 40-minute render on a 2s poll
+        # is 1200 identical lines in a CI log otherwise.
+        counts = automation.render_summary(jobs)
+        nonlocal seen
+        if counts != seen and not args.json:
+            seen = counts
+            state = "  ".join(f"{status}:{n}" for status, n in sorted(counts.items()))
+            print(f"  {state}  ({len(pending)} outstanding)", flush=True)
+
+    failed = automation.wait_for_render(
+        client,
+        args.project_id,
+        timeout_s=args.timeout_s,
+        on_progress=progress,
+        not_mine=not_mine,
+    )
+    payload = {
+        "project_id": args.project_id,
+        "failed": [
+            {"node_id": job["spec"]["node_id"], "error": job.get("error")} for job in failed
+        ],
+    }
+    automation.emit(
+        payload,
+        as_json=args.json,
+        lines=[f"{job['spec']['node_id']}: {job.get('error') or 'failed'}" for job in failed]
+        or ["render finished"],
+    )
+    return automation.EXIT_FAILED if failed else automation.EXIT_OK
+
+
+def _export_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    if args.export_format in ("otio", "fcpxml"):
+        written = client.download(
+            f"/projects/{args.project_id}/export/{args.export_format}", args.out
+        )
+    else:
+        board = (client.get(f"/projects/{args.project_id}") or {}).get("board") or {}
+        artifact = automation.export_hash(board)
+        if artifact is None:
+            raise automation.EngineError(
+                "this project has no finished cut yet - run `render` first, and check that "
+                "its export node succeeded"
+            )
+        written = client.download(f"/projects/{args.project_id}/artifacts/{artifact}", args.out)
+    automation.emit(
+        {"path": str(args.out), "bytes": written},
+        as_json=args.json,
+        lines=[f"wrote {args.out} ({written} bytes)"],
+    )
+    return automation.EXIT_OK
+
+
+def _template_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    if args.action == "export":
+        document = client.get(
+            f"/projects/{args.project_id}/template",
+            params={"name": args.name, "description": args.description},
+        )
+        automation.write_json_file(args.out, document, what="template")
+        # The result, not the document: --out already wrote the document, and
+        # echoing it to stdout as well makes `template export | jq` read the
+        # template where every other command's --json reads a result.
+        automation.emit(
+            {
+                "path": str(args.out),
+                "name": document.get("name"),
+                "nodes": len(document.get("nodes", {})),
+            },
+            as_json=args.json,
+            lines=[f"wrote {args.out} ({len(document.get('nodes', {}))} nodes)"],
+        )
+        return automation.EXIT_OK
+
+    document = automation.read_json_file(args.file, what="template")
+    result = client.post(
+        "/projects/from-template", json={"template": document, "title": args.title}
+    )
+    lines = [result["project"]["id"]]
+    # Both of these are things the importer would otherwise discover later:
+    # a bill, or a scene that renders without its conditioning image.
+    if result.get("cloud_models"):
+        lines.append(f"note: renders on cloud models: {', '.join(result['cloud_models'])}")
+    if result.get("dropped_assets"):
+        lines.append(
+            f"note: {result['dropped_assets']} conditioning asset(s) were not part of "
+            "this template - re-upload them if the scenes need conditioning"
+        )
+    automation.emit(result, as_json=args.json, lines=lines)
+    return automation.EXIT_OK
+
+
+def _workflow_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    if args.action == "list":
+        rows = client.get("/comfy/workflows") or []
+        automation.emit(
+            rows,
+            as_json=args.json,
+            lines=[
+                f"{row['name']:24} {row['nodes']:4} nodes  {' '.join(row['placeholders']) or '-'}"
+                for row in rows
+            ]
+            or ["no imported workflows"],
+        )
+        return automation.EXIT_OK
+
+    if args.action == "remove":
+        client.delete(f"/comfy/workflows/{args.name}")
+        automation.emit({"ok": True}, as_json=args.json, lines=[f"removed {args.name}"])
+        return automation.EXIT_OK
+
+    workflow = automation.read_json_file(args.file, what="workflow")
+    route = "/comfy/workflows/review" if args.check else "/comfy/workflows"
+    result = client.post(route, json={"name": args.name, "workflow": workflow})
+    lines = [
+        ("would import" if args.check else "imported")
+        + f" {args.name}: {len(result['class_types'])} node type(s)"
+    ]
+    if result.get("packs_required"):
+        lines.append(f"uses enabled packs: {', '.join(result['packs_required'])}")
+    lines += [f"warning: {w}" for w in result.get("warnings", [])]
+    automation.emit(result, as_json=args.json, lines=lines)
+    return automation.EXIT_OK
+
+
+def _packs_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    if args.action == "list":
+        catalog = client.get("/comfy/node-packs") or {}
+        lines = [catalog.get("warning", ""), ""]
+        for pack in catalog.get("packs", []):
+            state = f"enabled ({pack['version']})" if pack["enabled"] else "disabled"
+            lines.append(f"{pack['id']:24} {state:22} {pack['repo']}")
+        automation.emit(catalog, as_json=args.json, lines=lines)
+        return automation.EXIT_OK
+
+    if args.action == "disable":
+        result = client.delete(f"/comfy/node-packs/{args.pack_id}")
+        automation.emit(
+            result,
+            as_json=args.json,
+            lines=[f"disabled {args.pack_id}" if result.get("was_enabled") else "was not enabled"],
+        )
+        return automation.EXIT_OK
+
+    result = client.post(
+        f"/comfy/node-packs/{args.pack_id}/enable",
+        json={"version": args.version, "acknowledge_code_execution": args.acknowledged},
+    )
+    automation.emit(result, as_json=args.json, lines=[f"enabled {args.pack_id} at {args.version}"])
+    return automation.EXIT_OK
+
+
+# ONE list of the automation commands, used for both the routing gate in
+# `main` and the dispatch above. Built from the functions themselves, so a
+# command cannot be registered in the parser and forgotten in one of the two
+# places that have to know about it — the failure modes were an AttributeError
+# out of the `serve` branch, and a silent exit 1.
+_AUTOMATION_COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
+    "projects": _projects_command,
+    "create": _create_command,
+    "render": _render_command,
+    "export": _export_command,
+    "template": _template_command,
+    "workflow": _workflow_command,
+    "packs": _packs_command,
+}
 
 
 if __name__ == "__main__":
