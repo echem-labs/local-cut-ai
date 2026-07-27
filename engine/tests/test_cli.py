@@ -18,13 +18,8 @@ import socket
 
 import pytest
 
+from conftest import free_port
 from localcut_engine import cli
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
 
 
 @pytest.fixture
@@ -49,7 +44,7 @@ def spy_create_app(monkeypatch):
 def test_a_held_port_exits_cleanly_without_building_the_app(tmp_path, spy_create_app, capsys):
     """The defect this encodes: a second engine touched the first engine's
     queue on its way to failing."""
-    port = _free_port()
+    port = free_port()
     holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     holder.bind(("127.0.0.1", port))
     holder.listen(1)
@@ -87,7 +82,7 @@ def test_a_free_port_reaches_the_server_with_the_socket_already_bound(tmp_path, 
 
     monkeypatch.setattr(uvicorn.Server, "run", fake_run)
 
-    port = _free_port()
+    port = free_port()
     code = cli.main(
         ["serve", "--port", str(port), "--data-dir", str(tmp_path), "--backend", "mock"]
     )
@@ -124,7 +119,7 @@ def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path,
             [
                 "serve",
                 "--port",
-                str(_free_port()),
+                str(free_port()),
                 "--data-dir",
                 str(tmp_path),
                 "--backend",
@@ -180,7 +175,7 @@ def _serve_on(stream, tmp_path, monkeypatch) -> int:
             "--host",
             "0.0.0.0",
             "--port",
-            str(_free_port()),
+            str(free_port()),
             "--token",
             "shell-token",
             "--data-dir",

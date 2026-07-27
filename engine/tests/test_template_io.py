@@ -10,10 +10,12 @@ moment a template arrives from someone else.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from localcut_engine.events import EventBus
-from localcut_engine.graph.model import Edge, Node, NodeKind, StoryGraph
+from localcut_engine.graph.model import GRAPH_VERSION, Edge, Node, NodeKind, StoryGraph
 from localcut_engine.graph.template_io import (
     MAX_NODES,
     TEMPLATE_VERSION,
@@ -174,6 +176,47 @@ def test_an_asset_node_in_an_incoming_template_is_refused():
     doc["nodes"]["asset-1"] = {"id": "asset-1", "kind": "asset", "params": {}}
 
     with pytest.raises(TemplateError, match="uploaded assets"):
+        from_template(doc)
+
+
+def test_a_template_whose_graph_is_from_a_newer_engine_is_refused_too():
+    """The nodes carry their own version, and it is the one that decides
+    whether this build understands them. build_graph stamps GRAPH_VERSION on
+    what it writes, so a newer document accepted here would be recorded as a
+    graph THIS build wrote — the silent reduction the format check exists to
+    prevent, one field over."""
+    with pytest.raises(TemplateError, match="graph 2"):
+        from_template(_document(graph_version=GRAPH_VERSION + 1))
+
+
+def test_two_edges_cannot_feed_one_input():
+    """An input port holds one connection — the invariant `connect` keeps by
+    displacing whatever was there. Nothing downstream re-checks it: the
+    compiler folds a node's inputs into a {port: hash} dict, so the second
+    edge vanishes from the output identity while still sitting in the graph,
+    and which one survives depends on list order."""
+    doc = _document()
+    doc["edges"].append({"src": "script", "dst": "s1.clip", "port": "keyframe"})
+
+    with pytest.raises(TemplateError, match="more than one edge"):
+        from_template(doc)
+
+
+def test_a_template_cannot_wire_a_voice_ref_port():
+    """voice_ref is the consent chokepoint: only a consented voice-sample
+    ASSET may feed it, and the cloning backend trusts the graph rather than
+    re-checking. An asset can never travel in a template, so a voice_ref edge
+    in one is never legitimate however it was produced."""
+    doc = _document()
+    doc["nodes"]["s1.narration"] = {
+        "id": "s1.narration",
+        "kind": "narration",
+        "params": {},
+        "model": "local:chatterbox",
+    }
+    doc["edges"].append({"src": "s1.keyframe", "dst": "s1.narration", "port": "voice_ref"})
+
+    with pytest.raises(TemplateError, match="voice_ref"):
         from_template(doc)
 
 
@@ -380,4 +423,19 @@ def test_the_size_cap_applies_to_a_parsed_document_too():
     document["nodes"]["s1.clip"]["params"]["motion"] = "x" * (2 << 20)
 
     with pytest.raises(TemplateError, match="larger than"):
+        from_template(document)
+
+
+def test_a_document_nested_too_deeply_is_refused_not_crashed():
+    """The size guard is the last thing between an untrusted document and
+    pydantic, and it was itself unbounded in one dimension: `iterencode` with
+    a `default=` runs CPython's pure-Python encoder, which recurses per level.
+    json.loads (C, iterative) parses far deeper, so a ~12 KB document reached
+    the guard and raised RecursionError — a RuntimeError, caught by neither
+    `except TemplateError` in the route nor anything else, so the reply was a
+    500 with a traceback instead of the reason this function exists to give."""
+    document = _document()
+    document["deep"] = json.loads("[" * 3000 + "]" * 3000)
+
+    with pytest.raises(TemplateError, match="nested too deeply"):
         from_template(document)

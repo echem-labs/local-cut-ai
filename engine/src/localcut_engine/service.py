@@ -267,6 +267,25 @@ class ProjectService:
             self.events.publish("project.approved", project_id=project_id, checkpoint=checkpoint)
             return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
 
+    def render(self, project_id: str) -> int:
+        """Plan whatever is stale, at draft quality. Returns jobs enqueued.
+
+        `patch` only re-plans when an op actually dirtied something, so an
+        empty patch — the obvious way to say "just render what is pending" —
+        enqueues nothing at all. That is fine for an editor, which patches
+        because something changed, and wrong for a headless caller whose
+        queue was drained by a restart or a cancellation: it would be told
+        the render finished without a single job having run.
+
+        `_enqueue_dirty` already works from the cache rather than a dirty
+        set, so this is the draft-quality twin of `finalize`.
+        """
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            enqueued = self._enqueue_dirty(project_id, graph)
+            self._refresh_meta_locked(project_id, graph)
+            return enqueued
+
     # -- editing -----------------------------------------------------------
 
     def patch(self, project_id: str, ops: list[PatchOp]) -> set[str]:

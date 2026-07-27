@@ -345,3 +345,14 @@ def test_a_revoked_pack_does_not_come_back_when_another_is_enabled(tmp_path):
             thread.join()
 
         assert "video-helper-suite" not in allowlist.load_grants(tmp_path)
+
+
+def test_a_name_with_a_trailing_newline_cannot_be_stored(tmp_path):
+    """Python's `$` also matches before a trailing newline, so "clip_default\\n"
+    passed the name check and became a real file — while DELETE
+    /comfy/workflows/{name} binds the same pattern through pydantic, whose
+    rust engine reads `$` as end of text and 422s it. The file could be
+    written and never removed, and shadow_warning missed the packaged stem it
+    was shadowing."""
+    with pytest.raises(workflows.WorkflowError, match="name must be"):
+        workflows.store(tmp_path, "clip_default\n", {"1": {"class_type": "KSampler"}})

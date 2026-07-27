@@ -15,12 +15,14 @@ automation contract a script actually depends on.
 from __future__ import annotations
 
 import json
-import socket
 import threading
 import time
+from pathlib import Path
 
 import pytest
 import uvicorn
+
+from conftest import free_port
 
 from localcut_engine import automation, cli
 from localcut_engine.api.app import create_app
@@ -29,19 +31,13 @@ from localcut_engine.config import EngineConfig
 TOKEN = "automation-token"
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
 @pytest.fixture
 def engine(tmp_path):
     """A live engine on loopback, with the mock backend and the scheduler
     actually running (uvicorn drives the lifespan, which is what starts it)."""
     config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
     server = uvicorn.Server(
-        uvicorn.Config(create_app(config), host="127.0.0.1", port=_free_port(), log_level="error")
+        uvicorn.Config(create_app(config), host="127.0.0.1", port=free_port(), log_level="error")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -111,7 +107,7 @@ def test_render_reports_nothing_left_outstanding(engine, capsys):
 def test_an_unreachable_engine_exits_2_and_says_how_to_start_one(capsys):
     """Distinct from 'the render failed': only one of the two is worth
     retrying, and a script cannot tell them apart from a message."""
-    dead = f"http://127.0.0.1:{_free_port()}"
+    dead = f"http://127.0.0.1:{free_port()}"
 
     assert cli.main(["projects", "--engine", dead, "--token", "x"]) == automation.EXIT_UNREACHABLE
 
@@ -356,3 +352,144 @@ def test_importing_over_a_shipped_workflow_name_warns_before_it_lands(engine, ca
     assert run(engine, "workflow", "import", path, "--name", "clip_default", "--check") == 0
 
     assert "every project on this engine" in capsys.readouterr().out
+
+
+# -- what "render" has to mean to a script -----------------------------------
+
+
+def test_render_enqueues_work_when_the_queue_was_drained(engine, capsys):
+    """`render` on a project whose jobs were cancelled has to render it.
+
+    The draft path used to POST an empty patch, and `patch` re-plans only when
+    an op dirtied something — so nothing was enqueued, `wait_for_render` found
+    nothing pending, and the command printed "render finished" and exited 0
+    over a queue it had never filled. A script's next step would then export
+    whatever the previous complete run left behind.
+    """
+    run(engine, "create", "drained", "--json")
+    project_id = json_out(capsys)["id"]
+    with automation.EngineClient(engine, TOKEN) as client:
+        # Wait for the screenplay to expand, then cancel everything still to do.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            jobs = client.get("/jobs", params={"project_id": project_id}) or []
+            if len(jobs) > 3:
+                break
+            time.sleep(0.05)
+        for job in jobs:
+            if job["status"] in ("queued", "rendering"):
+                try:
+                    client.post(f"/jobs/{job['id']}/cancel")
+                except automation.EngineError:
+                    pass  # it finished on its own between the list and the cancel
+        time.sleep(0.3)
+        assert not automation.active_jobs(client, project_id), "the queue should be drained"
+
+        assert run(engine, "render", project_id, "--no-wait", "--json") == 0
+
+        assert json_out(capsys)["pending"] > 0
+
+
+class _JobsStub:
+    """Just enough EngineClient for wait_for_render: a canned /jobs history."""
+
+    def __init__(self, *polls: list[dict]) -> None:
+        self._polls = list(polls)
+
+    def get(self, path: str, **kwargs: object) -> list[dict]:
+        assert path == "/jobs"
+        return self._polls.pop(0) if len(self._polls) > 1 else self._polls[0]
+
+
+def test_a_failure_from_an_earlier_render_is_not_reported_as_this_one():
+    """/jobs is the project's whole history — nothing deletes rows and the
+    query has no status or time bound. Reporting every FAILED row as this
+    render's failure meant one clip that failed once made `render` exit 1
+    forever, so a CI job could never go green again."""
+    old = {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}}
+    mine = {"id": "mine", "status": "queued", "spec": {"node_id": "s1.clip"}}
+
+    failed = automation.wait_for_render(
+        _JobsStub([old, mine], [old, {**mine, "status": "done"}]),
+        "p1",
+        timeout_s=30,
+    )
+
+    assert failed == []
+
+
+def test_a_failure_from_this_render_is_still_reported():
+    """The bound above must not swallow the failures the command exists to
+    report — a job that was pending at the first poll is this render's."""
+    old = {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}}
+    mine = {"id": "mine", "status": "queued", "spec": {"node_id": "s1.clip"}}
+    broke = {**mine, "status": "failed", "error": "out of memory"}
+
+    failed = automation.wait_for_render(_JobsStub([old, mine], [old, broke]), "p1", timeout_s=30)
+
+    assert [job["id"] for job in failed] == ["mine"]
+
+
+# -- what the client refuses to call success ---------------------------------
+
+
+def test_pinning_a_certificate_against_a_cleartext_url_is_refused():
+    """httpx ignores `verify` entirely for an http:// base url, so `--cert`
+    there is not a weaker check, it is no check — the token and every provider
+    key go out in the clear with the operator believing they are pinned."""
+    with pytest.raises(automation.EngineError, match="not https"):
+        automation.EngineClient("http://gpu-box:7830", TOKEN, cert=Path("engine.pem"))
+
+
+def test_a_redirect_is_not_treated_as_a_successful_request():
+    """httpx does not follow redirects by default, so a proxy that upgrades
+    http->https or canonicalises the host returned a bodyless 302 that fell
+    through every check to `return None` — which `render` read as "enqueued"
+    and `export` wrote to disk as a finished cut, both exiting 0."""
+    redirector = _RedirectServer()
+    with redirector as url, automation.EngineClient(url, TOKEN) as client:
+        with pytest.raises(automation.EngineError, match="redirected"):
+            client.post("/projects/p1/render")
+
+
+def test_a_redirect_does_not_land_on_disk_as_an_export(tmp_path):
+    """The same hole in `download`, where it is worse: the empty body would be
+    renamed over the destination, so the atomic rename that exists to stop a
+    truncated file wearing a finished export's name delivered exactly that."""
+    out = tmp_path / "cut.mp4"
+    redirector = _RedirectServer()
+    with redirector as url, automation.EngineClient(url, TOKEN) as client:
+        with pytest.raises(automation.EngineError, match="redirected"):
+            client.download("/projects/p1/export/otio", out)
+
+    assert not out.exists()
+
+
+class _RedirectServer:
+    """A server that 302s everything, the way a reverse proxy in front of the
+    engine does."""
+
+    def __enter__(self) -> str:
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _redirect(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", "https://elsewhere.example/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_POST = _redirect
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", free_port()), Handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        return f"http://127.0.0.1:{self._server.server_port}"
+
+    def __exit__(self, *exc: object) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=10)

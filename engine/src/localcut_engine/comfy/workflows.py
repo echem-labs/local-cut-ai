@@ -31,13 +31,22 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .. import jsondoc
 from ..backends.comfyui import PLACEHOLDERS
+from ..project.store import _write_atomic
 from .allowlist import CLASS_TYPE_PATTERN, Allowlist
 
 # A stored template's filename stem. Bare, lowercase-ish, no separators — the
 # backend resolves `comfy_template` params against the same directory and
 # already refuses anything path-shaped, so this keeps a hostile name from ever
 # reaching that check.
+# Checked with `fullmatch`, never `match`: in Python `$` also matches just
+# before a trailing newline, so "clip_default\n" passed and became a real
+# file — while the DELETE route binds this SAME pattern string through
+# pydantic, whose rust engine reads `$` as end of text and 422s it, leaving a
+# file that could be written and never removed. The pattern text stays `$`
+# because pydantic's engine has no `\Z`; `fullmatch` is what makes the two
+# agree.
 NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # A workflow bigger than this is not a workflow. ComfyUI's own graphs run to
@@ -100,25 +109,15 @@ def parse_workflow(source: str | bytes | dict) -> dict:
     # never ran at all in production. A three-node workflow whose inputs are
     # megabytes of text passes the node count and is then written into the
     # templates directory, where the backend re-reads it on every render.
-    if _encoded_over(source, MAX_WORKFLOW_BYTES):
+    refusal = jsondoc.refuse_reason(source, MAX_WORKFLOW_BYTES)
+    if refusal == "size":
         raise WorkflowError(
             f"workflow is larger than {MAX_WORKFLOW_BYTES // 1024} KiB — "
             "that is not a ComfyUI graph"
         )
+    if refusal == "depth":
+        raise WorkflowError("workflow is nested too deeply — that is not a ComfyUI graph")
     return source
-
-
-def _encoded_over(document: Any, limit: int) -> bool:
-    """Would `document` serialize to more than `limit` bytes of JSON?
-    Incremental, so an oversized document is never encoded in full just to be
-    rejected. (Same guard as graph.template_io, the other untrusted-document
-    route; the messages differ, so the two are not shared.)"""
-    size = 0
-    for chunk in json.JSONEncoder(separators=(",", ":"), default=str).iterencode(document):
-        size += len(chunk)
-        if size > limit:
-            return True
-    return False
 
 
 def class_types(workflow: dict) -> list[str]:
@@ -133,7 +132,7 @@ def class_types(workflow: dict) -> list[str]:
         if not isinstance(node, dict):
             raise WorkflowError(f"node {node_id!r} is not an object")
         class_type = node.get("class_type")
-        if not isinstance(class_type, str) or not CLASS_TYPE_PATTERN.match(class_type):
+        if not isinstance(class_type, str) or not CLASS_TYPE_PATTERN.fullmatch(class_type):
             raise WorkflowError(f"node {node_id!r} has no usable class_type")
         found.add(class_type)
     return sorted(found)
@@ -147,15 +146,16 @@ def review(workflow: dict, allowlist: Allowlist) -> WorkflowReview:
     missing: set[str] = set()
     unknown: list[str] = []
     for class_type in types:
-        if class_type in allowlist.builtin:
-            continue
-        pack = allowlist.pack_for(class_type)
-        if pack is None:
-            unknown.append(class_type)
-        elif pack.id in allowlist.grants:
-            required.add(pack.id)
-        else:
-            missing.add(pack.id)
+        # Through the allowlist's own rule rather than a second copy of it —
+        # this is the decision about whether third-party Python may run, and
+        # it should have exactly one implementation.
+        match allowlist.verdict(class_type):
+            case "unknown":
+                unknown.append(class_type)
+            case "needs-grant":
+                missing.add(allowlist.pack_for(class_type).id)  # type: ignore[union-attr]
+            case _ if (pack := allowlist.pack_for(class_type)) is not None:
+                required.add(pack.id)
 
     body = json.dumps(workflow)
     placeholders = [token for token in PLACEHOLDERS if token in body]
@@ -240,7 +240,7 @@ def shadow_warning(name: str) -> str | None:
 
 def store(data_dir: Path, name: str, workflow: dict) -> Path:
     """Write an approved workflow as `<name>.json`. Returns its path."""
-    if not NAME_PATTERN.match(name or ""):
+    if not NAME_PATTERN.fullmatch(name or ""):
         raise WorkflowError(
             "name must be lowercase letters, digits, dashes or underscores "
             "(it becomes the template filename)"
@@ -248,9 +248,11 @@ def store(data_dir: Path, name: str, workflow: dict) -> Path:
     directory = templates_dir(data_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.json"
-    temp = path.with_suffix(".json.tmp")
-    temp.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
-    temp.replace(path)
+    # The project store's writer rather than a second hand-rolled rename: an
+    # imported workflow can shadow a packaged template, so a truncated write
+    # here is re-read by the backend on every render of every project on this
+    # engine. That is what the fsync and the replace-retry are for.
+    _write_atomic(path, json.dumps(workflow, indent=2))
     return path
 
 
@@ -283,7 +285,7 @@ def installed(data_dir: Path) -> list[dict[str, Any]]:
 
 def remove(data_dir: Path, name: str) -> bool:
     """Delete an imported workflow. True if it was there."""
-    if not NAME_PATTERN.match(name or ""):
+    if not NAME_PATTERN.fullmatch(name or ""):
         raise WorkflowError("not a workflow name")
     path = templates_dir(data_dir) / f"{name}.json"
     if not path.is_file():

@@ -251,7 +251,12 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
-                        templates_dir=config.data_dir / "comfy-templates",
+                        # The same function the import routes write through.
+                        # A repeated literal was the only thing joining "where
+                        # an import lands" to "where the backend looks", so
+                        # moving one would have sent every import somewhere
+                        # renders never read, with nothing failing.
+                        templates_dir=workflows.templates_dir(config.data_dir),
                         kinds=(
                             "keyframe,thumbnail,clip,music" if auto_kinds else config.comfy_kinds
                         ),
@@ -934,7 +939,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/projects/from-template", dependencies=[Authed])
     async def create_from_template(body: TemplateBody) -> dict:
         try:
-            template = from_template(body.template)
+            # Off the loop like every other heavy call here: validating a
+            # 500-node document re-encodes it to measure its size and then
+            # runs an O(nodes x edges) topological sort, which is long enough
+            # to stall the /ws progress fan-out and every in-flight request.
+            template = await asyncio.to_thread(from_template, body.template)
         except TemplateError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         project = await asyncio.to_thread(service.create_from_template, template, title=body.title)
@@ -1114,6 +1123,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         clip_model: str | None = Field(
             default=None, max_length=128, pattern=r"^$|^(local:|cloud:)?[\w.\-]+$"
         )
+
+    @app.post("/projects/{project_id}/render", dependencies=[Authed])
+    async def render(project_id: ProjectId) -> dict:
+        """Enqueue whatever the graph still owes, at draft quality — the
+        draft-side counterpart of /finalize, and what a headless caller
+        means by "render this". An empty /patch does NOT do this: it
+        re-plans only when an op dirtied something."""
+        await _get_project(project_id)
+        return {"enqueued": await asyncio.to_thread(service.render, project_id)}
 
     @app.post("/projects/{project_id}/finalize", dependencies=[Authed])
     async def finalize(project_id: ProjectId, body: FinalizeBody | None = None) -> dict:
