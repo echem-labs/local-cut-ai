@@ -10,7 +10,9 @@ import logging
 import os
 import socket
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 
@@ -304,9 +306,15 @@ def _models_command(args: argparse.Namespace) -> int:
 # Every command here talks HTTP to a running engine rather than opening the
 # data directory. See automation.py for why that is not merely tidier.
 
-_AUTOMATION_COMMANDS = frozenset(
-    {"projects", "create", "render", "export", "template", "workflow", "packs"}
-)
+# One list, used both to route into the automation path and to dispatch
+# within it. Written three times (parser registration, this gate, and a
+# `match` in the dispatcher) it had two silent failure modes: a command
+# missing here falls through to the `serve` branch below and dies reading
+# `args.host`, which the automation subparsers deliberately never define;
+# a command missing from the dispatcher exits 1 with no output. Neither
+# failed a test or a type check.
+# The dispatch table itself is built at the bottom of this section, from the
+# functions it names — see _AUTOMATION_COMMANDS there.
 
 
 def _add_connection_flags(parser: argparse.ArgumentParser) -> None:
@@ -415,9 +423,9 @@ def _add_automation_commands(subcommands) -> None:
 
 
 def _automation_command(args: argparse.Namespace) -> int:
-    from .automation import EXIT_OK, EngineClient, EngineError
+    from .automation import DEFAULT_ENGINE_URL, EXIT_FAILED, EngineClient, EngineError
 
-    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or "http://127.0.0.1:7830"
+    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
     token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
     try:
         with EngineClient(url, token, cert=Path(args.cert) if args.cert else None) as client:
@@ -427,53 +435,47 @@ def _automation_command(args: argparse.Namespace) -> int:
 
         return fail(str(exc), unreachable=exc.unreachable)
     except KeyboardInterrupt:
+        # NOT 0. An interrupted `render` has not rendered anything, and 0 is
+        # the one status a script reads as "carry on" - it would go straight
+        # to `export` and ship whatever the last complete run left behind.
         print("interrupted", file=sys.stderr)
-        return EXIT_OK
+        return EXIT_FAILED
 
 
 def _dispatch_automation(args: argparse.Namespace, client) -> int:
+    # No fallback return: _AUTOMATION_COMMANDS is what let us in here, so a
+    # key that is missing is a programming error worth the KeyError rather
+    # than a silent exit 1.
+    return _AUTOMATION_COMMANDS[args.command](args, client)
+
+
+def _projects_command(args: argparse.Namespace, client) -> int:
     from . import automation
 
-    match args.command:
-        case "projects":
-            rows = client.get("/projects") or []
-            automation.emit(
-                rows,
-                as_json=args.json,
-                lines=[f"{row['id']}  {row.get('mode', ''):10}  {row['title']}" for row in rows]
-                or ["no projects"],
-            )
-            return automation.EXIT_OK
+    rows = client.get("/projects") or []
+    automation.emit(
+        rows,
+        as_json=args.json,
+        lines=[f"{row['id']}  {row.get('mode', ''):10}  {row['title']}" for row in rows]
+        or ["no projects"],
+    )
+    return automation.EXIT_OK
 
-        case "create":
-            project = client.post(
-                "/projects",
-                json={
-                    "prompt": args.prompt,
-                    "aspect": args.aspect,
-                    "target_duration_s": args.duration_s,
-                    "mode": args.mode,
-                },
-            )
-            automation.emit(project, as_json=args.json, lines=[project["id"]])
-            return automation.EXIT_OK
 
-        case "render":
-            return _render_command(args, client)
+def _create_command(args: argparse.Namespace, client) -> int:
+    from . import automation
 
-        case "export":
-            return _export_command(args, client)
-
-        case "template":
-            return _template_command(args, client)
-
-        case "workflow":
-            return _workflow_command(args, client)
-
-        case "packs":
-            return _packs_command(args, client)
-
-    return automation.EXIT_FAILED
+    project = client.post(
+        "/projects",
+        json={
+            "prompt": args.prompt,
+            "aspect": args.aspect,
+            "target_duration_s": args.duration_s,
+            "mode": args.mode,
+        },
+    )
+    automation.emit(project, as_json=args.json, lines=[project["id"]])
+    return automation.EXIT_OK
 
 
 def _render_command(args: argparse.Namespace, client) -> int:
@@ -482,10 +484,10 @@ def _render_command(args: argparse.Namespace, client) -> int:
     if args.final:
         client.post(f"/projects/{args.project_id}/finalize")
     else:
-        # A draft render is whatever the graph already plans. Re-compiling
-        # with an empty patch is how the API expresses "plan what is dirty"
-        # without changing anything.
-        client.post(f"/projects/{args.project_id}/patch", json={"ops": []})
+        # NOT an empty patch: `patch` re-plans only when an op dirtied
+        # something, so `{"ops": []}` enqueued nothing and this command
+        # reported "render finished" over a queue it had never filled.
+        client.post(f"/projects/{args.project_id}/render")
 
     if args.no_wait:
         pending = automation.active_jobs(client, args.project_id)
@@ -651,6 +653,22 @@ def _packs_command(args: argparse.Namespace, client) -> int:
     )
     automation.emit(result, as_json=args.json, lines=[f"enabled {args.pack_id} at {args.version}"])
     return automation.EXIT_OK
+
+
+# ONE list of the automation commands, used for both the routing gate in
+# `main` and the dispatch above. Built from the functions themselves, so a
+# command cannot be registered in the parser and forgotten in one of the two
+# places that have to know about it — the failure modes were an AttributeError
+# out of the `serve` branch, and a silent exit 1.
+_AUTOMATION_COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
+    "projects": _projects_command,
+    "create": _create_command,
+    "render": _render_command,
+    "export": _export_command,
+    "template": _template_command,
+    "workflow": _workflow_command,
+    "packs": _packs_command,
+}
 
 
 if __name__ == "__main__":

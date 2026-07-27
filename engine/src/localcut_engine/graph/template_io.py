@@ -38,9 +38,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
-from .. import __version__
+from .. import __version__, jsondoc
 from ..aspects import EXPORT_RESOLUTIONS
-from .model import GRAPH_VERSION, Edge, Node, NodeKind, StoryGraph
+from .model import GRAPH_VERSION, VOICE_REF_PORT, Edge, Node, NodeKind, StoryGraph
 from .patch import RESERVED_PARAMS
 
 # The template wire format. Same contract as GRAPH_VERSION: a document from a
@@ -138,6 +138,11 @@ def to_template(
         if e.src not in dropped and e.dst not in dropped
     ]
     return GraphTemplate(
+        # The version these nodes were ACTUALLY written against, not this
+        # build's — a project on disk may still be at an older one, and a
+        # document that overstated it would tell a future migration to skip
+        # the step that fixes it.
+        graph_version=graph.version,
         name=name[:120],
         description=description[:2000],
         mode=mode,
@@ -201,6 +206,21 @@ def from_template(document: Any) -> GraphTemplate:
             f"(format {raw_version}, this build reads {TEMPLATE_VERSION}) — update to import it"
         )
 
+    # The NODES carry their own version, and it is the one that decides
+    # whether this build understands them. `build_graph` stamps GRAPH_VERSION
+    # on what it writes, so a newer document accepted here would be recorded
+    # as a graph this build wrote — the silent reduction TEMPLATE_VERSION
+    # exists to prevent, one field over. Same contract project/store.py
+    # enforces when it opens a project directory.
+    raw_graph_version = document.get("graph_version", GRAPH_VERSION)
+    if not isinstance(raw_graph_version, int) or isinstance(raw_graph_version, bool):
+        raise TemplateError("graph_version must be a whole number")
+    if raw_graph_version > GRAPH_VERSION:
+        raise TemplateError(
+            f"this template's graph was written by a newer version of LocalCut AI "
+            f"(graph {raw_graph_version}, this build reads {GRAPH_VERSION}) — update to import it"
+        )
+
     # Cheap structural caps BEFORE pydantic builds every Node: validating
     # 100k nodes to then reject them is the same amount of work as accepting
     # them, and this is a route an unauthenticated-adjacent client reaches.
@@ -212,10 +232,13 @@ def from_template(document: Any) -> GraphTemplate:
         raise TemplateError(f"template has {len(nodes)} nodes; the limit is {MAX_NODES}")
     if edges is not None and (not isinstance(edges, list) or len(edges) > MAX_EDGES):
         raise TemplateError(f"template has more than {MAX_EDGES} edges")
-    if _encoded_over(document, MAX_DOCUMENT_BYTES):
+    refusal = jsondoc.refuse_reason(document, MAX_DOCUMENT_BYTES)
+    if refusal == "size":
         raise TemplateError(
             f"template is larger than {MAX_DOCUMENT_BYTES // 1024} KiB — that is not a story graph"
         )
+    if refusal == "depth":
+        raise TemplateError("template is nested too deeply — that is not a story graph")
 
     try:
         template = GraphTemplate.model_validate(document)
@@ -271,6 +294,37 @@ def from_template(document: Any) -> GraphTemplate:
     if dangling:
         raise TemplateError(f"edges reference nodes that are not in the template: {dangling}")
 
+    # One edge per input port — the invariant the `connect` patch op keeps by
+    # displacing whatever held the port. Nothing downstream re-checks it: the
+    # compiler folds a node's inputs into a `{port: hash}` dict, so a second
+    # edge on one port vanishes from the output identity while still sitting
+    # in the graph, and which of the two survives depends on list order.
+    held: set[tuple[str, str]] = set()
+    doubled: set[str] = set()
+    for edge in template.edges:
+        if (edge.dst, edge.port) in held:
+            doubled.add(f"{edge.dst}.{edge.port}")
+        held.add((edge.dst, edge.port))
+    if doubled:
+        raise TemplateError(
+            "more than one edge feeds the same input: "
+            f"{', '.join(sorted(doubled))} — an input port holds one connection"
+        )
+
+    # The voice_ref port is the consent chokepoint (see graph/patch.py, and
+    # backends/chatterbox.py, which trusts the graph rather than re-checking).
+    # Only a consented voice-sample ASSET may feed it — and an asset can never
+    # travel in a template, so a voice_ref edge here is never legitimate
+    # however it was produced. Export already drops it with the asset it came
+    # from; refuse it on the way in so the second untrusted-document route
+    # re-establishes the same invariant the patch route does.
+    voice_refs = sorted({e.dst for e in template.edges if e.port == VOICE_REF_PORT})
+    if voice_refs:
+        raise TemplateError(
+            f"template wires the {VOICE_REF_PORT!r} port of {', '.join(voice_refs)} — voice "
+            "cloning needs a consented voice sample, and samples are not part of a template"
+        )
+
     # Reserved params are stripped rather than rejected: unlike the checks
     # above, their presence is not evidence of a broken template — it is
     # exactly what a forged one looks like, and dropping them is what the
@@ -304,27 +358,6 @@ def _portable_mode(mode: str) -> bool:
     if mode in PORTABLE_MODES:
         return True
     return mode.startswith("tool:") and mode.removeprefix("tool:") in TOOL_KINDS
-
-
-def _encoded_over(document: Any, limit: int) -> bool:
-    """Would `document` serialize to more than `limit` bytes of JSON?
-
-    Measured incrementally and abandoned at the limit, so an oversized
-    document is never encoded in full just to be rejected.
-
-    The cap has to apply to a PARSED document, not only to a string. Every
-    route that reaches from_template hands in a dict — FastAPI parsed the
-    request body, and the CLI parsed the file — so a check that only looked at
-    `str | bytes` fired in tests and nowhere else. A 400-node template whose
-    params are megabytes apiece passes every count above it, and is then
-    written to graph.json at that size and re-read on every board build.
-    """
-    size = 0
-    for chunk in json.JSONEncoder(separators=(",", ":"), default=str).iterencode(document):
-        size += len(chunk)
-        if size > limit:
-            return True
-    return False
 
 
 def _first_reason(exc: ValidationError) -> str:
