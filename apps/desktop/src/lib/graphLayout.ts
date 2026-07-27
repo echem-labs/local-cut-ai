@@ -151,7 +151,15 @@ export function layoutGraph(graph: StoryGraph | null): GraphLayout {
     // barycentre, and Array sort is stable, so without a tie-break their
     // order is whatever order they arrived in. See the note on layoutGraph
     // for why this and the id sort there are deliberately redundant.
-    const ordered = [...ids].sort((a, b) => weight(a) - weight(b) || a.localeCompare(b));
+    //
+    // Code-unit order, NOT localeCompare: the promise this module makes is
+    // that a graph draws the same way on every machine, and collation is a
+    // property of the host's locale — "Beta" and "alpha" swap places between
+    // one and the next. It is also the order the id sort above uses, so the
+    // two guards agree instead of quietly disagreeing.
+    const ordered = [...ids].sort(
+      (a, b) => weight(a) - weight(b) || (a < b ? -1 : a > b ? 1 : 0),
+    );
     ordered.forEach((id, row) => rowOf.set(id, row));
     columns.set(column, ordered);
   }
@@ -188,7 +196,10 @@ export function layoutGraph(graph: StoryGraph | null): GraphLayout {
  * right and arrives at the target going right, which reads as flow direction
  * even where a long edge skips several columns.
  */
-export function edgePath(from: PlacedNode, to: PlacedNode): string {
+// Takes only what it reads. Typed as PlacedNode, the live-wire caller had
+// to invent `id: ""`, `depth: 0`, `row: 0` for every drag frame — three
+// fields nothing here looks at, and `depth: 0` reads as a layout claim.
+export function edgePath(from: Point, to: Point): string {
   const x1 = from.x + NODE_WIDTH;
   const y1 = from.y + NODE_HEIGHT / 2;
   const x2 = to.x;
@@ -202,12 +213,36 @@ export function edgePath(from: PlacedNode, to: PlacedNode): string {
 
 /** Ports that already hold an edge on `nodeId` — connecting to one replaces
  * it, which the canvas warns about before it happens. */
+/** Just the corner an edge is drawn from or to. */
+interface Point {
+  x: number;
+  y: number;
+}
+
 export function occupiedPorts(graph: StoryGraph | null, nodeId: string): Record<string, string> {
   const held: Record<string, string> = {};
   for (const edge of graph?.edges ?? []) {
     if (edge.dst === nodeId) held[edge.port] = edge.src;
   }
   return held;
+}
+
+/** Every node's occupied ports, in one pass over the edges.
+ *
+ * The per-node call above is O(edges) each, and the canvas needs it for every
+ * node it draws — so used in the render loop it is O(nodes x edges), redone
+ * on every pointermove of a wire drag and every job-progress tick of a live
+ * render. This is the same answer for the whole graph at once, memoizable on
+ * `graph` beside the layout.
+ */
+export function occupiedPortIndex(
+  graph: StoryGraph | null,
+): Record<string, Record<string, string>> {
+  const index: Record<string, Record<string, string>> = {};
+  for (const edge of graph?.edges ?? []) {
+    (index[edge.dst] ??= {})[edge.port] = edge.src;
+  }
+  return index;
 }
 
 /**

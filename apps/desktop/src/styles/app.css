@@ -4534,6 +4534,7 @@ button.link:hover {
 
 /* Status accent down the left edge — the same colours the board's pills use,
  * so a node reads the same in both views. */
+.canvas-node.status-queued .canvas-node-body,
 .canvas-node.status-rendering .canvas-node-body {
   border-left: 3px solid var(--status-generating);
 }
