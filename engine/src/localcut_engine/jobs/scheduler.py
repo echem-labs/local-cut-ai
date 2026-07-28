@@ -257,6 +257,9 @@ class Scheduler:
             artifact = await backend.execute(job.spec, ctx)
             job.status = JobStatus.DONE
             job.progress = 1.0
+            # Only a finished job keeps its notices: on a failed attempt the
+            # error dominates, and the retry re-emits its own.
+            job.notices = ctx.notices
             # Stored RELATIVE to the project's generated/ dir, as the field
             # has always been documented. An absolute path breaks the moment
             # the data dir moves, the app is reinstalled under another

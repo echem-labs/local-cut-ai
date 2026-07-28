@@ -12,6 +12,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
+import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
 import { ToolSession } from "../components/ToolSession";
 import { Workspace } from "../components/Workspace";
@@ -492,6 +493,7 @@ export function Project() {
       </div>
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
+      <NoticeBar />
 
       {board.scenes.length === 0 ? (
         <div className="banner">
