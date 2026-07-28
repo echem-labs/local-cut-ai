@@ -156,6 +156,60 @@ async def test_the_scheduler_records_a_relative_artifact(tmp_path):
     queue.close()
 
 
+async def test_a_job_is_not_finished_until_the_work_it_plans_is_queued(tmp_path):
+    """Nothing queued or rendering is what "the render finished" means to a
+    caller: `wait_for_render` returns on it and the CLI exits 0.
+
+    So the gap between a job's DONE row and the jobs its own completion goes
+    on to enqueue is a gap in which a render reports success over work that
+    never ran. The script node is the real case - completing it is what
+    expands the screenplay into scenes - and the hook that does the expanding
+    loads a graph, saves it and enqueues, all after the DONE write. A poll
+    landing in there exported a project whose scenes had not been enqueued
+    yet, and `export` then refused with "no finished cut yet" over a render
+    that had just reported success.
+    """
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    backends = BackendRegistry()
+    backends.register(MockBackend())
+    project = store.create(title="t", graph=_seed_graph())
+
+    outstanding_while_planning: list[list[str]] = []
+
+    async def plan_more_work(job: Job) -> None:
+        # Stands in for the screenplay expansion: the hook is where a
+        # completion turns into the next round of jobs.
+        if job.spec.kind is not NodeKind.SCRIPT:
+            return
+        outstanding_while_planning.append([j.id for j in queue.active(project.id)])
+        queue.put(
+            Job(project_id=project.id, spec=make_spec(NodeKind.KEYFRAME, output_hash="b" * 64))
+        )
+
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=EventBus(),
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+        on_job_done=plan_more_work,
+    )
+    script = queue.put(Job(project_id=project.id, spec=make_spec(NodeKind.SCRIPT)))
+    scheduler.start()
+    try:
+        await wait_for(lambda: len(outstanding_while_planning) == 1, timeout=10)
+    finally:
+        await scheduler.stop()
+
+    assert outstanding_while_planning == [[script.id]], (
+        "the project read as idle while the work its script job planned was "
+        "still being enqueued - a render waiting on an empty queue would call "
+        "that finished"
+    )
+    queue.close()
+
+
 # -- DUR-1: the project format is versioned ----------------------------------
 
 

@@ -270,6 +270,16 @@ class Scheduler:
             # same reason.
             job.artifact = _relative_artifact(artifact, ctx.output_dir)
             job.finished_at = time.time()
+            # Settle BEFORE the DONE row, not after. "Nothing queued or
+            # rendering" is what a caller reads as a finished render —
+            # wait_for_render returns on it and `render` exits 0 — so work
+            # that this completion goes on to enqueue has to be on the queue
+            # before the job stops counting as outstanding. With the DONE
+            # write first, the script node's expansion (a graph load, a save
+            # with fsync, then the enqueue) left the queue momentarily empty
+            # and a poll landing there reported success over scenes that had
+            # not been enqueued yet.
+            await self._settle(job)
             if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                 return  # user cancelled during the render — honor it, skip DONE
             self.events.publish(
@@ -303,19 +313,38 @@ class Scheduler:
                 project_id=job.project_id,
             )
             return
-        # The hook runs outside the job's try: a follow-up failure (e.g.
-        # screenplay expansion) must not flip a persisted DONE to FAILED.
-        if self.on_job_done is not None:
-            try:
-                await self.on_job_done(job)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("post-completion hook failed for job %s", job.id)
-                self.events.publish(
-                    "project.error",
-                    project_id=job.project_id,
-                    node_id=job.spec.node_id,
-                    error=str(exc),
-                )
+
+    async def _settle(self, job: Job) -> None:
+        """Record what this job's completion implies — for the script node,
+        expanding the screenplay and enqueueing the scene work it plans.
+
+        Swallows its own failures rather than raising. It runs inside the
+        job's `try`, and a follow-up error (a screenplay that will not expand)
+        must not flip a job that really did render into FAILED.
+
+        The cancel check is a plain read, not the atomic one the DONE write
+        makes: a cancel landing *during* the hook still gets its side effects.
+        That is a far narrower window than skipping the check entirely, which
+        would expand and enqueue a whole pipeline for a job the user had
+        already cancelled. Project deletion needs no check here — the hook
+        bails on a project that is gone.
+        """
+        if self.on_job_done is None:
+            return
+        if await asyncio.to_thread(self.queue.status_of, job.id) == JobStatus.CANCELLED.value:
+            return
+        try:
+            await self.on_job_done(job)
+        except asyncio.CancelledError:
+            raise  # shutdown — _run requeues the job; never a job failure
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("post-completion hook failed for job %s", job.id)
+            self.events.publish(
+                "project.error",
+                project_id=job.project_id,
+                node_id=job.spec.node_id,
+                error=str(exc),
+            )
 
     def _requeue_quietly(self, job: Job) -> None:
         """Put a cancelled-by-shutdown job back on the queue. Best effort: a
