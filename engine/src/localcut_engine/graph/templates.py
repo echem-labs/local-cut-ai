@@ -250,7 +250,10 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             kf_id,
             NodeKind.KEYFRAME,
             params={
-                "prompt": f"{scene.visual}, {screenplay.style.visual}",
+                # strip(", "): scene.visual has no default to fall back on,
+                # so a model that leaves it empty must not ship a prompt
+                # that is only the dangling join.
+                "prompt": f"{scene.visual}, {screenplay.style.visual}".strip(", "),
                 "aspect": aspect,
             },
         )
