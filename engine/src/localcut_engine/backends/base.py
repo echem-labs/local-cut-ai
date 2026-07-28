@@ -18,6 +18,7 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
+from ..notices import Notice
 
 
 class GenerationError(RuntimeError):
@@ -110,6 +111,15 @@ class ExecutionContext:
     output_dir: Path  # project generated/ directory
     input_artifacts: dict[str, Path] = field(default_factory=dict)  # port -> path
     report_progress: ProgressFn | None = None
+    # Non-fatal signals for the user, collected during execute and persisted
+    # onto the job by the scheduler when the job completes. A notice on a
+    # failed attempt dies with it: the retry re-emits or the error dominates.
+    notices: list[Notice] = field(default_factory=list)
+
+    def notify(self, code: str, **data: str | int | float) -> None:
+        """Record something the user should know about a job that will still
+        finish. Raises on an unregistered code — see notices.py."""
+        self.notices.append(Notice(code=code, data=data))
 
     def output_path(self, output_hash: str, suffix: str) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)

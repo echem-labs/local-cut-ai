@@ -14,6 +14,7 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
+from ..notices import SCRIPT_SHORT_OF_TARGET
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
 
@@ -139,7 +140,9 @@ def _shortfall_note(screenplay: Screenplay, target_s: int) -> str:
 
 
 async def screenplay_within_target(
-    params: dict, ask: Callable[[str], Awaitable[str]]
+    params: dict,
+    ask: Callable[[str], Awaitable[str]],
+    notify: Callable[..., None] | None = None,
 ) -> Screenplay:
     """The longest screenplay the model will write for `target_duration_s`.
 
@@ -154,8 +157,9 @@ async def screenplay_within_target(
     same call `supports()` makes about a missing Ollama: a limited environment
     should render what it can, not refuse the project. 148 words is llama3.2's
     ceiling, not a fault in the request, and failing would reject a usable 45s
-    video over it. The shortfall is logged; there is no non-fatal channel to
-    the UI yet, which is what putting it on screen still needs.
+    video over it. The shortfall goes to `notify` (the callers pass
+    ExecutionContext.notify, so it reaches the scene board) and to the log,
+    which is all a headless engine has.
     """
     target_s = int(params.get("target_duration_s", 60))
     floor = target_s * LENGTH_TOLERANCE
@@ -186,15 +190,23 @@ async def screenplay_within_target(
             f"the script model returned a screenplay with no scenes after "
             f"{_LENGTH_ATTEMPTS} attempts"
         )
+    words = sum(len(scene.narration.split()) for scene in best.scenes)
     logger.warning(
         "screenplay stays short of its target after %d attempts: %d words, ~%.0fs against %ds. "
         "Rendering it anyway — lower the target duration, or use a larger script model, "
         "to get the full length.",
         _LENGTH_ATTEMPTS,
-        sum(len(scene.narration.split()) for scene in best.scenes),
+        words,
         estimated_runtime_s(best),
         target_s,
     )
+    if notify is not None:
+        notify(
+            SCRIPT_SHORT_OF_TARGET,
+            target_s=target_s,
+            estimated_s=round(estimated_runtime_s(best)),
+            words=words,
+        )
     return best
 
 
@@ -251,6 +263,7 @@ class LLMScriptBackend(ExecutionBackend):
             lambda text: self.complete(
                 text, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
             ),
+            notify=ctx.notify,
         )
         await ctx.progress(0.9)
         return ctx.publish_text(

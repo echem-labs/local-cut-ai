@@ -1,0 +1,5 @@
+{
+  "script": {
+    "short_of_target": "The script came out around {estimated_s}s of the {target_s}s you asked for — the model wrote {words} words of narration, and narration is what sets the length. Lower the target duration, or switch to a larger script model, for the full length."
+  }
+}
