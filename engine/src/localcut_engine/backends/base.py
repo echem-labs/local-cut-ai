@@ -5,6 +5,7 @@ wrapped behind this from day one so a future in-house backend is a drop-in.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
@@ -18,7 +19,10 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
-from ..notices import Notice
+from ..notices import NOTICE_CODES, Notice
+
+
+logger = logging.getLogger(__name__)
 
 
 class GenerationError(RuntimeError):
@@ -116,9 +120,18 @@ class ExecutionContext:
     # failed attempt dies with it: the retry re-emits or the error dominates.
     notices: list[Notice] = field(default_factory=list)
 
-    def notify(self, code: str, **data: str | int | float) -> None:
+    def notify(self, code: str, **data: bool | int | float | str) -> None:
         """Record something the user should know about a job that will still
-        finish. Raises on an unregistered code — see notices.py."""
+        finish.
+
+        An unregistered code is dropped with a log line rather than raised:
+        it means the emit site and the catalog have drifted (which
+        test_ui_contract catches), and an advisory must never break the render
+        it is advising about — that would trade a missing sentence for a
+        missing video."""
+        if code not in NOTICE_CODES:
+            logger.warning("dropping notice with unregistered code %r", code)
+            return
         self.notices.append(Notice(code=code, data=data))
 
     def output_path(self, output_hash: str, suffix: str) -> Path:
