@@ -3267,6 +3267,17 @@ button.link:hover {
   margin-bottom: var(--space-4);
 }
 
+/* Soft warnings from finished renders (NoticeBar). Deliberately quieter
+   than checkpoint: it asks for nothing, so no accent border. */
+.banner.notice-bar {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.banner.notice-bar .row + .row {
+  margin-top: var(--space-2);
+}
+
 .banner.checkpoint .row {
   display: flex;
   align-items: center;
