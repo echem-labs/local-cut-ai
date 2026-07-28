@@ -6,6 +6,8 @@ structured screenplay (schema-enforced JSON).
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import httpx
@@ -15,6 +17,12 @@ from ..graph.model import NodeKind
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
 
+# The single home for the pad the assembler actually applies — duplicating it
+# here would let the estimate drift from the timing it is estimating.
+from .ffmpeg import NARRATION_PAD_S
+
+logger = logging.getLogger(__name__)
+
 _SYSTEM_PROMPT = """You are a short-form video screenwriter. Given a topic, produce a JSON \
 screenplay with this exact shape (no markdown fences, JSON only):
 {"title": str, "hook": str, "target_duration_s": int, "aspect": str,
@@ -22,8 +30,10 @@ screenplay with this exact shape (no markdown fences, JSON only):
  "scenes": [{"id": "s1", "duration_s": float, "narration": str, "visual": str,
              "motion": str, "onscreen_text": str|null}]}
 Scenes are 3-8 seconds each for short videos; longer targets may use longer scenes, but never \
-exceed 60 seconds per scene. Narration is spoken aloud; visual is an image-generation prompt; \
-motion is a short camera direction. The first scene must hook the viewer instantly."""
+exceed 60 seconds per scene. "narration" is the words spoken aloud. "visual" describes what is \
+on screen, as a plain description of the picture — never a label, never the words "prompt" or \
+"image", just the scene itself. "motion" is a short camera direction. The first scene must hook \
+the viewer instantly."""
 
 _METADATA_PROMPT = """You are a short-form video publisher. Given a video's script, produce a \
 JSON publish kit with this exact shape (no markdown fences, JSON only):
@@ -56,6 +66,45 @@ def script_max_tokens(params: dict) -> int:
     return max(_SCRIPT_TOKENS_MIN, min(_SCRIPT_TOKENS_MAX, scenes * _SCRIPT_TOKENS_PER_SCENE))
 
 
+# Nominal narration rate, for turning a target duration into a word budget and
+# for measuring a draft against it. The *real* runtime is always the
+# synthesized audio — backends/ffmpeg.py is the timing authority — so this
+# number only ever sizes a prompt and the shortfall check. ~3.5 words/s
+# measured on Kokoro.
+SPEECH_WORDS_PER_S = 3.5
+# How short a draft may come in before it is re-asked, as a fraction of the
+# target. Deliberately wide: narration length varies with voice and phrasing,
+# and this exists to catch a script that is half the requested video rather
+# than to police seconds.
+LENGTH_TOLERANCE = 0.7
+# Total attempts, not extra ones. Each costs a full model round trip (and a
+# VRAM load on the local path), so this buys two corrections, not a loop.
+_LENGTH_ATTEMPTS = 3
+
+
+def _target_duration_s(params: dict) -> int:
+    """The node's target duration, coerced the way script_max_tokens already
+    coerces it. `/patch` set_params accepts a null, and a bare int(None) here
+    fails the script job with a TypeError instead of rendering."""
+    return int(params.get("target_duration_s", 60) or 60)
+
+
+def narration_word_budget(target_s: int) -> int:
+    """Words of narration a `target_s` video needs, since that is what sets
+    its length. Approximate by construction — it reaches the model as "about
+    N words"."""
+    return max(1, round(target_s * SPEECH_WORDS_PER_S))
+
+
+def estimated_runtime_s(screenplay: Screenplay) -> float:
+    """What this screenplay will actually assemble to: its narration spoken,
+    plus the breathing room each scene carries after its line. Compare against
+    `target_duration_s` — the schema's own `duration_s` per scene is what the
+    model *claimed*, and nothing downstream reads it."""
+    words = sum(len(scene.narration.split()) for scene in screenplay.scenes)
+    return words / SPEECH_WORDS_PER_S + NARRATION_PAD_S * len(screenplay.scenes)
+
+
 def script_prompt(params: dict) -> str:
     """The user-turn prompt for a screenplay, shared by the local and cloud
     script backends — they also share _SYSTEM_PROMPT and _parse_screenplay,
@@ -63,15 +112,114 @@ def script_prompt(params: dict) -> str:
 
     A scene may not exceed 60s (screenplay schema), so a long target needs a
     floor on the scene count: models otherwise return a handful of over-long
-    scenes that fail validation outright, on every retry."""
-    target_s = int(params.get("target_duration_s", 60))
+    scenes that fail validation outright, on every retry.
+
+    The narration budget is stated with its mechanism. A model told only
+    "60s" writes short couplets and pads `duration_s` to reach the number —
+    which produces a 28s video, because `duration_s` is not what anything
+    downstream reads."""
+    target_s = _target_duration_s(params)
     return (
         f"Topic: {params.get('prompt', '')}\n"
         f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
         "no scene may exceed 60 seconds)\n"
+        f"Narration: about {narration_word_budget(target_s)} words in total, across all "
+        "scenes. The video's length is how long its narration takes to speak aloud, NOT the "
+        "duration_s you write — write too few words and the video comes out short.\n"
         f"Aspect: {params.get('aspect', '9:16')}\n"
         f"Style preset: {params.get('style_preset', 'cinematic')}"
     )
+
+
+def _shortfall_note(screenplay: Screenplay, target_s: int) -> str:
+    """The re-ask. It carries the measurement: repeating the original
+    instruction is what already produced the short draft."""
+    words = sum(len(scene.narration.split()) for scene in screenplay.scenes)
+    return (
+        f"That screenplay is too short. Its narration is {words} words, which speaks in "
+        f"about {estimated_runtime_s(screenplay):.0f}s — but the target is {target_s}s, "
+        f"which needs about {narration_word_budget(target_s)} words.\n"
+        "Rewrite it with the same story and scenes, giving every scene enough narration to "
+        "fill its time. Do not shorten the narration and raise duration_s instead: "
+        "duration_s does not lengthen the video, only the spoken words do."
+    )
+
+
+async def screenplay_within_target(
+    params: dict, ask: Callable[[str], Awaitable[str]]
+) -> Screenplay:
+    """The longest screenplay the model will write for `target_duration_s`.
+
+    Shared by both script backends via an `ask` closure, so the rule holds on
+    every provider. Small local models write to a rhythm rather than to a word
+    count and ignore the budget however plainly it is stated, so a short draft
+    is re-asked carrying its own measurement — which measurably works:
+    llama3.2 went 97 words on the old prompt, then 121 -> 122 -> 148 across
+    three attempts here.
+
+    A model that still falls short degrades rather than fails. That is the
+    same call `supports()` makes about a missing Ollama: a limited environment
+    should render what it can, not refuse the project. 148 words is llama3.2's
+    ceiling, not a fault in the request, and failing would reject a usable 45s
+    video over it. The shortfall is logged; there is no non-fatal channel to
+    the UI yet, which is what putting it on screen still needs.
+    """
+    target_s = _target_duration_s(params)
+    floor = target_s * LENGTH_TOLERANCE
+    prompt = script_prompt(params)
+    # Unguarded, unlike the re-asks below: a model that cannot produce a
+    # valid screenplay at all has nothing to degrade to, and that parse
+    # error is the actionable one.
+    best = LLMScriptBackend._parse_screenplay(await ask(prompt))
+    candidate = best
+    for attempt in range(1, _LENGTH_ATTEMPTS + 1):
+        if attempt > 1:
+            try:
+                candidate = LLMScriptBackend._parse_screenplay(await ask(prompt))
+            except GenerationError as exc:
+                # A re-ask exists only to lengthen a draft already in hand,
+                # so failing the job on its JSON would make asking again
+                # strictly worse than not asking — and every extra ask is
+                # another chance for a small model to violate the schema.
+                # Observed on a real 60s render: a valid 96-word attempt 1
+                # was thrown away when attempt 2 omitted a scene's `visual`.
+                logger.warning(
+                    "screenplay re-ask %d/%d did not parse (%s) — keeping the best draft so far",
+                    attempt,
+                    _LENGTH_ATTEMPTS,
+                    exc,
+                )
+                continue
+            if estimated_runtime_s(candidate) > estimated_runtime_s(best):
+                best = candidate
+        if candidate.scenes and estimated_runtime_s(candidate) >= floor:
+            return candidate
+        logger.warning(
+            "screenplay attempt %d/%d: %d words, ~%.0fs against a %ds target",
+            attempt,
+            _LENGTH_ATTEMPTS,
+            sum(len(scene.narration.split()) for scene in candidate.scenes),
+            estimated_runtime_s(candidate),
+            target_s,
+        )
+        if attempt < _LENGTH_ATTEMPTS:
+            prompt = f"{script_prompt(params)}\n\n{_shortfall_note(candidate, target_s)}"
+    if not best.scenes:
+        # Nothing to render, and no amount of padding invents a scene.
+        raise GenerationError(
+            f"the script model returned a screenplay with no scenes after "
+            f"{_LENGTH_ATTEMPTS} attempts"
+        )
+    logger.warning(
+        "screenplay stays short of its target after %d attempts: %d words, ~%.0fs against %ds. "
+        "Rendering it anyway — lower the target duration, or use a larger script model, "
+        "to get the full length.",
+        _LENGTH_ATTEMPTS,
+        sum(len(scene.narration.split()) for scene in best.scenes),
+        estimated_runtime_s(best),
+        target_s,
+    )
+    return best
 
 
 class LLMScriptBackend(ExecutionBackend):
@@ -104,7 +252,6 @@ class LLMScriptBackend(ExecutionBackend):
         return kind is NodeKind.SCRIPT and self.probe.available()
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
-        prompt = script_prompt(spec.params)
         if spec.model is not None and spec.model.startswith("cloud:"):
             # Never fall back to the local model silently — the user asked
             # for cloud quality and would believe they got it.
@@ -123,12 +270,13 @@ class LLMScriptBackend(ExecutionBackend):
             return ctx.publish_text(
                 spec.output_hash, ".metadata.json", json.dumps(self._parse_metadata(raw), indent=2)
             )
-        raw = await self.complete(
-            prompt, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
+        screenplay = await screenplay_within_target(
+            spec.params,
+            lambda text: self.complete(
+                text, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
+            ),
         )
         await ctx.progress(0.9)
-
-        screenplay = self._parse_screenplay(raw)
         return ctx.publish_text(
             spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
         )
