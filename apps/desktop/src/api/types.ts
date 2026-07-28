@@ -51,11 +51,22 @@ export type NodeStatus =
   // SCENE_NODE_STATUSES in the engine — test_ui_contract compares the two.
   | "skipped";
 
+/** A non-fatal signal from a job that finished — `error` means it did not.
+ * The code is an id (mirrors NOTICE_CODES in the engine's notices.py;
+ * test_ui_contract compares it against the notices.json catalog) and `data`
+ * carries the numbers the catalog message interpolates. */
+export interface NodeNotice {
+  code: string;
+  data: Record<string, string | number>;
+}
+
 export interface NodeState {
   node_id: string;
   status: NodeStatus;
   progress: number;
   error: string | null;
+  /** Absent on engines older than the field. */
+  notices?: NodeNotice[];
   artifact_hash: string | null;
   params: Record<string, unknown>;
   seed: number;

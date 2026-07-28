@@ -376,13 +376,23 @@ def test_render_enqueues_work_when_the_queue_was_drained(engine, capsys):
             if len(jobs) > 3:
                 break
             time.sleep(0.05)
-        for job in jobs:
-            if job["status"] in ("queued", "rendering"):
+        # Cancel until nothing is left, rather than once over a single
+        # snapshot. The re-plan enqueues the expanded graph one job at a time,
+        # so the poll above can return between two puts, and the specs planned
+        # after it - export is the last of them - reach the queue only once
+        # the cancels have already run. Sleeping a fixed 0.3s and hoping was
+        # what left a queued export job behind on a loaded runner.
+        drained_by = time.monotonic() + 30
+        while time.monotonic() < drained_by:
+            active = automation.active_jobs(client, project_id)
+            if not active:
+                break
+            for job in active:
                 try:
                     client.post(f"/jobs/{job['id']}/cancel")
                 except automation.EngineError:
                     pass  # it finished on its own between the list and the cancel
-        time.sleep(0.3)
+            time.sleep(0.05)
         assert not automation.active_jobs(client, project_id), "the queue should be drained"
 
         assert run(engine, "render", project_id, "--no-wait", "--json") == 0
