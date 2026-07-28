@@ -19,11 +19,13 @@ def _drop_blank(data: object, fields: tuple[str, ...]) -> object:
     "instrumental", and an empty `style.visual` would silently unstyle every
     keyframe and clip. Only fields whose default is real fallback text are
     listed; blank is a legitimate value for prose like `hook`."""
-    if isinstance(data, dict):
-        for field in fields:
-            if isinstance(data.get(field), str) and not data[field].strip():
-                del data[field]
-    return data
+    if not isinstance(data, dict):
+        return data
+    blank = [f for f in fields if isinstance(data.get(f), str) and not data[f].strip()]
+    # A copy, not a del: validation is a read of the caller's payload, and
+    # a validator that quietly edits the dict it was handed would surprise
+    # anyone who validates a document they still hold a reference to.
+    return {k: v for k, v in data.items() if k not in blank} if blank else data
 
 
 class SceneStyle(BaseModel):
