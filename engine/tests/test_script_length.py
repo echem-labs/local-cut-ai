@@ -19,7 +19,7 @@ from localcut_engine.backends.llm import (
     script_prompt,
 )
 from localcut_engine.backends.base import GenerationError
-from localcut_engine.schema import Scene, Screenplay
+from localcut_engine.schema import Scene, SceneStyle, Screenplay
 
 
 def screenplay(words_per_scene: int, scenes: int = 9) -> Screenplay:
@@ -164,3 +164,65 @@ async def test_a_screenplay_with_no_scenes_is_refused_not_rendered():
 
     with pytest.raises(GenerationError, match="no scenes"):
         await screenplay_within_target({"target_duration_s": 60}, ask)
+
+
+# -- blank fields: the model's "nothing to say" must not defeat a default ------
+
+
+def test_blank_style_fields_get_the_declared_defaults():
+    """Pydantic fills defaults for *missing* keys, not empty ones — and a
+    small model that has nothing to say for a field returns `""`, not an
+    omission. The kids-poem sample shipped with `style.music: ""`, so the
+    music bed generated from the bare prompt "instrumental"; an empty
+    `style.visual` is worse, silently unstyling every keyframe and clip."""
+    parsed = Screenplay.model_validate(
+        {"title": "t", "style": {"visual": "", "voice": "  ", "music": ""}}
+    )
+    assert parsed.style.visual == SceneStyle().visual
+    assert parsed.style.voice == SceneStyle().voice
+    assert parsed.style.music == SceneStyle().music
+
+
+def test_real_style_values_are_untouched():
+    parsed = Screenplay.model_validate(
+        {"title": "t", "style": {"visual": "gouache", "voice": "warm", "music": "waltz"}}
+    )
+    assert (parsed.style.visual, parsed.style.voice, parsed.style.music) == (
+        "gouache",
+        "warm",
+        "waltz",
+    )
+
+
+def test_blank_scene_motion_gets_its_default():
+    parsed = Screenplay.model_validate(
+        {
+            "title": "t",
+            "scenes": [
+                {"id": "s1", "duration_s": 5, "narration": "hi", "visual": "a hill", "motion": ""}
+            ],
+        }
+    )
+    assert parsed.scenes[0].motion == "static shot"
+
+
+def test_blank_hook_stays_blank():
+    """The hook is prose with no fallback text — blank is a legitimate value
+    there, not a defeated default."""
+    assert Screenplay.model_validate({"title": "t", "hook": ""}).hook == ""
+
+
+def test_keyframe_prompt_survives_a_blank_scene_visual():
+    """`scene.visual` has no default to fall back on, so the joined keyframe
+    prompt must not ship a dangling ", " when the model leaves it empty."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+
+    screenplay = Screenplay.model_validate(
+        {
+            "title": "t",
+            "style": {"visual": "watercolor"},
+            "scenes": [{"id": "s1", "duration_s": 5, "narration": "hi", "visual": ""}],
+        }
+    )
+    graph = expand_screenplay(prompt_template_graph("t"), screenplay)
+    assert graph.nodes["s1.keyframe"].params["prompt"] == "watercolor"
