@@ -82,6 +82,13 @@ LENGTH_TOLERANCE = 0.7
 _LENGTH_ATTEMPTS = 3
 
 
+def _target_duration_s(params: dict) -> int:
+    """The node's target duration, coerced the way script_max_tokens already
+    coerces it. `/patch` set_params accepts a null, and a bare int(None) here
+    fails the script job with a TypeError instead of rendering."""
+    return int(params.get("target_duration_s", 60) or 60)
+
+
 def narration_word_budget(target_s: int) -> int:
     """Words of narration a `target_s` video needs, since that is what sets
     its length. Approximate by construction — it reaches the model as "about
@@ -111,7 +118,7 @@ def script_prompt(params: dict) -> str:
     "60s" writes short couplets and pads `duration_s` to reach the number —
     which produces a 28s video, because `duration_s` is not what anything
     downstream reads."""
-    target_s = int(params.get("target_duration_s", 60))
+    target_s = _target_duration_s(params)
     return (
         f"Topic: {params.get('prompt', '')}\n"
         f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
@@ -157,17 +164,34 @@ async def screenplay_within_target(
     video over it. The shortfall is logged; there is no non-fatal channel to
     the UI yet, which is what putting it on screen still needs.
     """
-    target_s = int(params.get("target_duration_s", 60))
+    target_s = _target_duration_s(params)
     floor = target_s * LENGTH_TOLERANCE
     prompt = script_prompt(params)
+    # Unguarded, unlike the re-asks below: a model that cannot produce a
+    # valid screenplay at all has nothing to degrade to, and that parse
+    # error is the actionable one.
     best = LLMScriptBackend._parse_screenplay(await ask(prompt))
+    candidate = best
     for attempt in range(1, _LENGTH_ATTEMPTS + 1):
         if attempt > 1:
-            candidate = LLMScriptBackend._parse_screenplay(await ask(prompt))
+            try:
+                candidate = LLMScriptBackend._parse_screenplay(await ask(prompt))
+            except GenerationError as exc:
+                # A re-ask exists only to lengthen a draft already in hand,
+                # so failing the job on its JSON would make asking again
+                # strictly worse than not asking — and every extra ask is
+                # another chance for a small model to violate the schema.
+                # Observed on a real 60s render: a valid 96-word attempt 1
+                # was thrown away when attempt 2 omitted a scene's `visual`.
+                logger.warning(
+                    "screenplay re-ask %d/%d did not parse (%s) — keeping the best draft so far",
+                    attempt,
+                    _LENGTH_ATTEMPTS,
+                    exc,
+                )
+                continue
             if estimated_runtime_s(candidate) > estimated_runtime_s(best):
                 best = candidate
-        else:
-            candidate = best
         if candidate.scenes and estimated_runtime_s(candidate) >= floor:
             return candidate
         logger.warning(
