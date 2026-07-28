@@ -7,7 +7,6 @@ now *renders* instead of failing, and before this channel existed the only
 trace was a server log no desktop user ever sees.
 """
 
-import pytest
 from conftest import make_spec
 
 from localcut_engine.backends.base import ExecutionContext
@@ -15,11 +14,29 @@ from localcut_engine.graph.model import NodeKind
 from localcut_engine.notices import SCRIPT_SHORT_OF_TARGET, Notice
 
 
-def test_a_notice_code_must_be_registered():
-    """The registry is what the desktop catalog is contract-tested against —
-    an unregistered code would render as nothing on every UI."""
-    with pytest.raises(ValueError):
-        Notice(code="script.totally_new_code", data={})
+def test_an_unregistered_code_is_dropped_not_raised():
+    """An advisory must never break the thing it is advising about. The
+    registry is a *write*-side guard: emitting a code with no catalog entry
+    is a bug, but failing the user's render over it trades a missing sentence
+    for a missing video."""
+    ctx = ExecutionContext(output_dir=None)  # type: ignore[arg-type]
+    ctx.notify("script.totally_new_code", target_s=60)
+    assert ctx.notices == []
+
+
+def test_a_code_from_a_newer_build_still_reads():
+    """The read side must be forward-compatible. Job payloads carry notices,
+    and a payload this build cannot parse is skipped whole by
+    JobQueue._hydrate — so a strict read would make one unknown code delete a
+    finished job from the board, losing its status and progress with it."""
+    notice = Notice.model_validate({"code": "clip.some_future_code", "data": {"n": 1}})
+    assert notice.code == "clip.some_future_code"
+
+
+def test_notice_data_keeps_a_bool_a_bool():
+    """bool is a subclass of int, so a union without it silently renders
+    True as "1" in a catalog sentence."""
+    assert Notice(code=SCRIPT_SHORT_OF_TARGET, data={"ok": True}).data["ok"] is True
 
 
 def test_notice_data_survives_a_json_round_trip():

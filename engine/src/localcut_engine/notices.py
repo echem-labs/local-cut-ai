@@ -12,11 +12,19 @@ which is the same discipline as board statuses (the raw wire value is an id).
 Every code here must have a catalog entry in the desktop's notices.json —
 test_ui_contract.py compares the two, so adding a code is a two-file change
 that cannot silently render as nothing.
+
+The registry is checked where a notice is *emitted* (ExecutionContext.notify),
+never where one is read. `Notice` itself stays permissive on purpose: job
+payloads carry notices, and JobQueue._hydrate skips any payload this build
+cannot parse — so refusing an unknown code on read would make one notice from
+a newer build delete a finished job from the board, taking its status and
+progress with it. The desktop makes the same call, skipping a code it has no
+message for rather than failing the screen.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 # The script model could not reach target_duration_s and the longest attempt
 # was rendered instead. data: target_s, estimated_s, words.
@@ -27,14 +35,6 @@ NOTICE_CODES = frozenset({SCRIPT_SHORT_OF_TARGET})
 
 class Notice(BaseModel):
     code: str
-    data: dict[str, str | int | float] = {}
-
-    @field_validator("code")
-    @classmethod
-    def _registered(cls, code: str) -> str:
-        # An unregistered code has no catalog entry anywhere, so it would
-        # cross the wire and render as nothing on every UI. Refusing it here
-        # turns that silent nothing into a test failure at the emit site.
-        if code not in NOTICE_CODES:
-            raise ValueError(f"unregistered notice code: {code!r}")
-        return code
+    # bool before int: bool is a subclass of int, and a union without it
+    # coerces True to 1 — which a catalog sentence then renders as "1".
+    data: dict[str, bool | int | float | str] = {}
