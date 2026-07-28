@@ -20,8 +20,8 @@ from .llm import (
     _METADATA_PROMPT,
     _SYSTEM_PROMPT,
     LLMScriptBackend,
+    screenplay_within_target,
     script_max_tokens,
-    script_prompt,
 )
 
 
@@ -63,13 +63,15 @@ class CloudBackend(ExecutionBackend):
         # Sized from the target duration: the adapters' 4096 default truncated
         # any long screenplay at HTTP 200, so the same project succeeded
         # locally (no cap at all) and failed on every cloud provider.
-        raw = await textgen.complete(
-            system=_SYSTEM_PROMPT,
-            prompt=script_prompt(spec.params),
-            max_tokens=script_max_tokens(spec.params),
+        screenplay = await screenplay_within_target(
+            spec.params,
+            lambda text: textgen.complete(
+                system=_SYSTEM_PROMPT,
+                prompt=text,
+                max_tokens=script_max_tokens(spec.params),
+            ),
         )
         await ctx.progress(0.9)
-        screenplay = LLMScriptBackend._parse_screenplay(raw)
         return ctx.publish_text(
             spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
         )
