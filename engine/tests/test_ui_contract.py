@@ -112,3 +112,25 @@ def test_every_board_status_has_a_ui_case_and_a_label():
     )
     missing = [s for s in SCENE_NODE_STATUSES if s not in catalog]
     assert not missing, f"no label in status.json for: {missing}"
+
+
+def test_notice_codes_match_the_desktop_catalog():
+    """Every notice code the engine can emit must have a message in the
+    desktop's notices.json, or it renders as nothing; every catalog entry
+    must be an emittable code, or it is dead copy no engine ever triggers."""
+    import json
+
+    from localcut_engine.notices import NOTICE_CODES
+
+    catalog_path = _FORMATS.parents[1] / "i18n" / "en" / "notices.json"
+    assert catalog_path.exists(), "the desktop has no notices.json catalog"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    def leaves(node: object, prefix: str = "") -> set[str]:
+        if isinstance(node, dict):
+            return {
+                key for name, child in node.items() for key in leaves(child, f"{prefix}{name}.")
+            }
+        return {prefix.rstrip(".")}
+
+    assert leaves(catalog) == set(NOTICE_CODES)

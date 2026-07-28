@@ -48,5 +48,6 @@
     "download": "Download MP4"
   },
   "scriptFailed": "Script generation failed: {error}",
-  "writingScript": "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders."
+  "writingScript": "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders.",
+  "noticesAria": "Render notices"
 }
