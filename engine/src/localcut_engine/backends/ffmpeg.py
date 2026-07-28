@@ -438,7 +438,7 @@ class FFmpegBackend(ExecutionBackend):
                 )
                 await ctx.progress(0.8 * (index + 1) / total)
 
-            burn = self._burnable_captions(spec, ctx, work)
+            burn = self._burnable_captions(spec, ctx, work, width, height)
             cut = await self._join_segments(segments, scene_files, work, encoder, bitrate, burn)
 
             out = ctx.output_path(spec.output_hash, ".mp4")
@@ -500,8 +500,12 @@ class FFmpegBackend(ExecutionBackend):
         await ctx.progress(1.0)
         return out
 
-    def _burnable_captions(self, spec: JobSpec, ctx: ExecutionContext, work: Path) -> Path | None:
-        """The caption artifact as a styled ASS file, when burn-in applies."""
+    def _burnable_captions(
+        self, spec: JobSpec, ctx: ExecutionContext, work: Path, width: int, height: int
+    ) -> Path | None:
+        """The caption artifact as a styled ASS file, when burn-in applies.
+        Takes the export's frame size: libass scales the ASS canvas onto the
+        frame, so a style built for any other canvas burns in rescaled."""
         if spec.params.get("captions", "burn") != "burn":
             return None
         srt = ctx.input_artifacts.get(CAPTIONS_PORT)
@@ -513,7 +517,7 @@ class FFmpegBackend(ExecutionBackend):
         if srt is None or not srt.exists() or not srt.read_text(encoding="utf-8").strip():
             return None
         ass = work / "captions.ass"
-        ass.write_text(srt_to_ass(srt.read_text(encoding="utf-8")), encoding="utf-8")
+        ass.write_text(srt_to_ass(srt.read_text(encoding="utf-8"), width, height), encoding="utf-8")
         return ass
 
     async def _join_segments(
