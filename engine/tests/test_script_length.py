@@ -226,3 +226,65 @@ def test_keyframe_prompt_survives_a_blank_scene_visual():
     )
     graph = expand_screenplay(prompt_template_graph("t"), screenplay)
     assert graph.nodes["s1.keyframe"].params["prompt"] == "watercolor"
+
+
+# -- a re-ask must never be worse than not asking -------------------------------
+
+
+async def test_an_unparseable_re_ask_keeps_the_draft_it_already_had(caplog):
+    """The regression a real run caught: attempt 1 returned a valid 96-word
+    screenplay, attempt 2 came back with a scene missing `visual`, and the
+    parse error failed the whole job — so asking again was strictly worse
+    than not asking, and a project that would have rendered short rendered
+    nothing. A re-ask exists only to lengthen a draft already in hand."""
+    replies = [
+        screenplay(words_per_scene=11).model_dump_json(),  # valid, short
+        '{"title": "t", "scenes": [{"id": "s1", "duration_s": 5}]}',  # missing fields
+        "not json at all",
+    ]
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    with caplog.at_level("WARNING"):
+        out = await screenplay_within_target({"target_duration_s": 60}, ask)
+
+    assert len(asked) == 3  # a bad re-ask still costs its attempt
+    assert out.model_dump() == screenplay(words_per_scene=11).model_dump()
+    assert "did not parse" in caplog.text
+
+
+async def test_a_valid_re_ask_after_an_unparseable_one_still_wins():
+    replies = [
+        screenplay(words_per_scene=11).model_dump_json(),  # short
+        "}{ not json",
+        screenplay(words_per_scene=23).model_dump_json(),  # on target
+    ]
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    out = await screenplay_within_target({"target_duration_s": 60}, ask)
+    assert estimated_runtime_s(out) >= 60 * LENGTH_TOLERANCE
+
+
+async def test_an_unparseable_first_ask_still_fails():
+    """Nothing to degrade to: a model that cannot produce a valid screenplay
+    at all must surface that error, not a confusing length message."""
+
+    async def ask(prompt: str) -> str:
+        return "not json at all"
+
+    with pytest.raises(GenerationError, match="invalid screenplay"):
+        await screenplay_within_target({"target_duration_s": 60}, ask)
+
+
+def test_a_null_target_duration_does_not_crash_the_prompt():
+    """`target_duration_s` is reachable through /patch set_params, which
+    accepts null. script_max_tokens already coerces; the prompt and the
+    length check must agree or the job dies with a bare TypeError."""
+    assert str(narration_word_budget(60)) in script_prompt({"target_duration_s": None})
