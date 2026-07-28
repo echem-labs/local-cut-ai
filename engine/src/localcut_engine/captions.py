@@ -234,25 +234,58 @@ def _ass_time(seconds: float) -> str:
     return f"{h}:{m:02}:{s:02}.{cs:02}"
 
 
+# The burn-in style, as validated on a real 9:16 export. libass scales the
+# whole PlayRes canvas onto the video frame, so these numbers only mean what
+# they say when PlayRes *is* the frame — a header pinned to 1080x1920 rendered
+# an 84px font at 47px on a 1920x1080 export, covering 19% of frame width
+# where 9:16 covered 61%. Every value below is therefore a ratio, resolved
+# against the export canvas the aspect actually maps to.
+_REF_W, _REF_H = 1080, 1920
+_REF_FONT_PX = 84
+# Font tracks the *short* side: turning a video on its side must not resize
+# its captions. Margins track the axis they push away from.
+_FONT_OF_SHORT_SIDE = _REF_FONT_PX / min(_REF_W, _REF_H)
+_OUTLINE_OF_FONT = 5 / _REF_FONT_PX
+_SHADOW_OF_FONT = 1 / _REF_FONT_PX
+_MARGIN_V_OF_HEIGHT = 340 / _REF_H
+_MARGIN_H_OF_WIDTH = 60 / _REF_W
+
 _ASS_HEADER = """\
 [Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: {width}
+PlayResY: {height}
 WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
-Style: Default,Sans,84,&H00FFFFFF,&H00101014,&H80000000,-1,5,1,2,60,60,340
+Style: Default,Sans,{font},&H00FFFFFF,&H00101014,&H80000000,-1,{outline},{shadow},2,{margin_h},{margin_h},{margin_v}
 
 [Events]
 Format: Layer, Start, End, Style, Text
 """
 
 
-def srt_to_ass(srt_text: str) -> str:
-    """Sidecar SRT → styled burn-in ASS (bottom-third, bold, outlined)."""
+def ass_header(width: int, height: int) -> str:
+    """The burn-in style sized for one frame. Takes the frame itself rather
+    than an aspect name so the ASS canvas is by construction the canvas the
+    export encodes at — the two cannot drift apart into a rescale."""
+    font = round(min(width, height) * _FONT_OF_SHORT_SIDE)
+    return _ASS_HEADER.format(
+        width=width,
+        height=height,
+        font=font,
+        outline=round(font * _OUTLINE_OF_FONT),
+        shadow=round(font * _SHADOW_OF_FONT),
+        margin_h=round(width * _MARGIN_H_OF_WIDTH),
+        margin_v=round(height * _MARGIN_V_OF_HEIGHT),
+    )
+
+
+def srt_to_ass(srt_text: str, width: int, height: int) -> str:
+    """Sidecar SRT → styled burn-in ASS (bottom-third, bold, outlined),
+    sized for a `width` x `height` frame."""
     lines = [
         "Dialogue: 0,{},{},Default,{}".format(
             _ass_time(c.start),
@@ -261,4 +294,4 @@ def srt_to_ass(srt_text: str) -> str:
         )
         for c in parse_srt(srt_text)
     ]
-    return _ASS_HEADER + "\n".join(lines) + "\n"
+    return ass_header(width, height) + "\n".join(lines) + "\n"

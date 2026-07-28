@@ -4,8 +4,10 @@ real synthesis+alignment only where the model files are present."""
 import pytest
 from conftest import make_spec
 
+from localcut_engine.aspects import EXPORT_RESOLUTIONS
 from localcut_engine.backends.align import AlignBackend
 from localcut_engine.backends.base import ExecutionContext, GenerationError
+from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.captions import (
     Cue,
     Word,
@@ -16,7 +18,7 @@ from localcut_engine.captions import (
     words_to_cues,
 )
 from localcut_engine.config import EngineConfig
-from localcut_engine.graph.model import NodeKind
+from localcut_engine.graph.model import CAPTIONS_PORT, NodeKind
 
 MODELS_DIR = EngineConfig.from_env().resolved_models_dir
 ALIGN_PRESENT = (MODELS_DIR / "asr" / "faster-whisper-base.en" / "model.bin").exists()
@@ -203,9 +205,70 @@ def test_srt_roundtrip():
 
 def test_srt_to_ass_styles_and_escapes():
     srt = cues_to_srt([Cue(start=0.5, end=2.0, text="brace {test}")])
-    ass = srt_to_ass(srt)
+    ass = srt_to_ass(srt, *EXPORT_RESOLUTIONS["9:16"])
     assert "[V4+ Styles]" in ass and "Dialogue: 0,0:00:00.50,0:00:02.00" in ass
     assert "{" not in ass.split("[Events]")[1].split("Text\n")[1]  # override tags neutralized
+
+
+def _ass_header_fields(ass: str) -> dict[str, str]:
+    """PlayRes* plus the Default style, read back through the Format: line so
+    the assertions do not depend on field order."""
+    info = {}
+    for line in ass.splitlines():
+        if line.startswith("PlayRes"):
+            key, value = line.split(":", 1)
+            info[key.strip()] = value.strip()
+    fmt = next(line for line in ass.splitlines() if line.startswith("Format: Name,"))
+    keys = [k.strip() for k in fmt.split(":", 1)[1].split(",")]
+    style = next(line for line in ass.splitlines() if line.startswith("Style:"))
+    values = [v.strip() for v in style.split(":", 1)[1].split(",")]
+    return {**info, **dict(zip(keys, values, strict=True))}
+
+
+@pytest.mark.parametrize("aspect", sorted(EXPORT_RESOLUTIONS))
+def test_ass_canvas_is_the_frame_it_burns_onto(aspect):
+    """A caption style is only pixel-correct on the canvas it was authored
+    for. The header used to hardcode 1080x1920, so on a 16:9 export libass
+    rescaled the whole style by 1080/1920 — an 84px font burned in at 47px,
+    covering 19% of frame width where 9:16 covered 61%."""
+    width, height = EXPORT_RESOLUTIONS[aspect]
+    fields = _ass_header_fields(srt_to_ass(cues_to_srt([Cue(0.0, 1.0, "hi")]), width, height))
+    assert (int(fields["PlayResX"]), int(fields["PlayResY"])) == (width, height)
+
+
+@pytest.mark.parametrize("aspect", sorted(EXPORT_RESOLUTIONS))
+def test_ass_caption_size_and_placement_hold_across_aspects(aspect):
+    """Same physical text size and same bottom-third placement whichever way
+    the video is oriented: the font tracks the short side (turning a video on
+    its side must not resize its captions), the margins track the axis they
+    push away from."""
+    width, height = EXPORT_RESOLUTIONS[aspect]
+    fields = _ass_header_fields(srt_to_ass(cues_to_srt([Cue(0.0, 1.0, "hi")]), width, height))
+    assert int(fields["Fontsize"]) / min(width, height) == pytest.approx(84 / 1080, abs=0.002)
+    assert int(fields["MarginV"]) / height == pytest.approx(340 / 1920, abs=0.002)
+    assert int(fields["MarginL"]) / width == pytest.approx(60 / 1080, abs=0.002)
+
+
+def test_ass_9_16_style_is_unchanged():
+    """The portrait style is the one validated on a real export; keep it
+    byte-identical so fixing the other aspects cannot regress it."""
+    ass = srt_to_ass(cues_to_srt([Cue(0.0, 1.0, "hi")]), *EXPORT_RESOLUTIONS["9:16"])
+    assert "PlayResX: 1080\nPlayResY: 1920" in ass
+    assert "Style: Default,Sans,84,&H00FFFFFF,&H00101014,&H80000000,-1,5,1,2,60,60,340" in ass
+
+
+def test_burned_captions_use_the_frame_the_export_encodes(tmp_path):
+    """The plumbing. The frame size is resolved from the *timeline's* aspect,
+    and burn-in must use that same number rather than resolve the export
+    node's `aspect` param a second time — a patched export aspect would
+    otherwise caption for a canvas the video is not being encoded at."""
+    srt = tmp_path / "captions.srt"
+    srt.write_text(cues_to_srt([Cue(0.0, 1.0, "hi")]), encoding="utf-8")
+    spec = make_spec(NodeKind.EXPORT, {"aspect": "9:16", "captions": "burn"})
+    ctx = ExecutionContext(output_dir=tmp_path, input_artifacts={CAPTIONS_PORT: srt})
+    ass = FFmpegBackend()._burnable_captions(spec, ctx, tmp_path, 1920, 1080)
+    assert ass is not None
+    assert "PlayResX: 1920\nPlayResY: 1080" in ass.read_text(encoding="utf-8")
 
 
 async def test_missing_model_gives_actionable_error(tmp_path):
