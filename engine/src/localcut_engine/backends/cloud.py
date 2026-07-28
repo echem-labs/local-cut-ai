@@ -70,6 +70,7 @@ class CloudBackend(ExecutionBackend):
                 prompt=text,
                 max_tokens=script_max_tokens(spec.params),
             ),
+            notify=ctx.notify,
         )
         await ctx.progress(0.9)
         return ctx.publish_text(

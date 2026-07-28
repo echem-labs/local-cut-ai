@@ -9,6 +9,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from ..graph.compiler import JobSpec
+from ..notices import Notice
 
 _JOB_ID_LEN = 12
 
@@ -33,6 +34,9 @@ class Job(BaseModel):
     progress: float = 0.0  # 0..1
     attempt: int = 0
     error: str | None = None
+    # Non-fatal signals from a job that finished — `error` means it did not.
+    # Stored with the payload (no migration) and surfaced on the scene board.
+    notices: list[Notice] = []
     # Path of the produced artifact, RELATIVE to the project's generated/
     # dir. Never absolute: the data dir moves, apps get reinstalled under
     # another account, and backups get restored onto other machines — an

@@ -944,6 +944,11 @@ class ProjectService:
                 "status": status,
                 "progress": job.progress if job else 0.0,
                 "error": job.error if job else None,
+                # Non-fatal signals from the job that produced this output.
+                # Advisory by design: when the job has aged out of history
+                # the cached artifact stands and the notice is gone, the same
+                # trade `error` already makes.
+                "notices": [notice.model_dump() for notice in job.notices] if job else [],
                 "artifact_hash": out_hash if out_hash in cached else None,
                 "params": node.params,
                 "seed": node.seed,
