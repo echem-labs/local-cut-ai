@@ -202,6 +202,11 @@ export function ToolSession() {
         )}
       </div>
 
+      {/* Outside the `done` branch on purpose: a session that has been
+          promoted stays promoted while it re-runs, and a re-run that fails
+          does not unmake the videos it already produced. */}
+      {currentProject && <PromotedTo project={currentProject} />}
+
       {shown.error && <div className="banner error">{shown.error}</div>}
       {!done && !shown.error && (
         <div className="banner">{t("toolSession.generating", { stage: stageLabel })}</div>
@@ -275,7 +280,6 @@ export function ToolSession() {
               </button>
             </div>
           )}
-          {currentProject && <PromotedTo project={currentProject} />}
           {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
               {actionError.message}
