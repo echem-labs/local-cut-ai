@@ -202,6 +202,45 @@ async def test_a_tool_session_that_rendered_a_still_gets_a_thumbnail(rig, tool, 
     assert store.resolve_artifact(session.id, meta.thumb_hash) is not None
 
 
+@pytest.mark.parametrize("tool", ["script", "thumbnail", "voiceover", "image", "music", "clip"])
+async def test_a_finished_tool_session_records_its_artifact_on_the_meta(rig, tool):
+    """Whether a session finished has to be answerable from meta.json alone.
+
+    The desktop derives it from `GET /jobs`, which returns the newest 200 job
+    rows across ALL projects -- so a session's own rows age out behind a
+    couple of full renders and its tile falls back to "Draft" while its
+    download link still works. Job history is the wrong place to ask a
+    question about a project that is arbitrarily old.
+    """
+    store, queue, service = rig
+    params = {"text": "one small step"} if tool == "voiceover" else {"prompt": "a lighthouse"}
+    session = service.create_tool(tool, params)
+    node_id = tool
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == node_id and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None
+    assert meta.tool_artifact_hash, f"{tool} session recorded no artifact"
+    assert store.resolve_artifact(session.id, meta.tool_artifact_hash) is not None
+
+
+async def test_an_unfinished_tool_session_records_no_artifact(rig):
+    """The field means "this produced something", so it must stay empty
+    until that is true -- otherwise the tile calls a session ready before
+    there is anything to download."""
+    store, _queue, service = rig
+    session = service.create_tool("image", {"prompt": "a lighthouse"})
+    # Read before the scheduler can finish it: created_at is stamped by
+    # create_tool, and meta is written there too.
+    meta = store.get(session.id)
+    assert meta is not None and meta.tool_artifact_hash is None
+
+
 async def test_a_tool_session_with_no_still_keeps_its_glyph(rig):
     """The other half: voiceover/music/script render no image, so there is
     nothing to point thumb_hash at. It must stay None rather than borrow

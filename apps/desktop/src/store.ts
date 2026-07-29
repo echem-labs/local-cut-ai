@@ -1399,6 +1399,22 @@ export const useApp = create<AppState>((set, get) => {
       const doomed = get()
         .projects.filter((project) => project.mode.startsWith("tool:"))
         .map((project) => project.id);
+      if (doomed.length === 0) return null;
+      // Close every doomed tab in ONE step, before the loop. deleteProject
+      // closes them one at a time, and closing the ACTIVE tab activates its
+      // neighbour — which here is the next session the loop is about to
+      // delete. Left alone, clearing history loads each doomed session's
+      // board and jobs on the way past, so the workspace flickers through
+      // them against a burst of requests for projects that are being erased.
+      const condemned = new Set(doomed);
+      const tabs = get().openProjects;
+      const survivors = tabs.filter((id) => !condemned.has(id));
+      if (survivors.length !== tabs.length) {
+        set({ openProjects: survivors });
+        saveOpenTabs(survivors);
+      }
+      const current = get().currentProject;
+      if (current && condemned.has(current.id)) get().closeProject();
       let failure: string | null = null;
       for (const id of doomed) {
         const error = await get().deleteProject(id);

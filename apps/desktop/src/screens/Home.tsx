@@ -49,8 +49,33 @@ type SortKey = "recent" | "created" | "name";
 
 type TileStatus = "generating" | "failed" | "ready" | "final" | "draft";
 
-export const toolKindOf = (project: Project): ToolKind | null =>
-  project.mode.startsWith("tool:") ? (project.mode.slice(5) as ToolKind) : null;
+const KNOWN_TOOLS = new Set<string>(TOOLS.map((entry) => entry.kind));
+
+/** Every `tool:` project, whether or not this build knows the kind. A session
+ * made by a newer engine is still history: it must still be listed, opened
+ * and deleted, so membership is deliberately looser than `toolKindOf`. */
+export const isToolSession = (project: Project): boolean => project.mode.startsWith("tool:");
+
+/** The rail lists only the most recent few sessions; its overflow row asks
+ * Home to reveal the whole list. Home may not be mounted when the ask is
+ * made (the row is reachable from inside a project), so the request is also
+ * left as a flag for Home's next mount to pick up — otherwise the click
+ * lands at the top of Home and the user is back to scrolling for it. */
+export const TOOL_HISTORY_EVENT = "localcut:reveal-tool-history";
+let revealPending = false;
+export function revealToolHistory() {
+  revealPending = true;
+  window.dispatchEvent(new Event(TOOL_HISTORY_EVENT));
+}
+
+/** The kind, only when there is copy and an icon for it. An unknown kind
+ * resolves to null rather than indexing the catalog with a key it does not
+ * have — `m().tools[kind].label` THROWS on a miss, which takes Home down
+ * through the error boundary rather than degrading. */
+export const toolKindOf = (project: Project): ToolKind | null => {
+  const kind = isToolSession(project) ? project.mode.slice(5) : "";
+  return KNOWN_TOOLS.has(kind) ? (kind as ToolKind) : null;
+};
 
 /** Tile status from the global queue: active work wins, then a trailing
  * failure, then a finished output, else draft. Shared with the rail's
@@ -68,11 +93,18 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   }
   const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
-  const kind = toolKindOf(project);
-  if (kind) {
-    // The tool's own node only — the clip tool's keyframe finishing means
-    // its conditioning frame is ready, not the video the user asked for.
-    return jobs.some((job) => job.spec.node_id === kind && job.status === "done")
+  if (isToolSession(project)) {
+    // The engine's own record first. `allJobs` is the newest 200 rows across
+    // ALL projects, so an old session's rows have aged out behind a couple of
+    // full renders — and history is made of exactly those old sessions, which
+    // would every one of them report "draft" beside a working download.
+    if (project.tool_artifact_hash) return "ready";
+    // Falling back to jobs covers the moment between a job finishing and the
+    // refreshed project list arriving. The tool's own node only: the clip
+    // tool's keyframe finishing means its conditioning frame is ready, not
+    // the video the user asked for.
+    const nodeId = project.mode.slice(5);
+    return nodeId && jobs.some((job) => job.spec.node_id === nodeId && job.status === "done")
       ? "ready"
       : "draft";
   }
@@ -113,6 +145,7 @@ export function Home() {
   const [missingModel, setMissingModel] = useState<{ task: string; size: number } | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const toolSectionRef = useRef<HTMLDivElement>(null);
 
   const { prompt, tool, toolInput, voice, motion, scriptModel } = homeDraft;
   const { aspect, duration, mode } = defaults;
@@ -153,6 +186,18 @@ export function Home() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuFor]);
 
+
+  // The rail's "all outputs" row, whether Home was already mounted (event)
+  // or is mounting because of the click that asked (flag).
+  useEffect(() => {
+    const reveal = () => {
+      revealPending = false;
+      toolSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener(TOOL_HISTORY_EVENT, reveal);
+    if (revealPending) requestAnimationFrame(reveal);
+    return () => window.removeEventListener(TOOL_HISTORY_EVENT, reveal);
+  }, []);
 
   // "/" focuses search when no field owns the keyboard (review 4 §H4).
   useEffect(() => {
@@ -324,7 +369,7 @@ export function Home() {
               <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
             )}
             {toolKind && <span className="tile-tool">{m().tools[toolKind].label}</span>}
-            {!toolKind && project.duration_s != null && project.duration_s > 0 && (
+            {!isToolSession(project) && project.duration_s != null && project.duration_s > 0 && (
               <span className="tile-dur">{shortDuration(project.duration_s)}</span>
             )}
           </div>
@@ -756,7 +801,7 @@ export function Home() {
       )}
 
       {toolSessions.length > 0 && (
-        <div className="recent">
+        <div className="recent" ref={toolSectionRef}>
           <div className="recent-head">
             <h2>{t("home.toolOutputs")}</h2>
             <span className="count">· {toolSessions.length}</span>

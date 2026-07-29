@@ -111,6 +111,13 @@ class Project(BaseModel):
     thumb_hash: str | None = None  # first rendered keyframe, for tiles
     aspect: str | None = None
     duration_s: float | None = None  # current cut length
+    # Quick tool sessions only: the finished artifact of the session's own
+    # node, or None until it has produced one. "Did this finish?" has to be
+    # answerable from meta.json, because the desktop's other source -- GET
+    # /jobs -- returns the newest 200 rows across every project, so a
+    # session's rows age out behind a couple of full renders and its tile
+    # would fall back to "draft" while its download link still worked.
+    tool_artifact_hash: str | None = None
 
 
 class ProjectStore:

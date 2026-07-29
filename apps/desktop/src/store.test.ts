@@ -329,3 +329,74 @@ describe("a graph patch from the canvas", () => {
     expect(error).toBe("engine went away");
   });
 });
+
+/**
+ * Clearing the quick-tool history.
+ *
+ * The loop reuses DELETE /projects/{id} rather than adding a bulk route,
+ * which means it also inherits deleteProject's tab bookkeeping — and that is
+ * the part with a sharp edge: closing the ACTIVE tab activates its
+ * neighbour, and during a clear-all the neighbour is the next session about
+ * to be deleted.
+ */
+describe("deleteToolSessions", () => {
+  const session = (id: string) => ({ ...PROJECT(id), mode: "tool:image", approvals: [] });
+  const video = (id: string) => ({ ...PROJECT(id), mode: "prompt", approvals: [] });
+
+  it("deletes every session and leaves real projects alone", async () => {
+    const deleted: string[] = [];
+    const client = fakeClient({
+      deleteProject: vi.fn(async (id: string) => {
+        deleted.push(id);
+      }),
+    });
+    useApp.setState({ client, projects: [video("v1"), session("t1"), session("t2")] });
+
+    expect(await useApp.getState().deleteToolSessions()).toBeNull();
+    expect(deleted.sort()).toEqual(["t1", "t2"]);
+    expect(useApp.getState().projects.map((p) => p.id)).toEqual(["v1"]);
+  });
+
+  it("closes the doomed tabs up front instead of activating each in turn", async () => {
+    const opened: string[] = [];
+    const client = fakeClient({
+      deleteProject: vi.fn(async () => {}),
+      getProject: vi.fn(async (id: string) => {
+        opened.push(id);
+        return { project: session(id), board: null };
+      }),
+    });
+    useApp.setState({
+      client,
+      projects: [session("t1"), session("t2"), session("t3")],
+      openProjects: ["t1", "t2", "t3"],
+      currentProject: session("t1") as never,
+    });
+
+    await useApp.getState().deleteToolSessions();
+    // No session's board is fetched on the way past — the tabs go in one
+    // step and the workspace falls back to Home, rather than flickering
+    // through boards for projects that are being erased.
+    expect(opened).toEqual([]);
+    expect(useApp.getState().openProjects).toEqual([]);
+    expect(useApp.getState().currentProject).toBeNull();
+  });
+
+  it("keeps going after one failure and reports it", async () => {
+    const client = fakeClient({
+      deleteProject: vi.fn(async (id: string) => {
+        if (id === "t1") throw new Error("engine said no");
+      }),
+    });
+    useApp.setState({ client, projects: [session("t1"), session("t2")] });
+
+    expect(await useApp.getState().deleteToolSessions()).toContain("engine said no");
+    // t2 still went, and the one that failed is restored to the list.
+    expect(useApp.getState().projects.map((p) => p.id)).toEqual(["t1"]);
+  });
+
+  it("reports rather than throws when there is no engine", async () => {
+    useApp.setState({ client: null, projects: [session("t1")] });
+    expect(await useApp.getState().deleteToolSessions()).toBeTruthy();
+  });
+});
