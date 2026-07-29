@@ -4693,3 +4693,39 @@ button.link:hover {
   right: -7px;
   transform: translateY(-50%);
 }
+
+/* Promotion provenance: the one line linking a script session to the video
+ * it became, and back. Quiet by default — it is context, not an action.
+ *
+ * No margin: both hosts are gap-ed flex columns, and flex gaps do not
+ * collapse with margins. Truncates rather than wraps — a session's title is
+ * the raw prompt, up to 120 characters, and in the project header a wrap
+ * would grow the toolbar and squeeze the pipeline beside it. */
+.provenance {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Title + provenance stack; the header row itself stays horizontal. */
+.board-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.board-header .board-title h1 {
+  flex: none;
+}
+
+.provenance .link {
+  color: var(--text-secondary);
+}
+
+.provenance .link:hover {
+  color: var(--text-primary);
+}

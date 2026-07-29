@@ -15,6 +15,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
 import { ToolSession } from "../components/ToolSession";
+import { PromotedFrom } from "../components/Provenance";
 import { Workspace } from "../components/Workspace";
 import { t } from "../i18n";
 import { finalizeEta, recordBoard } from "../lib/eta";
@@ -400,7 +401,13 @@ export function Project() {
   return (
     <div className="project-shell screen-enter">
       <div className="board-header">
-        <h1>{currentProject.title}</h1>
+        {/* The header is a horizontal toolbar; the provenance line belongs
+            UNDER the title, so the two share a column rather than becoming
+            a third item on the row. */}
+        <div className="board-title">
+          <h1>{currentProject.title}</h1>
+          <PromotedFrom project={currentProject} />
+        </div>
         <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
           {stages.map((stage) => {
             const inner = (
