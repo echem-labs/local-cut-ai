@@ -17,10 +17,27 @@ const RING_C = 2 * Math.PI * 7;
  * never money. Background model downloads join the pill (click → Settings)
  * so Home is honest about work the engine is doing off-screen. */
 export function QueueTray() {
-  const { jobs, models, refreshModels, openSettings, startDownload, cancelJob, firstRunDone } =
-    useApp();
-  const active = jobs.find((job) => job.status === "rendering");
-  const queued = jobs.filter((job) => job.status === "queued").length;
+  const {
+    jobs,
+    allJobs,
+    currentProject,
+    models,
+    refreshModels,
+    openSettings,
+    startDownload,
+    cancelJob,
+    firstRunDone,
+  } = useApp();
+  // The tray is app-global, so it answers for the whole ENGINE, not the open
+  // project — a render started in one project must not read "idle" from Home
+  // or another project's board. For the project that IS open, the
+  // board-refreshed `jobs` slice is fresher than the debounced home refetch
+  // behind `allJobs`, so its rows win.
+  const engineJobs = currentProject
+    ? [...jobs, ...allJobs.filter((job) => job.project_id !== currentProject.id)]
+    : allJobs;
+  const active = engineJobs.find((job) => job.status === "rendering");
+  const queued = engineJobs.filter((job) => job.status === "queued").length;
 
   // During first-run the setup screen already shows per-model bars —
   // and Settings isn't reachable yet, so the tray link would dead-end.
