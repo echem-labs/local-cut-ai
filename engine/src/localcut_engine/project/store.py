@@ -291,6 +291,14 @@ class ProjectStore:
                 "title": f"{source.title} copy"[:120],
                 "created_at": now,
                 "updated_at": now,
+                # Provenance is a claim about identity, not content, so it
+                # does NOT travel the way generated/ does: the copy of a
+                # promoted session never produced those videos, and the copy
+                # of a video was not the one that session made. Carried over,
+                # the link would resolve -- to the wrong project, which no
+                # amount of tolerance for dangling ids can detect.
+                "promoted_to": [],
+                "promoted_from": None,
             }
         )
         _write_atomic(dst / "meta.json", copy.model_dump_json(indent=2))
