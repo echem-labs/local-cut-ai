@@ -37,6 +37,18 @@ apps/desktop/   Electron + React frontend — talks to the engine exclusively ov
 
 ## Development
 
+**Hooks** (once, from the repo root):
+
+```bash
+uv run --project engine pre-commit install
+```
+
+Commits get `ruff check --fix` and `ruff format`; pushes additionally get the
+engine suite, the desktop typecheck and the desktop tests — gated on which half
+of the tree you touched, so a desktop-only push does not run pytest. CI is
+Ubuntu-only while the repo is private, so a green push hook is very nearly the
+same verdict CI gives. `--no-verify` skips them.
+
 **Engine** (Python ≥3.13, [uv](https://docs.astral.sh/uv/)):
 
 ```bash

@@ -1,9 +1,22 @@
-name: CI
+name: CI (engine)
 
+# Split from the desktop suite so each half runs only when its own half of the
+# tree changes. Two thirds of this repo's commits touch one side only, and a
+# handful touch neither (docs, the packaging workflow) — under a single
+# workflow every one of those booted both suites and paid for both.
+#
+# The path list must name this file too: a change to the workflow itself can
+# break the run, and nothing else here would trigger it.
 on:
   push:
     branches: [main]
+    paths:
+      - "engine/**"
+      - ".github/workflows/ci-engine.yml"
   pull_request:
+    paths:
+      - "engine/**"
+      - ".github/workflows/ci-engine.yml"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main
@@ -23,12 +36,12 @@ permissions:
 
 jobs:
   engine:
-    # Every supported OS, because the suite is otherwise only ever run on
-    # whichever one the author happens to be using — and a platform
-    # assumption in a test reads exactly like a product defect until someone
-    # checks. Two tests in this repo hardcoded POSIX behaviour (an
-    # extensionless `ffmpeg`, POSIX mode bits) and looked like broken code
-    # on Windows for exactly that reason.
+    # The matrix exists because the suite is otherwise only ever run on
+    # whichever OS the author happens to be using — and a platform assumption
+    # in a test reads exactly like a product defect until someone checks. Two
+    # tests in this repo hardcoded POSIX behaviour (an extensionless `ffmpeg`,
+    # POSIX mode bits) and looked like broken code on Windows for exactly
+    # that reason.
     name: engine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     # The suite runs in ~90s locally; brew/choco installing ffmpeg is the
@@ -38,7 +51,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # ---------------------------------------------------------------
+        # Ubuntu only WHILE THE REPO IS PRIVATE.
+        #
+        # GitHub meters a private repo's Actions minutes with a per-OS
+        # multiplier — macOS x10, Windows x2, Linux x1 — against 2,000 free
+        # minutes a month. Measured across July 2026 that put 54% of the
+        # entire monthly allowance into macOS jobs which ran for 99 real
+        # minutes, and the account reached 90% of quota with three days left
+        # in the cycle. A two-minute macOS job bills as twenty-one.
+        #
+        # RESTORE BOTH LINES THE DAY THE REPO GOES PUBLIC. Public repos get
+        # unlimited free minutes on standard runners, so the multiplier stops
+        # applying at all and there is no reason to test one platform. The
+        # cross-platform coverage is the entire point of this matrix — see
+        # the note on the job above. Tracked as a launch item alongside the
+        # license decision in specs 07-roadmap-and-risks.md.
+        # ---------------------------------------------------------------
+        os: [ubuntu-latest]
+        # os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: engine
@@ -100,30 +131,3 @@ jobs:
       # looked green while testing no assembly at all. What is NOT running
       # should be readable from the log without re-running anything.
       - run: uv run pytest -q -rs
-
-  desktop:
-    name: desktop (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    defaults:
-      run:
-        working-directory: apps/desktop
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      # `build` also runs both tsc projects, so a renderer that typechecks
-      # but cannot bundle still fails here.
-      - run: npm run build
