@@ -94,19 +94,20 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
   if (isToolSession(project)) {
-    // The engine's own record first. `allJobs` is the newest 200 rows across
-    // ALL projects, so an old session's rows have aged out behind a couple of
-    // full renders — and history is made of exactly those old sessions, which
-    // would every one of them report "draft" beside a working download.
-    if (project.tool_artifact_hash) return "ready";
-    // Falling back to jobs covers the moment between a job finishing and the
-    // refreshed project list arriving. The tool's own node only: the clip
-    // tool's keyframe finishing means its conditioning frame is ready, not
-    // the video the user asked for.
-    const nodeId = project.mode.slice(5);
-    return nodeId && jobs.some((job) => job.spec.node_id === nodeId && job.status === "done")
-      ? "ready"
-      : "draft";
+    // The engine's record, and ONLY that. Two reasons it beats the job list.
+    //
+    // Reach: `allJobs` is the newest 200 rows across ALL projects, so an old
+    // session's rows have aged out behind a couple of full renders — and
+    // history is made of exactly those old sessions.
+    //
+    // Meaning: a DONE row is not the same claim as "there is an artifact".
+    // The engine derives this field through the trusted artifact cache, so a
+    // placeholder rendered by a fallback tier and since distrusted has no
+    // hash here while its DONE row is still in the window. Reading the row
+    // would paint a green "Ready" tile that opens on a queued session with
+    // nothing to download — two sources disagreeing, which is the whole
+    // thing this field exists to stop.
+    return project.tool_artifact_hash ? "ready" : "draft";
   }
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";
@@ -195,8 +196,14 @@ export function Home() {
       toolSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     };
     window.addEventListener(TOOL_HISTORY_EVENT, reveal);
-    if (revealPending) requestAnimationFrame(reveal);
-    return () => window.removeEventListener(TOOL_HISTORY_EVENT, reveal);
+    // Cancelled on unmount: left to run after Home has gone, it clears the
+    // flag against a null ref, consuming the request without scrolling so a
+    // later mount never honours it.
+    const frame = revealPending ? requestAnimationFrame(reveal) : 0;
+    return () => {
+      window.removeEventListener(TOOL_HISTORY_EVENT, reveal);
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, []);
 
   // "/" focuses search when no field owns the keyboard (review 4 §H4).
@@ -289,7 +296,16 @@ export function Home() {
   };
 
   const real = projects.filter((project) => !project.mode.startsWith("tool:"));
-  const toolSessions = projects.filter((project) => project.mode.startsWith("tool:"));
+  // Sorted the same way the rail's history is (last activity first). The
+  // rail's overflow row scrolls the user straight to this list, and the two
+  // reading in different orders makes it look like a different list.
+  const toolSessions = useMemo(
+    () =>
+      [...projects.filter(isToolSession)].sort(
+        (a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at),
+      ),
+    [projects],
+  );
   // Gate on the grid this controls (real projects, not tool sessions), and keep
   // the controls visible whenever a query is active — otherwise deleting down to
   // ≤6 unmounts the search box while `search` still filters the grid, hiding
