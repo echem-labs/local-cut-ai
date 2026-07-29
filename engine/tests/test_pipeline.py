@@ -175,6 +175,75 @@ async def test_script_tool_promotes_to_full_project(rig):
     assert not [j for j in queue.list(promoted.id, 1000) if j.spec.node_id == "script"]
     assert service.scene_board(promoted.id)["scenes"]
 
+    # Both halves of the link are recorded, so each side can name the other.
+    assert promoted.promoted_from == tool.id
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    assert store.get(promoted.id).promoted_from == tool.id
+
+
+async def test_promoting_the_same_session_twice_records_both_videos(rig):
+    """A script is worth more than one attempt, and promote_tool has never
+    stopped a second run. A single `promoted_to` would let the newer video
+    erase the older one's provenance, so the session keeps every id it
+    produced, in the order it produced them."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    first = service.promote_tool(tool.id)
+    second = service.promote_tool(tool.id)
+
+    assert first.id != second.id
+    assert store.get(tool.id).promoted_to == [first.id, second.id]
+    assert store.get(first.id).promoted_from == tool.id
+    assert store.get(second.id).promoted_from == tool.id
+
+
+async def test_promotion_provenance_survives_a_later_meta_refresh(rig):
+    """The link lives in meta.json, which _refresh_meta_locked rewrites on
+    every job completion. That path re-reads before it writes, so provenance
+    has to come back out the other side -- otherwise the first keyframe to
+    finish would quietly erase where the video came from."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    promoted = service.promote_tool(tool.id)
+    await wait_for(
+        lambda: bool(service.scene_board(promoted.id)["aux"].get("export", {}).get("artifact_hash"))
+    )
+    # The video rewrote its meta on every one of those job completions.
+    assert store.get(promoted.id).promoted_from == tool.id
+
+    # The session's half needs its own refresh to be worth asserting: no job
+    # of its own runs after promotion, so a check here alone would pass
+    # against code that never re-read the session's meta at all. Patch and
+    # rename are the two paths that rewrite it -- one through
+    # _refresh_meta_locked, one writing the model directly.
+    service.patch(
+        tool.id,
+        [PatchOp(op="set_params", node_id="script", params={"prompt": "octopus hearts, take two"})],
+    )
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    service.rename(tool.id, "renamed session")
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    # ...and the re-run that patch just enqueued must not drop it either.
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 50)[:1]
+        )
+    )
+    assert store.get(tool.id).promoted_to == [promoted.id]
+
 
 @pytest.mark.parametrize(
     ("tool", "node_id"),
@@ -815,3 +884,30 @@ async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
     # Idempotent, and it leaves real projects alone.
     assert service.backfill_tool_metas() == 0
     assert store.get(video.id).tool_artifact_hash is None
+
+
+async def test_duplicating_a_project_does_not_inherit_provenance(rig):
+    """A copy is a new thing, and provenance is a claim about identity rather
+    than content -- unlike generated/, which travels because artifacts are
+    content-addressed. Carried over, the copy of a promoted session would
+    offer a link to a video it never produced (an id that RESOLVES, to the
+    wrong project, which no amount of dangling-id tolerance catches), and the
+    copy of a video would name a session whose own list never mentions it."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    video = service.promote_tool(tool.id)
+
+    session_copy = store.duplicate(tool.id)
+    video_copy = store.duplicate(video.id)
+    assert session_copy is not None and video_copy is not None
+    assert session_copy.promoted_to == []
+    assert video_copy.promoted_from is None
+    # The originals keep theirs, and the session never learns of the copies.
+    assert store.get(tool.id).promoted_to == [video.id]
+    assert store.get(video.id).promoted_from == tool.id

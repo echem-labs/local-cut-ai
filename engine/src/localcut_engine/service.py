@@ -248,6 +248,18 @@ class ProjectService:
             dest = self.store.generated_dir(project.id)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy(artifact, dest / f"{out_hash}.screenplay.json")
+            # Record the link on both sides before any job can run. Both metas
+            # are written under this lock hold, and _refresh_meta_locked --
+            # which the first finished job triggers -- re-reads meta.json
+            # before writing, so it carries these fields forward rather than
+            # dropping them.
+            #
+            # `meta` was read under this same hold and nothing else may write
+            # it meanwhile, so appending cannot lose a concurrent promotion.
+            project.promoted_from = project_id
+            self.store.save_meta(project)
+            meta.promoted_to = [*meta.promoted_to, project.id]
+            self.store.save_meta(meta)
             self._enqueue_dirty(project.id, new_graph)
         return project
 
