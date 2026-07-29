@@ -24,6 +24,10 @@ build = [
     "pyinstaller>=6.21.0",
 ]
 dev = [
+    # pre-commit drives the repo-root hooks, which cover the desktop half too.
+    # It lives here rather than in a second manifest because this is already
+    # the only lockfile that pins ruff, and the hooks run that same ruff.
+    "pre-commit>=4.6.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.15.22",
