@@ -188,6 +188,15 @@ export function Settings() {
     NAV.some((entry) => entry.id === settingsTab) ? settingsTab : "general"
   ) as SettingsTab;
 
+  // The storage walk reports every .lcut directory without saying which are
+  // quick tool sessions; `mode` lives on the project list, so the split
+  // happens here rather than as a second engine field that could disagree.
+  const isToolSession = useCallback(
+    (id: string) =>
+      projects.some((project) => project.id === id && project.mode.startsWith("tool:")),
+    [projects],
+  );
+
   const refreshProviders = useCallback(async () => {
     if (!client) return;
     try {
@@ -818,16 +827,7 @@ export function Settings() {
                     </div>
                   </div>
                   {(() => {
-                    // The storage walk reports every .lcut directory without
-                    // saying which are quick tool sessions — `mode` lives on
-                    // the project list, so the split happens here rather than
-                    // as a second engine-side field that could disagree.
-                    const toolIds = new Set(
-                      projects
-                        .filter((project) => project.mode.startsWith("tool:"))
-                        .map((project) => project.id),
-                    );
-                    const rows = storage.projects.filter((row) => toolIds.has(row.id));
+                    const rows = storage.projects.filter((row) => isToolSession(row.id));
                     const bytes = rows.reduce((sum, row) => sum + row.bytes, 0);
                     return (
                       <div className="setting-row">
@@ -1165,9 +1165,19 @@ export function Settings() {
 
       {confirmProject && (
         <ConfirmDialog
-          title={t("home.deleteTitle", { title: confirmProject.title })}
-          message={t("home.deleteMessage")}
-          confirmLabel={t("home.deleteConfirm")}
+          // This list carries quick tool sessions too, and a project's copy
+          // overstates what a one-off output costs to delete: there is no
+          // cut to lose and usually no job to cancel.
+          title={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolTitle" : "home.deleteTitle",
+            { title: confirmProject.title },
+          )}
+          message={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolMessage" : "home.deleteMessage",
+          )}
+          confirmLabel={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolConfirm" : "home.deleteConfirm",
+          )}
           danger
           onConfirm={() => {
             const target = confirmProject;
