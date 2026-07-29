@@ -79,12 +79,16 @@
   "status": {
     "generating": "Generating",
     "draft": "Draft",
+    "ready": "Ready",
     "final": "Final",
     "failed": "Failed"
   },
   "deleteTitle": "Delete \"{title}\"?",
   "deleteMessage": "Removes this project and all generated media from this machine. Running jobs are cancelled. This can't be undone.",
   "deleteConfirm": "Delete project",
+  "deleteToolTitle": "Delete \"{title}\"?",
+  "deleteToolMessage": "Removes this quick tool output and the file it generated. This can't be undone.",
+  "deleteToolConfirm": "Delete output",
   "dlStrip_one": "Downloading {count} model — {size} left. Write your first prompt now; generation starts as soon as models are ready.",
   "dlStrip_other": "Downloading {count} models — {size} left. Write your first prompt now; generation starts as soon as models are ready.",
   "viewModels": "View models"

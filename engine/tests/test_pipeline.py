@@ -176,6 +176,49 @@ async def test_script_tool_promotes_to_full_project(rig):
     assert service.scene_board(promoted.id)["scenes"]
 
 
+@pytest.mark.parametrize(
+    ("tool", "node_id"),
+    [("image", "image"), ("thumbnail", "thumbnail"), ("clip", "clip")],
+)
+async def test_a_tool_session_that_rendered_a_still_gets_a_thumbnail(rig, tool, node_id):
+    """A tool session has no scenes, so the `{scene}.keyframe` rule finds
+    nothing and its Home tile fell back to the generic tool glyph forever --
+    a finished image looking exactly like a finished voiceover. The still it
+    rendered itself is the thumbnail; the clip tool's is its conditioning
+    keyframe, the one frame of the video that already exists as an image."""
+    store, queue, service = rig
+    session = service.create_tool(tool, {"prompt": "a lighthouse at dusk"})
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == node_id and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None
+    assert meta.thumb_hash, f"{tool} session has no thumb_hash"
+    # A hash the tile cannot fetch is the same blank tile with extra steps.
+    assert store.resolve_artifact(session.id, meta.thumb_hash) is not None
+
+
+async def test_a_tool_session_with_no_still_keeps_its_glyph(rig):
+    """The other half: voiceover/music/script render no image, so there is
+    nothing to point thumb_hash at. It must stay None rather than borrow
+    some unrelated artifact the tile would fail to decode."""
+    store, queue, service = rig
+    session = service.create_tool("voiceover", {"text": "one small step"})
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "voiceover" and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None and meta.thumb_hash is None
+
+
 async def test_beginner_mode_gates_stages_until_approved(rig):
     store, queue, service = rig
     project = service.create_from_prompt(

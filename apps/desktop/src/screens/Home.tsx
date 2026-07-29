@@ -47,11 +47,20 @@ const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = [
 
 type SortKey = "recent" | "created" | "name";
 
-type TileStatus = "generating" | "failed" | "final" | "draft";
+type TileStatus = "generating" | "failed" | "ready" | "final" | "draft";
+
+export const toolKindOf = (project: Project): ToolKind | null =>
+  project.mode.startsWith("tool:") ? (project.mode.slice(5) as ToolKind) : null;
 
 /** Tile status from the global queue: active work wins, then a trailing
- * failure, then a finished export, else draft. Shared with the rail's
- * open-project tabs so both status dots always agree. */
+ * failure, then a finished output, else draft. Shared with the rail's
+ * open-project tabs and history rows so every status dot agrees.
+ *
+ * A quick tool has no export stage — `tool_graph` names its terminal node
+ * for the tool itself — so the export rule below never matched and every
+ * finished one-off read "Draft" beside its own download link. Tool sessions
+ * settle at "ready" rather than "final": "Final" is a claim about a cut, and
+ * a voiceover is not a cut. */
 export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   const jobs = allJobs.filter((job) => job.project_id === project.id);
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
@@ -59,12 +68,17 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   }
   const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
+  const kind = toolKindOf(project);
+  if (kind) {
+    // The tool's own node only — the clip tool's keyframe finishing means
+    // its conditioning frame is ready, not the video the user asked for.
+    return jobs.some((job) => job.spec.node_id === kind && job.status === "done")
+      ? "ready"
+      : "draft";
+  }
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";
 }
-
-const toolKindOf = (project: Project): ToolKind | null =>
-  project.mode.startsWith("tool:") ? (project.mode.slice(5) as ToolKind) : null;
 
 /** Home: one prompt surface — the video prompt, or the active quick tool's
  * panel in its place (never both) — plus the Quick Tools row and a real
@@ -664,7 +678,10 @@ export function Home() {
         })}
       </div>
 
-      {projects.length === 0 && (
+      {/* Gate on real projects, not the whole list: someone who has only
+          used the quick tools has made no video yet, and counting their
+          tool outputs here took away the templates that get them started. */}
+      {real.length === 0 && (
         <div className="empty-state">
           <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
           <b>{t("home.emptyTitle")}</b>
@@ -750,9 +767,19 @@ export function Home() {
 
       {confirmDelete && (
         <ConfirmDialog
-          title={t("home.deleteTitle", { title: confirmDelete.title })}
-          message={t("home.deleteMessage")}
-          confirmLabel={t("home.deleteConfirm")}
+          // A one-off output is not a project: promising to cancel running
+          // jobs and remove "all generated media" overstates what is at
+          // stake and makes deleting a stray thumbnail feel unsafe.
+          title={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolTitle" : "home.deleteTitle",
+            { title: confirmDelete.title },
+          )}
+          message={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolMessage" : "home.deleteMessage",
+          )}
+          confirmLabel={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolConfirm" : "home.deleteConfirm",
+          )}
           danger
           onConfirm={() => {
             const target = confirmDelete;

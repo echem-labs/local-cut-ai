@@ -5,12 +5,14 @@ import {
   Moon,
   Settings as SettingsIcon,
   Sun,
+  Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
-import { t } from "./i18n";
+import { plural, t } from "./i18n";
 import { BrandMark } from "./components/BrandMark";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
@@ -19,10 +21,15 @@ import { FirstRun } from "./screens/FirstRun";
 import { Home, tileStatus } from "./screens/Home";
 import { Project } from "./screens/Project";
 import { Settings } from "./screens/Settings";
+import type { Project as ProjectMeta } from "./api/types";
 import { useApp } from "./store";
 
 const ICON = { size: 15, strokeWidth: 1.8 } as const;
 const RAIL_KEY = "localcut.rail.expanded";
+/** The rail lists this many past tool sessions; the rest are one click away
+ * on Home. A rail that grows without bound pushes the bottom cluster into a
+ * scroll for someone who simply used the tools a lot. */
+const RECENT_LIMIT = 8;
 
 /** One window, one persistent left rail. */
 export default function App() {
@@ -37,12 +44,15 @@ export default function App() {
     closeProject,
     closeSettings,
     openSettings,
+    deleteProject,
     engineError,
     firstRunDone,
     settingsOpen,
     system,
     remoteEngine,
   } = useApp();
+  const [confirmDelete, setConfirmDelete] = useState<ProjectMeta | null>(null);
+  const [railError, setRailError] = useState<string | null>(null);
 
   useEffect(() => {
     void connect();
@@ -100,6 +110,22 @@ export default function App() {
     setRailExpanded(next);
   };
   const workspaceMode = currentProject ? !currentProject.mode.startsWith("tool:") : false;
+
+  // Quick-tool history. Every tool run is a real project the engine keeps
+  // forever, but the rail only ever showed one while its tab happened to be
+  // open — close the tab and the session was reachable only by scrolling to
+  // the bottom of Home. Derived from `projects`, never cached locally, so a
+  // delete from any surface (or another engine) takes it out of this list
+  // through the same refresh that updates Home.
+  //
+  // Open sessions are left out: the tab above already stands for them, and a
+  // row in both lists would make closing a tab look like it deleted one.
+  const recentTools = useMemo(() => {
+    const open = new Set(openProjects);
+    return projects
+      .filter((project) => project.mode.startsWith("tool:") && !open.has(project.id))
+      .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at));
+  }, [projects, openProjects]);
 
   return (
     <div className="app">
@@ -180,6 +206,63 @@ export default function App() {
             })}
           </div>
         )}
+        {firstRunDone && recentTools.length > 0 && (
+          <div className="rail-recent">
+            <div className="group-label">{t("nav.recent")}</div>
+            {recentTools.slice(0, RECENT_LIMIT).map((project) => {
+              const title = project.title;
+              return (
+                // Two sibling buttons, never a button inside a button: ARIA
+                // makes a button's children presentational, so a nested
+                // delete would vanish from assistive tech (same reason the
+                // project tiles are shaped this way).
+                <div key={project.id} className="rail-tab">
+                  <button
+                    title={title}
+                    onClick={() => {
+                      closeSettings();
+                      void openProject(project.id);
+                    }}
+                  >
+                    {compact && (
+                      <span className="rail-glyph" aria-hidden="true">
+                        {/* spread: [0] would split a surrogate pair (emoji titles) */}
+                        {([...title.trim()][0] ?? "?").toUpperCase()}
+                      </span>
+                    )}
+                    <i className={`dot ${tileStatus(project, allJobs)}`} aria-hidden="true" />
+                    <span className="rail-label">{title}</span>
+                  </button>
+                  <button
+                    className="rail-tab-action"
+                    title={t("nav.deleteToolAria", { title })}
+                    aria-label={t("nav.deleteToolAria", { title })}
+                    onClick={() => setConfirmDelete(project)}
+                  >
+                    <Trash2 size={12} strokeWidth={1.8} />
+                  </button>
+                </div>
+              );
+            })}
+            {recentTools.length > RECENT_LIMIT && (
+              <button
+                className="rail-recent-all"
+                aria-label={plural("nav.recentAll", recentTools.length)}
+                onClick={() => {
+                  closeProject();
+                  closeSettings();
+                }}
+              >
+                {compact && (
+                  <span className="rail-glyph" aria-hidden="true">
+                    +{recentTools.length - RECENT_LIMIT}
+                  </span>
+                )}
+                <span className="rail-label">{plural("nav.recentAll", recentTools.length)}</span>
+              </button>
+            )}
+          </div>
+        )}
         <div className="rail-bottom">
           <Tip
             label={remoteEngine ? t("nav.remoteEngine") : t("nav.localEngine")}
@@ -234,6 +317,14 @@ export default function App() {
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
+        {/* A rejected delete has no room to report itself in the rail, and
+            dropping the returned message would make a failed delete look
+            like a successful one — the row simply reappears. */}
+        {railError && (
+          <div className="banner error" role="alert">
+            {railError}
+          </div>
+        )}
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">
@@ -241,6 +332,21 @@ export default function App() {
           </div>
         )}
       </main>
+      {confirmDelete && (
+        <ConfirmDialog
+          title={t("home.deleteToolTitle", { title: confirmDelete.title })}
+          message={t("home.deleteToolMessage")}
+          confirmLabel={t("home.deleteToolConfirm")}
+          danger
+          onConfirm={() => {
+            const target = confirmDelete;
+            setConfirmDelete(null);
+            setRailError(null);
+            void deleteProject(target.id).then(setRailError);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
       <QueueTray />
       <Palette />
     </div>
