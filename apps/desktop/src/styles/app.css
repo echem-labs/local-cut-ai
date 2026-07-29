@@ -4693,3 +4693,19 @@ button.link:hover {
   right: -7px;
   transform: translateY(-50%);
 }
+
+/* Promotion provenance: the one line linking a script session to the video
+ * it became, and back. Quiet by default — it is context, not an action. */
+.provenance {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-top: var(--space-1);
+}
+
+.provenance .link {
+  color: var(--text-secondary);
+}
+
+.provenance .link:hover {
+  color: var(--text-primary);
+}

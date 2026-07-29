@@ -15,6 +15,7 @@ import { CheckpointBanner } from "../components/CheckpointBanner";
 import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
 import { ToolSession } from "../components/ToolSession";
+import { PromotedFrom } from "../components/Provenance";
 import { Workspace } from "../components/Workspace";
 import { t } from "../i18n";
 import { finalizeEta, recordBoard } from "../lib/eta";
@@ -401,6 +402,7 @@ export function Project() {
     <div className="project-shell screen-enter">
       <div className="board-header">
         <h1>{currentProject.title}</h1>
+        <PromotedFrom project={currentProject} />
         <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
           {stages.map((stage) => {
             const inner = (

@@ -118,6 +118,16 @@ class Project(BaseModel):
     # session's rows age out behind a couple of full renders and its tile
     # would fall back to "draft" while its download link still worked.
     tool_artifact_hash: str | None = None
+    # Promotion provenance, so a script session and the video it became can
+    # name each other. A session can be promoted more than once, hence a
+    # list; a video comes from exactly one session.
+    #
+    # Both are ADVISORY. Either side can be deleted independently and nothing
+    # rewrites the survivor -- that would mean reading every meta on every
+    # delete -- so a reader must treat an id it cannot resolve as "no link"
+    # rather than as a dangling reference worth reporting.
+    promoted_to: list[str] = []  # on a tool:script session: the videos made
+    promoted_from: str | None = None  # on a video: the session it came from
 
 
 class ProjectStore:
