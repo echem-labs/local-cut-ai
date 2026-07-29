@@ -219,6 +219,7 @@ interface AppState {
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
   deleteProject: (id: string) => Promise<string | null>;
+  deleteToolSessions: () => Promise<string | null>;
   renameProject: (id: string, title: string) => Promise<string | null>;
   duplicateProject: (id: string) => Promise<string | null>;
   refreshStorage: () => Promise<void>;
@@ -1384,6 +1385,28 @@ export const useApp = create<AppState>((set, get) => {
         }
         return messageOf(err);
       }
+    },
+
+    // Clearing the quick-tool history is a loop over the delete route, not a
+    // bulk one: DELETE /projects/{id} already reserves, cancels and purges in
+    // the order that survives an interrupted delete, and a second engine path
+    // doing the same thing in bulk would have to re-establish all of it.
+    //
+    // Sequential on purpose — the engine serialises these behind one lock, so
+    // firing them together only queues them with a less useful failure report.
+    deleteToolSessions: async () => {
+      if (!get().client) return t("errors.engineUnavailable");
+      const doomed = get()
+        .projects.filter((project) => project.mode.startsWith("tool:"))
+        .map((project) => project.id);
+      let failure: string | null = null;
+      for (const id of doomed) {
+        const error = await get().deleteProject(id);
+        // Keep going: one project wedged by a running job should not strand
+        // the rest, and the count in Settings re-measures either way.
+        if (error && !failure) failure = error;
+      }
+      return failure;
     },
 
     renameProject: async (id, title) => {

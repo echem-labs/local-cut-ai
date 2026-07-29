@@ -882,10 +882,35 @@ class ProjectService:
             assembled = edl.get("duration") if edl else None
             if isinstance(assembled, (int, float)) and assembled > 0:
                 duration = float(assembled)
+            if thumb is None and project.mode.startswith("tool:"):
+                thumb = self._tool_still(graph, memo, cached)
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
         self.store.save_meta(project)
+
+    @staticmethod
+    def _tool_still(graph: StoryGraph, memo: dict[str, str], cached: set[str]) -> str | None:
+        """The rendered still a quick tool session can show on its tile.
+
+        Tool graphs carry no scenes, so the `{scene}.keyframe` rule above
+        never matches and every session -- image, voiceover, script alike --
+        wore the same generic glyph. Only the two still-image kinds qualify:
+        the clip tool contributes its conditioning keyframe, which is a frame
+        of the video it produced, and the kinds that render audio or text
+        contribute nothing rather than an artifact no <img> can decode.
+
+        Node ids are walked in code-unit order so the choice is the same on
+        every machine -- `keyframe` before a hypothetical later still, not
+        whichever the dict happens to yield first.
+        """
+        for node_id in sorted(graph.nodes):
+            if graph.nodes[node_id].kind not in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
+                continue
+            still = graph.output_hash(node_id, memo)
+            if still in cached:
+                return still
+        return None
 
     def _assembled_edl(
         self, project_id: str, graph: StoryGraph, memo: dict[str, str], cached: set[str]
