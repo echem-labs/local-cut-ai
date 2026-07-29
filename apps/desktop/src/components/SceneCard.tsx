@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
 import { t } from "../i18n";
 import { remainingLabel } from "../lib/eta";
+import { displaySeconds } from "../lib/formats";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -206,7 +207,7 @@ export function SceneCard({
           </span>
         )}
         {!rendering && Number.isFinite(duration) && (
-          <span className="dur-badge">{t("scene.durValue", { d: duration })}</span>
+          <span className="dur-badge">{t("scene.durValue", { d: displaySeconds(duration) })}</span>
         )}
         {/* failure ladder lives ON the dimmed frame (design mock): the
             thumb stays the stage, the choices sit at its foot */}
@@ -311,9 +312,9 @@ export function SceneCard({
             {rendering || failed
               ? t("scene.dash")
               : clip.status === "queued" && Number.isFinite(duration)
-                ? t("scene.durQueued", { d: duration })
+                ? t("scene.durQueued", { d: displaySeconds(duration) })
                 : Number.isFinite(duration)
-                  ? t("scene.durValue", { d: duration })
+                  ? t("scene.durValue", { d: displaySeconds(duration) })
                   : t("scene.dash")}
           </span>
         </div>
