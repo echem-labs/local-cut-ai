@@ -13,7 +13,7 @@ import logging
 import re
 import secrets
 from contextlib import asynccontextmanager
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 from urllib.parse import unquote
 
@@ -180,6 +180,46 @@ _TASK_KINDS = (
     NodeKind.TIMELINE,
     NodeKind.EXPORT,
 )
+
+
+_FILENAME_SLUG_MAX = 60
+# Bound on reading a screenplay back for its title. Screenplays are a few KB;
+# anything past this is not one, and serving must never block on a large read.
+_FILENAME_PEEK_BYTES = 256 << 10
+
+
+def _slugify(title: str) -> str:
+    parts: list[str] = []
+    pending_dash = False
+    for ch in title.lower():
+        if ch.isascii() and ch.isalnum():
+            if pending_dash and parts:
+                parts.append("-")
+            parts.append(ch)
+            pending_dash = False
+        else:
+            pending_dash = True
+    return "".join(parts)[:_FILENAME_SLUG_MAX].rstrip("-")
+
+
+def artifact_filename(title: str, path: Path, output_hash: str) -> str:
+    """The filename a served artifact downloads as: a slug of the project
+    title plus the artifact's real suffix. The store keys artifacts by output
+    hash, and without a name of our own that hash is what a browser's
+    save dialog shows. Screenplays are named after the title *inside* them —
+    the script model already wrote a better one than the prompt — and any
+    problem reading it falls back to the project title, never to a 500: a
+    worse filename must not cost the download."""
+    suffix = path.name.removeprefix(output_hash)
+    if suffix.endswith(".screenplay.json"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                doc = json.loads(fh.read(_FILENAME_PEEK_BYTES))
+            title = str(doc.get("title") or title)
+        except (OSError, ValueError, AttributeError):
+            pass
+    slug = _slugify(title) or output_hash[:12]
+    return f"{slug}{suffix}"
 
 
 def _resolved_tasks(backends: BackendRegistry, config: EngineConfig) -> list[dict]:
@@ -519,6 +559,32 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             },
         }
 
+    @app.get("/llm/models", dependencies=[Authed])
+    async def llm_models() -> dict:
+        """Local models the script tool can offer: the configured default
+        plus whatever the LLM server has installed. `available` is the
+        registry's answer for SCRIPT — a live Ollama behind a mock-only
+        chain still cannot honor a choice, so a picker there would lie."""
+
+        def script_served_by_llm() -> bool:
+            # resolve() consults the liveness probe; keep it off the loop
+            # like every other probe caller.
+            try:
+                return backends.resolve(NodeKind.SCRIPT).name == LLMScriptBackend.name
+            except GenerationError:
+                return False
+
+        unavailable = {"available": False, "default": config.llm_model, "models": []}
+        if not await asyncio.to_thread(script_served_by_llm):
+            return unavailable
+        try:
+            models = await LLMScriptBackend(
+                base_url=config.llm_url, model=config.llm_model, timeout_s=config.llm_timeout_s
+            ).list_models()
+        except httpx.HTTPError:
+            return unavailable
+        return {"available": True, "default": config.llm_model, "models": models}
+
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
         return load_manifest(config).model_dump()
@@ -852,6 +918,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # Single-clip generator: local I2V tops out at short takes.
         motion: str = Field(default="", max_length=500)
         duration_s: float = Field(default=5.0, ge=1.0, le=8.0)
+        # Script only: which local model writes it (a /llm/models name,
+        # optionally `local:`-prefixed). Validated like FinalizeBody's
+        # clip_model — this string is persisted onto the node — plus `:` and
+        # `/`, which Ollama tags use (`llama3.2:latest`, `hf.co/u/m:Q4`).
+        model: str | None = Field(
+            default=None, max_length=128, pattern=r"^(local:|cloud:)?[\w./:\-]+$"
+        )
 
     @app.post("/tools", dependencies=[Authed])
     async def create_tool(body: ToolRequest) -> dict:
@@ -1103,6 +1176,23 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"summary": plan.summary, **result}
 
+    class EnhanceBody(BaseModel):
+        notes: str = Field(min_length=1, max_length=2000)
+
+    @app.post("/projects/{project_id}/script/enhance", dependencies=[Authed])
+    async def enhance_script(project_id: ProjectId, body: EnhanceBody) -> dict:
+        """Rewrite the script from user feedback. Internally a /patch on the
+        script node (feedback + the screenplay it amends), so the re-render
+        inherits the chokepoint's guarantees instead of a private path."""
+        await _get_project(project_id)
+        if not body.notes.strip():
+            raise HTTPException(status_code=422, detail="feedback is empty")
+        try:
+            dirty = await asyncio.to_thread(service.enhance_script, project_id, body.notes)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "dirty": sorted(dirty)}
+
     class RegenerateBody(BaseModel):
         seed: int | None = None
 
@@ -1198,13 +1288,21 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.get("/projects/{project_id}/artifacts/{output_hash}", dependencies=[Authed])
     async def artifact(project_id: ProjectId, output_hash: OutputHash) -> FileResponse:
-        await _get_project(project_id)
+        project = await _get_project(project_id)
         # A directory scan per call, and the player issues one of these for
         # every range request while scrubbing.
         path = await asyncio.to_thread(store.resolve_artifact, project_id, output_hash)
         if path is None:
             raise HTTPException(status_code=404, detail="artifact not found")
-        return FileResponse(path)
+        # inline, not attachment: this same route feeds <video>/<audio>
+        # playback — the header exists purely to name the file when the
+        # desktop's bare <a download> saves it (the engine is another origin,
+        # so a client-side download="name" would be ignored).
+        return FileResponse(
+            path,
+            filename=await asyncio.to_thread(artifact_filename, project.title, path, output_hash),
+            content_disposition_type="inline",
+        )
 
     # -- events (progress streaming end to end) --------------------------
 

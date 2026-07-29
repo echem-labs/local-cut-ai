@@ -260,6 +260,8 @@ class Scheduler:
             # Only a finished job keeps its notices: on a failed attempt the
             # error dominates, and the retry re-emits its own.
             job.notices = ctx.notices
+            # Same trip for the model the backend reported actually using.
+            job.model = ctx.model_used
             # Stored RELATIVE to the project's generated/ dir, as the field
             # has always been documented. An absolute path breaks the moment
             # the data dir moves, the app is reinstalled under another

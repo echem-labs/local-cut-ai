@@ -10,6 +10,7 @@ import type {
   EngineConnection,
   EngineEvent,
   Job,
+  LlmModels,
   ModelRow,
   Project,
   Provider,
@@ -80,8 +81,23 @@ export class EngineClient {
     target_duration_s?: number;
     motion?: string;
     duration_s?: number;
+    model?: string;
   }): Promise<Project> {
     return this.request("/tools", { method: "POST", body: JSON.stringify(body) });
+  }
+
+  /** Local models the script tool can offer (engine routing answer). */
+  llmModels(): Promise<LlmModels> {
+    return this.request("/llm/models");
+  }
+
+  /** Rewrite the script from user feedback — a /patch under the hood, so
+   * the board flips to rendering through the usual events. */
+  enhanceScript(projectId: string, notes: string): Promise<{ dirty: string[] }> {
+    return this.request(`/projects/${projectId}/script/enhance`, {
+      method: "POST",
+      body: JSON.stringify({ notes }),
+    });
   }
 
   promote(projectId: string): Promise<Project> {

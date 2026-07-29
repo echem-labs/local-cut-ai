@@ -33,6 +33,8 @@
   "motionTipLabel": "How the camera moves",
   "motionTipHint": "push-in, pan, orbit, handheld, static · empty = model decides",
   "motionInfoAria": "About the camera motion field",
+  "scriptModelAria": "Script model",
+  "defaultModel": "{name} · default",
   "voiceoverTextAria": "Voiceover text",
   "toolPromptAria": "{label} prompt",
   "quickTools": "Quick tools",
