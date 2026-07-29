@@ -20,6 +20,9 @@ const project = (mode: string): Project => ({
   approvals: [],
 });
 
+/** A session the engine has recorded an artifact for. */
+const ready = (mode: string): Project => ({ ...project(mode), tool_artifact_hash: "abc123" });
+
 const job = (node_id: string, status: Job["status"], created_at = 0): Job => ({
   id: `j-${node_id}-${created_at}`,
   project_id: "p1",
@@ -35,18 +38,29 @@ const job = (node_id: string, status: Job["status"], created_at = 0): Job => ({
 
 describe("tileStatus", () => {
   it("reports a finished quick tool as ready, not draft", () => {
-    expect(tileStatus(project("tool:image"), [job("image", "done")])).toBe("ready");
+    expect(tileStatus(ready("tool:image"), [])).toBe("ready");
   });
 
-  it("reads each tool's own node, not a shared one", () => {
+  it("reports every tool kind the same way", () => {
     for (const kind of ["script", "thumbnail", "voiceover", "image", "music", "clip"]) {
-      expect(tileStatus(project(`tool:${kind}`), [job(kind, "done")])).toBe("ready");
+      expect(tileStatus(ready(`tool:${kind}`), [])).toBe("ready");
     }
   });
 
-  // The clip tool renders its keyframe first; that job finishing is not the
-  // session finishing, and reporting "ready" at that point would offer a
-  // download for a video that does not exist yet.
+  /**
+   * A DONE job row is NOT the same claim as "there is an artifact". The
+   * engine derives the meta field through its trusted artifact cache, so a
+   * placeholder from a fallback tier that has since been distrusted leaves
+   * no hash while its DONE row is still in the 200-row window. Believing
+   * the row would paint a green tile that opens on a queued session with
+   * nothing to download.
+   */
+  it("does not call a session ready on a job row alone", () => {
+    expect(tileStatus(project("tool:image"), [job("image", "done")])).toBe("draft");
+  });
+
+  // The clip tool renders its keyframe first; that finishing is not the
+  // session finishing, and it is the clip's artifact the meta records.
   it("does not call a clip session ready on its keyframe alone", () => {
     expect(tileStatus(project("tool:clip"), [job("keyframe", "done")])).toBe("draft");
   });
@@ -62,18 +76,15 @@ describe("tileStatus", () => {
   });
 
   it("lets active work and a trailing failure win over readiness", () => {
-    const done = job("image", "done", 1);
-    expect(tileStatus(project("tool:image"), [done, job("image", "rendering", 2)])).toBe(
-      "generating",
-    );
-    expect(tileStatus(project("tool:image"), [done, job("image", "failed", 2)])).toBe("failed");
+    expect(tileStatus(ready("tool:image"), [job("image", "rendering", 2)])).toBe("generating");
+    expect(tileStatus(ready("tool:image"), [job("image", "failed", 2)])).toBe("failed");
   });
 
   // A retry that succeeded is a finished session, not a failed one — the
   // trailing job decides, so the older failure must not pin the tile.
   it("clears a failure the session has since recovered from", () => {
     const jobs = [job("image", "failed", 1), job("image", "done", 2)];
-    expect(tileStatus(project("tool:image"), jobs)).toBe("ready");
+    expect(tileStatus(ready("tool:image"), jobs)).toBe("ready");
   });
 
   /**
@@ -124,11 +135,9 @@ describe("tool kind resolution", () => {
     expect(toolKindOf(project("prompt"))).toBeNull();
   });
 
-  // An unknown kind still resolves its status from its own node id, which
-  // `tool_graph` names for the tool whether or not this build knows it.
+  // Status comes from the meta, which the engine writes for any kind it
+  // can run — so an unlabelled session still reports honestly.
   it("still reports an unknown kind's session as ready", () => {
-    const future = { ...project("tool:caption"), tool_artifact_hash: "abc123" };
-    expect(tileStatus(future, [])).toBe("ready");
-    expect(tileStatus(project("tool:caption"), [job("caption", "done")])).toBe("ready");
+    expect(tileStatus(ready("tool:caption"), [])).toBe("ready");
   });
 });

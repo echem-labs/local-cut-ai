@@ -3696,7 +3696,11 @@ button.link:hover {
  * above it (and is dismissible, since nothing else clears it). */
 .rail-toast {
   position: fixed;
-  top: var(--space-4);
+  /* Below the title bar, which is fixed at the same z-index and earlier in
+     the DOM: overlapping it would cover the project name and, worse, the
+     -webkit-app-region drag strip, so the window could not be moved while
+     an error was showing. */
+  top: calc(var(--titlebar-h) + var(--space-2));
   left: 50%;
   transform: translateX(-50%);
   z-index: var(--z-tray);
