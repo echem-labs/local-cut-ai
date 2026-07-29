@@ -71,6 +71,19 @@ const forgetStoredPairing = (): void => {
   storedPairing = undefined;
 };
 
+/** Does this URL belong to the engine the renderer is actually talking to?
+ * Origin-compared against the ACTIVE connection only: a paired remote makes
+ * the idle local spawn (and any previously paired engine) a stranger. */
+const isActiveEngineUrl = (raw: string): boolean => {
+  const connection = activeConnection();
+  if (!connection) return false;
+  try {
+    return new URL(raw).origin === new URL(connection.url).origin;
+  } catch {
+    return false;
+  }
+};
+
 /** Is this URL the app's own renderer? Everything downstream of this — the
  * navigation lockdown and every state-mutating IPC handler — treats "yes"
  * as "may hold the engine token".
@@ -148,8 +161,17 @@ async function createWindow(): Promise<void> {
   // the pair/keys mutators, so the webContents must never navigate to — or open
   // — content outside the app's own origin, which would inherit that bridge
   // (a redirect, an injected iframe, or an in-bundle XSS).
+  //
+  // Download links are the one legitimate way a click leaves the app: every
+  // <a download href=…> points at the engine, which is cross-origin to the
+  // renderer, and Chromium ignores the download attribute on cross-origin
+  // anchors — the click arrives here as a navigation. Blocking it outright
+  // makes every Download button a silent no-op, so the active engine's own
+  // URLs become downloads instead. Nothing else is exempted.
   window.webContents.on("will-navigate", (event, url) => {
-    if (!isAppUrl(url)) event.preventDefault();
+    if (isAppUrl(url)) return;
+    event.preventDefault();
+    if (isActiveEngineUrl(url)) window.webContents.downloadURL(url);
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
