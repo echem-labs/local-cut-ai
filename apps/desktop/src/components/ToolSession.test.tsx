@@ -2,9 +2,10 @@ import { render, screen } from "@testing-library/react";
 
 import { describe, expect, it } from "vitest";
 
-import type { Screenplay } from "../api/types";
+import type { Board, Job, NodeState, Project, Screenplay } from "../api/types";
 import { NARRATION_PAD_S, SPEECH_WORDS_PER_S, spokenSeconds } from "../lib/formats";
-import { ScriptTable, screenplayMarkdown } from "./ToolSession";
+import { useApp } from "../store";
+import { ScriptTable, ToolSession, screenplayMarkdown } from "./ToolSession";
 
 /**
  * The Length column showed `duration_s` — the script model's own claim,
@@ -56,5 +57,78 @@ describe("screenplayMarkdown", () => {
     expect(md).toContain("## s1 · ~10s");
     expect(md).toContain("*Visual:* aerial view");
     expect(md.endsWith("\n")).toBe(true);
+  });
+});
+
+/**
+ * The provenance line reads the project-scoped `jobs` slice, not `allJobs`.
+ *
+ * `allJobs` is refreshed only by refreshHome, and a job event for the OPEN
+ * project deliberately routes to refreshBoard instead — so the model and
+ * duration read from it were whatever the last Home visit happened to see:
+ * absent for a first render, and a take stale after every enhance.
+ */
+
+const toolNode = (): NodeState => ({
+  node_id: "script",
+  status: "draft",
+  progress: 1,
+  error: null,
+  artifact_hash: "a".repeat(64),
+  params: { target_duration_s: 60 },
+  seed: 0,
+  model: null,
+  pinned: false,
+});
+
+const doneJob = (over: Partial<Job> = {}): Job => ({
+  id: "j1",
+  project_id: "p1",
+  status: "done",
+  progress: 1,
+  error: null,
+  created_at: 100,
+  started_at: 100,
+  finished_at: 168,
+  model: "llama3.2",
+  spec: { node_id: "script", kind: "script" },
+  ...over,
+});
+
+function mountSession(state: { jobs?: Job[]; allJobs?: Job[] }) {
+  useApp.setState({
+    currentProject: { id: "p1", title: "T", mode: "tool:script" } as Project,
+    board: { scenes: [], aux: { script: toolNode() } } as Board,
+    client: null,
+    jobs: [],
+    allJobs: [],
+    actionError: null,
+    ...state,
+  } as never);
+  return render(<ToolSession />);
+}
+
+describe("ToolSession provenance", () => {
+  it("shows the model and duration of the job the board loop refreshed", () => {
+    mountSession({ jobs: [doneJob()] });
+    expect(screen.getByText("llama3.2")).toBeInTheDocument();
+    expect(screen.getByText("took 1:08")).toBeInTheDocument();
+  });
+
+  it("does not read the Home-only allJobs slice", () => {
+    // The exact shape of the bug: the board loop has this render's job, and
+    // allJobs still holds the previous take's. Reading allJobs would show
+    // "some-stale-model" here.
+    mountSession({
+      jobs: [doneJob()],
+      allJobs: [doneJob({ id: "j0", model: "some-stale-model", finished_at: 900 })],
+    });
+    expect(screen.getByText("llama3.2")).toBeInTheDocument();
+    expect(screen.queryByText("some-stale-model")).toBeNull();
+  });
+
+  it("shows nothing rather than a wrong model when the slice is empty", () => {
+    mountSession({ jobs: [], allJobs: [doneJob({ model: "some-stale-model" })] });
+    expect(screen.queryByText("some-stale-model")).toBeNull();
   });
 });

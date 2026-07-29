@@ -24,6 +24,7 @@ import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
+import { newestJob } from "../lib/jobs";
 import { shortcutLabel } from "../lib/platform";
 import { relativeTime, shortDuration } from "../lib/time";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
@@ -56,13 +57,7 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
     return "generating";
   }
-  // Pick the trailing job by stamp — /jobs arrives newest-first and store
-  // merges may reorder, so indexing either end can grab the oldest job and
-  // pin a long-since-recovered project at "failed".
-  const newest = jobs.reduce<Job | null>(
-    (best, job) => (best && best.created_at >= job.created_at ? best : job),
-    null,
-  );
+  const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";

@@ -20,7 +20,7 @@ from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
-from .graph.patch import PatchOp, apply_patch
+from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch
 from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
@@ -404,6 +404,10 @@ class ProjectService:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
             node.seed = seed if seed is not None else node.seed + 1
+            # A new take is of the node's configuration. Carrying a finished
+            # revision's notes here would re-ask them against a draft that
+            # the revision itself has already superseded.
+            node.params = {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS}
             self.store.save_graph(project_id, graph)
             self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
@@ -980,7 +984,10 @@ class ProjectService:
                 # trade `error` already makes.
                 "notices": [notice.model_dump() for notice in job.notices] if job else [],
                 "artifact_hash": out_hash if out_hash in cached else None,
-                "params": node.params,
+                # Transient params are omitted, not just unused: the desktop
+                # polls this through every render, and base_screenplay is a
+                # whole screenplay riding along each time.
+                "params": {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS},
                 "seed": node.seed,
                 # The advanced inspector edits these directly.
                 "model": node.model,
