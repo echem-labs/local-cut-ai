@@ -7,6 +7,7 @@ import { newestJob } from "../lib/jobs";
 import { isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
 import { StatusRing } from "./StatusRing";
+import { PromotedTo } from "./Provenance";
 
 export function useScreenplay(url: string | null): Screenplay | null {
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
@@ -200,6 +201,11 @@ export function ToolSession() {
           <small className="hint">{t("toolSession.took", { t: shortDuration(tookS) })}</small>
         )}
       </div>
+
+      {/* Outside the `done` branch on purpose: a session that has been
+          promoted stays promoted while it re-runs, and a re-run that fails
+          does not unmake the videos it already produced. */}
+      {currentProject && <PromotedTo project={currentProject} />}
 
       {shown.error && <div className="banner error">{shown.error}</div>}
       {!done && !shown.error && (

@@ -22,5 +22,7 @@
   "enhance": "Enhance",
   "enhancing": "Enhancing…",
   "enhancePlaceholder": "What should change? e.g. make it about the 1453 conquest",
-  "enhanceAria": "Feedback for the script rewrite"
+  "enhanceAria": "Feedback for the script rewrite",
+  "becameVideo_one": "Turned into a video:",
+  "becameVideo_other": "Turned into {count} videos:"
 }
