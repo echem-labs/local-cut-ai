@@ -146,3 +146,47 @@ def test_speech_timing_matches_the_narration_authority():
 
     assert _number(r"export const SPEECH_WORDS_PER_S = ([\d.]+)") == SPEECH_WORDS_PER_S
     assert _number(r"export const NARRATION_PAD_S = ([\d.]+)") == NARRATION_PAD_S
+
+
+def test_quick_tool_kinds_agree_across_the_boundary():
+    """A quick tool kind is spelled out in four places, and each one fails
+    differently when it drifts: the route rejects the kind with a 422, the
+    template importer refuses a `tool:` mode it should accept, the desktop's
+    union stops narrowing, and the tile renders `undefined` where its label
+    should be. Nothing bound the four together."""
+    import json
+
+    from localcut_engine.graph.template_io import TOOL_KINDS
+
+    app_src = (
+        Path(__file__).resolve().parents[1] / "src" / "localcut_engine" / "api" / "app.py"
+    ).read_text(encoding="utf-8")
+    route = re.search(r"tool: Literal\[([^\]]+)\]", app_src)
+    assert route, "app.py no longer declares the quick tool Literal"
+    accepted = set(re.findall(r'"([^"]+)"', route.group(1)))
+    assert accepted == set(TOOL_KINDS), (
+        f"POST /tools and TOOL_KINDS disagree: "
+        f"only on the route {sorted(accepted - set(TOOL_KINDS))}, "
+        f"only in TOOL_KINDS {sorted(set(TOOL_KINDS) - accepted)}"
+    )
+
+    # Comments first: a `;` inside one would truncate the non-greedy match to
+    # a partial member list, and the test would pass against nothing.
+    text = re.sub(r"//[^\n]*", "", (_FORMATS.parent.parent / "api" / "types.ts").read_text("utf-8"))
+    union = re.search(r"export type ToolKind =(.*?);", text, re.S)
+    assert union, "types.ts no longer declares ToolKind"
+    declared = set(re.findall(r'"([^"]+)"', union.group(1)))
+    assert declared == set(TOOL_KINDS), (
+        f"ToolKind and TOOL_KINDS disagree: "
+        f"only in UI {sorted(declared - set(TOOL_KINDS))}, "
+        f"only in engine {sorted(set(TOOL_KINDS) - declared)}"
+    )
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "tools.json").read_text(encoding="utf-8")
+    )
+    assert set(catalog) == set(TOOL_KINDS), (
+        f"tools.json and TOOL_KINDS disagree: "
+        f"only in the catalog {sorted(set(catalog) - set(TOOL_KINDS))}, "
+        f"only in engine {sorted(set(TOOL_KINDS) - set(catalog))}"
+    )

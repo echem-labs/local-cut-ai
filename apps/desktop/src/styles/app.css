@@ -139,6 +139,9 @@ textarea {
 .rail .group-label {
   font-size: 10px; /* the 200px rail is the one place 11px reads big */
   padding: var(--space-3) var(--space-2) var(--space-1);
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .rail button {
@@ -229,7 +232,8 @@ textarea {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
-.rail-tab .dot.final {
+.rail-tab .dot.final,
+.rail-tab .dot.ready {
   background: var(--status-final);
 }
 
@@ -237,7 +241,27 @@ textarea {
   background: var(--status-failed);
 }
 
-.rail-tab .rail-tab-close {
+/* Quick-tool history. Shares .rail-tab's row shape so a session looks the
+ * same whether it is open above or listed here; the trailing control is a
+ * delete rather than a close, which is why it is a separate class — the two
+ * must never be mistaken for each other. */
+.rail-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rail-recent-all {
+  width: 100%;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.rail-tab .rail-tab-close,
+.rail-tab .rail-tab-action {
   position: absolute;
   right: 4px;
   top: 50%;
@@ -255,12 +279,21 @@ textarea {
 }
 
 .rail-tab:hover .rail-tab-close,
-.rail-tab:focus-within .rail-tab-close {
+.rail-tab:focus-within .rail-tab-close,
+.rail-tab:hover .rail-tab-action,
+.rail-tab:focus-within .rail-tab-action {
   opacity: 1;
 }
 
 .rail-tab .rail-tab-close:hover {
   color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* The delete reads as destructive on hover; the close ✕ deliberately does
+ * not, because closing a tab throws nothing away. */
+.rail-tab .rail-tab-action:hover {
+  color: var(--status-failed);
   background: var(--surface-2);
 }
 
@@ -286,7 +319,8 @@ textarea {
   padding-right: var(--space-2);
 }
 
-.rail.compact .rail-tab .rail-tab-close {
+.rail.compact .rail-tab .rail-tab-close,
+.rail.compact .rail-tab .rail-tab-action {
   right: 1px;
   top: 1px;
   transform: none;
@@ -1355,7 +1389,10 @@ button.link:hover {
   background: var(--status-draft);
 }
 
-.project-tile .meta .dot.final {
+/* "ready" is a finished quick tool, "final" a finished cut — different
+ * claims, same "this is done" green. */
+.project-tile .meta .dot.final,
+.project-tile .meta .dot.ready {
   background: var(--status-final);
 }
 
