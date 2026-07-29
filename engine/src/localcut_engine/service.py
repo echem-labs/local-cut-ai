@@ -843,7 +843,9 @@ class ProjectService:
 
     # -- read model for the UI ------------------------------------------------
 
-    def _refresh_meta_locked(self, project_id: str, graph: StoryGraph | None = None) -> None:
+    def _refresh_meta_locked(
+        self, project_id: str, graph: StoryGraph | None = None, *, touch: bool = True
+    ) -> None:
         """Denormalize the Home-grid read model into meta.json (review 4):
         updated_at now, thumb = the cut's first rendered keyframe, duration =
         current cut length. Meta-only — graph and wire contract untouched.
@@ -856,7 +858,8 @@ class ProjectService:
                 graph = self.store.load_graph(project_id)
             except (OSError, ValueError):
                 graph = None
-        project.updated_at = time.time()
+        if touch:
+            project.updated_at = time.time()
         if graph is not None:
             history = self.queue.list(project_id, 1000)
             cached = self._trusted_cache(project_id, history)
@@ -938,6 +941,40 @@ class ProjectService:
             if still in cached:
                 return still
         return None
+
+    def backfill_tool_metas(self) -> int:
+        """Fill in the quick-tool fields for sessions written by an older
+        build, returning how many gained an artifact.
+
+        `tool_artifact_hash` and a tool session's `thumb_hash` are only ever
+        written by a meta refresh, and a refresh only happens on a WRITE. A
+        session that finished before this build existed is never written
+        again, so without this it would report "draft" behind a working
+        download, and a generic glyph in place of the image it made, forever.
+        History is made of precisely those old sessions.
+
+        One pass at startup. A session that legitimately has no artifact is
+        re-examined on each start -- a graph load apiece, and they are the
+        minority -- which is cheaper and less brittle than persisting a
+        "swept" marker that could itself fall out of date.
+        """
+        filled = 0
+        for project in self.store.list():
+            if not project.mode.startswith("tool:") or project.tool_artifact_hash:
+                continue
+            with self._lock:
+                try:
+                    self._refresh_meta_locked(project.id, touch=False)
+                except (OSError, ValueError):
+                    # One unreadable project must not stop the sweep, exactly
+                    # as store.list() refuses to let one damaged meta take
+                    # the whole listing down.
+                    logger.warning("could not backfill tool meta for %s", project.id)
+                    continue
+                healed = self.store.get(project.id)
+            if healed is not None and healed.tool_artifact_hash:
+                filled += 1
+        return filled
 
     def _assembled_edl(
         self, project_id: str, graph: StoryGraph, memo: dict[str, str], cached: set[str]

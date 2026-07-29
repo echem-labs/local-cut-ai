@@ -777,3 +777,41 @@ async def test_edit_plan_with_no_ops_still_persists_a_caption_resync(rig):
     assert result["ops"] == 0
 
     assert store.load_graph(project.id).nodes["captions"].params["texts"] == expected
+
+
+async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
+    """The quick-tool meta fields are only ever written by a REFRESH, and a
+    refresh only happens on a write. A session that finished before this
+    build existed is never written again, so it would keep reporting "draft"
+    and a generic glyph forever -- and history is made of exactly those old
+    sessions, so the feature would miss the population it is for."""
+    store, queue, service = rig
+    session = service.create_tool("image", {"prompt": "a lighthouse"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "image" and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    video = service.create_from_prompt("tide pools", target_duration_s=24)
+
+    # A meta as an older build left it: neither field had been invented.
+    stale = store.get(session.id)
+    was_updated_at = stale.updated_at
+    stale.tool_artifact_hash = None
+    stale.thumb_hash = None
+    store.save_meta(stale)
+
+    assert service.backfill_tool_metas() == 1
+    healed = store.get(session.id)
+    assert healed.tool_artifact_hash
+    assert healed.thumb_hash
+    assert store.resolve_artifact(session.id, healed.tool_artifact_hash) is not None
+
+    # A repair is not activity. Stamping updated_at here would jump every
+    # old session to "just now" on the first launch after upgrading, which
+    # is precisely the ordering the history list is sorted by.
+    assert healed.updated_at == was_updated_at
+    # Idempotent, and it leaves real projects alone.
+    assert service.backfill_tool_metas() == 0
+    assert store.get(video.id).tool_artifact_hash is None
