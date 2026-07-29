@@ -1231,10 +1231,11 @@ async def test_enhance_reasks_the_script_with_the_feedback(client):
     assert enhanced.status_code == 200
     assert "script" in enhanced.json()["dirty"]
 
-    board = (await client.get(f"/projects/{pid}")).json()["board"]
-    node = board["aux"]["script"]
-    # The feedback and the screenplay it amends ride the node — the next
-    # render (and the cloud backend, and a headless client) all see them.
+    # The feedback and the screenplay it amends ride the node's params, which
+    # is what puts them in the output hash (a re-ask that hashed identical
+    # would be served from cache) and in front of every script backend. They
+    # live in the graph, not the board — see the transient-params test below.
+    node = (await client.get(f"/projects/{pid}/graph")).json()["nodes"]["script"]
     assert node["params"]["feedback"] == "focus on 1453, not 1922"
     assert node["params"]["base_screenplay"]
     # The edit dirtied the node: a NEW script job exists for a new identity.
@@ -1251,3 +1252,38 @@ async def test_enhance_refuses_when_there_is_no_script(client):
 
     blank = await client.post(f"/projects/{pid}/script/enhance", json={"notes": "   "})
     assert blank.status_code == 422
+
+
+async def test_enhance_notes_do_not_outlive_the_render_they_asked_for(client):
+    """Feedback and the draft it amends describe one completed revision, not
+    the node's configuration. Left in params they would ride every later
+    regenerate — re-asking the old notes against a draft that is now two
+    versions stale — and travel into exported templates."""
+    pid = (await client.post("/tools", json={"tool": "script", "prompt": "one-shot"})).json()["id"]
+
+    async def script_ready():
+        node = (await client.get(f"/projects/{pid}")).json()["board"]["aux"].get("script")
+        return node if node and node.get("artifact_hash") else None
+
+    await _wait_for(script_ready)
+    await client.post(f"/projects/{pid}/script/enhance", json={"notes": "punchier"})
+    await _wait_for(script_ready)
+
+    # The board never echoes them: nothing reads them, and base_screenplay is
+    # kilobytes on an endpoint the desktop polls through every render.
+    board_params = (await client.get(f"/projects/{pid}")).json()["board"]["aux"]["script"]["params"]
+    assert "feedback" not in board_params
+    assert "base_screenplay" not in board_params
+
+    # A template is structure, not history — and MAX_DOCUMENT_BYTES is not a
+    # budget to spend on a copy of one project's screenplay.
+    template = (await client.get(f"/projects/{pid}/template")).json()
+    script_node = template["nodes"]["script"]
+    assert "feedback" not in script_node["params"]
+    assert "base_screenplay" not in script_node["params"]
+
+    # And a plain regenerate is a new take of the prompt, not a replay.
+    await client.post(f"/projects/{pid}/nodes/script/regenerate", json={})
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert "feedback" not in graph["nodes"]["script"]["params"]
+    assert "base_screenplay" not in graph["nodes"]["script"]["params"]

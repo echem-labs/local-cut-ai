@@ -20,6 +20,21 @@ from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
 # definition, so a param added here is covered on both paths at once.
 RESERVED_PARAMS = frozenset({"voice_consent", "sha256"})
 
+# Params that describe one completed instruction rather than the node's
+# configuration. They have to live in params — a re-ask that ignored them
+# would hash identical to the render it is meant to replace and be served
+# from cache — but they must not behave like configuration afterwards:
+#
+#   - `regenerate` clears them, or "give me a different take" would replay
+#     the last revision against a draft that is now a version stale;
+#   - a template drops them, being structure rather than history;
+#   - the board does not echo them, because nothing reads them and
+#     base_screenplay is kilobytes on an endpoint polled through a render.
+#
+# They stay in the saved graph so the job that was enqueued for them can
+# still be identified by its output hash.
+TRANSIENT_PARAMS = frozenset({"feedback", "base_screenplay"})
+
 # By id, not by kind: expand_screenplay looks the node up as graph.nodes[...],
 # so this string is the contract the rebuild depends on, and a script-kind
 # node under any other id is not the one it will find.
