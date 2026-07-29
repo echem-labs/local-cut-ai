@@ -624,6 +624,18 @@ export const useApp = create<AppState>((set, get) => {
 
     const sub = client.subscribe(
       (event: EngineEvent) => {
+        // Progress ticks first patch the ENGINE-wide job list, whatever
+        // project they belong to: job ids are engine-global (unlike node
+        // ids), and the queue tray reads this list — without it, a render
+        // in any project you are not looking at froze at whatever the last
+        // debounced refetch happened to see.
+        if (event.type === "job.progress") {
+          set({
+            allJobs: get().allJobs.map((job) =>
+              job.id === event.job_id ? { ...job, progress: event.progress } : job,
+            ),
+          });
+        }
         // Drop project-scoped events for a project we're not viewing: the WS
         // is a global stream and job events name node ids ("timeline",
         // "script") that exist in every project, so an unscoped apply would

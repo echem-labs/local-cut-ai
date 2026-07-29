@@ -153,4 +153,38 @@ describe("a progress tick", () => {
 
     expect(useApp.getState().board?.scenes[0]!.clip.progress).toBe(0);
   });
+
+  it("still moves the engine-wide job list for an off-screen project", async () => {
+    // Job ids are engine-global, so the scope guard that protects the board
+    // must not starve `allJobs`: the queue tray reads it, and without this
+    // an off-project render ring froze at whatever the last refetch saw.
+    const send = await connected();
+    useApp.setState({
+      allJobs: [
+        { id: "j-other", project_id: "another-project", status: "rendering", progress: 0.1 },
+        { id: "j-mine", project_id: "p1", status: "rendering", progress: 0.2 },
+      ],
+    } as never);
+    send({
+      type: "job.progress",
+      job_id: "j-other",
+      node_id: "s1.clip",
+      progress: 0.9,
+      project_id: "another-project",
+    } as EngineEvent);
+
+    const all = useApp.getState().allJobs;
+    expect(all.find((job) => job.id === "j-other")?.progress).toBe(0.9);
+    expect(all.find((job) => job.id === "j-mine")?.progress).toBe(0.2);
+  });
+
+  it("keeps the engine-wide list in step for the on-screen project too", async () => {
+    const send = await connected();
+    useApp.setState({
+      allJobs: [{ id: "j1", project_id: "p1", status: "rendering", progress: 0 }],
+    } as never);
+    tick(send, "s1.clip", 0.5);
+
+    expect(useApp.getState().allJobs[0]?.progress).toBe(0.5);
+  });
 });
