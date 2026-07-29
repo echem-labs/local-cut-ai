@@ -7,6 +7,7 @@ import { newestJob } from "../lib/jobs";
 import { isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
 import { StatusRing } from "./StatusRing";
+import { PromotedTo } from "./Provenance";
 
 export function useScreenplay(url: string | null): Screenplay | null {
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
@@ -274,6 +275,7 @@ export function ToolSession() {
               </button>
             </div>
           )}
+          {currentProject && <PromotedTo project={currentProject} />}
           {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
               {actionError.message}
