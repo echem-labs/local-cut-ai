@@ -47,11 +47,45 @@ const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = [
 
 type SortKey = "recent" | "created" | "name";
 
-type TileStatus = "generating" | "failed" | "final" | "draft";
+type TileStatus = "generating" | "failed" | "ready" | "final" | "draft";
+
+const KNOWN_TOOLS = new Set<string>(TOOLS.map((entry) => entry.kind));
+
+/** Every `tool:` project, whether or not this build knows the kind. A session
+ * made by a newer engine is still history: it must still be listed, opened
+ * and deleted, so membership is deliberately looser than `toolKindOf`. */
+export const isToolSession = (project: Project): boolean => project.mode.startsWith("tool:");
+
+/** The rail lists only the most recent few sessions; its overflow row asks
+ * Home to reveal the whole list. Home may not be mounted when the ask is
+ * made (the row is reachable from inside a project), so the request is also
+ * left as a flag for Home's next mount to pick up — otherwise the click
+ * lands at the top of Home and the user is back to scrolling for it. */
+export const TOOL_HISTORY_EVENT = "localcut:reveal-tool-history";
+let revealPending = false;
+export function revealToolHistory() {
+  revealPending = true;
+  window.dispatchEvent(new Event(TOOL_HISTORY_EVENT));
+}
+
+/** The kind, only when there is copy and an icon for it. An unknown kind
+ * resolves to null rather than indexing the catalog with a key it does not
+ * have — `m().tools[kind].label` THROWS on a miss, which takes Home down
+ * through the error boundary rather than degrading. */
+export const toolKindOf = (project: Project): ToolKind | null => {
+  const kind = isToolSession(project) ? project.mode.slice(5) : "";
+  return KNOWN_TOOLS.has(kind) ? (kind as ToolKind) : null;
+};
 
 /** Tile status from the global queue: active work wins, then a trailing
- * failure, then a finished export, else draft. Shared with the rail's
- * open-project tabs so both status dots always agree. */
+ * failure, then a finished output, else draft. Shared with the rail's
+ * open-project tabs and history rows so every status dot agrees.
+ *
+ * A quick tool has no export stage — `tool_graph` names its terminal node
+ * for the tool itself — so the export rule below never matched and every
+ * finished one-off read "Draft" beside its own download link. Tool sessions
+ * settle at "ready" rather than "final": "Final" is a claim about a cut, and
+ * a voiceover is not a cut. */
 export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   const jobs = allJobs.filter((job) => job.project_id === project.id);
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
@@ -59,12 +93,25 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   }
   const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
+  if (isToolSession(project)) {
+    // The engine's record, and ONLY that. Two reasons it beats the job list.
+    //
+    // Reach: `allJobs` is the newest 200 rows across ALL projects, so an old
+    // session's rows have aged out behind a couple of full renders — and
+    // history is made of exactly those old sessions.
+    //
+    // Meaning: a DONE row is not the same claim as "there is an artifact".
+    // The engine derives this field through the trusted artifact cache, so a
+    // placeholder rendered by a fallback tier and since distrusted has no
+    // hash here while its DONE row is still in the window. Reading the row
+    // would paint a green "Ready" tile that opens on a queued session with
+    // nothing to download — two sources disagreeing, which is the whole
+    // thing this field exists to stop.
+    return project.tool_artifact_hash ? "ready" : "draft";
+  }
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";
 }
-
-const toolKindOf = (project: Project): ToolKind | null =>
-  project.mode.startsWith("tool:") ? (project.mode.slice(5) as ToolKind) : null;
 
 /** Home: one prompt surface — the video prompt, or the active quick tool's
  * panel in its place (never both) — plus the Quick Tools row and a real
@@ -99,6 +146,7 @@ export function Home() {
   const [missingModel, setMissingModel] = useState<{ task: string; size: number } | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const toolSectionRef = useRef<HTMLDivElement>(null);
 
   const { prompt, tool, toolInput, voice, motion, scriptModel } = homeDraft;
   const { aspect, duration, mode } = defaults;
@@ -139,6 +187,24 @@ export function Home() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuFor]);
 
+
+  // The rail's "all outputs" row, whether Home was already mounted (event)
+  // or is mounting because of the click that asked (flag).
+  useEffect(() => {
+    const reveal = () => {
+      revealPending = false;
+      toolSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener(TOOL_HISTORY_EVENT, reveal);
+    // Cancelled on unmount: left to run after Home has gone, it clears the
+    // flag against a null ref, consuming the request without scrolling so a
+    // later mount never honours it.
+    const frame = revealPending ? requestAnimationFrame(reveal) : 0;
+    return () => {
+      window.removeEventListener(TOOL_HISTORY_EVENT, reveal);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   // "/" focuses search when no field owns the keyboard (review 4 §H4).
   useEffect(() => {
@@ -230,7 +296,16 @@ export function Home() {
   };
 
   const real = projects.filter((project) => !project.mode.startsWith("tool:"));
-  const toolSessions = projects.filter((project) => project.mode.startsWith("tool:"));
+  // Sorted the same way the rail's history is (last activity first). The
+  // rail's overflow row scrolls the user straight to this list, and the two
+  // reading in different orders makes it look like a different list.
+  const toolSessions = useMemo(
+    () =>
+      [...projects.filter(isToolSession)].sort(
+        (a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at),
+      ),
+    [projects],
+  );
   // Gate on the grid this controls (real projects, not tool sessions), and keep
   // the controls visible whenever a query is active — otherwise deleting down to
   // ≤6 unmounts the search box while `search` still filters the grid, hiding
@@ -310,7 +385,7 @@ export function Home() {
               <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
             )}
             {toolKind && <span className="tile-tool">{m().tools[toolKind].label}</span>}
-            {!toolKind && project.duration_s != null && project.duration_s > 0 && (
+            {!isToolSession(project) && project.duration_s != null && project.duration_s > 0 && (
               <span className="tile-dur">{shortDuration(project.duration_s)}</span>
             )}
           </div>
@@ -664,7 +739,10 @@ export function Home() {
         })}
       </div>
 
-      {projects.length === 0 && (
+      {/* Gate on real projects, not the whole list: someone who has only
+          used the quick tools has made no video yet, and counting their
+          tool outputs here took away the templates that get them started. */}
+      {real.length === 0 && (
         <div className="empty-state">
           <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
           <b>{t("home.emptyTitle")}</b>
@@ -739,7 +817,7 @@ export function Home() {
       )}
 
       {toolSessions.length > 0 && (
-        <div className="recent">
+        <div className="recent" ref={toolSectionRef}>
           <div className="recent-head">
             <h2>{t("home.toolOutputs")}</h2>
             <span className="count">· {toolSessions.length}</span>
@@ -750,9 +828,19 @@ export function Home() {
 
       {confirmDelete && (
         <ConfirmDialog
-          title={t("home.deleteTitle", { title: confirmDelete.title })}
-          message={t("home.deleteMessage")}
-          confirmLabel={t("home.deleteConfirm")}
+          // A one-off output is not a project: promising to cancel running
+          // jobs and remove "all generated media" overstates what is at
+          // stake and makes deleting a stray thumbnail feel unsafe.
+          title={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolTitle" : "home.deleteTitle",
+            { title: confirmDelete.title },
+          )}
+          message={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolMessage" : "home.deleteMessage",
+          )}
+          confirmLabel={t(
+            toolKindOf(confirmDelete) ? "home.deleteToolConfirm" : "home.deleteConfirm",
+          )}
           danger
           onConfirm={() => {
             const target = confirmDelete;
