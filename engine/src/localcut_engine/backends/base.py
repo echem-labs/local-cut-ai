@@ -119,6 +119,14 @@ class ExecutionContext:
     # onto the job by the scheduler when the job completes. A notice on a
     # failed attempt dies with it: the retry re-emits or the error dominates.
     notices: list[Notice] = field(default_factory=list)
+    # The model that actually produced the artifact, reported by the backend
+    # at execute time and persisted with the finished job. spec.model is the
+    # *request* (usually None = "the configured default"), and config changes
+    # between runs — this is the only record of what really ran.
+    model_used: str | None = None
+
+    def record_model(self, name: str) -> None:
+        self.model_used = name
 
     def notify(self, code: str, **data: bool | int | float | str) -> None:
         """Record something the user should know about a job that will still

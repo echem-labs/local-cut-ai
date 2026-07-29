@@ -120,7 +120,7 @@ def script_prompt(params: dict) -> str:
     which produces a 28s video, because `duration_s` is not what anything
     downstream reads."""
     target_s = _target_duration_s(params)
-    return (
+    ask = (
         f"Topic: {params.get('prompt', '')}\n"
         f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
         "no scene may exceed 60 seconds)\n"
@@ -130,6 +130,19 @@ def script_prompt(params: dict) -> str:
         f"Aspect: {params.get('aspect', '9:16')}\n"
         f"Style preset: {params.get('style_preset', 'cinematic')}"
     )
+    # Enhance: the re-ask carries the screenplay it amends. Both or neither —
+    # feedback without its base (a hand-edited graph, a partial patch) would
+    # ask the model to revise something it cannot see.
+    feedback = str(params.get("feedback") or "").strip()
+    base = str(params.get("base_screenplay") or "").strip()
+    if feedback and base:
+        ask += (
+            f"\n\nHere is the current screenplay:\n{base}\n\n"
+            f"The user asked for this revision: {feedback}\n"
+            "Rewrite the screenplay applying that feedback, keeping whatever it does not "
+            "touch. The duration and narration budget above still apply."
+        )
+    return ask
 
 
 def _shortfall_note(screenplay: Screenplay, target_s: int) -> str:
@@ -263,6 +276,29 @@ class LLMScriptBackend(ExecutionBackend):
         # *model* on a live server still fails loudly and actionably.
         return kind is NodeKind.SCRIPT and self.probe.available()
 
+    async def list_models(self) -> list[str]:
+        """Model names the server can complete with, from the OpenAI-compat
+        `/models` surface (Ollama and llama.cpp both serve it). Raises
+        httpx.HTTPError when the server is unreachable — the caller decides
+        what a missing server means."""
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(f"{self.chat_base}/models")
+            if response.status_code != 200:
+                return []
+            try:
+                data = response.json().get("data", [])
+            except ValueError:
+                return []
+        return sorted(str(row["id"]) for row in data if isinstance(row, dict) and row.get("id"))
+
+    def resolve_model(self, requested: str | None) -> str:
+        """The Ollama model a node's `model` choice lands on: the configured
+        default when unset, otherwise the requested name (with the `local:`
+        routing prefix stripped — the server knows only bare names)."""
+        if not requested:
+            return self.model
+        return requested.removeprefix("local:")
+
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         if spec.model is not None and spec.model.startswith("cloud:"):
             # Never fall back to the local model silently — the user asked
@@ -271,6 +307,8 @@ class LLMScriptBackend(ExecutionBackend):
                 f"cloud model {spec.model!r} requested but no cloud provider is "
                 "configured (BYOK providers arrive in a later phase)"
             )
+        model = self.resolve_model(spec.model)
+        ctx.record_model(model)
         if spec.params.get("task") == "metadata":
             # Publish kit (title/description/hashtags) from the script — a
             # second LLM task on the same backend, not a new node kind.
@@ -278,6 +316,7 @@ class LLMScriptBackend(ExecutionBackend):
                 str(spec.params.get("prompt", "")),
                 system=_METADATA_PROMPT,
                 max_tokens=METADATA_MAX_TOKENS,
+                model=model,
             )
             return ctx.publish_text(
                 spec.output_hash, ".metadata.json", json.dumps(self._parse_metadata(raw), indent=2)
@@ -285,7 +324,7 @@ class LLMScriptBackend(ExecutionBackend):
         screenplay = await screenplay_within_target(
             spec.params,
             lambda text: self.complete(
-                text, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
+                text, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params), model=model
             ),
             notify=ctx.notify,
         )
@@ -294,13 +333,20 @@ class LLMScriptBackend(ExecutionBackend):
             spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
         )
 
-    async def complete(self, prompt: str, system: str, max_tokens: int = _SCRIPT_TOKENS_MAX) -> str:
+    async def complete(
+        self,
+        prompt: str,
+        system: str,
+        max_tokens: int = _SCRIPT_TOKENS_MAX,
+        model: str | None = None,
+    ) -> str:
         """One-shot completion with the same VRAM-yield discipline as jobs:
         interactive tasks (graph edits) share the server with script jobs and
         must release the model for image/video work afterwards."""
-        raw = await self._local_complete(prompt, system=system, max_tokens=max_tokens)
+        model = model or self.model
+        raw = await self._local_complete(prompt, system=system, max_tokens=max_tokens, model=model)
         if self.unload_after:
-            await self._unload()
+            await self._unload(model)
         return raw
 
     async def _local_complete(
@@ -308,12 +354,13 @@ class LLMScriptBackend(ExecutionBackend):
         prompt: str,
         system: str = _SYSTEM_PROMPT,
         max_tokens: int = _SCRIPT_TOKENS_MAX,
+        model: str | None = None,
     ) -> str:
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
                 json={
-                    "model": self.model,
+                    "model": model or self.model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
@@ -347,13 +394,14 @@ class LLMScriptBackend(ExecutionBackend):
                 )
             return text
 
-    async def _unload(self) -> None:
+    async def _unload(self, model: str | None = None) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and
         other OpenAI-compatible servers simply 404 and are ignored."""
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
-                    f"{self.root_url}/api/generate", json={"model": self.model, "keep_alive": 0}
+                    f"{self.root_url}/api/generate",
+                    json={"model": model or self.model, "keep_alive": 0},
                 )
         except httpx.HTTPError:
             pass

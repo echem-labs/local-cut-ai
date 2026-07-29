@@ -3342,6 +3342,18 @@ button.link:hover {
   text-decoration: none;
 }
 
+/* feedback → rewrite row under the script actions */
+.tool-enhance {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: stretch;
+}
+
+.tool-enhance input {
+  flex: 1;
+}
+
 /* ---- script view ---- */
 .script-view {
   user-select: text;

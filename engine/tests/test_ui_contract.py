@@ -134,3 +134,15 @@ def test_notice_codes_match_the_desktop_catalog():
         return {prefix.rstrip(".")}
 
     assert leaves(catalog) == set(NOTICE_CODES)
+
+
+def test_speech_timing_matches_the_narration_authority():
+    """ToolSession shows per-scene lengths computed from narration words —
+    the script model's own duration_s is a claim nothing downstream reads.
+    The UI's copy of the words-per-second rate and the per-scene pad must be
+    the assembly's, or the preview quietly disagrees with the cut."""
+    from localcut_engine.backends.ffmpeg import NARRATION_PAD_S
+    from localcut_engine.backends.llm import SPEECH_WORDS_PER_S
+
+    assert _number(r"export const SPEECH_WORDS_PER_S = ([\d.]+)") == SPEECH_WORDS_PER_S
+    assert _number(r"export const NARRATION_PAD_S = ([\d.]+)") == NARRATION_PAD_S

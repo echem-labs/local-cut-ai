@@ -81,7 +81,7 @@ declare global {
 /** A failed user action, tagged so the screen that started it can show
  * the message next to its own button. */
 export interface ActionError {
-  scope: "create" | "tool" | "promote" | "approve";
+  scope: "create" | "tool" | "promote" | "approve" | "enhance";
   message: string;
 }
 
@@ -104,6 +104,8 @@ export interface HomeDraft {
   toolInput: string;
   voice: string;
   motion: string;
+  /** Script tool's model pick; "" = the engine's configured default. */
+  scriptModel: string;
 }
 
 interface AppState {
@@ -166,9 +168,11 @@ interface AppState {
   ) => Promise<void>;
   createTool: (
     tool: ToolKind,
-    input: { prompt?: string; text?: string; voice?: string; motion?: string },
+    input: { prompt?: string; text?: string; voice?: string; motion?: string; model?: string },
   ) => Promise<void>;
   promote: () => Promise<void>;
+  /** Rewrite the current project's script from user feedback. */
+  enhance: (notes: string) => Promise<void>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** The Story Graph behind the board, for the flowchart view. Null until
@@ -269,7 +273,14 @@ const FALLBACK_DEFAULTS: HomeDefaults = {
   videoModel: null,
 };
 
-const EMPTY_DRAFT: HomeDraft = { prompt: "", tool: null, toolInput: "", voice: "", motion: "" };
+const EMPTY_DRAFT: HomeDraft = {
+  prompt: "",
+  tool: null,
+  toolInput: "",
+  voice: "",
+  motion: "",
+  scriptModel: "",
+};
 
 function loadPersisted<T extends object>(key: string, fallback: T): T {
   try {
@@ -973,6 +984,21 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         console.warn(`tool ${tool} failed:`, err);
         set({ actionError: { scope: "tool", message: messageOf(err) } });
+      }
+    },
+
+    enhance: async (notes) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      set({ actionError: null });
+      try {
+        await client.enhanceScript(currentProject.id, notes);
+        // The re-render is on the queue; the board flip arrives over WS, but
+        // refresh now so the status ring never shows a stale "draft".
+        await get().refreshBoard();
+      } catch (err) {
+        console.warn("enhance failed:", err);
+        set({ actionError: { scope: "enhance", message: messageOf(err) } });
       }
     },
 

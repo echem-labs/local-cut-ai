@@ -13,5 +13,14 @@
   "audioAria": "{tool} preview",
   "clipPreview": "Clip preview",
   "creatingProject": "Creating project…",
-  "turnIntoVideo": "Turn into a video"
+  "turnIntoVideo": "Turn into a video",
+  "took": "took {t}",
+  "spokenTotal": "~{total}s spoken",
+  "spokenTotalVsTarget": "~{total}s spoken · target {target}s",
+  "copied": "Copied",
+  "regenerate": "Regenerate",
+  "enhance": "Enhance",
+  "enhancing": "Enhancing…",
+  "enhancePlaceholder": "What should change? e.g. make it about the 1453 conquest",
+  "enhanceAria": "Feedback for the script rewrite"
 }

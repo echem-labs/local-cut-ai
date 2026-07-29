@@ -45,6 +45,10 @@ class Job(BaseModel):
     # ProjectStore.resolve_job_artifact, never by Path(job.artifact).
     artifact: str | None = None
     backend: str | None = None  # which backend rendered it — cache trust boundary
+    # The model the backend reported using (ctx.record_model). Display-grade
+    # provenance, not a trust boundary like `backend`: None when the backend
+    # has no meaningful model name (ffmpeg assembly, mock).
+    model: str | None = None
     created_at: float = Field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
