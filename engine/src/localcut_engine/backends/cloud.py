@@ -47,6 +47,8 @@ class CloudBackend(ExecutionBackend):
 
     async def _script(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         textgen = textgen_for_model(self.config, spec.model or "")
+        if spec.model:
+            ctx.record_model(spec.model)
         if spec.params.get("task") == "metadata":
             # Publish-kit nodes are SCRIPT-kind with a different contract —
             # same split the local LLM backend makes.

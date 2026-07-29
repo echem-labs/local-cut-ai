@@ -296,6 +296,9 @@ export function Project() {
         <div className="board-header">
           <h1>{currentProject.title}</h1>
         </div>
+        {/* The script-shortfall notice lives on the tool node — without this
+            the tool screen was the one place it never showed. */}
+        <NoticeBar />
         <ToolSession />
       </div>
     );

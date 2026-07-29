@@ -64,6 +64,8 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
                         "aspect": str(params.get("aspect", "9:16")),
                         "style_preset": str(params.get("style_preset", "cinematic")),
                     },
+                    # The tool panel's model pick; None = the engine default.
+                    model=str(params["model"]) if params.get("model") else None,
                 )
             )
         case "thumbnail":

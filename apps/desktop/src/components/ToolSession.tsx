@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import type { Screenplay } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
+import { spokenSeconds } from "../lib/formats";
+import { newestJob } from "../lib/jobs";
 import { isSettled } from "../lib/status";
+import { shortDuration } from "../lib/time";
 import { StatusRing } from "./StatusRing";
 
 export function useScreenplay(url: string | null): Screenplay | null {
@@ -26,7 +29,33 @@ export function useScreenplay(url: string | null): Screenplay | null {
   return screenplay;
 }
 
-export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
+/** The screenplay as portable Markdown — what the Copy button puts on the
+ * clipboard. Reads fine as plain text too. */
+export function screenplayMarkdown(screenplay: Screenplay): string {
+  const lines = [`# ${screenplay.title}`, ""];
+  if (screenplay.hook) lines.push(`> ${screenplay.hook}`, "");
+  for (const scene of screenplay.scenes) {
+    lines.push(`## ${scene.id} · ~${Math.round(spokenSeconds(scene.narration))}s`, "");
+    lines.push(scene.narration, "");
+    if (scene.visual) lines.push(`*Visual:* ${scene.visual}`, "");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+export function ScriptTable({
+  screenplay,
+  targetS,
+}: {
+  screenplay: Screenplay;
+  targetS?: number;
+}) {
+  // Spoken time, not the script model's per-scene duration_s claim — nothing
+  // downstream reads that field, and the assembled video will not either
+  // (see SPEECH_WORDS_PER_S in lib/formats.ts).
+  const totalS = screenplay.scenes.reduce(
+    (sum, scene) => sum + spokenSeconds(scene.narration),
+    0,
+  );
   return (
     <div className="script-view">
       <h2>{screenplay.title}</h2>
@@ -46,11 +75,16 @@ export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
               <td>{scene.id}</td>
               <td>{scene.narration}</td>
               <td>{scene.visual}</td>
-              <td>{t("toolSession.lengthCell", { d: scene.duration_s })}</td>
+              <td>{t("toolSession.lengthCell", { d: Math.round(spokenSeconds(scene.narration)) })}</td>
             </tr>
           ))}
         </tbody>
       </table>
+      <p className="hint">
+        {targetS
+          ? t("toolSession.spokenTotalVsTarget", { total: Math.round(totalS), target: targetS })
+          : t("toolSession.spokenTotal", { total: Math.round(totalS) })}
+      </p>
     </div>
   );
 }
@@ -58,8 +92,23 @@ export function ScriptTable({ screenplay }: { screenplay: Screenplay }) {
 /** Focused single-panel view for tool:* micro-projects — one node,
  * one preview, one download, and (for scripts) one promote path. */
 export function ToolSession() {
-  const { board, client, currentProject, promote, actionError } = useApp();
+  // `jobs`, not `allJobs`: allJobs is refreshed only by refreshHome, which a
+  // job event for the OPEN project deliberately does not trigger (that path
+  // calls refreshBoard). Reading it here left the model and duration below
+  // pinned to whatever the last Home visit saw — so they never appeared at
+  // all for a first render, and showed the previous take's after an enhance.
+  const { board, client, currentProject, promote, actionError, jobs, regenerate, enhance } =
+    useApp();
   const [promoting, setPromoting] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [enhancing, setEnhancing] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   const tool = currentProject?.mode.startsWith("tool:")
     ? currentProject.mode.slice("tool:".length)
@@ -83,6 +132,21 @@ export function ToolSession() {
 
   if (!tool || !node) return <div className="banner">{t("toolSession.preparing")}</div>;
 
+  // The job that produced what's on screen — its model and wall time are the
+  // render's provenance. Newest DONE job for the tool node wins (a stale
+  // failed retry must not claim a good artifact, and vice versa).
+  const renderJob = done
+    ? newestJob(jobs.filter((job) => job.spec.node_id === node.node_id && job.status === "done"))
+    : null;
+  const tookS =
+    renderJob?.started_at != null && renderJob?.finished_at != null
+      ? renderJob.finished_at - renderJob.started_at
+      : null;
+  const targetS =
+    typeof node.params?.target_duration_s === "number"
+      ? node.params.target_duration_s
+      : undefined;
+
   const turnIntoVideo = async () => {
     if (promoting) return;
     setPromoting(true);
@@ -90,6 +154,28 @@ export function ToolSession() {
       await promote();
     } finally {
       setPromoting(false);
+    }
+  };
+
+  const copyScript = async () => {
+    if (!screenplay) return;
+    try {
+      await navigator.clipboard.writeText(screenplayMarkdown(screenplay));
+      setCopied(true);
+    } catch (err) {
+      console.warn("copy failed:", err);
+    }
+  };
+
+  const sendEnhance = async () => {
+    const trimmed = notes.trim();
+    if (!trimmed || enhancing) return;
+    setEnhancing(true);
+    try {
+      await enhance(trimmed);
+      if (!useApp.getState().actionError) setNotes("");
+    } finally {
+      setEnhancing(false);
     }
   };
 
@@ -109,6 +195,10 @@ export function ToolSession() {
         <StatusRing status={shown.status} progress={shown.progress} />
         <span style={{ textTransform: "capitalize" }}>{m().status[shown.status]}</span>
         {shown.status === "rendering" && <span>{Math.round(shown.progress * 100)}%</span>}
+        {renderJob?.model && <small className="hint">{renderJob.model}</small>}
+        {tookS != null && (
+          <small className="hint">{t("toolSession.took", { t: shortDuration(tookS) })}</small>
+        )}
       </div>
 
       {shown.error && <div className="banner error">{shown.error}</div>}
@@ -138,7 +228,7 @@ export function ToolSession() {
           )}
           {tool === "script" &&
             (screenplay ? (
-              <ScriptTable screenplay={screenplay} />
+              <ScriptTable screenplay={screenplay} targetS={targetS} />
             ) : (
               <div className="banner">{t("toolSession.loadingScript")}</div>
             ))}
@@ -146,6 +236,14 @@ export function ToolSession() {
             <a className="btn-ghost" href={artifactUrl} download>
               {t("common.download")}
             </a>
+            {tool === "script" && screenplay && (
+              <button className="btn-ghost" onClick={() => void copyScript()}>
+                {copied ? t("toolSession.copied") : t("common.copy")}
+              </button>
+            )}
+            <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
+              {t("toolSession.regenerate")}
+            </button>
             {tool === "script" && (
               <button
                 className="btn-primary"
@@ -156,7 +254,27 @@ export function ToolSession() {
               </button>
             )}
           </div>
-          {actionError?.scope === "promote" && (
+          {tool === "script" && (
+            <div className="tool-enhance">
+              <input
+                value={notes}
+                placeholder={t("toolSession.enhancePlaceholder")}
+                aria-label={t("toolSession.enhanceAria")}
+                onChange={(event) => setNotes(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void sendEnhance();
+                }}
+              />
+              <button
+                className="btn-ghost"
+                onClick={() => void sendEnhance()}
+                disabled={enhancing || !notes.trim()}
+              >
+                {enhancing ? t("toolSession.enhancing") : t("toolSession.enhance")}
+              </button>
+            </div>
+          )}
+          {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
               {actionError.message}
             </p>
