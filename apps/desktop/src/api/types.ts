@@ -17,6 +17,10 @@ export interface Project {
   thumb_hash?: string | null;
   aspect?: string | null;
   duration_s?: number | null;
+  // Quick tool sessions: the finished artifact of the session's own node.
+  // The durable answer to "did this finish?" — /jobs only carries the newest
+  // 200 rows across every project, so an old session's are long gone.
+  tool_artifact_hash?: string | null;
 }
 
 export type ToolKind = "script" | "thumbnail" | "voiceover" | "image" | "music" | "clip";

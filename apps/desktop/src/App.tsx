@@ -18,7 +18,7 @@ import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
-import { Home, tileStatus } from "./screens/Home";
+import { Home, isToolSession, revealToolHistory, tileStatus } from "./screens/Home";
 import { Project } from "./screens/Project";
 import { Settings } from "./screens/Settings";
 import type { Project as ProjectMeta } from "./api/types";
@@ -123,9 +123,16 @@ export default function App() {
   const recentTools = useMemo(() => {
     const open = new Set(openProjects);
     return projects
-      .filter((project) => project.mode.startsWith("tool:") && !open.has(project.id))
+      .filter((project) => isToolSession(project) && !open.has(project.id))
       .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at));
   }, [projects, openProjects]);
+  // Counts every session, open ones included: this row leads to Home's list,
+  // which shows them all, so a number that excluded the open ones would
+  // disagree with the heading it takes you to.
+  const toolSessionCount = useMemo(
+    () => projects.filter(isToolSession).length,
+    [projects],
+  );
 
   return (
     <div className="app">
@@ -247,10 +254,11 @@ export default function App() {
             {recentTools.length > RECENT_LIMIT && (
               <button
                 className="rail-recent-all"
-                aria-label={plural("nav.recentAll", recentTools.length)}
+                aria-label={plural("nav.recentAll", toolSessionCount)}
                 onClick={() => {
                   closeProject();
                   closeSettings();
+                  revealToolHistory();
                 }}
               >
                 {compact && (
@@ -258,7 +266,7 @@ export default function App() {
                     +{recentTools.length - RECENT_LIMIT}
                   </span>
                 )}
-                <span className="rail-label">{plural("nav.recentAll", recentTools.length)}</span>
+                <span className="rail-label">{plural("nav.recentAll", toolSessionCount)}</span>
               </button>
             )}
           </div>
@@ -315,16 +323,26 @@ export default function App() {
           </button>
         </div>
       </nav>
+      {/* A rejected delete has no room to report itself in the rail, and
+          dropping the message would make a failed delete look like a
+          successful one — the row simply reappears. Deliberately OUTSIDE
+          <main>: the rail stays usable while the Settings overlay is up, and
+          that layer is opaque, so a banner inside the content area would
+          paint behind the very screen the user is looking at. */}
+      {railError && (
+        <div className="banner error rail-toast" role="alert">
+          <span className="grow">{railError}</span>
+          <button
+            className="icon-btn-sm"
+            aria-label={t("common.dismiss")}
+            onClick={() => setRailError(null)}
+          >
+            <X size={13} strokeWidth={2} />
+          </button>
+        </div>
+      )}
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
-        {/* A rejected delete has no room to report itself in the rail, and
-            dropping the returned message would make a failed delete look
-            like a successful one — the row simply reappears. */}
-        {railError && (
-          <div className="banner error" role="alert">
-            {railError}
-          </div>
-        )}
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">

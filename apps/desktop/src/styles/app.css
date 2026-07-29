@@ -136,12 +136,11 @@ textarea {
   gap: 2px;
 }
 
+/* Everything else about this label comes from the shared eyebrow rule
+ * above; only the size and the rail's own spacing differ. */
 .rail .group-label {
   font-size: 10px; /* the 200px rail is the one place 11px reads big */
   padding: var(--space-3) var(--space-2) var(--space-1);
-  color: var(--text-tertiary);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .rail button {
@@ -258,6 +257,24 @@ textarea {
   width: 100%;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+
+/* Not inside a .rail-tab, so it does not inherit that row's truncation —
+ * without this the label wraps to two lines while every row above ellipses. */
+.rail-recent-all .rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Compact rail: the group heading is hidden, so history and open tabs become
+ * two runs of identical glyph rows whose only difference is a 12px trash can
+ * where the tabs have a 12px close. A rule is the one cue left that the
+ * control below means "delete", not "close". */
+.rail.compact .rail-recent {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
 }
 
 .rail-tab .rail-tab-close,
@@ -3674,6 +3691,25 @@ button.link:hover {
 
 /* ---- settings (review 4): an overlay layer with a left category nav ----
  * Rendered above whatever screen is open — never unmounts the project. */
+/* The rail is usable while the Settings overlay is up, so a rail delete can
+ * be refused with that opaque layer covering the content area. This sits
+ * above it (and is dismissible, since nothing else clears it). */
+.rail-toast {
+  position: fixed;
+  top: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-tray);
+  max-width: min(560px, calc(100vw - 2 * var(--space-6)));
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.rail-toast .grow {
+  min-width: 0;
+}
+
 .settings-layer {
   position: absolute;
   inset: 0;

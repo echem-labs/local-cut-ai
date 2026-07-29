@@ -76,7 +76,7 @@
     "clearTools_one": "Clear {count} output ({size})",
     "clearTools_other": "Clear {count} outputs ({size})",
     "clearToolsTitle": "Clear the quick tool history?",
-    "clearToolsMessage": "Removes every quick tool output and the files they generated. Your projects are untouched. This can't be undone.",
+    "clearToolsMessage": "Removes every quick tool output and the files they generated, stopping anything still generating. Your projects are untouched. This can't be undone.",
     "clearToolsConfirm": "Clear history",
     "modelsHeading": "Models",
     "modelsHint": "Downloaded model weights are managed in the model library.",
