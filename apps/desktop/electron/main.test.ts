@@ -770,6 +770,49 @@ describe("the window", () => {
     expect(window.navigateTo("javascript:alert(1)")).toBe(false);
   });
 
+  it("turns a navigation to the engine's origin into a download", async () => {
+    // Download links (<a download href=…>) point at the engine, which is
+    // cross-origin to the renderer — Chromium ignores the download attribute
+    // there and navigates instead. The lockdown must not dead-end the click:
+    // the engine's own URLs become downloads.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+    const artifact = `${engineUrl}/projects/p1/artifacts/abc123?token=local-token`;
+
+    expect(window.navigateTo(artifact)).toBe(false);
+    expect(window.downloads).toEqual([artifact]);
+  });
+
+  it("does not download from non-engine origins it blocks", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    expect(window.navigateTo("https://evil.example/payload.bin")).toBe(false);
+    expect(window.navigateTo(`${DEV_ORIGIN}@evil.example/payload.bin`)).toBe(false);
+    expect(window.downloads).toEqual([]);
+  });
+
+  it("follows the active connection: a paired remote downloads, the idle local does not", async () => {
+    // The local auto-spawn answers on a different origin than the remote the
+    // user pairs; only the connection the renderer actually talks to may
+    // trigger downloads.
+    localEngine.url = `http://127.0.0.1:${deadPort}`;
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    await electron.invokeIpc(
+      "engine:pair",
+      trusted(),
+      codeFor({ url: engineUrl, token: "remote-token" }),
+      { armKeys: false },
+    );
+    const window = electron.BrowserWindow.instances[0]!;
+    const artifact = `${engineUrl}/projects/p1/artifacts/abc123?token=remote-token`;
+
+    expect(window.navigateTo(artifact)).toBe(false);
+    expect(window.downloads).toEqual([artifact]);
+    expect(window.navigateTo(`http://127.0.0.1:${deadPort}/projects/p1/artifacts/abc123`)).toBe(false);
+    expect(window.downloads).toEqual([artifact]);
+  });
+
   it("denies every window-open request", async () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
     expect(electron.BrowserWindow.instances[0]!.windowOpenHandler!()).toEqual({ action: "deny" });
