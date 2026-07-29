@@ -27,6 +27,7 @@ export function QueueTray() {
     startDownload,
     cancelJob,
     firstRunDone,
+    settingsOpen,
   } = useApp();
   // The tray is app-global, so it answers for the whole ENGINE, not the open
   // project — a render started in one project must not read "idle" from Home
@@ -58,6 +59,10 @@ export function QueueTray() {
   }, [anyDownloading, refreshModels]);
 
   const hasJobs = active !== undefined || queued > 0;
+  // The pill floats above the Settings layer (z-tray > z-drawer) and lands
+  // exactly on the Models pane's bottom controls, swallowing their clicks.
+  // Settings has its own queue and download surfaces — yield entirely.
+  if (settingsOpen) return null;
   if (!hasJobs && downloads.length === 0 && paused.length === 0) return null;
 
   // A row's byte total falls back to its manifest size until the first
