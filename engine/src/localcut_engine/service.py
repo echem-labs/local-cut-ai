@@ -20,7 +20,7 @@ from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
-from .graph.patch import PatchOp, apply_patch
+from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch
 from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
@@ -404,9 +404,43 @@ class ProjectService:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
             node.seed = seed if seed is not None else node.seed + 1
+            # A new take is of the node's configuration. Carrying a finished
+            # revision's notes here would re-ask them against a draft that
+            # the revision itself has already superseded.
+            node.params = {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS}
             self.store.save_graph(project_id, graph)
             self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
+
+    def enhance_script(self, project_id: str, notes: str) -> set[str]:
+        """Revise the script from user feedback: the notes and the screenplay
+        they amend ride the script node's params, so the rewrite goes through
+        the same patch path as any other graph edit (new hash, re-plan, board
+        state) and reaches every script backend via script_prompt."""
+        notes = notes.strip()
+        if not notes:
+            raise ValueError("feedback is empty")
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            script = graph.nodes.get("script")
+            if script is None or script.kind is not NodeKind.SCRIPT:
+                raise ValueError("this project has no script to enhance")
+            # Only the artifact matching the node's CURRENT identity is the
+            # screenplay the user is looking at — same rule promotion applies.
+            artifact = self.store.resolve_artifact(project_id, graph.output_hash("script"))
+            if artifact is None:
+                raise ValueError("the script has not finished generating yet")
+            base = artifact.read_text(encoding="utf-8")
+        return self.patch(
+            project_id,
+            [
+                PatchOp(
+                    op="set_params",
+                    node_id="script",
+                    params={"feedback": notes, "base_screenplay": base},
+                )
+            ],
+        )
 
     def finalize(self, project_id: str, clip_model: str | None = None) -> int:
         """Draft → final ladder: re-render at target quality. When a final
@@ -950,7 +984,10 @@ class ProjectService:
                 # trade `error` already makes.
                 "notices": [notice.model_dump() for notice in job.notices] if job else [],
                 "artifact_hash": out_hash if out_hash in cached else None,
-                "params": node.params,
+                # Transient params are omitted, not just unused: the desktop
+                # polls this through every render, and base_screenplay is a
+                # whole screenplay riding along each time.
+                "params": {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS},
                 "seed": node.seed,
                 # The advanced inspector edits these directly.
                 "model": node.model,

@@ -288,3 +288,30 @@ def test_a_null_target_duration_does_not_crash_the_prompt():
     accepts null. script_max_tokens already coerces; the prompt and the
     length check must agree or the job dies with a bare TypeError."""
     assert str(narration_word_budget(60)) in script_prompt({"target_duration_s": None})
+
+
+def test_feedback_reaches_the_prompt_with_the_screenplay_it_amends():
+    """Enhance = re-ask carrying the current screenplay plus the user's
+    notes. Both script backends build their user turn here, so asserting the
+    prompt covers local and cloud alike."""
+    base = '{"title": "The Fall of Istanbul", "scenes": []}'
+    prompt = script_prompt(
+        {
+            "prompt": "istanbul, dramatic",
+            "target_duration_s": 60,
+            "feedback": "Make it about the 1453 conquest, not 1922.",
+            "base_screenplay": base,
+        }
+    )
+    assert "Make it about the 1453 conquest, not 1922." in prompt
+    assert base in prompt
+    assert "rewrite" in prompt.lower()
+    # The original ask still anchors the rewrite: budget and topic hold.
+    assert "istanbul, dramatic" in prompt
+
+
+def test_feedback_without_a_base_changes_nothing():
+    """A feedback param that arrives without the screenplay it refers to
+    (hand-edited graph, partial patch) must not emit a dangling instruction."""
+    plain = script_prompt({"prompt": "p", "target_duration_s": 60})
+    assert script_prompt({"prompt": "p", "target_duration_s": 60, "feedback": "x"}) == plain
