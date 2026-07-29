@@ -175,6 +175,54 @@ async def test_script_tool_promotes_to_full_project(rig):
     assert not [j for j in queue.list(promoted.id, 1000) if j.spec.node_id == "script"]
     assert service.scene_board(promoted.id)["scenes"]
 
+    # Both halves of the link are recorded, so each side can name the other.
+    assert promoted.promoted_from == tool.id
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    assert store.get(promoted.id).promoted_from == tool.id
+
+
+async def test_promoting_the_same_session_twice_records_both_videos(rig):
+    """A script is worth more than one attempt, and promote_tool has never
+    stopped a second run. A single `promoted_to` would let the newer video
+    erase the older one's provenance, so the session keeps every id it
+    produced, in the order it produced them."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    first = service.promote_tool(tool.id)
+    second = service.promote_tool(tool.id)
+
+    assert first.id != second.id
+    assert store.get(tool.id).promoted_to == [first.id, second.id]
+    assert store.get(first.id).promoted_from == tool.id
+    assert store.get(second.id).promoted_from == tool.id
+
+
+async def test_promotion_provenance_survives_a_later_meta_refresh(rig):
+    """The link lives in meta.json, which _refresh_meta_locked rewrites on
+    every job completion. That path re-reads before it writes, so provenance
+    has to come back out the other side -- otherwise the first keyframe to
+    finish would quietly erase where the video came from."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    promoted = service.promote_tool(tool.id)
+    await wait_for(
+        lambda: bool(service.scene_board(promoted.id)["aux"].get("export", {}).get("artifact_hash"))
+    )
+    assert store.get(promoted.id).promoted_from == tool.id
+    assert store.get(tool.id).promoted_to == [promoted.id]
+
 
 @pytest.mark.parametrize(
     ("tool", "node_id"),
