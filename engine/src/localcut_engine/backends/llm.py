@@ -343,8 +343,10 @@ class LLMScriptBackend(ExecutionBackend):
         """One-shot completion with the same VRAM-yield discipline as jobs:
         interactive tasks (graph edits) share the server with script jobs and
         must release the model for image/video work afterwards."""
+        # The one place the configured default is applied — the private
+        # helpers below take a resolved name so it cannot drift between them.
         model = model or self.model
-        raw = await self._local_complete(prompt, system=system, max_tokens=max_tokens, model=model)
+        raw = await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
         if self.unload_after:
             await self._unload(model)
         return raw
@@ -352,15 +354,15 @@ class LLMScriptBackend(ExecutionBackend):
     async def _local_complete(
         self,
         prompt: str,
+        model: str,
         system: str = _SYSTEM_PROMPT,
         max_tokens: int = _SCRIPT_TOKENS_MAX,
-        model: str | None = None,
     ) -> str:
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
             response = await client.post(
                 f"{self.chat_base}/chat/completions",
                 json={
-                    "model": model or self.model,
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
@@ -394,14 +396,17 @@ class LLMScriptBackend(ExecutionBackend):
                 )
             return text
 
-    async def _unload(self, model: str | None = None) -> None:
+    async def _unload(self, model: str) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and
-        other OpenAI-compatible servers simply 404 and are ignored."""
+        other OpenAI-compatible servers simply 404 and are ignored. Takes the
+        model that was actually loaded — releasing the configured default
+        instead would leave a picked model resident, which is the whole point
+        of the yield."""
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(
                     f"{self.root_url}/api/generate",
-                    json={"model": model or self.model, "keep_alive": 0},
+                    json={"model": model, "keep_alive": 0},
                 )
         except httpx.HTTPError:
             pass

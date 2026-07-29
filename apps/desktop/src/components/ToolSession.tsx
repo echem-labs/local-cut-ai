@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import type { Job, Screenplay } from "../api/types";
+import type { Screenplay } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
 import { spokenSeconds } from "../lib/formats";
+import { newestJob } from "../lib/jobs";
 import { isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
 import { StatusRing } from "./StatusRing";
@@ -91,7 +92,12 @@ export function ScriptTable({
 /** Focused single-panel view for tool:* micro-projects — one node,
  * one preview, one download, and (for scripts) one promote path. */
 export function ToolSession() {
-  const { board, client, currentProject, promote, actionError, allJobs, regenerate, enhance } =
+  // `jobs`, not `allJobs`: allJobs is refreshed only by refreshHome, which a
+  // job event for the OPEN project deliberately does not trigger (that path
+  // calls refreshBoard). Reading it here left the model and duration below
+  // pinned to whatever the last Home visit saw — so they never appeared at
+  // all for a first render, and showed the previous take's after an enhance.
+  const { board, client, currentProject, promote, actionError, jobs, regenerate, enhance } =
     useApp();
   const [promoting, setPromoting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -130,17 +136,7 @@ export function ToolSession() {
   // render's provenance. Newest DONE job for the tool node wins (a stale
   // failed retry must not claim a good artifact, and vice versa).
   const renderJob = done
-    ? allJobs
-        .filter(
-          (job) =>
-            job.project_id === currentProject?.id &&
-            job.spec.node_id === node.node_id &&
-            job.status === "done",
-        )
-        .reduce<Job | null>(
-          (best, job) => (best && best.created_at >= job.created_at ? best : job),
-          null,
-        )
+    ? newestJob(jobs.filter((job) => job.spec.node_id === node.node_id && job.status === "done"))
     : null;
   const tookS =
     renderJob?.started_at != null && renderJob?.finished_at != null
@@ -278,12 +274,7 @@ export function ToolSession() {
               </button>
             </div>
           )}
-          {actionError?.scope === "promote" && (
-            <p className="hint error-text" role="alert">
-              {actionError.message}
-            </p>
-          )}
-          {actionError?.scope === "enhance" && (
+          {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
               {actionError.message}
             </p>
