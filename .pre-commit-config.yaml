@@ -1,0 +1,71 @@
+# Local gates, so CI is not the thing that tells you about a missing newline.
+#
+# Actions minutes are metered while this repo is private (see the matrix note
+# in .github/workflows/ci-engine.yml), and lint is the cheapest possible
+# reason to spend them. These hooks are worth keeping after the repo goes
+# public regardless: the feedback is seconds instead of minutes.
+#
+# Install:  uv run --project engine pre-commit install
+# Bypass:   git commit --no-verify  /  git push --no-verify
+#
+# Every hook is `repo: local` on purpose. The obvious alternative — pinning
+# astral-sh/ruff-pre-commit — writes the ruff version down a second time, in
+# a file that has no relationship to engine/uv.lock. When the two drift, the
+# hook formats code one way and CI checks it another, and the failure surfaces
+# as a red build on code that passed locally. Running the project's own ruff
+# through uv makes that class of drift impossible.
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: local
+    hooks:
+      # --- on commit: fast enough that you do not notice it -------------
+      # These carry no `stages:`, so they also run again on push — which is
+      # the point, since it is the one thing that still catches code that was
+      # committed with --no-verify.
+      - id: ruff-check
+        name: ruff check (engine)
+        entry: uv run --project engine ruff check --force-exclude --fix
+        language: system
+        types_or: [python, pyi]
+        files: ^engine/
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format (engine)
+        entry: uv run --project engine ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        files: ^engine/
+        require_serial: true
+
+      # --- on push: the same verdict CI would give ----------------------
+      # Now that CI runs Ubuntu-only, these are very nearly the whole of it.
+      # A green pre-push on Linux means a green CI run, so the remaining
+      # reason to spend a runner is the record, not the discovery.
+      #
+      # `pass_filenames: false` because these are suite-level commands, but
+      # `files:` still gates them — a desktop-only push does not run pytest.
+      - id: engine-tests
+        name: engine tests (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q -rs'
+        language: system
+        files: ^engine/
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: desktop-typecheck
+        name: desktop typecheck (tsc)
+        entry: bash -c 'cd apps/desktop && npm run typecheck'
+        language: system
+        files: ^apps/desktop/
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: desktop-tests
+        name: desktop tests (vitest)
+        entry: bash -c 'cd apps/desktop && npm test'
+        language: system
+        files: ^apps/desktop/
+        pass_filenames: false
+        stages: [pre-push]
