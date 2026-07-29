@@ -750,7 +750,15 @@ class ProjectService:
             and job.artifact is not None
         ):
             if meta.mode.startswith("tool:"):
-                return  # tool sessions stay one node; promotion expands
+                # A tool session stays one node -- promotion is what expands
+                # it -- but the meta still has to be refreshed, or the one
+                # kind of session that never re-enters this function keeps
+                # `updated_at` at its creation time and records no artifact,
+                # so history sorts it wrong and calls a finished script
+                # unfinished.
+                with self._lock:
+                    self._refresh_meta_locked(job.project_id)
+                return
             with self._lock:
                 graph = self.store.load_graph(job.project_id)
                 # Refuse a screenplay the graph has already moved past.
@@ -882,12 +890,31 @@ class ProjectService:
             assembled = edl.get("duration") if edl else None
             if isinstance(assembled, (int, float)) and assembled > 0:
                 duration = float(assembled)
-            if thumb is None and project.mode.startswith("tool:"):
-                thumb = self._tool_still(graph, memo, cached)
+            if project.mode.startswith("tool:"):
+                project.tool_artifact_hash = self._tool_output(graph, project.mode, memo, cached)
+                if thumb is None:
+                    thumb = self._tool_still(graph, memo, cached)
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
         self.store.save_meta(project)
+
+    @staticmethod
+    def _tool_output(
+        graph: StoryGraph, mode: str, memo: dict[str, str], cached: set[str]
+    ) -> str | None:
+        """The finished artifact of a quick tool session, or None.
+
+        `tool_graph` names the session's terminal node for the tool itself,
+        so the mode carries the node id: `tool:voiceover` -> `voiceover`. Only
+        a hash that is actually cached counts, which is what makes this mean
+        "produced something" rather than "was asked to".
+        """
+        node_id = mode.removeprefix("tool:")
+        if node_id not in graph.nodes:
+            return None
+        out_hash = graph.output_hash(node_id, memo)
+        return out_hash if out_hash in cached else None
 
     @staticmethod
     def _tool_still(graph: StoryGraph, memo: dict[str, str], cached: set[str]) -> str | None:

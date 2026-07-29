@@ -827,8 +827,20 @@ export function Settings() {
                     </div>
                   </div>
                   {(() => {
-                    const rows = storage.projects.filter((row) => isToolSession(row.id));
-                    const bytes = rows.reduce((sum, row) => sum + row.bytes, 0);
+                    // Count from the project list, which is what the action
+                    // actually deletes; size from the storage walk, which is
+                    // the only thing that knows bytes. Counting from storage
+                    // instead let a session created since the last
+                    // measurement go uncounted and still be deleted — and, on
+                    // a stale measurement, showed "Clear 0" as disabled while
+                    // the rail plainly listed sessions.
+                    const sessions = projects.filter((project) =>
+                      project.mode.startsWith("tool:"),
+                    );
+                    const bytes = storage.projects
+                      .filter((row) => isToolSession(row.id))
+                      .reduce((sum, row) => sum + row.bytes, 0);
+                    const rows = sessions;
                     return (
                       <div className="setting-row">
                         <div className="st">
