@@ -220,7 +220,28 @@ async def test_promotion_provenance_survives_a_later_meta_refresh(rig):
     await wait_for(
         lambda: bool(service.scene_board(promoted.id)["aux"].get("export", {}).get("artifact_hash"))
     )
+    # The video rewrote its meta on every one of those job completions.
     assert store.get(promoted.id).promoted_from == tool.id
+
+    # The session's half needs its own refresh to be worth asserting: no job
+    # of its own runs after promotion, so a check here alone would pass
+    # against code that never re-read the session's meta at all. Patch and
+    # rename are the two paths that rewrite it -- one through
+    # _refresh_meta_locked, one writing the model directly.
+    service.patch(
+        tool.id,
+        [PatchOp(op="set_params", node_id="script", params={"prompt": "octopus hearts, take two"})],
+    )
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    service.rename(tool.id, "renamed session")
+    assert store.get(tool.id).promoted_to == [promoted.id]
+    # ...and the re-run that patch just enqueued must not drop it either.
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 50)[:1]
+        )
+    )
     assert store.get(tool.id).promoted_to == [promoted.id]
 
 
@@ -863,3 +884,30 @@ async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
     # Idempotent, and it leaves real projects alone.
     assert service.backfill_tool_metas() == 0
     assert store.get(video.id).tool_artifact_hash is None
+
+
+async def test_duplicating_a_project_does_not_inherit_provenance(rig):
+    """A copy is a new thing, and provenance is a claim about identity rather
+    than content -- unlike generated/, which travels because artifacts are
+    content-addressed. Carried over, the copy of a promoted session would
+    offer a link to a video it never produced (an id that RESOLVES, to the
+    wrong project, which no amount of dangling-id tolerance catches), and the
+    copy of a video would name a session whose own list never mentions it."""
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+    video = service.promote_tool(tool.id)
+
+    session_copy = store.duplicate(tool.id)
+    video_copy = store.duplicate(video.id)
+    assert session_copy is not None and video_copy is not None
+    assert session_copy.promoted_to == []
+    assert video_copy.promoted_from is None
+    # The originals keep theirs, and the session never learns of the copies.
+    assert store.get(tool.id).promoted_to == [video.id]
+    assert store.get(video.id).promoted_from == tool.id

@@ -401,8 +401,13 @@ export function Project() {
   return (
     <div className="project-shell screen-enter">
       <div className="board-header">
-        <h1>{currentProject.title}</h1>
-        <PromotedFrom project={currentProject} />
+        {/* The header is a horizontal toolbar; the provenance line belongs
+            UNDER the title, so the two share a column rather than becoming
+            a third item on the row. */}
+        <div className="board-title">
+          <h1>{currentProject.title}</h1>
+          <PromotedFrom project={currentProject} />
+        </div>
         <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
           {stages.map((stage) => {
             const inner = (
