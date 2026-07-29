@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Server,
   SlidersHorizontal,
+  Sparkles,
   SunMoon,
   Tag,
   Trash2,
@@ -28,7 +29,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
 import { InfoDot } from "../components/Tooltip";
-import { m, type MessageKey, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
+import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
@@ -132,6 +133,8 @@ export function Settings() {
     refreshStorage,
     cleanupStorage,
     deleteProject,
+    deleteToolSessions,
+    projects,
     storage,
     storageStale,
     models,
@@ -172,6 +175,7 @@ export function Settings() {
     null,
   );
   const [confirmCache, setConfirmCache] = useState(false);
+  const [confirmTools, setConfirmTools] = useState(false);
   // A failed delete or cache purge — shown in the storage pane rather than
   // discarded, which is what used to happen to both.
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -183,6 +187,15 @@ export function Settings() {
   const tab = (
     NAV.some((entry) => entry.id === settingsTab) ? settingsTab : "general"
   ) as SettingsTab;
+
+  // The storage walk reports every .lcut directory without saying which are
+  // quick tool sessions; `mode` lives on the project list, so the split
+  // happens here rather than as a second engine field that could disagree.
+  const isToolSession = useCallback(
+    (id: string) =>
+      projects.some((project) => project.id === id && project.mode.startsWith("tool:")),
+    [projects],
+  );
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -208,7 +221,7 @@ export function Settings() {
   }, [tab, refreshStorage]);
 
   // Esc closes the overlay — unless a field or a layered dialog owns it.
-  const dialogOpen = confirmProject !== null || confirmCache || showLicenses;
+  const dialogOpen = confirmProject !== null || confirmCache || confirmTools || showLicenses;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || dialogOpen) return;
@@ -813,6 +826,42 @@ export function Settings() {
                       </button>
                     </div>
                   </div>
+                  {(() => {
+                    // Count from the project list, which is what the action
+                    // actually deletes; size from the storage walk, which is
+                    // the only thing that knows bytes. Counting from storage
+                    // instead let a session created since the last
+                    // measurement go uncounted and still be deleted — and, on
+                    // a stale measurement, showed "Clear 0" as disabled while
+                    // the rail plainly listed sessions.
+                    const sessions = projects.filter((project) =>
+                      project.mode.startsWith("tool:"),
+                    );
+                    const bytes = storage.projects
+                      .filter((row) => isToolSession(row.id))
+                      .reduce((sum, row) => sum + row.bytes, 0);
+                    const rows = sessions;
+                    return (
+                      <div className="setting-row">
+                        <div className="st">
+                          <Sparkles {...ICON_SUBHEAD} />
+                          {t("settings.storage.toolsHeading")}
+                        </div>
+                        <div className="sd">{t("settings.storage.toolsHint")}</div>
+                        <div className="sc">
+                          <button
+                            className="btn-ghost"
+                            disabled={rows.length === 0}
+                            onClick={() => setConfirmTools(true)}
+                          >
+                            {plural("settings.storage.clearTools", rows.length, {
+                              size: formatSize(bytes),
+                            })}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   <div className="setting-row">
                     <div className="st">
                       <Boxes {...ICON_SUBHEAD} />
@@ -1128,9 +1177,19 @@ export function Settings() {
 
       {confirmProject && (
         <ConfirmDialog
-          title={t("home.deleteTitle", { title: confirmProject.title })}
-          message={t("home.deleteMessage")}
-          confirmLabel={t("home.deleteConfirm")}
+          // This list carries quick tool sessions too, and a project's copy
+          // overstates what a one-off output costs to delete: there is no
+          // cut to lose and usually no job to cancel.
+          title={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolTitle" : "home.deleteTitle",
+            { title: confirmProject.title },
+          )}
+          message={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolMessage" : "home.deleteMessage",
+          )}
+          confirmLabel={t(
+            isToolSession(confirmProject.id) ? "home.deleteToolConfirm" : "home.deleteConfirm",
+          )}
           danger
           onConfirm={() => {
             const target = confirmProject;
@@ -1166,6 +1225,25 @@ export function Settings() {
               .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
           }}
           onCancel={() => setConfirmCache(false)}
+        />
+      )}
+      {confirmTools && (
+        <ConfirmDialog
+          title={t("settings.storage.clearToolsTitle")}
+          message={t("settings.storage.clearToolsMessage")}
+          confirmLabel={t("settings.storage.clearToolsConfirm")}
+          danger
+          onConfirm={() => {
+            setConfirmTools(false);
+            setStorageError(null);
+            void deleteToolSessions()
+              .then((error) => {
+                setStorageError(error);
+                return refreshStorage();
+              })
+              .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
+          }}
+          onCancel={() => setConfirmTools(false)}
         />
       )}
       {showLicenses && (

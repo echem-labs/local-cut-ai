@@ -750,7 +750,15 @@ class ProjectService:
             and job.artifact is not None
         ):
             if meta.mode.startswith("tool:"):
-                return  # tool sessions stay one node; promotion expands
+                # A tool session stays one node -- promotion is what expands
+                # it -- but the meta still has to be refreshed, or the one
+                # kind of session that never re-enters this function keeps
+                # `updated_at` at its creation time and records no artifact,
+                # so history sorts it wrong and calls a finished script
+                # unfinished.
+                with self._lock:
+                    self._refresh_meta_locked(job.project_id)
+                return
             with self._lock:
                 graph = self.store.load_graph(job.project_id)
                 # Refuse a screenplay the graph has already moved past.
@@ -835,7 +843,9 @@ class ProjectService:
 
     # -- read model for the UI ------------------------------------------------
 
-    def _refresh_meta_locked(self, project_id: str, graph: StoryGraph | None = None) -> None:
+    def _refresh_meta_locked(
+        self, project_id: str, graph: StoryGraph | None = None, *, touch: bool = True
+    ) -> None:
         """Denormalize the Home-grid read model into meta.json (review 4):
         updated_at now, thumb = the cut's first rendered keyframe, duration =
         current cut length. Meta-only — graph and wire contract untouched.
@@ -848,7 +858,8 @@ class ProjectService:
                 graph = self.store.load_graph(project_id)
             except (OSError, ValueError):
                 graph = None
-        project.updated_at = time.time()
+        if touch:
+            project.updated_at = time.time()
         if graph is not None:
             history = self.queue.list(project_id, 1000)
             cached = self._trusted_cache(project_id, history)
@@ -882,10 +893,88 @@ class ProjectService:
             assembled = edl.get("duration") if edl else None
             if isinstance(assembled, (int, float)) and assembled > 0:
                 duration = float(assembled)
+            if project.mode.startswith("tool:"):
+                project.tool_artifact_hash = self._tool_output(graph, project.mode, memo, cached)
+                if thumb is None:
+                    thumb = self._tool_still(graph, memo, cached)
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
         self.store.save_meta(project)
+
+    @staticmethod
+    def _tool_output(
+        graph: StoryGraph, mode: str, memo: dict[str, str], cached: set[str]
+    ) -> str | None:
+        """The finished artifact of a quick tool session, or None.
+
+        `tool_graph` names the session's terminal node for the tool itself,
+        so the mode carries the node id: `tool:voiceover` -> `voiceover`. Only
+        a hash that is actually cached counts, which is what makes this mean
+        "produced something" rather than "was asked to".
+        """
+        node_id = mode.removeprefix("tool:")
+        if node_id not in graph.nodes:
+            return None
+        out_hash = graph.output_hash(node_id, memo)
+        return out_hash if out_hash in cached else None
+
+    @staticmethod
+    def _tool_still(graph: StoryGraph, memo: dict[str, str], cached: set[str]) -> str | None:
+        """The rendered still a quick tool session can show on its tile.
+
+        Tool graphs carry no scenes, so the `{scene}.keyframe` rule above
+        never matches and every session -- image, voiceover, script alike --
+        wore the same generic glyph. Only the two still-image kinds qualify:
+        the clip tool contributes its conditioning keyframe, which is a frame
+        of the video it produced, and the kinds that render audio or text
+        contribute nothing rather than an artifact no <img> can decode.
+
+        Node ids are walked in code-unit order so the choice is the same on
+        every machine -- `keyframe` before a hypothetical later still, not
+        whichever the dict happens to yield first.
+        """
+        for node_id in sorted(graph.nodes):
+            if graph.nodes[node_id].kind not in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
+                continue
+            still = graph.output_hash(node_id, memo)
+            if still in cached:
+                return still
+        return None
+
+    def backfill_tool_metas(self) -> int:
+        """Fill in the quick-tool fields for sessions written by an older
+        build, returning how many gained an artifact.
+
+        `tool_artifact_hash` and a tool session's `thumb_hash` are only ever
+        written by a meta refresh, and a refresh only happens on a WRITE. A
+        session that finished before this build existed is never written
+        again, so without this it would report "draft" behind a working
+        download, and a generic glyph in place of the image it made, forever.
+        History is made of precisely those old sessions.
+
+        One pass at startup. A session that legitimately has no artifact is
+        re-examined on each start -- a graph load apiece, and they are the
+        minority -- which is cheaper and less brittle than persisting a
+        "swept" marker that could itself fall out of date.
+        """
+        filled = 0
+        for project in self.store.list():
+            if not project.mode.startswith("tool:") or project.tool_artifact_hash:
+                continue
+            with self._lock:
+                try:
+                    self._refresh_meta_locked(project.id, touch=False)
+                except (OSError, ValueError):
+                    # One unreadable project must not stop the sweep, exactly
+                    # as store.list() refuses to let one damaged meta take
+                    # the whole listing down.
+                    logger.warning("could not backfill tool meta for %s", project.id)
+                    continue
+                healed = self.store.get(project.id)
+            if healed is not None and healed.tool_artifact_hash:
+                filled += 1
+        return filled
 
     def _assembled_edl(
         self, project_id: str, graph: StoryGraph, memo: dict[str, str], cached: set[str]

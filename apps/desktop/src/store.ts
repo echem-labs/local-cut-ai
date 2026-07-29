@@ -219,6 +219,7 @@ interface AppState {
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
   deleteProject: (id: string) => Promise<string | null>;
+  deleteToolSessions: () => Promise<string | null>;
   renameProject: (id: string, title: string) => Promise<string | null>;
   duplicateProject: (id: string) => Promise<string | null>;
   refreshStorage: () => Promise<void>;
@@ -1384,6 +1385,44 @@ export const useApp = create<AppState>((set, get) => {
         }
         return messageOf(err);
       }
+    },
+
+    // Clearing the quick-tool history is a loop over the delete route, not a
+    // bulk one: DELETE /projects/{id} already reserves, cancels and purges in
+    // the order that survives an interrupted delete, and a second engine path
+    // doing the same thing in bulk would have to re-establish all of it.
+    //
+    // Sequential on purpose — the engine serialises these behind one lock, so
+    // firing them together only queues them with a less useful failure report.
+    deleteToolSessions: async () => {
+      if (!get().client) return t("errors.engineUnavailable");
+      const doomed = get()
+        .projects.filter((project) => project.mode.startsWith("tool:"))
+        .map((project) => project.id);
+      if (doomed.length === 0) return null;
+      // Close every doomed tab in ONE step, before the loop. deleteProject
+      // closes them one at a time, and closing the ACTIVE tab activates its
+      // neighbour — which here is the next session the loop is about to
+      // delete. Left alone, clearing history loads each doomed session's
+      // board and jobs on the way past, so the workspace flickers through
+      // them against a burst of requests for projects that are being erased.
+      const condemned = new Set(doomed);
+      const tabs = get().openProjects;
+      const survivors = tabs.filter((id) => !condemned.has(id));
+      if (survivors.length !== tabs.length) {
+        set({ openProjects: survivors });
+        saveOpenTabs(survivors);
+      }
+      const current = get().currentProject;
+      if (current && condemned.has(current.id)) get().closeProject();
+      let failure: string | null = null;
+      for (const id of doomed) {
+        const error = await get().deleteProject(id);
+        // Keep going: one project wedged by a running job should not strand
+        // the rest, and the count in Settings re-measures either way.
+        if (error && !failure) failure = error;
+      }
+      return failure;
     },
 
     renameProject: async (id, title) => {

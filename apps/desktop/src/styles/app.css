@@ -136,6 +136,8 @@ textarea {
   gap: 2px;
 }
 
+/* Everything else about this label comes from the shared eyebrow rule
+ * above; only the size and the rail's own spacing differ. */
 .rail .group-label {
   font-size: 10px; /* the 200px rail is the one place 11px reads big */
   padding: var(--space-3) var(--space-2) var(--space-1);
@@ -229,7 +231,8 @@ textarea {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
-.rail-tab .dot.final {
+.rail-tab .dot.final,
+.rail-tab .dot.ready {
   background: var(--status-final);
 }
 
@@ -237,7 +240,45 @@ textarea {
   background: var(--status-failed);
 }
 
-.rail-tab .rail-tab-close {
+/* Quick-tool history. Shares .rail-tab's row shape so a session looks the
+ * same whether it is open above or listed here; the trailing control is a
+ * delete rather than a close, which is why it is a separate class — the two
+ * must never be mistaken for each other. */
+.rail-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.rail-recent-all {
+  width: 100%;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* Not inside a .rail-tab, so it does not inherit that row's truncation —
+ * without this the label wraps to two lines while every row above ellipses. */
+.rail-recent-all .rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Compact rail: the group heading is hidden, so history and open tabs become
+ * two runs of identical glyph rows whose only difference is a 12px trash can
+ * where the tabs have a 12px close. A rule is the one cue left that the
+ * control below means "delete", not "close". */
+.rail.compact .rail-recent {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+.rail-tab .rail-tab-close,
+.rail-tab .rail-tab-action {
   position: absolute;
   right: 4px;
   top: 50%;
@@ -255,12 +296,21 @@ textarea {
 }
 
 .rail-tab:hover .rail-tab-close,
-.rail-tab:focus-within .rail-tab-close {
+.rail-tab:focus-within .rail-tab-close,
+.rail-tab:hover .rail-tab-action,
+.rail-tab:focus-within .rail-tab-action {
   opacity: 1;
 }
 
 .rail-tab .rail-tab-close:hover {
   color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* The delete reads as destructive on hover; the close ✕ deliberately does
+ * not, because closing a tab throws nothing away. */
+.rail-tab .rail-tab-action:hover {
+  color: var(--status-failed);
   background: var(--surface-2);
 }
 
@@ -286,7 +336,8 @@ textarea {
   padding-right: var(--space-2);
 }
 
-.rail.compact .rail-tab .rail-tab-close {
+.rail.compact .rail-tab .rail-tab-close,
+.rail.compact .rail-tab .rail-tab-action {
   right: 1px;
   top: 1px;
   transform: none;
@@ -1355,7 +1406,10 @@ button.link:hover {
   background: var(--status-draft);
 }
 
-.project-tile .meta .dot.final {
+/* "ready" is a finished quick tool, "final" a finished cut — different
+ * claims, same "this is done" green. */
+.project-tile .meta .dot.final,
+.project-tile .meta .dot.ready {
   background: var(--status-final);
 }
 
@@ -3637,6 +3691,29 @@ button.link:hover {
 
 /* ---- settings (review 4): an overlay layer with a left category nav ----
  * Rendered above whatever screen is open — never unmounts the project. */
+/* The rail is usable while the Settings overlay is up, so a rail delete can
+ * be refused with that opaque layer covering the content area. This sits
+ * above it (and is dismissible, since nothing else clears it). */
+.rail-toast {
+  position: fixed;
+  /* Below the title bar, which is fixed at the same z-index and earlier in
+     the DOM: overlapping it would cover the project name and, worse, the
+     -webkit-app-region drag strip, so the window could not be moved while
+     an error was showing. */
+  top: calc(var(--titlebar-h) + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-tray);
+  max-width: min(560px, calc(100vw - 2 * var(--space-6)));
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.rail-toast .grow {
+  min-width: 0;
+}
+
 .settings-layer {
   position: absolute;
   inset: 0;

@@ -378,6 +378,14 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         reclaimed = await asyncio.to_thread(service.sweep_deleted)
         if reclaimed:
             logger.info("reclaimed %d partially-deleted project(s)", reclaimed)
+        # A quick tool session that finished under an older build carries
+        # none of the meta the history list reads, and nothing would ever
+        # write it: a refresh only happens on a write, and a finished session
+        # is never written again. Off the event loop -- one graph load per
+        # session that still lacks the field.
+        backfilled = await asyncio.to_thread(service.backfill_tool_metas)
+        if backfilled:
+            logger.info("backfilled meta for %d quick tool session(s)", backfilled)
         scheduler.start()
         yield
         await downloads.shutdown()

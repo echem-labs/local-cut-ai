@@ -176,6 +176,88 @@ async def test_script_tool_promotes_to_full_project(rig):
     assert service.scene_board(promoted.id)["scenes"]
 
 
+@pytest.mark.parametrize(
+    ("tool", "node_id"),
+    [("image", "image"), ("thumbnail", "thumbnail"), ("clip", "clip")],
+)
+async def test_a_tool_session_that_rendered_a_still_gets_a_thumbnail(rig, tool, node_id):
+    """A tool session has no scenes, so the `{scene}.keyframe` rule finds
+    nothing and its Home tile fell back to the generic tool glyph forever --
+    a finished image looking exactly like a finished voiceover. The still it
+    rendered itself is the thumbnail; the clip tool's is its conditioning
+    keyframe, the one frame of the video that already exists as an image."""
+    store, queue, service = rig
+    session = service.create_tool(tool, {"prompt": "a lighthouse at dusk"})
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == node_id and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None
+    assert meta.thumb_hash, f"{tool} session has no thumb_hash"
+    # A hash the tile cannot fetch is the same blank tile with extra steps.
+    assert store.resolve_artifact(session.id, meta.thumb_hash) is not None
+
+
+@pytest.mark.parametrize("tool", ["script", "thumbnail", "voiceover", "image", "music", "clip"])
+async def test_a_finished_tool_session_records_its_artifact_on_the_meta(rig, tool):
+    """Whether a session finished has to be answerable from meta.json alone.
+
+    The desktop derives it from `GET /jobs`, which returns the newest 200 job
+    rows across ALL projects -- so a session's own rows age out behind a
+    couple of full renders and its tile falls back to "Draft" while its
+    download link still works. Job history is the wrong place to ask a
+    question about a project that is arbitrarily old.
+    """
+    store, queue, service = rig
+    params = {"text": "one small step"} if tool == "voiceover" else {"prompt": "a lighthouse"}
+    session = service.create_tool(tool, params)
+    node_id = tool
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == node_id and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None
+    assert meta.tool_artifact_hash, f"{tool} session recorded no artifact"
+    assert store.resolve_artifact(session.id, meta.tool_artifact_hash) is not None
+
+
+async def test_an_unfinished_tool_session_records_no_artifact(rig):
+    """The field means "this produced something", so it must stay empty
+    until that is true -- otherwise the tile calls a session ready before
+    there is anything to download."""
+    store, _queue, service = rig
+    session = service.create_tool("image", {"prompt": "a lighthouse"})
+    # Read before the scheduler can finish it: created_at is stamped by
+    # create_tool, and meta is written there too.
+    meta = store.get(session.id)
+    assert meta is not None and meta.tool_artifact_hash is None
+
+
+async def test_a_tool_session_with_no_still_keeps_its_glyph(rig):
+    """The other half: voiceover/music/script render no image, so there is
+    nothing to point thumb_hash at. It must stay None rather than borrow
+    some unrelated artifact the tile would fail to decode."""
+    store, queue, service = rig
+    session = service.create_tool("voiceover", {"text": "one small step"})
+
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "voiceover" and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    meta = store.get(session.id)
+    assert meta is not None and meta.thumb_hash is None
+
+
 async def test_beginner_mode_gates_stages_until_approved(rig):
     store, queue, service = rig
     project = service.create_from_prompt(
@@ -695,3 +777,41 @@ async def test_edit_plan_with_no_ops_still_persists_a_caption_resync(rig):
     assert result["ops"] == 0
 
     assert store.load_graph(project.id).nodes["captions"].params["texts"] == expected
+
+
+async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
+    """The quick-tool meta fields are only ever written by a REFRESH, and a
+    refresh only happens on a write. A session that finished before this
+    build existed is never written again, so it would keep reporting "draft"
+    and a generic glyph forever -- and history is made of exactly those old
+    sessions, so the feature would miss the population it is for."""
+    store, queue, service = rig
+    session = service.create_tool("image", {"prompt": "a lighthouse"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "image" and j.status is JobStatus.DONE
+            for j in queue.list(session.id, 10)
+        )
+    )
+    video = service.create_from_prompt("tide pools", target_duration_s=24)
+
+    # A meta as an older build left it: neither field had been invented.
+    stale = store.get(session.id)
+    was_updated_at = stale.updated_at
+    stale.tool_artifact_hash = None
+    stale.thumb_hash = None
+    store.save_meta(stale)
+
+    assert service.backfill_tool_metas() == 1
+    healed = store.get(session.id)
+    assert healed.tool_artifact_hash
+    assert healed.thumb_hash
+    assert store.resolve_artifact(session.id, healed.tool_artifact_hash) is not None
+
+    # A repair is not activity. Stamping updated_at here would jump every
+    # old session to "just now" on the first launch after upgrading, which
+    # is precisely the ordering the history list is sorted by.
+    assert healed.updated_at == was_updated_at
+    # Idempotent, and it leaves real projects alone.
+    assert service.backfill_tool_metas() == 0
+    assert store.get(video.id).tool_artifact_hash is None
