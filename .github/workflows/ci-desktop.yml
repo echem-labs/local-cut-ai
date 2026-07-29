@@ -1,0 +1,67 @@
+name: CI (desktop)
+
+# See ci-engine.yml for why the two suites are separate workflows rather than
+# two jobs behind one path filter: GitHub filters paths per workflow, not per
+# job, and a filter job of its own would cost about as much as it saves.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/ci-desktop.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - ".github/workflows/ci-desktop.yml"
+
+# A new push to a PR makes the previous run's result irrelevant — cancel it.
+# NOT on main: every commit there needs its own verdict. All pushes to main
+# share one ref, so blanket cancellation means two PRs merging a minute apart
+# leave the first merge with no result at all, and a commit that broke the
+# build carries no red mark.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # ---------------------------------------------------------------
+        # Ubuntu only WHILE THE REPO IS PRIVATE — Windows bills at 2x on a
+        # private repo's 2,000-minute monthly allowance. The full rationale
+        # and the measurements are in ci-engine.yml.
+        #
+        # RESTORE THE SECOND LINE THE DAY THE REPO GOES PUBLIC. Windows is
+        # the platform this project ships first (specs 07), and it is the one
+        # that catches the path-separator and line-ending class of bug that
+        # Ubuntu cannot see. Tracked as a launch item in specs
+        # 07-roadmap-and-risks.md.
+        # ---------------------------------------------------------------
+        os: [ubuntu-latest]
+        # os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # `build` also runs both tsc projects, so a renderer that typechecks
+      # but cannot bundle still fails here.
+      - run: npm run build
