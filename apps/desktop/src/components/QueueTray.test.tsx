@@ -56,6 +56,17 @@ describe("QueueTray", () => {
     expect(screen.getByRole("status").textContent).toContain("2");
   });
 
+  it("yields while Settings is open instead of covering its controls", () => {
+    // The pill floats above the Settings layer (z-tray > z-drawer) and sat
+    // exactly on the Models pane's "Add custom model" button, swallowing its
+    // clicks. Settings has its own download and queue surfaces — the tray
+    // adds nothing there but the overlap.
+    useApp.setState({ allJobs: [job({})], settingsOpen: true } as never);
+    const { container } = render(<QueueTray />);
+
+    expect(container.querySelector(".queue-tray")).toBeNull();
+  });
+
   it("prefers the open project's fresher slice over the stale engine list", () => {
     // `jobs` refreshes with the board on every lifecycle edge; `allJobs`
     // only on the debounced home refresh. For the open project the stale
