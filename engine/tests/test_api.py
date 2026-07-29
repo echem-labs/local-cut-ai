@@ -1119,3 +1119,135 @@ async def test_render_does_not_double_enqueue_work_already_in_flight(client):
 
 async def test_render_404s_for_a_project_that_is_not_there(client):
     assert (await client.post("/projects/aaaaaaaaaa/render")).status_code == 404
+
+
+# -- artifact download filenames ----------------------------------------------
+
+
+def test_artifact_filenames_are_readable_slugs(tmp_path):
+    """A served artifact is named for the human who downloads it — a slug of
+    the title plus the artifact's real suffix — never the bare output hash
+    the store keys it by."""
+    from localcut_engine.api.app import artifact_filename
+
+    out_hash = "ab" * 32
+    wav = tmp_path / f"{out_hash}.wav"
+    wav.write_bytes(b"")
+    assert (
+        artifact_filename("A 60s script on how Istanbul was captured!", wav, out_hash)
+        == "a-60s-script-on-how-istanbul-was-captured.wav"
+    )
+
+    # Screenplays carry a better title than the prompt — the one the script
+    # model wrote — so that is the one the file is named after.
+    screenplay = tmp_path / f"{out_hash}.screenplay.json"
+    screenplay.write_text(json.dumps({"title": "The Fall of Istanbul"}), encoding="utf-8")
+    assert (
+        artifact_filename("prompt goes here", screenplay, out_hash)
+        == "the-fall-of-istanbul.screenplay.json"
+    )
+
+    # A title with nothing sluggable falls back to the hash, not to "".
+    assert artifact_filename("— —", wav, out_hash) == f"{out_hash[:12]}.wav"
+
+    # A corrupt screenplay must not break serving — the project title stands.
+    broken = tmp_path / f"{out_hash}.screenplay.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert artifact_filename("plan b", broken, out_hash) == "plan-b.screenplay.json"
+
+
+async def test_artifact_route_names_the_download(client):
+    """The desktop's Download button is a bare <a download> on this route, so
+    the filename the user sees is whatever this header says — without it,
+    Chromium falls back to the URL basename, which is the output hash."""
+    pid = (
+        await client.post("/tools", json={"tool": "script", "prompt": "Name me nicely, please"})
+    ).json()["id"]
+
+    async def script_ready():
+        board = (await client.get(f"/projects/{pid}")).json()["board"]
+        node = board["aux"].get("script")
+        return node if node and node.get("artifact_hash") else None
+
+    node = await _wait_for(script_ready)
+    response = await client.get(f"/projects/{pid}/artifacts/{node['artifact_hash']}")
+    assert response.status_code == 200
+    disposition = response.headers["content-disposition"]
+    # inline: the same route feeds <video>/<audio> playback — naming the
+    # download must not turn a player fetch into an attachment.
+    assert disposition.startswith("inline")
+    assert 'filename="name-me-nicely-please.screenplay.json"' in disposition
+
+
+# -- script model selection ---------------------------------------------------
+
+
+async def test_llm_models_route_answers_even_without_a_server(client):
+    """The tool panel asks this before offering a picker. A mock-chain
+    engine (or a dead Ollama) is a fact to report, never a 500."""
+    response = await client.get("/llm/models")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["models"] == []
+    assert isinstance(body["default"], str)
+
+
+async def test_tool_script_carries_a_model_choice_onto_the_node(client):
+    created = await client.post(
+        "/tools", json={"tool": "script", "prompt": "pick me", "model": "local:phi4"}
+    )
+    assert created.status_code == 200
+    pid = created.json()["id"]
+    board = (await client.get(f"/projects/{pid}")).json()["board"]
+    assert board["aux"]["script"]["model"] == "local:phi4"
+
+
+async def test_tool_script_rejects_a_garbage_model_string(client):
+    response = await client.post(
+        "/tools", json={"tool": "script", "prompt": "p", "model": "rm -rf /; llama"}
+    )
+    assert response.status_code == 422
+
+
+# -- script enhance -----------------------------------------------------------
+
+
+async def test_enhance_reasks_the_script_with_the_feedback(client):
+    pid = (
+        await client.post("/tools", json={"tool": "script", "prompt": "istanbul, dramatic"})
+    ).json()["id"]
+
+    async def script_ready():
+        board = (await client.get(f"/projects/{pid}")).json()["board"]
+        node = board["aux"].get("script")
+        return node if node and node.get("artifact_hash") else None
+
+    first = await _wait_for(script_ready)
+
+    enhanced = await client.post(
+        f"/projects/{pid}/script/enhance", json={"notes": "focus on 1453, not 1922"}
+    )
+    assert enhanced.status_code == 200
+    assert "script" in enhanced.json()["dirty"]
+
+    board = (await client.get(f"/projects/{pid}")).json()["board"]
+    node = board["aux"]["script"]
+    # The feedback and the screenplay it amends ride the node — the next
+    # render (and the cloud backend, and a headless client) all see them.
+    assert node["params"]["feedback"] == "focus on 1453, not 1922"
+    assert node["params"]["base_screenplay"]
+    # The edit dirtied the node: a NEW script job exists for a new identity.
+    second = await _wait_for(script_ready)
+    assert second["artifact_hash"] != first["artifact_hash"]
+
+
+async def test_enhance_refuses_when_there_is_no_script(client):
+    pid = (
+        await client.post("/tools", json={"tool": "thumbnail", "prompt": "a fine cover"})
+    ).json()["id"]
+    response = await client.post(f"/projects/{pid}/script/enhance", json={"notes": "longer"})
+    assert response.status_code == 409
+
+    blank = await client.post(f"/projects/{pid}/script/enhance", json={"notes": "   "})
+    assert blank.status_code == 422
