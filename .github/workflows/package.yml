@@ -1,22 +1,32 @@
 name: Package
 
 # Building an installer is slow and macOS runners bill at a premium, so this
-# does NOT run on every push. It runs when the packaging path itself changes
-# (which is the only time it can break without someone noticing), on demand,
-# and on a release tag.
+# does NOT run on every push. It runs on a release tag and on demand.
+#
+# It used to also run on any PR touching the packaging path, on the reasoning
+# that that is the only time packaging can break unnoticed. That is still
+# true, but the price was wrong: one run is ~65 billable minutes (150 of them
+# macOS, at the 10x private-repo multiplier), it fired six times in July 2026,
+# and it was ~11% of a 2,000-minute allowance the account then ran out of.
+# `workflow_dispatch` covers the same ground at a moment of your choosing —
+# run it by hand on a packaging PR before merging.
+#
+# Once the repo is public, minutes on standard runners are free and the
+# paths-based `pull_request` trigger above is worth restoring; it is kept
+# here, commented, so the path list does not have to be reconstructed.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-  pull_request:
-    paths:
-      - "apps/desktop/electron-builder.yml"
-      - "apps/desktop/package.json"
-      - "apps/desktop/scripts/check-engine.mjs"
-      - "apps/desktop/build/**"
-      - "engine/localcut-engine.spec"
-      - "engine/packaging/**"
-      - ".github/workflows/package.yml"
+  # pull_request:
+  #   paths:
+  #     - "apps/desktop/electron-builder.yml"
+  #     - "apps/desktop/package.json"
+  #     - "apps/desktop/scripts/check-engine.mjs"
+  #     - "apps/desktop/build/**"
+  #     - "engine/localcut-engine.spec"
+  #     - "engine/packaging/**"
+  #     - ".github/workflows/package.yml"
 
 # Only a pull_request run is safe to cancel. A tag push is a release build —
 # `github.ref` is refs/tags/v… there, so a "not main" test would treat it as
