@@ -33,3 +33,17 @@ export const CLIP_MAX_S = 15.0;
 /** Narration speed bounds — graph/editor.py `_SPEED_MIN`/`_SPEED_MAX`. */
 export const SPEED_MIN = 0.5;
 export const SPEED_MAX = 1.5;
+
+/** The engine's narration timing model — backends/llm.py
+ * `SPEECH_WORDS_PER_S` and backends/ffmpeg.py `NARRATION_PAD_S`. A scene
+ * lasts as long as its narration takes to speak (plus breathing room), NOT
+ * the `duration_s` the script model wrote — nothing downstream reads that
+ * claim, so neither may the UI. */
+export const SPEECH_WORDS_PER_S = 3.5;
+export const NARRATION_PAD_S = 0.35;
+
+/** Seconds a scene's narration actually takes to speak, engine-rule. */
+export const spokenSeconds = (narration: string): number => {
+  const words = narration.split(/\s+/).filter(Boolean).length;
+  return words / SPEECH_WORDS_PER_S + NARRATION_PAD_S;
+};

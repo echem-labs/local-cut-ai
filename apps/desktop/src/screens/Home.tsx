@@ -19,11 +19,12 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { ModelsPopover } from "../components/ModelsPopover";
 import { Tip } from "../components/Tooltip";
-import type { Job, Project, ToolKind } from "../api/types";
+import type { Job, LlmModels, Project, ToolKind } from "../api/types";
 import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
+import { newestJob } from "../lib/jobs";
 import { shortcutLabel } from "../lib/platform";
 import { relativeTime, shortDuration } from "../lib/time";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
@@ -56,13 +57,7 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
   if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
     return "generating";
   }
-  // Pick the trailing job by stamp — /jobs arrives newest-first and store
-  // merges may reorder, so indexing either end can grab the oldest job and
-  // pin a long-since-recovered project at "failed".
-  const newest = jobs.reduce<Job | null>(
-    (best, job) => (best && best.created_at >= job.created_at ? best : job),
-    null,
-  );
+  const newest = newestJob(jobs);
   if (newest?.status === "failed") return "failed";
   if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
   return "draft";
@@ -105,10 +100,32 @@ export function Home() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const { prompt, tool, toolInput, voice, motion } = homeDraft;
+  const { prompt, tool, toolInput, voice, motion, scriptModel } = homeDraft;
   const { aspect, duration, mode } = defaults;
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
   const toolCopy = activeTool ? m().tools[activeTool.kind] : null;
+
+  // The script tool's model pick — fetched when the panel opens, so the
+  // list is what the LLM server has installed *now*. null = no picker
+  // (server down, or scripts route to another backend) and the engine
+  // default silently applies, exactly as before.
+  const [scriptModels, setScriptModels] = useState<LlmModels | null>(null);
+  useEffect(() => {
+    if (tool !== "script") return;
+    let stale = false;
+    useApp
+      .getState()
+      .client?.llmModels()
+      .then((result) => {
+        if (!stale) setScriptModels(result.available ? result : null);
+      })
+      .catch(() => {
+        if (!stale) setScriptModels(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [tool]);
 
   // The context menu closes on any press outside its own tile.
   useEffect(() => {
@@ -189,6 +206,8 @@ export function Home() {
           ? { text: toolInput.trim(), ...(effectiveVoice ? { voice: effectiveVoice } : {}) }
           : { prompt: toolInput.trim() }),
         ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
+        // Only an explicit pick travels — "" lets the engine default apply.
+        ...(tool === "script" && scriptModel ? { model: scriptModel } : {}),
       });
       if (!useApp.getState().actionError) setHomeDraft({ toolInput: "" });
     } finally {
@@ -530,7 +549,24 @@ export function Home() {
                 </Tip>
               </>
             )}
+            {activeTool.kind === "script" && scriptModels && (
+              <Dropdown
+                value={scriptModel || scriptModels.default}
+                onChange={(value) =>
+                  setHomeDraft({ scriptModel: value === scriptModels.default ? "" : value })
+                }
+                ariaLabel={t("home.scriptModelAria")}
+                options={[...new Set([scriptModels.default, ...scriptModels.models])].map(
+                  (name) => ({
+                    value: name,
+                    label:
+                      name === scriptModels.default ? t("home.defaultModel", { name }) : name,
+                  }),
+                )}
+              />
+            )}
             <div className="spacer" />
+            <ModelsPopover />
             <Tip label={t("common.generate")} shortcut={shortcutLabel(t("home.ctrlEnter"))} side="top">
               <button
                 className="btn-primary"

@@ -228,7 +228,20 @@ export interface Job {
   progress: number;
   error: string | null;
   created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  /** The model the backend reported actually using (null when the backend
+   * has no meaningful model name — assembly, mock). */
+  model: string | null;
   spec: { node_id: string; kind: string };
+}
+
+/** GET /llm/models — what the script tool's model picker can offer.
+ * `available` is the engine's routing answer, not just server liveness. */
+export interface LlmModels {
+  available: boolean;
+  default: string;
+  models: string[];
 }
 
 /** GET /storage — Settings → Storage. */
