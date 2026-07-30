@@ -54,5 +54,11 @@
   "onScreenText": "On-screen text",
   "onScreenInfoLabel": "Text drawn on the video",
   "applyRegenerate": "Apply & regenerate",
-  "newTake": "New take"
+  "newTake": "New take",
+  "takes": "Takes",
+  "takesAria": "Alternate takes",
+  "takeChip": "Take {n}",
+  "takeCurrentTitle": "The take you're seeing now",
+  "takeSwitchTitle": "Switch to this take — instant, it's still on disk",
+  "takeMissingTitle": "This take's file is gone — switching re-renders it"
 }

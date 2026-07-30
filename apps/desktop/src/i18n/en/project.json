@@ -39,7 +39,17 @@
     "finalCutPro": "Final Cut Pro",
     "workspace": "Workspace",
     "resetLayout": "Reset layout",
-    "resetLayoutTitle": "Restore this view's default panel layout"
+    "resetLayoutTitle": "Restore this view's default panel layout",
+    "history": "History",
+    "undo": "Undo",
+    "redo": "Redo",
+    "savePoints": "Save points…",
+    "frameRate": "Frame rate",
+    "fpsAuto": "Auto (24 fps)",
+    "fpsValue": "{fps} fps",
+    "resolution": "Resolution",
+    "resolutionAuto": "Auto (full size)",
+    "resolutionValue": "{px}p"
   },
   "cta": {
     "create": "Create final video",
@@ -51,5 +61,23 @@
   "retryScript": "Try again",
   "writingScript": "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders.",
   "noticesAria": "Render notices",
-  "fromSession": "From the script session"
+  "fromSession": "From the script session",
+  "savepoints": {
+    "title": "Save points",
+    "hint": "Named versions of this project. Restore any of them — restoring is itself undoable.",
+    "empty": "No save points yet.",
+    "placeholder": "Name this version…",
+    "save": "Save",
+    "restore": "Restore",
+    "delete": "Delete",
+    "closeAria": "Close save points",
+    "listAria": "Save points",
+    "nameAria": "Save point name"
+  },
+  "historyKinds": {
+    "patch": "change",
+    "edit": "AI edit",
+    "regenerate": "new take",
+    "restore": "restore"
+  }
 }
