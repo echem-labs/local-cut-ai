@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import secrets
+import statistics
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
@@ -181,6 +182,11 @@ _TASK_KINDS = (
     NodeKind.EXPORT,
 )
 
+
+# Newest completed renders considered per (kind, quality) when computing the
+# calibrated ETA — enough to smooth run-to-run variance, few enough that a
+# GPU/driver/model change stops dominating the estimate within a session.
+_ETA_SAMPLES_PER_KEY = 20
 
 _FILENAME_SLUG_MAX = 60
 # Bound on reading a screenplay back for its title. Screenplays are a few KB;
@@ -596,6 +602,28 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except httpx.HTTPError:
             return unavailable
         return {"available": True, "default": backend.model, "models": models}
+
+    @app.get("/system/etas", dependencies=[Authed])
+    async def system_etas() -> dict:
+        """Calibrated render-time estimates per node kind and quality, from
+        this machine's own completed jobs. Medians of the newest samples:
+        medians because OOM-ladder retries and cold model loads skew a mean
+        badly, newest-first so a hardware or model change ages out of the
+        estimate instead of haunting it. Empty until something has rendered
+        — an honest 'no data yet' beats a hand-written guess."""
+        durations = await asyncio.to_thread(queue.completed_durations)
+        by_key: dict[tuple[str, str], list[float]] = {}
+        for kind, quality, seconds in durations:  # newest first
+            samples = by_key.setdefault((kind, quality), [])
+            if len(samples) < _ETA_SAMPLES_PER_KEY:
+                samples.append(seconds)
+        etas: dict[str, dict[str, dict]] = {}
+        for (kind, quality), samples in sorted(by_key.items()):
+            etas.setdefault(kind, {})[quality] = {
+                "seconds": round(statistics.median(samples), 2),
+                "samples": len(samples),
+            }
+        return {"etas": etas}
 
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
