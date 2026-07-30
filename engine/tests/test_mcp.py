@@ -9,49 +9,32 @@ reason test_automation_cli.py does — the thing under test IS the client half
 
 What the toolset refuses to offer is tested as deliberately as what it does:
 enabling a ComfyUI node pack acknowledges third-party code execution, which
-is an operator's decision, and a tool would hand that acknowledgment to a
-model.
+is an operator's decision; a cloud model spends the user's provider key,
+which is a per-request decision made in the app. A tool would hand either
+one to a model.
 """
 
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
-import threading
 import time
 
 import pytest
-import uvicorn
 from mcp.client import Client
 
-from conftest import free_port
+from conftest import serve_engine
 
 from localcut_engine import mcp_server
-from localcut_engine.api.app import create_app
-from localcut_engine.config import EngineConfig
 
 TOKEN = "mcp-token"
 
 
 @pytest.fixture
 def engine(tmp_path):
-    """A live engine on loopback, with the mock backend and the scheduler
-    actually running (uvicorn drives the lifespan, which is what starts it)."""
-    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
-    server = uvicorn.Server(
-        uvicorn.Config(create_app(config), host="127.0.0.1", port=free_port(), log_level="error")
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 20
-    while not server.started and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert server.started, "the test engine never came up"
-    try:
-        yield f"http://127.0.0.1:{server.config.port}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=20)
+    with serve_engine(tmp_path, TOKEN) as url:
+        yield url
 
 
 def build(url: str, token: str = TOKEN):
@@ -108,9 +91,10 @@ async def test_a_prompt_becomes_a_rendered_file_over_mcp(engine, tmp_path):
         project_id = project["id"]
 
         started = await call(client, "start_render", {"project_id": project_id})
-        assert isinstance(started["settled_before"], list)
+        assert isinstance(started["enqueued"], int)
+        assert isinstance(started["earlier_failures"], list)
 
-        status = await until_done(client, project_id, ignore=started["settled_before"])
+        status = await until_done(client, project_id, ignore=started["earlier_failures"])
         assert status["failed"] == []
         assert status["export_ready"] is True
 
@@ -135,9 +119,35 @@ async def test_the_finalize_pass_renders_over_mcp(engine):
         await until_done(client, project["id"])
 
         started = await call(client, "start_render", {"project_id": project["id"], "final": True})
-        status = await until_done(client, project["id"], ignore=started["settled_before"])
+        status = await until_done(client, project["id"], ignore=started["earlier_failures"])
 
     assert status["failed"] == []
+
+
+async def test_a_beginner_project_advances_through_approve(engine):
+    """mode="beginner" pauses at the script and storyboard checkpoints,
+    released only by /approve — so without an approve tool the project is a
+    dead end no other tool can advance: done=true, nothing enqueued,
+    export_ready never true. This is the storyboard-first UX (approve before
+    burning GPU time), operable by an agent."""
+    async with Client(build(engine)) as client:
+        project = await call(
+            client, "create_project", {"prompt": "step by step", "mode": "beginner"}
+        )
+        project_id = project["id"]
+
+        status = await until_done(client, project_id)
+        assert status["export_ready"] is False, "the checkpoint should still be closed"
+
+        released = await call(client, "approve", {"project_id": project_id, "checkpoint": "script"})
+        assert released["ok"] is True
+        await until_done(client, project_id)
+
+        await call(client, "approve", {"project_id": project_id, "checkpoint": "storyboard"})
+        status = await until_done(client, project_id)
+
+    assert status["failed"] == []
+    assert status["export_ready"] is True
 
 
 async def test_the_console_command_serves_a_real_agent_over_stdio(engine):
@@ -186,10 +196,15 @@ async def test_engine_info_reports_version_and_backend(engine):
 
 async def test_an_unreachable_engine_reads_as_a_sentence_not_a_traceback():
     """The agent relays this text to a person. It has to say what to do —
-    start an engine — not name an errno."""
-    dead = f"http://127.0.0.1:{free_port()}"
-    async with Client(build(dead)) as client:
-        message = await refusal(client, "list_projects")
+    start an engine — not name an errno. The dead port is HELD (bound, never
+    listening) for the duration: a merely-probed free port can be claimed by
+    another process between the probe and the connect, turning 'unreachable'
+    into a reachable non-engine and this assert into a flake."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", 0))
+        dead = f"http://127.0.0.1:{held.getsockname()[1]}"
+        async with Client(build(dead)) as client:
+            message = await refusal(client, "list_projects")
 
     assert "no engine at" in message
     assert "localcut-engine serve" in message
@@ -200,6 +215,17 @@ async def test_a_wrong_token_names_the_fix(engine):
         message = await refusal(client, "list_projects")
 
     assert "rejected the token" in message
+
+
+async def test_a_missing_token_is_not_reported_as_a_rejected_one(engine):
+    """With no token configured, no Authorization header goes out at all.
+    'Rejected the token' would send the operator to debug a value that was
+    never sent — an env var that templated to empty is the ordinary way a
+    host config gets here, and nobody sees the request on a stdio channel."""
+    async with Client(build(engine, token="")) as client:
+        message = await refusal(client, "list_projects")
+
+    assert "none was sent" in message
 
 
 async def test_exporting_before_a_render_names_the_tools_to_run_first(engine):
@@ -234,10 +260,17 @@ async def test_an_edit_names_an_unknown_scene_before_any_llm_runs(engine):
     assert "unknown scene" in message
 
 
-async def test_a_plan_lands_via_apply_edit_without_a_second_llm_round_trip(engine):
+async def test_a_plan_lands_via_apply_edit_with_the_previewed_revision(engine):
+    """apply_edit requires the scope and revision the preview returned; with
+    the real revision the plan lands, exactly once around the LLM."""
+    from localcut_engine.graph.editor import graph_revision
+    from localcut_engine.graph.model import StoryGraph
+
     async with Client(build(engine)) as client:
         project = await call(client, "create_project", {"prompt": "planned"})
         await until_done(client, project["id"])
+        graph = await call(client, "get_graph", {"project_id": project["id"]})
+        revision = graph_revision(StoryGraph.model_validate(graph), "project")
 
         result = await call(
             client,
@@ -245,10 +278,35 @@ async def test_a_plan_lands_via_apply_edit_without_a_second_llm_round_trip(engin
             {
                 "project_id": project["id"],
                 "plan": {"summary": "nothing to change", "edits": []},
+                "scope": "project",
+                "revision": revision,
             },
         )
 
     assert result["summary"] == "nothing to change"
+
+
+async def test_a_stale_revision_refuses_to_land(engine):
+    """The stale-plan refusal is the reason revision is a REQUIRED argument:
+    optional, it silently skipped the check server-side, and a plan
+    previewed before a background re-expansion would land on renumbered
+    scenes the model never saw."""
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "stale"})
+        await until_done(client, project["id"])
+
+        message = await refusal(
+            client,
+            "apply_edit",
+            {
+                "project_id": project["id"],
+                "plan": {"summary": "late", "edits": []},
+                "scope": "project",
+                "revision": "0" * 12,
+            },
+        )
+
+    assert "changed" in message
 
 
 async def test_a_patch_applies_and_undo_reverses_it(engine):
@@ -319,24 +377,78 @@ async def test_an_agent_cannot_fabricate_voice_consent_through_patch(engine):
     assert "consent" in message
 
 
+async def test_an_agent_cannot_set_a_cloud_model_through_patch(engine):
+    """The BYOK line edit_project draws is only a line if patch_project
+    holds it too: a raw set_model (or an add_node carrying a model) reaches
+    the same provider-key spend one tool down. Local models stay allowed —
+    they are the user's own GPU."""
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "billed"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+
+        for op in (
+            {"op": "set_model", "node_id": "s1.clip", "model": "cloud:kling-pro"},
+            {
+                "op": "add_node",
+                "node": {"id": "expensive", "kind": "clip", "model": "cloud:veo-3.1-fast"},
+            },
+        ):
+            message = await refusal(
+                client, "patch_project", {"project_id": project_id, "ops": [op]}
+            )
+            assert "provider key" in message
+
+        result = await call(
+            client,
+            "patch_project",
+            {
+                "project_id": project_id,
+                "ops": [{"op": "set_model", "node_id": "s1.clip", "model": "local:ltx-video"}],
+            },
+        )
+        assert "s1.clip" in result["dirty"]
+        await until_done(client, project_id)
+
+
 # -- the client cannot be steered off its own routes ----------------------------
 
 
 async def test_a_crafted_id_cannot_slide_a_tool_onto_a_different_route(engine):
     """Tool arguments become URL path segments, and tool inputs come from a
-    model. Unchecked, a project_id of "<real id>/graph" turns get_project
-    into a successful request against the GRAPH route - the toolset's
-    deny-list bypassed by string-building, answering with a document the
-    tool never meant to fetch. The percent form is the same attack after one
-    decode: the ASGI server unescapes %2F before the framework routes, so
-    quoting is no defense and both spellings must be refused before any
-    request is sent."""
+    model. Every spelling of path structure must be refused before any
+    request goes out: "<id>/graph" would hit the GRAPH route directly;
+    "%2Fgraph" arrives there after the ASGI server's percent-decode; "." and
+    ".." are removed by httpx itself when merging URLs, landing on the LIST
+    route and the server root; DEL dies inside httpx with a traceback
+    instead of a sentence. The allow-list (the engine's own id pattern)
+    refuses the whole class, not an enumeration of yesterday's tricks."""
     async with Client(build(engine)) as client:
         project = await call(client, "create_project", {"prompt": "smuggle"})
 
-        for smuggled in (project["id"] + "/graph", project["id"] + "%2Fgraph"):
+        for smuggled in (
+            project["id"] + "/graph",
+            project["id"] + "%2Fgraph",
+            ".",
+            "..",
+            "\x7f",
+        ):
             message = await refusal(client, "get_project", {"project_id": smuggled})
-            assert "not a valid id" in message
+            assert "not a project id" in message
+
+
+async def test_an_empty_id_is_refused_not_broadened(engine):
+    """/jobs treats an empty project_id as NO filter, so before validation
+    an empty id fabricated a status document out of every other project's
+    jobs — a plausible-looking answer about nothing. It must be a refusal,
+    and the same refusal whether or not unrelated work happens to be
+    queued."""
+    async with Client(build(engine)) as client:
+        await call(client, "create_project", {"prompt": "somebody else's render"})
+
+        message = await refusal(client, "render_status", {"project_id": ""})
+
+    assert "not a project id" in message
 
 
 async def test_export_refuses_to_replace_an_existing_file_unless_told(engine, tmp_path):
@@ -350,7 +462,7 @@ async def test_export_refuses_to_replace_an_existing_file_unless_told(engine, tm
         project = await call(client, "create_project", {"prompt": "careful"})
         project_id = project["id"]
         started = await call(client, "start_render", {"project_id": project_id})
-        await until_done(client, project_id, ignore=started["settled_before"])
+        await until_done(client, project_id, ignore=started["earlier_failures"])
 
         message = await refusal(
             client, "export_video", {"project_id": project_id, "out_path": str(target)}
@@ -375,7 +487,7 @@ def test_failures_an_agent_said_to_ignore_are_not_this_renders():
     """/jobs is the project's whole history, so without the ignore list one
     clip that failed weeks ago would be reported as a failure of every render
     since — the same trap wait_for_render's not_mine exists for, carried over
-    a stateless protocol by start_render handing out the snapshot."""
+    a stateless protocol by start_render handing out earlier_failures."""
     jobs = [
         {"id": "old", "status": "failed", "spec": {"node_id": "s3.clip"}, "error": "oom"},
         {"id": "mine", "status": "failed", "spec": {"node_id": "s1.clip"}, "error": "boom"},
@@ -385,19 +497,36 @@ def test_failures_an_agent_said_to_ignore_are_not_this_renders():
 
     assert [row["node_id"] for row in payload["failed"]] == ["s1.clip"]
     assert payload["done"] is True
-    assert payload["counts"] == {"failed": 2}
+    # Named for its population: every job ever, NOT this render — so the
+    # filtered `failed` beside it is a different answer, not a contradiction.
+    assert payload["history_counts"] == {"failed": 2}
     assert payload["export_ready"] is False
 
 
-def test_outstanding_work_defers_the_export_answer():
+def test_outstanding_rows_carry_the_stall_signal():
+    """status+progress, not bare node ids: progress that stops moving across
+    polls is the only way an agent can tell a wedged render from a slow one —
+    the CLI's bounded --timeout, translated to a stateless poll."""
     payload = mcp_server.render_status_payload(
-        [{"id": "j1", "status": "queued", "spec": {"node_id": "s1.clip"}}],
-        export_hash="abc123",
+        [{"id": "j1", "status": "rendering", "progress": 0.4, "spec": {"node_id": "s1.clip"}}],
+        export_hash=None,
         ignore_job_ids=[],
     )
 
     assert payload["done"] is False
-    assert payload["outstanding"] == ["s1.clip"]
+    assert payload["outstanding"] == [
+        {"node_id": "s1.clip", "status": "rendering", "progress": 0.4}
+    ]
+
+
+def test_the_export_answer_belongs_to_the_caller():
+    """The payload trusts export_hash as given — the caller owns both the
+    mid-render skip (a board build is not free) and therefore the nulling.
+    One owner, so the two can never disagree."""
+    payload = mcp_server.render_status_payload([], export_hash="c" * 64, ignore_job_ids=[])
+
+    assert payload["export_ready"] is True
+    assert payload["export_hash"] == "c" * 64
 
 
 # -- the toolset stops where operator decisions begin --------------------------
@@ -417,6 +546,7 @@ async def test_the_toolset_is_the_agent_surface_not_the_operator_one(engine):
         "create_project",
         "get_project",
         "get_graph",
+        "approve",
         "start_render",
         "render_status",
         "edit_project",
@@ -437,12 +567,15 @@ async def test_edit_project_cannot_choose_a_cloud_model(engine):
     """/edit takes a `model` field so the DESKTOP can offer cloud editing as
     a per-request opt-in. The MCP surface deliberately does not forward it: an
     agent choosing to spend the user's BYOK key is exactly the "silently
-    spend" the route's own guard exists to prevent."""
+    spend" the route's own guard exists to prevent. And apply_edit's scope
+    and revision are REQUIRED: optional, the stale-plan check was silently
+    skipped and a scene-scoped preview could re-validate at project scope."""
     async with Client(build(engine)) as client:
         schemas = {tool.name: tool.input_schema for tool in (await client.list_tools()).tools}
 
     assert "model" not in schemas["edit_project"]["properties"]
     assert schemas["edit_project"]["properties"]["dry_run"]["default"] is True
+    assert {"project_id", "plan", "scope", "revision"} <= set(schemas["apply_edit"]["required"])
 
 
 # -- the `mcp` subcommand's wiring ---------------------------------------------
@@ -464,7 +597,8 @@ def test_mcp_serves_stdio_against_the_resolved_engine(monkeypatch):
     automation commands use, hands them to build_server, and runs the stdio
     transport agent hosts spawn. Patched on the module because cli imports it
     inside the command - the import happens per call and picks this up."""
-    from localcut_engine import cli, mcp_server as mcp_module
+    from localcut_engine import cli
+    from localcut_engine import mcp_server as mcp_module
 
     seen: dict = {}
 
