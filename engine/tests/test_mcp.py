@@ -465,54 +465,162 @@ async def test_an_empty_id_is_refused_not_broadened(engine):
     assert "not a project id" in message
 
 
+def _as_the_app(engine_url: str):
+    """A raw HTTP client with no cloud-spend header - i.e. the desktop app,
+    where choosing a cloud model is the user's own decision to make."""
+    import httpx
+
+    return httpx.Client(base_url=engine_url, headers={"Authorization": f"Bearer {TOKEN}"})
+
+
+def _record_a_cloud_take(api, project_id: str, node_id: str) -> str:
+    """Put `node_id` on a cloud model and regenerate, which parks the prior
+    identity in takes.json - the way a cloud take really comes to exist."""
+    api.post(
+        f"/projects/{project_id}/patch",
+        json={"ops": [{"op": "set_model", "node_id": node_id, "model": "cloud:kling-2.5"}]},
+    ).raise_for_status()
+    api.post(f"/projects/{project_id}/nodes/{node_id}/regenerate", json={}).raise_for_status()
+    # Back to local: the realistic end state, and the one that matters -
+    # the cloud model now lives only in the take record, where restoring it
+    # is the spend an agent must not be able to reach.
+    api.post(
+        f"/projects/{project_id}/patch",
+        json={"ops": [{"op": "set_model", "node_id": node_id, "model": "local:ltx-video"}]},
+    ).raise_for_status()
+    board = api.get(f"/projects/{project_id}").raise_for_status().json()["board"]
+    stack, found = [board], []
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            for take in item.get("takes") or []:
+                if (take.get("model") or "").startswith("cloud:"):
+                    found.append(take["output_hash"])
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    assert found, f"no cloud take was recorded on {node_id}"
+    return found[0]
+
+
 async def test_a_take_rendered_on_a_cloud_model_cannot_be_restored(engine, tmp_path):
     """select_take names only an output hash - the engine substitutes the
     recorded params, seed AND model - so a take rendered on a cloud model
     puts that model back on the node and re-renders it. That is the BYOK
     spend this surface refuses, reached without an agent ever naming a
-    model, which is why the refusal cannot be a scan of the ops alone.
-
-    The cloud take is recorded the way it really arises: over the HTTP API,
-    as the app does when the user picks a cloud model themselves."""
-    import httpx
-
+    model, which is why scanning the ops cannot be the whole answer."""
     async with Client(build(engine, export_dir=tmp_path)) as client:
         project = await call(client, "create_project", {"prompt": "a pricey take"})
         project_id = project["id"]
         await until_done(client, project_id)
-
-        api = httpx.Client(base_url=engine, headers={"Authorization": f"Bearer {TOKEN}"})
-        with api:
-            # The app's own path: set a cloud model, then regenerate, which
-            # parks the previous identity in takes.json as a take.
-            api.post(
-                f"/projects/{project_id}/patch",
-                json={
-                    "ops": [{"op": "set_model", "node_id": "s1.clip", "model": "cloud:kling-2.5"}]
-                },
-            ).raise_for_status()
-            api.post(f"/projects/{project_id}/nodes/s1.clip/regenerate", json={}).raise_for_status()
+        with _as_the_app(engine) as api:
+            billed = _record_a_cloud_take(api, project_id, "s1.clip")
         await until_done(client, project_id)
-
-        board = await call(client, "get_project", {"project_id": project_id})
-        takes = [
-            take
-            for scene in board["board"]["scenes"]
-            for take in ((scene.get("clip") or {}).get("takes") or [])
-        ]
-        billed = [t["output_hash"] for t in takes if (t.get("model") or "").startswith("cloud:")]
-        assert billed, f"no cloud take was recorded to test against: {takes}"
 
         message = await refusal(
             client,
             "patch_project",
             {
                 "project_id": project_id,
-                "ops": [{"op": "select_take", "node_id": "s1.clip", "take": billed[0]}],
+                "ops": [{"op": "select_take", "node_id": "s1.clip", "take": billed}],
             },
         )
 
-    assert "provider key" in message
+    assert "provider keys" in message
+
+
+async def test_hiding_a_scene_from_the_board_does_not_unlock_a_cloud_take(engine, tmp_path):
+    """Why the refusal is the ENGINE's and not a read of the board.
+
+    A scene card exists only for scene ids derived from `.clip` nodes, so
+    removing s1.clip - an ordinary, permitted op - takes that scene's takes
+    off the board while s1.clip2 stays in the graph and stays selectable.
+    Any client-side check reading the board sees nothing left to refuse.
+    The queue does not care what the board shows."""
+    async with Client(build(engine, export_dir=tmp_path)) as client:
+        project = await call(client, "create_project", {"prompt": "a split scene"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+        with _as_the_app(engine) as api:
+            billed = _record_a_cloud_take(api, project_id, "s1.clip2")
+        await until_done(client, project_id)
+
+        await call(
+            client,
+            "patch_project",
+            {"project_id": project_id, "ops": [{"op": "remove_node", "node_id": "s1.clip"}]},
+        )
+        await until_done(client, project_id)
+
+        message = await refusal(
+            client,
+            "patch_project",
+            {
+                "project_id": project_id,
+                "ops": [{"op": "select_take", "node_id": "s1.clip2", "take": billed}],
+            },
+        )
+
+    assert "provider keys" in message
+
+
+async def test_undo_cannot_restore_a_snapshot_that_spends(engine, tmp_path):
+    """undo restores a whole prior graph - model fields included - and then
+    re-enqueues the dirty cone, so a cloud model the user backed out of is
+    one documented tool call away from rendering again. No gate on any
+    single tool could have seen this; the queue's can."""
+    async with Client(build(engine, export_dir=tmp_path)) as client:
+        project = await call(client, "create_project", {"prompt": "a change of mind"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+
+        with _as_the_app(engine) as api:
+            # The user picks cloud, then thinks better of it - two ordinary
+            # app actions, leaving the cloud model in the undo history.
+            for model in ("cloud:kling-2.5", "local:ltx-video"):
+                api.post(
+                    f"/projects/{project_id}/patch",
+                    json={"ops": [{"op": "set_model", "node_id": "s1.clip", "model": model}]},
+                ).raise_for_status()
+        await until_done(client, project_id)
+
+        message = await refusal(client, "undo", {"project_id": project_id})
+
+    assert "provider keys" in message
+
+
+async def test_the_app_itself_is_not_gated(engine, tmp_path):
+    """The refusal belongs to callers that declare they may not spend, not
+    to the engine at large: the desktop app - where the user makes the
+    decision - must still be able to put a node on a cloud model."""
+    async with Client(build(engine, export_dir=tmp_path)) as client:
+        project = await call(client, "create_project", {"prompt": "the user's own call"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+
+    with _as_the_app(engine) as api:
+        response = api.post(
+            f"/projects/{project_id}/patch",
+            json={"ops": [{"op": "set_model", "node_id": "s1.clip", "model": "cloud:kling-2.5"}]},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "s1.clip" in response.json()["dirty"]
+
+
+async def test_a_render_can_be_stopped(engine, tmp_path):
+    """ "Stop it" is an ordinary request, and a stalled render is otherwise
+    something an agent can only watch. Cancelling only reduces work."""
+    async with Client(build(engine, export_dir=tmp_path)) as client:
+        project = await call(client, "create_project", {"prompt": "second thoughts"})
+        project_id = project["id"]
+
+        result = await call(client, "cancel_render", {"project_id": project_id})
+        assert isinstance(result["cancelled"], int)
+
+        status = await until_done(client, project_id)
+
+    assert status["done"] is True
 
 
 async def test_export_cannot_write_outside_its_export_directory(engine, tmp_path):

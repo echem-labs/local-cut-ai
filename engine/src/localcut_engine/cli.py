@@ -333,9 +333,10 @@ def _mcp_command(args: argparse.Namespace) -> int:
         )
     except EngineError as exc:
         # Only what can never work fails here (--cert against http://, a
-        # missing PEM). An engine that is merely down is not startup's
-        # business: each tool call reports it as a sentence the agent reads.
-        return fail(str(exc))
+        # missing PEM), so this is exit 1 in practice - but pass the flag
+        # through rather than relying on that, so the 0/1/2 contract stays
+        # true by construction if build_server ever reaches the network.
+        return fail(str(exc), unreachable=exc.unreachable)
     try:
         server.run(transport="stdio")
     except KeyboardInterrupt:
