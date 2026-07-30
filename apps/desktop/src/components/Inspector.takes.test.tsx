@@ -9,9 +9,15 @@ import type { Board, NodeState, TakeInfo } from "../api/types";
 import { Inspector } from "./Inspector";
 import { useApp } from "../store";
 
-const take = (hash: string, current: boolean, available = true): TakeInfo => ({
+const take = (
+  hash: string,
+  current: boolean,
+  available = true,
+  model: string | null = null,
+): TakeInfo => ({
   output_hash: hash,
   seed: 1,
+  model,
   at: current ? null : 1,
   available,
   current,
@@ -73,5 +79,25 @@ describe("Inspector takes", () => {
   it("shows nothing until a node has an alternate to offer", () => {
     mount(undefined);
     expect(screen.queryByRole("group", { name: /takes/i })).toBeNull();
+  });
+
+  it("says a cloud take bills before it is clicked", () => {
+    // Selecting restores the take's whole identity, model included, so a
+    // cloud take re-renders on the user's own key. The app is the surface
+    // where that choice is allowed — but it must not be a surprise.
+    mount([
+      take("a".repeat(64), false, true, "cloud:kling-2.5"),
+      take("b".repeat(64), true, true, null),
+    ]);
+    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    expect(chip.title).toMatch(/cloud:kling-2\.5/);
+    expect(chip.title).toMatch(/bills again/i);
+    expect(chip.className).toContain("billed");
+  });
+
+  it("does not call a local take billed", () => {
+    mount([take("a".repeat(64), false, true, "local:ltx"), take("b".repeat(64), true)]);
+    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    expect(chip.className).not.toContain("billed");
   });
 });

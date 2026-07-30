@@ -4865,3 +4865,9 @@ button.link:hover {
   gap: 12px;
   padding: 5px 0;
 }
+
+/* A take that would re-render on a cloud model. Not a status colour (those
+   are reserved): the glyph and the tooltip carry the meaning. */
+.take-row .chip.billed {
+  border-style: dashed;
+}
