@@ -13,16 +13,26 @@ do. A natural-language edit compiles server-side into ordinary /patch ops,
 so the cycle check, the voice-consent gate and the re-plan apply to an agent
 exactly as they do to the canvas and the inspector.
 
+Exports are the one thing that leaves that HTTP boundary: export_video
+writes a file on the machine running THIS process, and `_export_destination`
+is where that is bounded to a single directory. An `out_path` is a
+model-authored string, so unconfined it is an arbitrary file write.
+
 What is deliberately NOT reachable here, and must stay that way:
   - enabling ComfyUI node packs: that acknowledges third-party code
     execution (doc 07 risk 9), which is an operator's decision to make, not
     a model's;
-  - provider keys and cloud-model selection: an agent choosing to spend the
-    user's BYOK key is exactly the "silently spend" /edit's per-request
-    opt-in exists to prevent. That line is held in TWO places — the cloud
-    `model` field /edit accepts is not forwarded by edit_project, and raw
-    patch ops naming a `cloud:*` model are refused by patch_project — since
-    a gate on one tool is no gate at all if the tool below it opens it;
+  - spending the user's BYOK provider keys. Note what this does and does
+    not promise: an agent cannot CHOOSE cloud, but it can still cause a
+    node the user ALREADY put on a cloud model to re-render — that is the
+    user's own standing decision, and `final=true` likewise uses whatever
+    finalize model the engine is configured with. The enforcement is
+    server-side: every request carries NO_CLOUD_SPEND, and the engine
+    refuses to queue a billable job for such a caller, at the queue rather
+    than at any route. Three client-side gates leaked before that (a
+    set_model op, then select_take restoring a recorded cloud identity,
+    then undo restoring a snapshot), which is why the rule now names the
+    outcome instead of the routes;
   - model downloads/deletes and project deletion: operator surfaces, served
     by the app and the CLI.
 (test_mcp.py holds the toolset to this.)
@@ -36,7 +46,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from mcp.server import MCPServer
@@ -73,6 +83,15 @@ _EDIT_TIMEOUT = httpx.Timeout(600.0, connect=30.0)
 # safe to write.
 DEFAULT_EXPORT_DIR = Path.home() / "LocalCut"
 
+# Sent on every request this server makes. The engine refuses to queue a job
+# that would render on a cloud model for a caller carrying it, at the queue
+# itself - so the guarantee covers routes this module does not know about,
+# which is what three rounds of client-side gating failed to do (set_model,
+# then select_take restoring a recorded cloud identity, then undo restoring
+# a whole snapshot). What survives on this side is the cheap op scan below,
+# which keeps a cloud model from being written onto the graph at all.
+NO_CLOUD_SPEND = {"X-LocalCut-Cloud-Spend": "deny"}
+
 _INSTRUCTIONS = """LocalCut turns a prompt or a script into a finished video \
 (clips, narration, music, captions) on the user's own GPU.
 
@@ -81,9 +100,15 @@ Typical flow: create_project -> get_project (the scene board) -> start_render \
 ignore_job_ids, or failures from past renders are blamed on this one) -> \
 export_video. Renders take real GPU time - minutes per clip on consumer \
 hardware - so poll between other work. Compare outstanding[].progress across \
-polls to spot a stalled render. done only means nothing is queued: a \
-never-rendered or checkpoint-gated project is also "done", so read \
-export_ready before promising a file.
+polls to spot a stalled render; cancel_render stops one. done only means \
+nothing is queued: a never-rendered or checkpoint-gated project is also \
+"done", so read export_ready before promising a file. export_video writes \
+only inside the export directory engine_info reports.
+
+If a tool says it cannot reach the engine, the fix is in this MCP server's \
+own configuration (the command and environment your host launches it with, \
+and whether `localcut-engine serve` is running) - the message names CLI \
+flags, which are not something you can pass.
 
 mode="beginner" projects pause at the script and storyboard checkpoints for \
 the user's review (get_project shows what to review); release each with \
@@ -92,8 +117,9 @@ approve.
 To change a project, prefer edit_project (natural language). It previews by \
 default: show the user the returned plan, then land it with apply_edit, \
 passing plan, scope and revision exactly as edit_project returned them. \
-patch_project takes raw graph ops for precise changes; get_graph shows the \
-node ids and params they target. undo/redo revert applied edits."""
+Applying re-renders the scenes it dirtied, so poll render_status afterwards \
+too. patch_project takes raw graph ops for precise changes; get_graph shows \
+the node ids and params they target. undo/redo revert applied edits."""
 
 
 def _project_id(value: str) -> str:
@@ -114,6 +140,17 @@ def _project_id(value: str) -> str:
 # module has to stay ASCII (test_cli.py::test_every_string_the_cli_can_print
 # _is_ascii covers it, because these sentences reach a console).
 _BOM = chr(0xFEFF)
+
+
+def _job_id(value: Any) -> str:
+    """A job id from the engine's own /jobs answer, on its way back into a
+    request path. Engine-derived rather than model-authored, but it is
+    interpolated into a URL all the same, so it gets the same shape check
+    the ids an agent supplies get."""
+    text = str(value)
+    if not text or not text.isalnum():
+        raise EngineError(f"not a job id: {value!r}")
+    return text
 
 
 def _is_cloud_model(value: Any) -> bool:
@@ -154,30 +191,6 @@ def _refuse_cloud_models(ops: list[dict[str, Any]]) -> None:
                 )
 
 
-def _cloud_take_hashes(board: Any) -> set[str]:
-    """Output hashes on the board whose recorded take used a cloud model.
-
-    Walks the board rather than reading a fixed path into it: take rows hang
-    off scene cards and aux nodes alike, and an output hash is
-    content-addressed, so the hash alone is the answer to "would selecting
-    this bill the user".
-    """
-    found: set[str] = set()
-    stack = [board]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, dict):
-            takes = item.get("takes")
-            if isinstance(takes, list):
-                for take in takes:
-                    if isinstance(take, dict) and _is_cloud_model(take.get("model")):
-                        found.add(str(take.get("output_hash")))
-            stack.extend(item.values())
-        elif isinstance(item, list):
-            stack.extend(item)
-    return found
-
-
 def _export_destination(out_path: str, root: Path, *, overwrite: bool) -> Path:
     """Where export_video is allowed to write, or a refusal.
 
@@ -199,8 +212,20 @@ def _export_destination(out_path: str, root: Path, *, overwrite: bool) -> Path:
     root = root.resolve()
     # `root / candidate` IS candidate when candidate is absolute, so one
     # expression covers both spellings and the check below judges both.
-    destination = (root / Path(out_path).expanduser()).resolve()
-    if destination != root and root not in destination.parents:
+    try:
+        destination = (root / Path(out_path).expanduser()).resolve()
+    except (RuntimeError, ValueError) as exc:
+        # An unknown ~user raises RuntimeError and an embedded NUL raises
+        # ValueError - neither is an OSError, so without this the agent gets
+        # a stack-flavoured message where every other refusal is a sentence.
+        raise EngineError(f"not a usable path: {out_path!r} ({exc})") from exc
+    if destination == root:
+        # An export names a FILE. Allowed through, this reaches the download
+        # with destination.parent one level ABOVE the root, and the scratch
+        # file - a whole video - is streamed outside the boundary this
+        # function exists to draw before the rename fails on a directory.
+        raise EngineError(f"{root} is the export directory itself - name a file inside it")
+    if root not in destination.parents:
         raise EngineError(
             f"{destination} is outside the export directory {root} - pass a path inside it, "
             "or start the server with --export-dir to allow somewhere else"
@@ -220,18 +245,19 @@ def render_status_payload(
     """The render answer an agent polls, from one /jobs snapshot.
 
     `ignore_job_ids` is start_render's earlier_failures, carried by the
-    agent because MCP calls share no state: /jobs is the project's whole
-    history — nothing deletes rows — so without it one clip that failed
-    weeks ago is reported as a failure of every render since.
+    agent because MCP calls share no state: /jobs still lists failures from
+    every earlier render (nothing prunes rows; the route returns the newest
+    200), so without it one clip that failed weeks ago is reported as a
+    failure of every render since.
 
     A cut is only ready when nothing is outstanding, and that conjunction
     lives HERE rather than in the caller's board-fetch skip: the skip is a
     cost decision (a board build scans the project directory) and would one
     day be relaxed, whereas reporting a stale cut as ready mid-render is an
     agent promising the user a file that is the PREVIOUS render.
-    history_counts is named for its population — every job the project ever
-    ran, not this render — so it can never read as contradicting the
-    filtered `failed` list beside it.
+    history_counts is named for its population — every job the engine still
+    lists for this project, not this render — so it can never read as
+    contradicting the filtered `failed` list beside it.
     """
     outstanding = automation.outstanding_jobs(jobs)
     ready = not outstanding and export_hash is not None
@@ -283,8 +309,12 @@ def build_server(
     def connect(**kwargs: Any) -> EngineClient:
         """The one construction expression for every client this server
         opens — including the startup probe below, so a construction detail
-        added here is validated at startup and used by every tool."""
-        return EngineClient(url, token, cert=cert, **kwargs)
+        added here is validated at startup and used by every tool.
+
+        The cloud-spend header is why this is one expression: it is a
+        capability this whole surface gives up, and a per-call opt-in is
+        exactly what leaked three times."""
+        return EngineClient(url, token, cert=cert, headers=NO_CLOUD_SPEND, **kwargs)
 
     # Fail at startup on what can never work (a cert pin against http://, a
     # missing PEM) rather than letting every later tool call repeat it.
@@ -292,11 +322,19 @@ def build_server(
 
     @server.tool()
     def engine_info() -> dict[str, Any]:
-        """Engine and API version, hardware profile, backend chain, and which
-        models this machine can run. Call once to calibrate expectations
+        """Engine and API version, hardware profile, backend chain, which
+        models this machine can run, and export_dir - the only directory
+        export_video may write to. Call once to calibrate expectations
         (render speed, quality tier) before promising results."""
         with connect() as client:
-            return {**(client.get("/health") or {}), **(client.get("/system") or {})}
+            return {
+                # Named here because nothing else can tell the agent where
+                # exports may go: without it the only way to learn the root
+                # is to trigger a refusal.
+                "export_dir": str(export_root),
+                **(client.get("/health") or {}),
+                **(client.get("/system") or {}),
+            }
 
     @server.tool()
     def list_projects() -> dict[str, Any]:
@@ -309,7 +347,10 @@ def build_server(
         prompt: str,
         aspect: str = "9:16",
         duration_s: int = 60,
-        mode: str = "prompt",
+        # Literal, not str: the allowed values reach the tool's JSON Schema,
+        # which is what an agent actually reads - a docstring sentence is
+        # advice, a schema is a constraint.
+        mode: Literal["prompt", "beginner"] = "prompt",
         style_preset: str | None = None,
     ) -> dict[str, Any]:
         """Create a project from a prompt and return it (including its id).
@@ -347,7 +388,7 @@ def build_server(
             return client.get(f"/projects/{project_id}/graph")
 
     @server.tool()
-    def approve(project_id: str, checkpoint: str) -> dict[str, Any]:
+    def approve(project_id: str, checkpoint: Literal["script", "storyboard"]) -> dict[str, Any]:
         """Release a beginner-mode checkpoint after the user has reviewed it:
         "script" for the screenplay, "storyboard" for the keyframes. Returns
         how many jobs the release enqueued. Without this a beginner project
@@ -395,9 +436,9 @@ def build_server(
         outstanding rows carry status and progress (0..1); progress frozen
         across polls means a stalled render worth telling the user about.
         failed excludes ignore_job_ids - pass start_render's
-        earlier_failures; omitted, it lists every failure in the project's
-        history. history_counts likewise counts ALL jobs ever, not this
-        render."""
+        earlier_failures; omitted, it lists every failure still on record
+        for the project. history_counts likewise counts every job the engine
+        still lists (its newest 200), not just this render."""
         project_id = _project_id(project_id)
         with connect() as client:
             jobs = client.get("/jobs", params={"project_id": project_id}) or []
@@ -409,6 +450,27 @@ def build_server(
         return render_status_payload(
             jobs, export_hash=artifact, ignore_job_ids=ignore_job_ids or []
         )
+
+    @server.tool()
+    def cancel_render(project_id: str) -> dict[str, Any]:
+        """Stop a render: cancels every job still queued or rendering and
+        returns how many were cancelled. "Stop it" is an ordinary request,
+        and a render that has stalled (render_status progress frozen) is
+        otherwise something an agent can only watch. Cancelling only ever
+        reduces work - finished artifacts are content-addressed and kept, so
+        a later render reuses them."""
+        project_id = _project_id(project_id)
+        cancelled = 0
+        with connect() as client:
+            for job in automation.active_jobs(client, project_id):
+                try:
+                    client.post(f"/jobs/{_job_id(job.get('id'))}/cancel")
+                    cancelled += 1
+                except EngineError:
+                    # It finished on its own between the list and the
+                    # cancel. That is the outcome asked for, not a failure.
+                    continue
+        return {"cancelled": cancelled}
 
     @server.tool()
     def edit_project(
@@ -458,27 +520,7 @@ def build_server(
         and so is a select_take that would restore one."""
         project_id = _project_id(project_id)
         _refuse_cloud_models(ops)
-        wanted_takes = [
-            str(op.get("take"))
-            for op in ops
-            if isinstance(op, dict) and op.get("op") == "select_take" and op.get("take")
-        ]
         with connect() as client:
-            if wanted_takes:
-                # A select_take op names only an output hash; the engine
-                # substitutes the params, seed AND MODEL recorded for it, so
-                # a take rendered on a cloud model puts that model back on
-                # the node and the dirty cone re-renders it - the BYOK spend
-                # this surface refuses, reached without ever naming a model.
-                # Only the engine knows which takes those are, hence the ask.
-                board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
-                billed = _cloud_take_hashes(board)
-                for take in wanted_takes:
-                    if take in billed:
-                        raise EngineError(
-                            f"take {take} was rendered on a cloud model - restoring it would "
-                            "spend the user's provider key, which is a decision made in the app"
-                        )
             return client.post(f"/projects/{project_id}/patch", json={"ops": ops})
 
     @server.tool()
@@ -506,7 +548,10 @@ def build_server(
 
     @server.tool()
     def export_video(
-        project_id: str, out_path: str, format: str = "mp4", overwrite: bool = False
+        project_id: str,
+        out_path: str,
+        format: Literal["mp4", "otio", "fcpxml"] = "mp4",
+        overwrite: bool = False,
     ) -> dict[str, Any]:
         """Write the finished cut (mp4) or an NLE handoff (otio, fcpxml) to a
         file. Returns the resolved path and bytes written; mp4 requires a
@@ -529,8 +574,9 @@ def build_server(
                 written = client.download(
                     f"/projects/{project_id}/artifacts/{artifact}", destination
                 )
-            else:
-                raise EngineError(f"unknown format: {format} (use mp4, otio or fcpxml)")
+            # No `else`: the Literal above is what makes these two branches
+            # exhaustive, and the SDK rejects anything else against the
+            # schema before the tool is ever entered.
         return {"path": str(destination), "bytes": written}
 
     return server

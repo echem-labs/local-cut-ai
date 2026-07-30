@@ -20,11 +20,11 @@ Output is designed to be read by two audiences at once: a human sees lines,
 
 from __future__ import annotations
 
+import contextlib
 import json
-import os
+import secrets
 import ssl
 import sys
-import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -80,6 +80,7 @@ class EngineClient:
         *,
         cert: Path | None = None,
         timeout: float | httpx.Timeout = 30.0,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self.token = token
@@ -103,9 +104,15 @@ class EngineClient:
             # desktop does it.
             context.check_hostname = False
             verify = context
+        # `headers` rides every request this client makes, which is the
+        # point: a capability a caller gives up (see the MCP server's
+        # cloud-spend header) must not depend on remembering it per call.
         self._client = httpx.Client(
             base_url=self.url,
-            headers={"Authorization": f"Bearer {self.token}"} if self.token else {},
+            headers={
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
+                **(headers or {}),
+            },
             timeout=timeout,
             verify=verify,
         )
@@ -232,31 +239,46 @@ class EngineClient:
                 # unrelated `report.mp4.part`, and no overwrite check
                 # upstream can see it, because callers only ever get to
                 # approve `destination`.
+                #
+                # Opened "xb" rather than through tempfile.mkstemp: mkstemp
+                # forces 0600, so every exported video arrived unreadable by
+                # the web server, sync agent or second user it was written
+                # for - and exit 0 said it had worked. "x" keeps the umask
+                # the operator set while still refusing to open a file that
+                # already exists. The name is truncated because it costs
+                # NAME_MAX budget the destination needs more than we do.
                 written = 0
-                partial = None
+                partial = destination.with_name(
+                    f".{destination.name[:40]}.{secrets.token_hex(4)}.part"
+                )
+                landed = False
                 try:
-                    handle, temp_name = tempfile.mkstemp(
-                        dir=str(destination.parent),
-                        prefix=f".{destination.name}.",
-                        suffix=".part",
-                    )
-                    partial = Path(temp_name)
-                    with os.fdopen(handle, "wb") as sink:
+                    with partial.open("xb") as sink:
                         for chunk in response.iter_bytes():
                             sink.write(chunk)
                             written += len(chunk)
                     partial.replace(destination)
+                    landed = True
                 except OSError as exc:
-                    # Never leave the scratch file behind: it is invisible to
-                    # the caller, who cannot clean up a name they never saw.
-                    if partial is not None:
-                        partial.unlink(missing_ok=True)
                     # A missing directory or a full disk is something the
                     # operator fixes, not a traceback to decode. Every other
                     # failure this CLI can hit reports a sentence and an exit
                     # status, and `export --out build/cut.mp4` before `build/`
-                    # exists is the ordinary way to reach this one.
-                    raise EngineError(f"could not write {destination}: {exc}") from exc
+                    # exists is the ordinary way to reach this one. Name the
+                    # destination and the reason, never the scratch file -
+                    # the operator never chose that name and cannot act on it.
+                    raise EngineError(
+                        f"could not write {destination}: {exc.strerror or exc}"
+                    ) from exc
+                finally:
+                    # Covers the TRANSPORT failures too, not just OSError: a
+                    # link that drops mid-stream raises httpx.HTTPError past
+                    # the handler above, and a scratch file that is both
+                    # uniquely named and dot-prefixed would otherwise pile up
+                    # invisibly, one per attempt.
+                    if not landed:
+                        with contextlib.suppress(OSError):
+                            partial.unlink(missing_ok=True)
                 return written
         except httpx.HTTPError as exc:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc

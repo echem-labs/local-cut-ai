@@ -12,6 +12,7 @@ import logging
 import shutil
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 
 from .backends.base import BackendRegistry, GenerationError
@@ -65,6 +66,29 @@ SCENE_NODE_STATUSES = (
 
 class ConflictError(RuntimeError):
     """A request lost a race with concurrent state (maps to HTTP 409)."""
+
+
+# Whether the caller of the request in flight may spend the user's BYOK
+# provider keys. A ContextVar rather than a parameter because EVERY enqueue
+# funnels through _enqueue_dirty and nothing else, while the *routes* that
+# reach it are fifteen and growing - a flag threaded through them would be
+# missing from the sixteenth, which is precisely how this rule was broken
+# three times over. asyncio.to_thread copies the context, so a value set by
+# the API layer is visible in the worker thread that runs the service.
+CLOUD_SPEND_ALLOWED: ContextVar[bool] = ContextVar("cloud_spend_allowed", default=True)
+
+
+class CloudSpendRefused(RuntimeError):
+    """A caller that may not spend the user's BYOK keys planned a render
+    that would (maps to HTTP 403).
+
+    The rule is enforced where the money is actually committed - the queue -
+    rather than at the surfaces that lead there. A client-side deny-list of
+    routes cannot hold: set_model was gated, then select_take reached the
+    same spend by restoring a recorded identity, then undo reached it by
+    restoring a whole snapshot. Each fix named a route; this names the
+    outcome.
+    """
 
 
 # Nodes whose regenerate keeps the displaced identity as a selectable take.
@@ -1080,6 +1104,22 @@ class ProjectService:
             }
             cached -= clip_hashes
         plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
+
+        # Before anything is queued or superseded: a caller that may not
+        # spend gets nothing enqueued at all, rather than a partial render
+        # that stops at the first billable node. The test is the exact
+        # prefix BackendRegistry.resolve routes on, so what is refused here
+        # is precisely what would have reached a provider.
+        if not CLOUD_SPEND_ALLOWED.get():
+            billed = sorted(
+                {spec.node_id for spec in plan.jobs if (spec.model or "").startswith("cloud:")}
+            )
+            if billed:
+                raise CloudSpendRefused(
+                    f"{', '.join(billed)} would render on a cloud model, and this caller may "
+                    "not spend the user's provider keys - nothing was queued. Choosing cloud "
+                    "models is a decision made in the app."
+                )
 
         # Supersede stale queued work: a re-plan that changed a node's hash
         # (seed bump, param edit) makes any still-queued job for that node

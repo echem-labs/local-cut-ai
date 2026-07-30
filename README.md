@@ -150,12 +150,16 @@ directory (`--export-dir`, `$LOCALCUT_MCP_EXPORT_DIR`, default `~/LocalCut`):
 `out_path` is a model-authored string, and an unconfined one is an arbitrary
 file write. A host config for a dev checkout:
 
+The engine must already be running (`localcut-engine serve`) — this command
+is a client of it, not a second engine. Use an absolute `--project` path: an
+MCP host launches the server from an arbitrary working directory.
+
 ```json
 {
   "mcpServers": {
     "localcut": {
       "command": "uv",
-      "args": ["run", "--project", "engine", "localcut-engine", "mcp"],
+      "args": ["run", "--project", "/path/to/local-cut-ai/engine", "localcut-engine", "mcp"],
       "env": { "LOCALCUT_TOKEN": "<the token the engine printed>" }
     }
   }
