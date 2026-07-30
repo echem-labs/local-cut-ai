@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
-from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat
+from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat, waveform_peaks
 from ..captions import srt_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
@@ -928,6 +928,18 @@ class FFmpegBackend(ExecutionBackend):
             _, stderr = await process.communicate()
         if process.returncode != 0:
             raise GenerationError(f"ffmpeg failed: {stderr.decode()[-600:]}")
+
+    async def audio_peaks(self, path: Path, bins: int) -> dict | None:
+        """Waveform peaks for an audio lane, or None for undecodable media.
+        Raises GenerationError when the ffmpeg binary itself is missing —
+        the caller must tell those two apart (422 vs 503)."""
+        pcm = await self._decode_pcm(path)
+        if pcm is None or pcm.size == 0:
+            return None
+        return {
+            "duration_s": round(pcm.size / ANALYSIS_RATE, 3),
+            "peaks": waveform_peaks(pcm, bins),
+        }
 
     async def _decode_pcm(self, path: Path):
         """Mono float32 PCM at the analysis rate, or None for undecodable

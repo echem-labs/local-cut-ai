@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
+import shutil
 import threading
+import wave
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -1394,3 +1397,59 @@ async def test_enhance_notes_do_not_outlive_the_render_they_asked_for(client):
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert "feedback" not in graph["nodes"]["script"]["params"]
     assert "base_screenplay" not in graph["nodes"]["script"]["params"]
+
+
+_PEAKS_FFMPEG = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
+
+
+@pytest.mark.skipif(_PEAKS_FFMPEG is None, reason="ffmpeg not installed")
+async def test_artifact_peaks_serves_a_waveform_and_caches_it(tmp_path):
+    """GET .../artifacts/{hash}/peaks: the audio-lane shape, computed
+    engine-side (and cached) instead of every client decoding whole tracks
+    through WebAudio."""
+    config = EngineConfig(
+        data_dir=tmp_path, token="test-token", backend="mock", ffmpeg_bin=_PEAKS_FFMPEG
+    )
+    app = create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+    ):
+        async with app.router.lifespan_context(app):
+            created = await http.post("/projects", json={"prompt": "x"})
+            pid = created.json()["id"]
+            generated = tmp_path / "projects" / f"{pid}.lcut" / "generated"
+            generated.mkdir(parents=True, exist_ok=True)
+
+            voiced = "ab" * 32
+            with wave.open(str(generated / f"{voiced}.wav"), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                frames = bytearray()
+                for i in range(22050):
+                    value = int(20000 * math.sin(2 * math.pi * 220 * i / 22050))
+                    frames += value.to_bytes(2, "little", signed=True)
+                handle.writeframes(bytes(frames))
+
+            response = await http.get(f"/projects/{pid}/artifacts/{voiced}/peaks?bins=64")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["bins"] == 64 and len(body["peaks"]) == 64
+            assert abs(body["duration_s"] - 1.0) < 0.1
+            assert max(body["peaks"]) > 0.3
+            cache_file = tmp_path / "projects" / f"{pid}.lcut" / "cache" / f"peaks-{voiced}-64.json"
+            assert cache_file.exists()
+
+            missing = await http.get(f"/projects/{pid}/artifacts/{'cd' * 32}/peaks")
+            assert missing.status_code == 404
+
+            not_audio = "ef" * 32
+            (generated / f"{not_audio}.txt").write_text("not audio", encoding="utf-8")
+            refused = await http.get(f"/projects/{pid}/artifacts/{not_audio}/peaks")
+            assert refused.status_code == 422
