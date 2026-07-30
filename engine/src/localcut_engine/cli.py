@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         help="serve this engine's projects to MCP agents over stdio "
         "(configure the agent host to run this command)",
     )
-    _add_connection_flags(mcp, include_json=False)
+    _add_connection_flags(mcp)
 
     _add_automation_commands(subcommands)
 
@@ -316,13 +316,12 @@ def _mcp_command(args: argparse.Namespace) -> int:
     running engine, exactly as the automation commands are (see
     mcp_server.py). stdout belongs to the protocol from here on; everything
     human-readable, including logging, goes to stderr."""
-    from .automation import DEFAULT_ENGINE_URL, EngineError, fail
+    from .automation import EngineError, fail
     from .mcp_server import build_server
 
-    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
-    token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
+    url, token, cert = _resolve_connection(args)
     try:
-        server = build_server(url, token, cert=Path(args.cert) if args.cert else None)
+        server = build_server(url, token, cert=cert)
     except EngineError as exc:
         # Only what can never work fails here (--cert against http://, a
         # missing PEM). An engine that is merely down is not startup's
@@ -353,11 +352,12 @@ def _mcp_command(args: argparse.Namespace) -> int:
 # functions it names — see _AUTOMATION_COMMANDS there.
 
 
-def _add_connection_flags(parser: argparse.ArgumentParser, *, include_json: bool = True) -> None:
+def _add_connection_flags(parser: argparse.ArgumentParser) -> None:
     """Where to find the engine. Env defaults so a CI job sets them once.
 
-    `include_json=False` is for `mcp`, whose stdout is the protocol channel:
-    a --json flag there would promise an output mode the command cannot have.
+    Strictly connection facts (`mcp` uses this as-is): --json is an OUTPUT
+    flag and lives in _add_automation_flags — on a command whose stdout is
+    the MCP protocol channel it would promise a mode that cannot exist.
     """
     parser.add_argument(
         "--engine",
@@ -372,20 +372,37 @@ def _add_connection_flags(parser: argparse.ArgumentParser, *, include_json: bool
         default=None,
         help="PEM of a remote engine's self-signed certificate, pinned as the only trusted CA",
     )
-    if include_json:
-        parser.add_argument("--json", action="store_true", help="print the raw JSON result")
+
+
+def _add_automation_flags(parser: argparse.ArgumentParser) -> None:
+    """Connection flags plus the automation commands' output contract."""
+    _add_connection_flags(parser)
+    parser.add_argument("--json", action="store_true", help="print the raw JSON result")
+
+
+def _resolve_connection(args: argparse.Namespace) -> tuple[str, str, Path | None]:
+    """One interpretation of the connection flags for every client command.
+
+    _add_connection_flags declares the contract once; this is the matching
+    single reader, so `mcp` and the automation commands cannot drift on
+    precedence or env names while both documenting "the same flags"."""
+    from .automation import DEFAULT_ENGINE_URL
+
+    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
+    token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
+    return url, token, Path(args.cert) if args.cert else None
 
 
 def _add_automation_commands(subcommands) -> None:
     projects = subcommands.add_parser("projects", help="list projects on the engine")
-    _add_connection_flags(projects)
+    _add_automation_flags(projects)
 
     create = subcommands.add_parser("create", help="create a project from a prompt")
     create.add_argument("prompt")
     create.add_argument("--aspect", default="9:16")
     create.add_argument("--duration", type=int, default=60, dest="duration_s")
     create.add_argument("--mode", default="prompt")
-    _add_connection_flags(create)
+    _add_automation_flags(create)
 
     render = subcommands.add_parser("render", help="render a project and wait for it to finish")
     render.add_argument("project_id")
@@ -400,7 +417,7 @@ def _add_automation_commands(subcommands) -> None:
         help="seconds to wait before giving up (default 3600)",
     )
     render.add_argument("--no-wait", action="store_true", help="enqueue and return without waiting")
-    _add_connection_flags(render)
+    _add_automation_flags(render)
 
     export = subcommands.add_parser("export", help="write a finished cut or an NLE handoff to disk")
     export.add_argument("project_id")
@@ -408,7 +425,7 @@ def _add_automation_commands(subcommands) -> None:
         "--format", default="mp4", choices=("mp4", "otio", "fcpxml"), dest="export_format"
     )
     export.add_argument("--out", required=True, type=Path, help="file to write")
-    _add_connection_flags(export)
+    _add_automation_flags(export)
 
     template = subcommands.add_parser("template", help="export or import a project template")
     template_actions = template.add_subparsers(dest="action", required=True)
@@ -417,13 +434,13 @@ def _add_automation_commands(subcommands) -> None:
     template_export.add_argument("--out", required=True, type=Path)
     template_export.add_argument("--name", default="")
     template_export.add_argument("--description", default="")
-    _add_connection_flags(template_export)
+    _add_automation_flags(template_export)
     template_import = template_actions.add_parser(
         "import", help="create a project from a template file"
     )
     template_import.add_argument("file", type=Path)
     template_import.add_argument("--title", default="")
-    _add_connection_flags(template_import)
+    _add_automation_flags(template_import)
 
     workflow = subcommands.add_parser("workflow", help="manage imported ComfyUI workflows")
     workflow_actions = workflow.add_subparsers(dest="action", required=True)
@@ -435,17 +452,17 @@ def _add_automation_commands(subcommands) -> None:
     workflow_import.add_argument(
         "--check", action="store_true", help="review it without storing anything"
     )
-    _add_connection_flags(workflow_import)
+    _add_automation_flags(workflow_import)
     workflow_list = workflow_actions.add_parser("list", help="list imported workflows")
-    _add_connection_flags(workflow_list)
+    _add_automation_flags(workflow_list)
     workflow_remove = workflow_actions.add_parser("remove", help="delete an imported workflow")
     workflow_remove.add_argument("name")
-    _add_connection_flags(workflow_remove)
+    _add_automation_flags(workflow_remove)
 
     packs = subcommands.add_parser("packs", help="ComfyUI custom-node packs this engine allows")
     pack_actions = packs.add_subparsers(dest="action", required=True)
     packs_list = pack_actions.add_parser("list", help="show the catalog and what is enabled")
-    _add_connection_flags(packs_list)
+    _add_automation_flags(packs_list)
     packs_enable = pack_actions.add_parser("enable", help="allow one pack, at one version")
     packs_enable.add_argument("pack_id")
     packs_enable.add_argument(
@@ -457,19 +474,18 @@ def _add_automation_commands(subcommands) -> None:
         dest="acknowledged",
         help="required: node packs are third-party code that runs inside ComfyUI",
     )
-    _add_connection_flags(packs_enable)
+    _add_automation_flags(packs_enable)
     packs_disable = pack_actions.add_parser("disable", help="revoke a pack")
     packs_disable.add_argument("pack_id")
-    _add_connection_flags(packs_disable)
+    _add_automation_flags(packs_disable)
 
 
 def _automation_command(args: argparse.Namespace) -> int:
-    from .automation import DEFAULT_ENGINE_URL, EXIT_FAILED, EngineClient, EngineError
+    from .automation import EXIT_FAILED, EngineClient, EngineError
 
-    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
-    token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
+    url, token, cert = _resolve_connection(args)
     try:
-        with EngineClient(url, token, cert=Path(args.cert) if args.cert else None) as client:
+        with EngineClient(url, token, cert=cert) as client:
             return _dispatch_automation(args, client)
     except EngineError as exc:
         from .automation import fail
@@ -586,8 +602,7 @@ def _export_command(args: argparse.Namespace, client) -> int:
             f"/projects/{args.project_id}/export/{args.export_format}", args.out
         )
     else:
-        board = (client.get(f"/projects/{args.project_id}") or {}).get("board") or {}
-        artifact = automation.export_hash(board)
+        artifact = automation.finished_cut_hash(client, args.project_id)
         if artifact is None:
             raise automation.EngineError(
                 "this project has no finished cut yet - run `render` first, and check that "

@@ -20,36 +20,18 @@ import time
 from pathlib import Path
 
 import pytest
-import uvicorn
 
-from conftest import free_port
+from conftest import free_port, serve_engine
 
 from localcut_engine import automation, cli
-from localcut_engine.api.app import create_app
-from localcut_engine.config import EngineConfig
 
 TOKEN = "automation-token"
 
 
 @pytest.fixture
 def engine(tmp_path):
-    """A live engine on loopback, with the mock backend and the scheduler
-    actually running (uvicorn drives the lifespan, which is what starts it)."""
-    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
-    server = uvicorn.Server(
-        uvicorn.Config(create_app(config), host="127.0.0.1", port=free_port(), log_level="error")
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 20
-    while not server.started and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert server.started, "the test engine never came up"
-    try:
-        yield f"http://127.0.0.1:{server.config.port}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=20)
+    with serve_engine(tmp_path, TOKEN) as url:
+        yield url
 
 
 def run(engine_url: str, *args: str, token: str = TOKEN) -> int:

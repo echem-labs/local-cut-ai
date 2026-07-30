@@ -1,24 +1,28 @@
 """Serving the engine to MCP agents.
 
 Phase 3's ecosystem follow-on to CLI automation: `localcut-engine mcp` speaks
-Model Context Protocol over stdio to an agent host (Claude, goose, an IDE)
-and the engine's HTTP API on the other side. Like automation.py, this is a
-*client* of a running engine, never a second way into its data directory —
-which is what keeps every doc 02 topology working: the same tools drive the
-engine the desktop spawned, a GPU box over pinned TLS, or a container in CI.
+Model Context Protocol over stdio to an agent host (a chat assistant, goose,
+an IDE) and the engine's HTTP API on the other side. Like automation.py,
+this is a *client* of a running engine, never a second way into its data
+directory — which is what keeps every doc 02 topology working: the same
+tools drive the engine the desktop spawned, a GPU box over pinned TLS, or a
+container in CI.
 
 Being a client also means an agent's mutations arrive where everyone else's
 do. A natural-language edit compiles server-side into ordinary /patch ops,
 so the cycle check, the voice-consent gate and the re-plan apply to an agent
 exactly as they do to the canvas and the inspector.
 
-What is deliberately NOT a tool here, and must stay that way:
+What is deliberately NOT reachable here, and must stay that way:
   - enabling ComfyUI node packs: that acknowledges third-party code
     execution (doc 07 risk 9), which is an operator's decision to make, not
     a model's;
-  - provider keys, and the cloud `model` field /edit accepts: an agent
-    choosing to spend the user's BYOK key is exactly the "silently spend"
-    that field's per-request opt-in exists to prevent;
+  - provider keys and cloud-model selection: an agent choosing to spend the
+    user's BYOK key is exactly the "silently spend" /edit's per-request
+    opt-in exists to prevent. That line is held in TWO places — the cloud
+    `model` field /edit accepts is not forwarded by edit_project, and raw
+    patch ops naming a `cloud:*` model are refused by patch_project — since
+    a gate on one tool is no gate at all if the tool below it opens it;
   - model downloads/deletes and project deletion: operator surfaces, served
     by the app and the CLI.
 (test_mcp.py holds the toolset to this.)
@@ -30,56 +34,93 @@ structured output off in the SDK, leaving agents to re-parse prose.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
+import httpx
 from mcp.server import MCPServer
 
 from . import __version__, automation
 from .automation import DEFAULT_ENGINE_URL, EngineClient, EngineError
+from .project.store import PROJECT_ID_PATTERN
 
-# Characters that would let an id restructure the request path. "%" belongs
-# here as much as "/": the ASGI server decodes percent-escapes before the
-# framework routes, so an id of "x%2Fgraph" ARRIVES at the router as
-# "x/graph" — which is why quoting is not a defense either (a quoted "/"
-# becomes "%2F" on the wire and a real "/" again at the router).
-_SEGMENT_UNSAFE = frozenset("/?#%\\")
-
-
-def _segment(value: str) -> str:
-    """A tool argument about to become one URL path segment, or a refusal.
-
-    Tool inputs come from a model: unquoted, a project_id of "<id>/graph"
-    turns get_project into a successful request against the GRAPH route —
-    the toolset's deny-list bypassed by string-building. No engine id ever
-    contains path structure, so anything that does is refused here with a
-    sentence instead of being sent. (The automation CLI does not need this:
-    its ids come from the operator's own argv.)
-    """
-    if not value or any(ch in _SEGMENT_UNSAFE or ord(ch) < 0x20 for ch in value):
-        raise EngineError(f"not a valid id for a request path: {value!r}")
-    return value
-
+# The engine's own definition of a project id, checked with fullmatch (the
+# repo rule for $-anchored patterns shared with pydantic path params). An
+# allow-list, NOT a character deny-list: tool inputs come from a model, and
+# the deny-list route was beaten twice in one afternoon — httpx removes dot
+# segments when merging URLs (a project_id of "." slid get_project onto the
+# LIST route, ".." onto the server root), and DEL or a lone surrogate died
+# inside httpx instead of being refused. Matching the server's pattern
+# refuses the whole class at once and cannot drift from what the routes
+# accept.
+_PROJECT_ID = re.compile(PROJECT_ID_PATTERN)
 
 # An interactive /edit runs a local LLM round trip that can take minutes on
-# the same GPU a render is using; the default client timeout would cut it
-# off mid-generation and report a transport error for a working engine.
-_EDIT_TIMEOUT_S = 600.0
+# the same GPU a render is using — but only the READ needs that patience.
+# The connect timeout stays short, so an engine that is unreachable at the
+# TCP level reports itself in seconds here exactly like in every other
+# tool. Known limitation, accepted: the SDK runs sync tools in a worker
+# thread that cancellation cannot unwind, so an in-flight edit pins
+# cancellation/shutdown until this read timeout expires; lifting that needs
+# an async EngineClient, a change of its own.
+_EDIT_TIMEOUT = httpx.Timeout(600.0, connect=30.0)
 
 _INSTRUCTIONS = """LocalCut turns a prompt or a script into a finished video \
 (clips, narration, music, captions) on the user's own GPU.
 
 Typical flow: create_project -> get_project (the scene board) -> start_render \
--> poll render_status until done (pass start_render's settled_before as \
-ignore_job_ids, or old failures count against this render) -> export_video.
+-> poll render_status until done (pass start_render's earlier_failures as \
+ignore_job_ids, or failures from past renders are blamed on this one) -> \
+export_video. Renders take real GPU time - minutes per clip on consumer \
+hardware - so poll between other work. Compare outstanding[].progress across \
+polls to spot a stalled render. done only means nothing is queued: a \
+never-rendered or checkpoint-gated project is also "done", so read \
+export_ready before promising a file.
 
-Renders take real GPU time: minutes per clip on consumer hardware. Never wait \
-inside a call; poll render_status between other work.
+mode="beginner" projects pause at the script and storyboard checkpoints for \
+the user's review (get_project shows what to review); release each with \
+approve.
 
 To change a project, prefer edit_project (natural language). It previews by \
-default: read the returned plan, then land it with apply_edit. patch_project \
-takes raw graph ops for precise changes; get_graph shows the node ids and \
-params they target. undo/redo revert applied edits."""
+default: show the user the returned plan, then land it with apply_edit, \
+passing plan, scope and revision exactly as edit_project returned them. \
+patch_project takes raw graph ops for precise changes; get_graph shows the \
+node ids and params they target. undo/redo revert applied edits."""
+
+
+def _project_id(value: str) -> str:
+    """A model-supplied project id, or a refusal with a sentence.
+
+    Every tool validates BEFORE its first request — including ids bound for
+    a query parameter: /jobs treats an empty project_id as "no filter", so
+    an unvalidated "" would fabricate a status document out of other
+    projects' jobs instead of refusing. (The automation CLI does not need
+    this: its ids come from the operator's own argv.)
+    """
+    if not isinstance(value, str) or _PROJECT_ID.fullmatch(value) is None:
+        raise EngineError(f"not a project id: {value!r}")
+    return value
+
+
+def _refuse_cloud_models(ops: list[dict[str, Any]]) -> None:
+    """The BYOK line, held for raw ops.
+
+    edit_project deliberately does not forward /edit's cloud `model` field;
+    a set_model op (or an add_node carrying a model) reaches the same spend
+    one tool down, so the same refusal applies here. Local models pass —
+    they are the user's own GPU.
+    """
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        node = op.get("node") if isinstance(op.get("node"), dict) else {}
+        for model in (op.get("model"), node.get("model")):
+            if isinstance(model, str) and model.startswith("cloud:"):
+                raise EngineError(
+                    f"{model}: choosing a cloud model spends the user's provider key - "
+                    "that is a per-request decision made in the app, not over MCP"
+                )
 
 
 def render_status_payload(
@@ -87,29 +128,42 @@ def render_status_payload(
 ) -> dict[str, Any]:
     """The render answer an agent polls, from one /jobs snapshot.
 
-    `ignore_job_ids` is start_render's settled_before, carried by the agent
-    because MCP calls share no state: /jobs is the project's whole history —
-    nothing deletes rows — so without it one clip that failed weeks ago is
-    reported as a failure of every render since.
+    `ignore_job_ids` is start_render's earlier_failures, carried by the
+    agent because MCP calls share no state: /jobs is the project's whole
+    history — nothing deletes rows — so without it one clip that failed
+    weeks ago is reported as a failure of every render since.
+
+    `export_hash` is trusted as given: the caller owns the decision not to
+    resolve it mid-render (a board build is not free), and one owner means
+    the two never disagree. history_counts is named for its population —
+    every job the project ever ran, not this render — so it can never read
+    as contradicting the filtered `failed` list beside it.
     """
-    outstanding = automation._outstanding(jobs)
-    ignored = set(ignore_job_ids)
-    failed = [
-        {
-            "id": str(job.get("id")),
-            "node_id": (job.get("spec") or {}).get("node_id"),
-            "error": job.get("error") or "failed",
-        }
-        for job in jobs
-        if str(job.get("status")) == "failed" and str(job.get("id")) not in ignored
-    ]
+    outstanding = automation.outstanding_jobs(jobs)
     return {
         "done": not outstanding,
-        "counts": automation.render_summary(jobs),
-        "outstanding": [(job.get("spec") or {}).get("node_id") for job in outstanding],
-        "failed": failed,
-        "export_ready": not outstanding and export_hash is not None,
-        "export_hash": export_hash if not outstanding else None,
+        # status+progress, not bare node ids: progress that stops moving
+        # across polls is the only signal an agent has that a render is
+        # wedged rather than slow — the CLI's --timeout, translated.
+        "outstanding": [
+            {
+                "node_id": (job.get("spec") or {}).get("node_id"),
+                "status": str(job.get("status")),
+                "progress": job.get("progress") or 0.0,
+            }
+            for job in outstanding
+        ],
+        "failed": [
+            {
+                "id": str(job.get("id")),
+                "node_id": (job.get("spec") or {}).get("node_id"),
+                "error": job.get("error") or "failed",
+            }
+            for job in automation.failed_jobs(jobs, not_mine=set(ignore_job_ids))
+        ],
+        "history_counts": automation.render_summary(jobs),
+        "export_ready": export_hash is not None,
+        "export_hash": export_hash,
     }
 
 
@@ -120,14 +174,17 @@ def build_server(
     call: this process sits idle for hours between an agent's requests, and a
     pooled connection to an engine that restarted in the meantime would
     report a running server as unreachable."""
-    # Fail at startup on what can never work (a cert pin against http://, a
-    # missing PEM) rather than letting every later tool call repeat it.
-    EngineClient(url, token, cert=cert).close()
-
     server = MCPServer("localcut", instructions=_INSTRUCTIONS, version=__version__)
 
-    def connect(timeout: float = 30.0) -> EngineClient:
-        return EngineClient(url, token, cert=cert, timeout=timeout)
+    def connect(**kwargs: Any) -> EngineClient:
+        """The one construction expression for every client this server
+        opens — including the startup probe below, so a construction detail
+        added here is validated at startup and used by every tool."""
+        return EngineClient(url, token, cert=cert, **kwargs)
+
+    # Fail at startup on what can never work (a cert pin against http://, a
+    # missing PEM) rather than letting every later tool call repeat it.
+    connect().close()
 
     @server.tool()
     def engine_info() -> dict[str, Any]:
@@ -152,9 +209,10 @@ def build_server(
         style_preset: str | None = None,
     ) -> dict[str, Any]:
         """Create a project from a prompt and return it (including its id).
-        The engine writes a script, expands scenes and starts draft work by
-        itself; follow with render_status. duration_s is a target - the cut's
-        real length follows the narration the script produces."""
+        mode "prompt" (the default) writes the script and starts draft work
+        by itself; mode "beginner" pauses at the script and storyboard
+        checkpoints until approve releases them. duration_s is a target -
+        the cut's real length follows the narration the script produces."""
         body: dict[str, Any] = {
             "prompt": prompt,
             "aspect": aspect,
@@ -170,46 +228,75 @@ def build_server(
     def get_project(project_id: str) -> dict[str, Any]:
         """A project plus its scene board: per-scene status, artifacts,
         narration, and the export slot. This is what to read before and after
-        edits."""
+        edits, and what the user reviews at a beginner-mode checkpoint."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            return client.get(f"/projects/{_segment(project_id)}")
+            return client.get(f"/projects/{project_id}")
 
     @server.tool()
     def get_graph(project_id: str) -> dict[str, Any]:
         """The project's story graph: every node with its id, kind, params,
         pinned state, and the edges between them. Read this before
         patch_project to see what an op would target."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            return client.get(f"/projects/{_segment(project_id)}/graph")
+            return client.get(f"/projects/{project_id}/graph")
+
+    @server.tool()
+    def approve(project_id: str, checkpoint: str) -> dict[str, Any]:
+        """Release a beginner-mode checkpoint after the user has reviewed it:
+        "script" for the screenplay, "storyboard" for the keyframes. Returns
+        how many jobs the release enqueued. Without this a beginner project
+        waits forever - render_status reads done=true with nothing queued
+        and export_ready stays false."""
+        project_id = _project_id(project_id)
+        with connect() as client:
+            return client.post(f"/projects/{project_id}/approve", json={"checkpoint": checkpoint})
 
     @server.tool()
     def start_render(project_id: str, final: bool = False) -> dict[str, Any]:
-        """Enqueue a draft render (or the final-quality pass) and return
-        immediately with the pending job count. Keep settled_before and pass
-        it to render_status as ignore_job_ids, so failures from earlier
-        renders are not blamed on this one. Then poll render_status."""
+        """Enqueue a draft render (or with final=true the final-quality
+        pass). Returns the enqueued job count and earlier_failures: job ids
+        that had already failed BEFORE this render. Keep them and pass them
+        to render_status as ignore_job_ids so an old failure is not blamed
+        on this render, then poll render_status."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            # BEFORE the trigger: taken after, a job of this render that
-            # failed instantly would be classified as somebody else's.
-            settled = automation.settled_jobs(client, project_id)
+            # Snapshot BEFORE the trigger: taken after, a job of this render
+            # that failed instantly would be classified as somebody else's.
+            jobs = client.get("/jobs", params={"project_id": project_id}) or []
+            earlier = automation.failed_jobs(jobs, not_mine=frozenset())
             action = "finalize" if final else "render"
-            client.post(f"/projects/{_segment(project_id)}/{action}")
-            pending = automation.active_jobs(client, project_id)
-        return {"pending": len(pending), "settled_before": sorted(settled)}
+            result = client.post(f"/projects/{project_id}/{action}") or {}
+        return {
+            # The POST's own answer — not a third round trip that would
+            # re-download the whole /jobs history for a count already sent.
+            "enqueued": int(result.get("enqueued") or 0),
+            # Failed ids only: they are all render_status ever consults, and
+            # the agent re-sends this list on every poll — done/cancelled
+            # ids would be unbounded dead weight in its context.
+            "earlier_failures": sorted(str(job.get("id")) for job in earlier),
+        }
 
     @server.tool()
     def render_status(project_id: str, ignore_job_ids: list[str] | None = None) -> dict[str, Any]:
-        """Where the render stands: done, job counts by status, outstanding
-        node ids, failures (minus ignore_job_ids - pass start_render's
-        settled_before), and whether a finished cut is ready to export."""
+        """Where the render stands. done means nothing is queued or running
+        - a never-rendered or checkpoint-gated project is also "done" - so
+        read export_ready (and get_project) before concluding anything.
+        outstanding rows carry status and progress (0..1); progress frozen
+        across polls means a stalled render worth telling the user about.
+        failed excludes ignore_job_ids - pass start_render's
+        earlier_failures; omitted, it lists every failure in the project's
+        history. history_counts likewise counts ALL jobs ever, not this
+        render."""
+        project_id = _project_id(project_id)
         with connect() as client:
             jobs = client.get("/jobs", params={"project_id": project_id}) or []
-            # The board build scans the project directory; only pay for it
-            # when the answer can be "ready" - mid-render it cannot.
             artifact = None
-            if not automation._outstanding(jobs):
-                board = (client.get(f"/projects/{_segment(project_id)}") or {}).get("board") or {}
-                artifact = automation.export_hash(board)
+            if not automation.outstanding_jobs(jobs):
+                # The board build scans the project directory; only pay for
+                # it when the answer can be "ready" — mid-render it cannot.
+                artifact = automation.finished_cut_hash(client, project_id)
         return render_status_payload(
             jobs, export_hash=artifact, ignore_job_ids=ignore_job_ids or []
         )
@@ -220,27 +307,36 @@ def build_server(
     ) -> dict[str, Any]:
         """Edit the project in natural language ("make scene 2 slower and
         mute the music"). Previews by default: the response carries the
-        compiled plan and the revision it was built against - read it, then
-        land it with apply_edit. Set dry_run=false only when the user has
+        compiled plan, the scope, and the revision it was built against -
+        show the user, then land it with apply_edit passing all three back
+        exactly as returned. Set dry_run=false only when the user has
         already seen the change, because applying re-renders dirtied scenes
         on real GPU time. scope narrows the edit to one scene id."""
+        project_id = _project_id(project_id)
         body = {"instruction": instruction, "scope": scope, "dry_run": dry_run}
-        with connect(timeout=_EDIT_TIMEOUT_S) as client:
-            return client.post(f"/projects/{_segment(project_id)}/edit", json=body)
+        with connect(timeout=_EDIT_TIMEOUT) as client:
+            result = client.post(f"/projects/{project_id}/edit", json=body)
+        # Echo the scope: apply_edit needs plan, scope AND revision exactly
+        # as previewed (the plan re-validates differently per scope), and
+        # the engine's response carries only the other two.
+        return {**(result or {}), "scope": scope}
 
     @server.tool()
     def apply_edit(
-        project_id: str,
-        plan: dict[str, Any],
-        scope: str = "project",
-        revision: str | None = None,
+        project_id: str, plan: dict[str, Any], scope: str, revision: str
     ) -> dict[str, Any]:
         """Land a plan a dry-run edit_project returned, without a second LLM
-        round trip. Pass the plan and revision exactly as returned; a stale
-        revision is refused if the graph moved in between."""
+        round trip. plan, scope and revision must be passed exactly as
+        edit_project returned them, and the latter two are required on
+        purpose: the plan re-validates against the scope (a remove_scene
+        refused in a scene-scoped preview would APPLY at project scope), and
+        the revision is the stale-plan refusal - if the graph moved since
+        the preview, the apply is rejected instead of landing on content the
+        model never saw."""
+        project_id = _project_id(project_id)
         body = {"plan": plan, "scope": scope, "revision": revision}
         with connect() as client:
-            return client.post(f"/projects/{_segment(project_id)}/edit/apply", json=body)
+            return client.post(f"/projects/{project_id}/edit/apply", json=body)
 
     @server.tool()
     def patch_project(project_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
@@ -248,29 +344,36 @@ def build_server(
         add_node, remove_node, connect, disconnect, select_take, add_scene)
         and return the dirtied node ids. This is the same validated /patch
         every other client uses: cycles are refused, and voice_ref accepts
-        only a consented voice sample."""
+        only a consented voice sample. Ops naming a cloud:* model are
+        refused here - cloud spend is the user's decision, made in the
+        app."""
+        project_id = _project_id(project_id)
+        _refuse_cloud_models(ops)
         with connect() as client:
-            return client.post(f"/projects/{_segment(project_id)}/patch", json={"ops": ops})
+            return client.post(f"/projects/{project_id}/patch", json={"ops": ops})
 
     @server.tool()
     def undo(project_id: str) -> dict[str, Any]:
         """Revert the most recent graph edit. Re-renders nothing that already
         existed: prior artifacts are content-addressed and still cached."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            return client.post(f"/projects/{_segment(project_id)}/undo")
+            return client.post(f"/projects/{project_id}/undo")
 
     @server.tool()
     def redo(project_id: str) -> dict[str, Any]:
         """Re-apply the edit the last undo reverted."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            return client.post(f"/projects/{_segment(project_id)}/redo")
+            return client.post(f"/projects/{project_id}/redo")
 
     @server.tool()
     def project_history(project_id: str) -> dict[str, Any]:
         """Undo/redo stack depths, what the next undo or redo would change,
         and the save points. Read this before undoing blind."""
+        project_id = _project_id(project_id)
         with connect() as client:
-            return client.get(f"/projects/{_segment(project_id)}/history")
+            return client.get(f"/projects/{project_id}/history")
 
     @server.tool()
     def export_video(
@@ -281,24 +384,22 @@ def build_server(
         mp4 requires a completed render. Refuses to replace an existing file
         unless overwrite=true: a mistyped path must not cost the user a
         file, and unlike the CLI's --out there is no operator watching."""
+        project_id = _project_id(project_id)
         destination = Path(out_path).expanduser().resolve()
         if destination.exists() and not overwrite:
             raise EngineError(f"{destination} already exists - pass overwrite=true to replace it")
         with connect() as client:
             if format in ("otio", "fcpxml"):
-                written = client.download(
-                    f"/projects/{_segment(project_id)}/export/{format}", destination
-                )
+                written = client.download(f"/projects/{project_id}/export/{format}", destination)
             elif format == "mp4":
-                board = (client.get(f"/projects/{_segment(project_id)}") or {}).get("board") or {}
-                artifact = automation.export_hash(board)
+                artifact = automation.finished_cut_hash(client, project_id)
                 if artifact is None:
                     raise EngineError(
                         "this project has no finished cut yet - call start_render, poll "
                         "render_status until it reports export_ready, then export"
                     )
                 written = client.download(
-                    f"/projects/{_segment(project_id)}/artifacts/{_segment(artifact)}", destination
+                    f"/projects/{project_id}/artifacts/{artifact}", destination
                 )
             else:
                 raise EngineError(f"unknown format: {format} (use mp4, otio or fcpxml)")
