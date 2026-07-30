@@ -726,3 +726,62 @@ async def test_trim_out_bounds_a_narrated_scene(tmp_path, media):
     # which is what stops it revealing footage the user cut.
     assert segment["trim_window"] == pytest.approx(1.0, abs=0.01)
     assert segment["trim_in"] == pytest.approx(0.5, abs=0.01)
+
+
+async def test_export_honors_encode_params(tmp_path, media):
+    """fps/resolution/bitrates off the export node's params: the frame
+    shrinks to the requested short side (aspect kept) and the container
+    runs at the requested rate — while garbage values fall back to the
+    defaults instead of failing an export mid-encode."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={"s1": media["clip1"], "s1.audio": media["narr1"]},
+    )
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}), timeline_ctx
+    )
+    export_ctx = ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path})
+
+    def video_stream(path):
+        probe = subprocess.run(
+            [
+                backend.ffprobe_bin,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,width,height,r_frame_rate",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        streams = json.loads(probe.stdout)["streams"]
+        return next(s for s in streams if s["codec_type"] == "video")
+
+    tuned = await backend.execute(
+        make_spec(
+            NodeKind.EXPORT,
+            {"fps": 30, "resolution": 720, "video_kbps": 2000, "audio_kbps": 96},
+            output_hash="e" * 64,
+        ),
+        export_ctx,
+    )
+    stream = video_stream(tuned)
+    assert (stream["width"], stream["height"]) == (720, 1280)
+    assert stream["r_frame_rate"] == "30/1"
+
+    untuned = await backend.execute(
+        make_spec(
+            NodeKind.EXPORT,
+            {"fps": "cinematic", "resolution": [], "video_kbps": None},
+            output_hash="f" * 64,
+        ),
+        export_ctx,
+    )
+    stream = video_stream(untuned)
+    assert (stream["width"], stream["height"]) == (1080, 1920)

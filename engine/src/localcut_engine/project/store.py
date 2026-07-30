@@ -36,6 +36,11 @@ class ProjectTooNew(RuntimeError):
     the loss, so the read is refused instead (maps to HTTP 409)."""
 
 
+class HistoryTooNew(ProjectTooNew):
+    """history.json written by a newer engine. Subclasses ProjectTooNew so
+    the API's existing refuse-when-newer handler answers for it too."""
+
+
 _PROJECT_ID_LEN = 10
 
 # The API's path-param validation is built from this — the id generator and
@@ -128,6 +133,83 @@ class Project(BaseModel):
     # rather than as a dangling reference worth reporting.
     promoted_to: list[str] = []  # on a tool:script session: the videos made
     promoted_from: str | None = None  # on a video: the session it came from
+
+
+HISTORY_VERSION = 1
+TAKES_VERSION = 1
+
+# Whole-graph snapshots, not inverse ops: graphs are small JSON, and because
+# artifacts are content-addressed, restoring a prior graph re-references
+# hashes whose renders are still on disk — an undo is a metadata operation
+# that never re-renders anything that existed before.
+UNDO_LIMIT = 50
+SAVEPOINT_LIMIT = 20
+# Alternate takes kept per node. Old takes stay reachable only while their
+# artifact survives in generated/, so a deep list would mostly be dead ends.
+TAKE_LIMIT = 8
+
+# What a history entry records having changed. A wire contract like
+# SCENE_NODE_STATUSES: the desktop labels undo/redo actions from these ids,
+# and a kind it does not know renders with no label (test_ui_contract).
+SNAPSHOT_KINDS = ("patch", "edit", "regenerate", "restore")
+
+
+class Snapshot(BaseModel):
+    """The graph as it stood BEFORE the mutation this entry describes."""
+
+    kind: str  # one of SNAPSHOT_KINDS
+    at: float
+    summary: str | None = None  # NL-edit summary / restored save point label
+    node_id: str | None = None  # regenerate target
+    graph: dict
+
+
+class SavePoint(BaseModel):
+    id: str
+    label: str
+    at: float
+    graph: dict
+
+
+class TakeRecord(BaseModel):
+    """A node identity (params/seed/model) it held before a regenerate. The
+    artifact under output_hash is already content-addressed in generated/,
+    so selecting this take back is a cache hit, not a re-render."""
+
+    output_hash: str
+    seed: int
+    model: str | None = None
+    params: dict
+    at: float
+
+
+class NodeTakes(BaseModel):
+    """takes.json — prior identities per node id. Kept apart from
+    history.json on purpose: the scene board reads this on every poll, and
+    it must not have to parse fifty graph snapshots to answer."""
+
+    version: int = TAKES_VERSION
+    takes: dict[str, list[TakeRecord]] = {}
+
+    def record(self, node_id: str, take: TakeRecord) -> None:
+        kept = [t for t in self.takes.get(node_id, []) if t.output_hash != take.output_hash]
+        kept.append(take)
+        self.takes[node_id] = kept[-TAKE_LIMIT:]
+
+
+class GraphHistory(BaseModel):
+    version: int = HISTORY_VERSION
+    undo: list[Snapshot] = []
+    redo: list[Snapshot] = []
+    savepoints: list[SavePoint] = []
+    next_savepoint: int = 1
+
+    def push(self, snapshot: Snapshot) -> None:
+        """Record a mutation. Any new edit forks history, so the redo stack
+        — states reachable only by walking back — is cleared."""
+        self.undo.append(snapshot)
+        del self.undo[:-UNDO_LIMIT]
+        self.redo.clear()
 
 
 class ProjectStore:
@@ -334,6 +416,56 @@ class ProjectStore:
         if timeline is not None and timeline.params.get("edl_version") != EDL_VERSION:
             timeline.params["edl_version"] = EDL_VERSION
         return graph
+
+    def _load_sidecar(self, path: Path, model_cls, max_version: int, what: str):
+        """Shared discipline for the history/takes sidecar files.
+
+        Missing file → empty document (projects predate the feature). A file
+        from a newer build is refused like project.json — validating it here
+        would silently drop the fields this build doesn't know and the next
+        save would persist the loss. An unreadable file, though, resets to
+        empty: these are convenience records over state that lives elsewhere,
+        and refusing to load one would take patching down with it.
+        """
+        if not path.exists():
+            return model_cls()
+        try:
+            raw = json.loads(_read_text_retry(path))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("resetting unreadable %s: %s", what, path)
+            return model_cls()
+        version = raw.get("version", 1) if isinstance(raw, dict) else 1
+        if not isinstance(version, int) or version > max_version:
+            raise HistoryTooNew(
+                f"this project's {what} was written by a newer version of LocalCut AI "
+                f"(format v{version}, this engine reads up to v{max_version}) — "
+                "update the engine. It has not been modified."
+            )
+        try:
+            return model_cls.model_validate(raw)
+        except ValidationError:
+            logger.warning("resetting invalid %s: %s", what, path)
+            return model_cls()
+
+    def load_history(self, project_id: str) -> GraphHistory:
+        """The project's undo/redo stacks and save points."""
+        path = self._dir(project_id) / "history.json"
+        return self._load_sidecar(path, GraphHistory, HISTORY_VERSION, "edit history")
+
+    def save_history(self, project_id: str, history: GraphHistory) -> None:
+        history.version = HISTORY_VERSION
+        # Compact on purpose: unlike project.json this file holds dozens of
+        # graph snapshots, and it is rewritten on every recorded mutation.
+        _write_atomic(self._dir(project_id) / "history.json", history.model_dump_json())
+
+    def load_takes(self, project_id: str) -> NodeTakes:
+        """Prior takes per node — the identities a regenerate moved past."""
+        path = self._dir(project_id) / "takes.json"
+        return self._load_sidecar(path, NodeTakes, TAKES_VERSION, "take history")
+
+    def save_takes(self, project_id: str, takes: NodeTakes) -> None:
+        takes.version = TAKES_VERSION
+        _write_atomic(self._dir(project_id) / "takes.json", takes.model_dump_json())
 
     # -- artifact index: generated/ files are named {output_hash}{suffix} --
 

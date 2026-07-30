@@ -23,6 +23,19 @@ _HOP = 512
 _BPM_MIN, _BPM_MAX = 60.0, 180.0
 
 
+def waveform_peaks(samples: np.ndarray, bins: int) -> list[float]:
+    """Per-bin peak of |amplitude| — the shape an audio lane draws. Bins
+    are equal spans of the whole signal; when the signal is shorter than
+    the bin count the tail bins read 0.0 rather than shrinking the lane."""
+    if samples.size == 0:
+        return [0.0] * bins
+    magnitude = np.abs(samples)
+    return [
+        round(float(chunk.max()), 4) if chunk.size else 0.0
+        for chunk in np.array_split(magnitude, bins)
+    ]
+
+
 def onset_strength(samples: np.ndarray, hop: int = _HOP, frame: int = _FRAME) -> np.ndarray:
     """Positive log-energy flux per hop — spikes where hits/notes land."""
     if samples.size < frame:

@@ -12,6 +12,7 @@ import logging
 import shutil
 import threading
 import time
+from contextvars import ContextVar
 from pathlib import Path
 
 from .backends.base import BackendRegistry, GenerationError
@@ -19,15 +20,31 @@ from .events import EventBus
 from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
-from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
-from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch
+from .graph.model import (
+    KEYFRAME_PORT,
+    OPTIONAL_PORTS,
+    SCENE_AUDIO_SUFFIX,
+    Node,
+    NodeKind,
+    StoryGraph,
+    scene_sort_key,
+)
+from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch, check_restorable
 from .graph.template_io import GraphTemplate, build_graph, to_template
-from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
+from .graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
 from .otio import edl_to_otio
-from .project.store import Project, ProjectStore
+from .project.store import (
+    SAVEPOINT_LIMIT,
+    GraphHistory,
+    Project,
+    ProjectStore,
+    SavePoint,
+    Snapshot,
+    TakeRecord,
+)
 from .schema import Screenplay
 
 logger = logging.getLogger(__name__)
@@ -49,6 +66,41 @@ SCENE_NODE_STATUSES = (
 
 class ConflictError(RuntimeError):
     """A request lost a race with concurrent state (maps to HTTP 409)."""
+
+
+# Whether the caller of the request in flight may spend the user's BYOK
+# provider keys. A ContextVar rather than a parameter because EVERY enqueue
+# funnels through _enqueue_dirty and nothing else, while the *routes* that
+# reach it are fifteen and growing - a flag threaded through them would be
+# missing from the sixteenth, which is precisely how this rule was broken
+# three times over. asyncio.to_thread copies the context, so a value set by
+# the API layer is visible in the worker thread that runs the service.
+CLOUD_SPEND_ALLOWED: ContextVar[bool] = ContextVar("cloud_spend_allowed", default=True)
+
+
+class CloudSpendRefused(RuntimeError):
+    """A caller that may not spend the user's BYOK keys planned a render
+    that would (maps to HTTP 403).
+
+    The rule is enforced where the money is actually committed - the queue -
+    rather than at the surfaces that lead there. A client-side deny-list of
+    routes cannot hold: set_model was gated, then select_take reached the
+    same spend by restoring a recorded identity, then undo reached it by
+    restoring a whole snapshot. Each fix named a route; this names the
+    outcome.
+    """
+
+
+# Nodes whose regenerate keeps the displaced identity as a selectable take.
+# Assets are never regenerated; the script rebuilds the whole pipeline, so a
+# screenplay "take" is a different feature from an alternate render.
+TAKE_KINDS = (
+    NodeKind.KEYFRAME,
+    NodeKind.CLIP,
+    NodeKind.NARRATION,
+    NodeKind.MUSIC,
+    NodeKind.THUMBNAIL,
+)
 
 
 class ProjectService:
@@ -303,13 +355,217 @@ class ProjectService:
     def patch(self, project_id: str, ops: list[PatchOp]) -> set[str]:
         with self._lock:
             graph = self.store.load_graph(project_id)
+            before = graph.model_dump(mode="json")
+            ops = self._resolve_select_takes(project_id, graph, ops)
+            ops = self._resolve_add_scenes(graph, ops)
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
+            self._record_history(project_id, before, graph, kind="patch")
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
         return dirty
+
+    def _resolve_select_takes(
+        self, project_id: str, graph: StoryGraph, ops: list[PatchOp]
+    ) -> list[PatchOp]:
+        """Fill each select_take op with the recorded identity its `take`
+        hash names, and park the node's current identity as a take of its
+        own — so switching is always a round trip, never a one-way door."""
+        if not any(op.op == "select_take" for op in ops):
+            return ops
+        takes = self.store.load_takes(project_id)
+        memo = {nid: n.frozen_hash for nid, n in graph.nodes.items() if n.pinned and n.frozen_hash}
+        resolved: list[PatchOp] = []
+        for op in ops:
+            if op.op != "select_take":
+                resolved.append(op)
+                continue
+            node = graph.nodes.get(op.node_id)
+            if node is None:
+                raise KeyError(op.node_id)
+            record = next(
+                (t for t in takes.takes.get(op.node_id, []) if t.output_hash == op.take), None
+            )
+            if record is None:
+                raise ValueError(f"{op.node_id} has no recorded take {op.take}")
+            takes.record(op.node_id, self._current_take(graph, op.node_id, memo))
+            resolved.append(
+                PatchOp(
+                    op="select_take",
+                    node_id=op.node_id,
+                    params=dict(record.params),
+                    seed=record.seed,
+                    model=record.model,
+                )
+            )
+        self.store.save_takes(project_id, takes)
+        return resolved
+
+    def _resolve_add_scenes(self, graph: StoryGraph, ops: list[PatchOp]) -> list[PatchOp]:
+        """Compile each add_scene op into the primitive ops that build a
+        scene subgraph — through apply_patch like every other edit, so the
+        cycle check and the consent gate cover added scenes for free.
+
+        The screenplay stays the source of truth: like a scene removed by
+        the NL editor, an added scene lives until the script itself
+        re-renders, at which point expansion rebuilds the scene set from
+        the new screenplay.
+        """
+        resolved: list[PatchOp] = []
+        # Ops are compiled against the unmutated graph, so a second
+        # add_scene in the same patch must see the order the first one
+        # built, not recompute it from the graph and overwrite it.
+        carried_order: list[str] | None = None
+        for op in ops:
+            if op.op == "add_scene":
+                compiled = self._compile_add_scene(graph, op, resolved, carried_order)
+                carried_order = list(compiled[-1].params["order"])
+                resolved.extend(compiled)
+            else:
+                resolved.append(op)
+        return resolved
+
+    @staticmethod
+    def _compile_add_scene(
+        graph: StoryGraph,
+        op: PatchOp,
+        pending: list[PatchOp],
+        carried_order: list[str] | None,
+    ) -> list[PatchOp]:
+        if "timeline" not in graph.nodes or "script" not in graph.nodes:
+            raise ValueError("this project has no timeline to add a scene to")
+        params = op.params or {}
+        prompt = str(params.get("prompt", ""))
+        narration = str(params.get("narration", ""))
+        try:
+            duration_s = float(params.get("duration_s", 5.0))
+        except (TypeError, ValueError):
+            duration_s = 5.0
+        # One clip only: past MAX_CLIP_S a scene splits into sequential
+        # takes, which is expansion's job to construct, not a patch op's.
+        duration_s = min(max(duration_s, 1.0), MAX_CLIP_S)
+
+        # Never reuse a scene number: trims/transitions in the timeline
+        # params are keyed by scene id and survive scene removal, so a
+        # recycled id would inherit a removed scene's edits. Ids pending in
+        # this same patch count too, or two add_scene ops collide.
+        used = {
+            n.split(".")[0] for n in graph.nodes if "." in n and n.split(".")[0].startswith("s")
+        }
+        timeline = graph.nodes["timeline"]
+        order = (
+            list(carried_order)
+            if carried_order is not None
+            else list(timeline.params.get("order") or [])
+        )
+        used |= set(order)
+        used |= set((timeline.params.get("trims") or {}).keys())
+        used |= set((timeline.params.get("transitions") or {}).keys())
+        used |= {p.node_id.split(".")[0] for p in pending if p.op == "add_node"}
+        numbers = [int(s[1:]) for s in used if s[1:].isdigit()]
+        sid = f"s{max(numbers, default=0) + 1}"
+
+        scene_ids = sorted(
+            {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")},
+            key=scene_sort_key,
+        )
+        if not order:
+            order = scene_ids
+        if op.after is not None:
+            if op.after not in order:
+                raise ValueError(f"unknown scene: {op.after}")
+            order.insert(order.index(op.after) + 1, sid)
+        else:
+            order.append(sid)
+
+        aspect = graph.nodes["script"].params.get("aspect") or timeline.params.get("aspect")
+        # Voice is a project-wide style choice; a new scene should speak
+        # like its neighbours, not fall back to the backend default.
+        voice = next(
+            (
+                node.params["voice"]
+                for node in graph.nodes.values()
+                if node.kind is NodeKind.NARRATION and node.params.get("voice")
+            ),
+            None,
+        )
+        keyframe_params = {"prompt": prompt}
+        clip_params = {
+            "prompt": prompt,
+            "motion": str(params.get("motion", "")),
+            "duration_s": duration_s,
+            "mode": "i2v",
+        }
+        if aspect:
+            keyframe_params["aspect"] = aspect
+            clip_params["aspect"] = aspect
+        narration_params: dict = {"text": narration}
+        if voice:
+            narration_params["voice"] = voice
+
+        kf_id, clip_id, narr_id = f"{sid}.keyframe", f"{sid}.clip", f"{sid}.narration"
+        return [
+            PatchOp(
+                op="add_node",
+                node_id=kf_id,
+                node=Node(id=kf_id, kind=NodeKind.KEYFRAME, params=keyframe_params),
+            ),
+            PatchOp(
+                op="add_node",
+                node_id=clip_id,
+                node=Node(id=clip_id, kind=NodeKind.CLIP, params=clip_params),
+            ),
+            PatchOp(
+                op="add_node",
+                node_id=narr_id,
+                node=Node(id=narr_id, kind=NodeKind.NARRATION, params=narration_params),
+            ),
+            PatchOp(op="connect", node_id=kf_id, src="script", port="default"),
+            PatchOp(op="connect", node_id=narr_id, src="script", port="default"),
+            PatchOp(op="connect", node_id=clip_id, src=kf_id, port=KEYFRAME_PORT),
+            PatchOp(op="connect", node_id="timeline", src=clip_id, port=sid),
+            PatchOp(
+                op="connect",
+                node_id="timeline",
+                src=narr_id,
+                port=f"{sid}{SCENE_AUDIO_SUFFIX}",
+            ),
+            PatchOp(op="set_params", node_id="timeline", params={"order": order}),
+        ]
+
+    @staticmethod
+    def _current_take(graph: StoryGraph, node_id: str, memo: dict[str, str]) -> TakeRecord:
+        node = graph.nodes[node_id]
+        return TakeRecord(
+            output_hash=graph.output_hash(node_id, memo),
+            seed=node.seed,
+            model=node.model,
+            params={k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS},
+            at=time.time(),
+        )
+
+    def _record_history(
+        self,
+        project_id: str,
+        before: dict,
+        graph: StoryGraph,
+        *,
+        kind: str,
+        summary: str | None = None,
+        node_id: str | None = None,
+    ) -> None:
+        """Under the lock, after a mutation: push the pre-mutation graph onto
+        the undo stack — but only when the mutation changed anything, so a
+        no-op patch does not burn an undo step on nothing."""
+        if graph.model_dump(mode="json") == before:
+            return
+        history = self.store.load_history(project_id)
+        history.push(
+            Snapshot(kind=kind, at=time.time(), summary=summary, node_id=node_id, graph=before)
+        )
+        self.store.save_history(project_id, history)
 
     @staticmethod
     def _sync_caption_texts(graph: StoryGraph) -> set[str]:
@@ -374,6 +630,30 @@ class ProjectService:
         with self._lock:
             return graph_view(self.store.load_graph(project_id), scope)
 
+    def preview_edit_plan(
+        self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
+    ) -> dict:
+        """Compile an edit plan and report what it WOULD do — the planned
+        ops, the warnings, and the dirty cone — committing nothing: no
+        save, no enqueue, no history entry, no event. The dirty preview
+        applies the ops to a throwaway copy of the graph, so it is the
+        same answer apply would give, not an estimate."""
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            if revision is not None and graph_revision(graph, scope) != revision:
+                raise ConflictError(
+                    "the project changed while the edit was being generated — please retry"
+                )
+            ops, warnings = compile_edits(graph, plan, scope)
+            scratch = graph.model_copy(deep=True)
+            dirty = apply_patch(scratch, ops) if ops else set()
+        return {
+            "ops": len(ops),
+            "planned": [op.model_dump(exclude_none=True) for op in ops],
+            "dirty": sorted(dirty),
+            "warnings": warnings,
+        }
+
     def apply_edit_plan(
         self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
     ) -> dict:
@@ -390,6 +670,7 @@ class ProjectService:
                 raise ConflictError(
                     "the project changed while the edit was being generated — please retry"
                 )
+            before = graph.model_dump(mode="json")
             ops, warnings = compile_edits(graph, plan, scope)
             dirty = apply_patch(graph, ops) if ops else set()
             # Same ground-truth sync as patch(): an NL edit rewrites narration
@@ -402,6 +683,7 @@ class ProjectService:
             # graph can never reproduce — re-rendering forever.
             if ops or dirty:
                 self.store.save_graph(project_id, graph)
+                self._record_history(project_id, before, graph, kind="edit", summary=plan.summary)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             if ops or dirty:
@@ -415,14 +697,150 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
+            before = graph.model_dump(mode="json")
+            if node.kind in TAKE_KINDS:
+                # The identity being displaced stays selectable: its artifact
+                # is content-addressed on disk, so switching back later is a
+                # cache hit, not a re-render.
+                takes = self.store.load_takes(project_id)
+                memo = {
+                    nid: n.frozen_hash
+                    for nid, n in graph.nodes.items()
+                    if n.pinned and n.frozen_hash
+                }
+                takes.record(node_id, self._current_take(graph, node_id, memo))
+                self.store.save_takes(project_id, takes)
             node.seed = seed if seed is not None else node.seed + 1
             # A new take is of the node's configuration. Carrying a finished
             # revision's notes here would re-ask them against a draft that
             # the revision itself has already superseded.
             node.params = {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS}
             self.store.save_graph(project_id, graph)
+            self._record_history(project_id, before, graph, kind="regenerate", node_id=node_id)
             self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
+
+    # -- undo/redo & save points --------------------------------------------
+
+    def history_info(self, project_id: str) -> dict:
+        with self._lock:
+            return self._history_info(self.store.load_history(project_id))
+
+    def undo(self, project_id: str) -> dict:
+        return self._step_history(project_id, "undo")
+
+    def redo(self, project_id: str) -> dict:
+        return self._step_history(project_id, "redo")
+
+    def _step_history(self, project_id: str, direction: str) -> dict:
+        """Walk the undo/redo stacks one step. The two directions are one
+        mechanism: pop a snapshot, park the current graph on the opposite
+        stack under the same descriptor, restore. Because artifacts are
+        content-addressed, the re-plan after a restore is cache hits for
+        everything that ever rendered — undo never re-renders old work."""
+        with self._lock:
+            history = self.store.load_history(project_id)
+            source = history.undo if direction == "undo" else history.redo
+            target = history.redo if direction == "undo" else history.undo
+            if not source:
+                raise ConflictError(f"nothing to {direction}")
+            entry = source.pop()
+            restored = self._restorable_graph(entry.graph)
+            current = self.store.load_graph(project_id)
+            target.append(entry.model_copy(update={"graph": current.model_dump(mode="json")}))
+            self.store.save_graph(project_id, restored)
+            self.store.save_history(project_id, history)
+            self._enqueue_dirty(project_id, restored)
+            self._refresh_meta_locked(project_id, restored)
+            info = self._history_info(history)
+        self.events.publish("project.restored", project_id=project_id, direction=direction)
+        return info
+
+    def create_savepoint(self, project_id: str, label: str) -> dict:
+        label = label.strip()[:80]
+        if not label:
+            raise ValueError("save point label is empty")
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            history = self.store.load_history(project_id)
+            if len(history.savepoints) >= SAVEPOINT_LIMIT:
+                raise ValueError(
+                    f"a project holds at most {SAVEPOINT_LIMIT} save points - delete one first"
+                )
+            history.savepoints.append(
+                SavePoint(
+                    id=f"sp{history.next_savepoint}",
+                    label=label,
+                    at=time.time(),
+                    graph=graph.model_dump(mode="json"),
+                )
+            )
+            history.next_savepoint += 1
+            self.store.save_history(project_id, history)
+            return self._history_info(history)
+
+    def restore_savepoint(self, project_id: str, savepoint_id: str) -> dict:
+        with self._lock:
+            history = self.store.load_history(project_id)
+            savepoint = next((s for s in history.savepoints if s.id == savepoint_id), None)
+            if savepoint is None:
+                raise KeyError(savepoint_id)
+            restored = self._restorable_graph(savepoint.graph)
+            current = self.store.load_graph(project_id)
+            if restored.model_dump(mode="json") != current.model_dump(mode="json"):
+                # Restoring is itself an undoable mutation, so Ctrl+Z walks
+                # back out of a save point like out of any other edit.
+                history.push(
+                    Snapshot(
+                        kind="restore",
+                        at=time.time(),
+                        summary=savepoint.label,
+                        graph=current.model_dump(mode="json"),
+                    )
+                )
+                self.store.save_graph(project_id, restored)
+                self._enqueue_dirty(project_id, restored)
+                self._refresh_meta_locked(project_id, restored)
+            self.store.save_history(project_id, history)
+            info = self._history_info(history)
+        self.events.publish("project.restored", project_id=project_id, direction="savepoint")
+        return info
+
+    def delete_savepoint(self, project_id: str, savepoint_id: str) -> dict:
+        with self._lock:
+            history = self.store.load_history(project_id)
+            kept = [s for s in history.savepoints if s.id != savepoint_id]
+            if len(kept) == len(history.savepoints):
+                raise KeyError(savepoint_id)
+            history.savepoints = kept
+            self.store.save_history(project_id, history)
+            return self._history_info(history)
+
+    @staticmethod
+    def _restorable_graph(dump: dict) -> StoryGraph:
+        """A snapshot as a validated StoryGraph. check_restorable re-runs the
+        patch chokepoint's structural gates (cycles, voice consent): the
+        snapshots are engine-written, but they live in an editable file."""
+        graph = StoryGraph.model_validate(dump)
+        check_restorable(graph)
+        return graph
+
+    @staticmethod
+    def _history_info(history: GraphHistory) -> dict:
+        def descriptor(snapshot: Snapshot) -> dict:
+            return {
+                "kind": snapshot.kind,
+                "summary": snapshot.summary,
+                "node_id": snapshot.node_id,
+            }
+
+        return {
+            "undo_depth": len(history.undo),
+            "redo_depth": len(history.redo),
+            "undo_top": descriptor(history.undo[-1]) if history.undo else None,
+            "redo_top": descriptor(history.redo[-1]) if history.redo else None,
+            "savepoints": [{"id": s.id, "label": s.label, "at": s.at} for s in history.savepoints],
+        }
 
     def enhance_script(self, project_id: str, notes: str) -> set[str]:
         """Revise the script from user feedback: the notes and the screenplay
@@ -686,6 +1104,22 @@ class ProjectService:
             }
             cached -= clip_hashes
         plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
+
+        # Before anything is queued or superseded: a caller that may not
+        # spend gets nothing enqueued at all, rather than a partial render
+        # that stops at the first billable node. The test is the exact
+        # prefix BackendRegistry.resolve routes on, so what is refused here
+        # is precisely what would have reached a provider.
+        if not CLOUD_SPEND_ALLOWED.get():
+            billed = sorted(
+                {spec.node_id for spec in plan.jobs if (spec.model or "").startswith("cloud:")}
+            )
+            if billed:
+                raise CloudSpendRefused(
+                    f"{', '.join(billed)} would render on a cloud model, and this caller may "
+                    "not spend the user's provider keys - nothing was queued. Choosing cloud "
+                    "models is a decision made in the app."
+                )
 
         # Supersede stale queued work: a re-plan that changed a node's hash
         # (seed bump, param edit) makes any still-queued job for that node
@@ -1047,6 +1481,7 @@ class ProjectService:
 
     def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
+        recorded_takes = self.store.load_takes(project_id).takes
         history = self.queue.list(project_id, 1000)
         # Keyed by IDENTITY — (node, output hash) — not by node id alone. The
         # newest job for a node id can belong to an output the graph has since
@@ -1105,7 +1540,7 @@ class ProjectService:
                 status = "final" if (job and job.spec.quality == "final") else "draft"
             else:
                 status = "queued"
-            return {
+            state = {
                 "node_id": node_id,
                 "status": status,
                 "progress": job.progress if job else 0.0,
@@ -1125,6 +1560,40 @@ class ProjectService:
                 "model": node.model,
                 "pinned": node.pinned,
             }
+            # Alternate takes a regenerate moved past (distinct from a split
+            # scene's sequential clip_takes below). The node's live identity
+            # is listed too, marked current, so a picker is one flat row.
+            records = recorded_takes.get(node_id, [])
+            if records:
+                takes = [
+                    {
+                        "output_hash": r.output_hash,
+                        "seed": r.seed,
+                        # The model the take was rendered with. Selecting a
+                        # take restores its whole identity, model included,
+                        # so without this a picker cannot tell a client
+                        # which takes put a cloud model back on the node -
+                        # and the MCP surface has to refuse exactly those.
+                        "model": r.model,
+                        "at": r.at,
+                        "available": r.output_hash in cached,
+                        "current": r.output_hash == out_hash,
+                    }
+                    for r in records
+                ]
+                if not any(t["current"] for t in takes):
+                    takes.append(
+                        {
+                            "output_hash": out_hash,
+                            "seed": node.seed,
+                            "model": node.model,
+                            "at": None,
+                            "available": out_hash in cached,
+                            "current": True,
+                        }
+                    )
+                state["takes"] = takes
+            return state
 
         scenes = []
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}

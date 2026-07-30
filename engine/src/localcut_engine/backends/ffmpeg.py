@@ -22,8 +22,17 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from ..aspects import DEFAULT_ASPECT, EXPORT_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
-from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat
+from ..aspects import (
+    DEFAULT_ASPECT,
+    EXPORT_AUDIO_KBPS_BOUNDS,
+    EXPORT_FPS_CHOICES,
+    EXPORT_RESOLUTIONS,
+    EXPORT_SHORT_SIDE_CHOICES,
+    EXPORT_VIDEO_KBPS_BOUNDS,
+    VIDEO_RESOLUTIONS,
+    resolution_for,
+)
+from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat, waveform_peaks
 from ..captions import srt_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
@@ -105,6 +114,40 @@ def _as_float(value: object, default: float) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _int_choice(value: object, choices: tuple[int, ...]) -> int | None:
+    """The value as an int when it names one of the closed choices, else
+    None (absent, garbage, or off-menu all mean 'use the default')."""
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed in choices else None
+
+
+def _int_clamped(value: object, lo: int, hi: int) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(float(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return min(hi, max(lo, parsed))
+
+
+def _scaled_canvas(width: int, height: int, short_side: object) -> tuple[int, int]:
+    """The export canvas scaled so its short side hits the requested
+    choice, keeping the aspect. Only ever downscales — a request at or
+    above the aspect's own canvas is 'native', never an upscale."""
+    target = _int_choice(short_side, EXPORT_SHORT_SIDE_CHOICES)
+    if target is None or target >= min(width, height):
+        return width, height
+    scale = target / min(width, height)
+    # Encoders want even dimensions.
+    return max(2, round(width * scale / 2) * 2), max(2, round(height * scale / 2) * 2)
 
 
 class FFmpegBackend(ExecutionBackend):
@@ -406,8 +449,18 @@ class FFmpegBackend(ExecutionBackend):
             raise GenerationError(f"clip artifacts missing for scenes: {lost}")
 
         width, height = resolution_for(EXPORT_RESOLUTIONS, timeline.get("aspect"))
+        # Per-platform encode params off the export node. Every read
+        # tolerates garbage: the raw /patch path can write anything into
+        # params, and a bad value must fall back to defaults, not 500 an
+        # export that is minutes into its segments.
+        width, height = _scaled_canvas(width, height, spec.params.get("resolution"))
+        fps = _int_choice(spec.params.get("fps"), EXPORT_FPS_CHOICES)
+        audio_kbps = _int_clamped(spec.params.get("audio_kbps"), *EXPORT_AUDIO_KBPS_BOUNDS)
         encoder = await self._pick_encoder()
         bitrate = _VIDEO_BITRATE.get(spec.quality, _VIDEO_BITRATE["draft"])
+        video_kbps = _int_clamped(spec.params.get("video_kbps"), *EXPORT_VIDEO_KBPS_BOUNDS)
+        if video_kbps is not None:
+            bitrate = f"{video_kbps}k"
         # Never under generated/ — everything there is treated as an artifact.
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
         partial: Path | None = None  # set once the final artifact path is known
@@ -439,7 +492,16 @@ class FFmpegBackend(ExecutionBackend):
                 await ctx.progress(0.8 * (index + 1) / total)
 
             burn = self._burnable_captions(spec, ctx, work, width, height)
-            cut = await self._join_segments(segments, scene_files, work, encoder, bitrate, burn)
+            cut = await self._join_segments(
+                segments,
+                scene_files,
+                work,
+                encoder,
+                bitrate,
+                burn,
+                fps=fps,
+                audio_kbps=audio_kbps,
+            )
 
             out = ctx.output_path(spec.output_hash, ".mp4")
             # Build into a dot-prefixed sibling (skipped by the artifact scan)
@@ -485,7 +547,7 @@ class FFmpegBackend(ExecutionBackend):
                     "-c:a",
                     "aac",
                     "-b:a",
-                    "192k",
+                    f"{audio_kbps}k" if audio_kbps is not None else "192k",
                     str(partial),
                 )
             else:
@@ -528,6 +590,8 @@ class FFmpegBackend(ExecutionBackend):
         encoder: str,
         bitrate: str,
         burn: Path | None,
+        fps: int | None = None,
+        audio_kbps: int | None = None,
     ) -> Path:
         """Pairwise transition chain: cut/dip boundaries concat, crossfade
         boundaries xfade+acrossfade. The concat *filter* (not the demuxer) is
@@ -537,6 +601,11 @@ class FFmpegBackend(ExecutionBackend):
         inputs: list[str] = []
         for path in scene_files:
             inputs += ["-i", str(path)]
+        # Segments render at the internal cadence; the export's fps applies
+        # at this final encode, so a 30/60 fps request never touches the
+        # cached per-scene intermediates.
+        rate = ["-r", str(fps)] if fps is not None else []
+        audio_rate = f"{audio_kbps}k" if audio_kbps is not None else "160k"
 
         steps: list[str] = []
         cur_v, cur_a = "[0:v]", "[0:a]"
@@ -577,6 +646,7 @@ class FFmpegBackend(ExecutionBackend):
             await self._run(
                 "-i",
                 str(scene_files[0]),
+                *rate,
                 "-c:v",
                 encoder,
                 "-b:v",
@@ -584,7 +654,7 @@ class FFmpegBackend(ExecutionBackend):
                 "-c:a",
                 "aac",
                 "-b:a",
-                "160k",
+                audio_rate,
                 str(cut),
             )
             return cut
@@ -602,6 +672,7 @@ class FFmpegBackend(ExecutionBackend):
             map_arg(cur_v),
             "-map",
             map_arg(cur_a),
+            *rate,
             "-c:v",
             encoder,
             "-b:v",
@@ -609,7 +680,7 @@ class FFmpegBackend(ExecutionBackend):
             "-c:a",
             "aac",
             "-b:a",
-            "160k",
+            audio_rate,
             str(cut),
         )
         return cut
@@ -928,6 +999,18 @@ class FFmpegBackend(ExecutionBackend):
             _, stderr = await process.communicate()
         if process.returncode != 0:
             raise GenerationError(f"ffmpeg failed: {stderr.decode()[-600:]}")
+
+    async def audio_peaks(self, path: Path, bins: int) -> dict | None:
+        """Waveform peaks for an audio lane, or None for undecodable media.
+        Raises GenerationError when the ffmpeg binary itself is missing —
+        the caller must tell those two apart (422 vs 503)."""
+        pcm = await self._decode_pcm(path)
+        if pcm is None or pcm.size == 0:
+            return None
+        return {
+            "duration_s": round(pcm.size / ANALYSIS_RATE, 3),
+            "peaks": waveform_peaks(pcm, bins),
+        }
 
     async def _decode_pcm(self, path: Path):
         """Mono float32 PCM at the analysis rate, or None for undecodable
