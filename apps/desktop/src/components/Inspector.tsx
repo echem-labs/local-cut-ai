@@ -571,24 +571,35 @@ export function Inspector() {
           {(activeNode.takes?.length ?? 0) > 1 && (
             <div className="take-row" role="group" aria-label={t("inspector.takesAria")}>
               <span className="field-label">{t("inspector.takes")}</span>
-              {activeNode.takes?.map((take, index) => (
-                <button
-                  key={take.output_hash}
-                  className={`chip${take.current ? " selected" : ""}`}
-                  disabled={pinned || take.current}
-                  aria-pressed={take.current}
-                  title={
-                    take.current
-                      ? t("inspector.takeCurrentTitle")
-                      : take.available
-                        ? t("inspector.takeSwitchTitle")
-                        : t("inspector.takeMissingTitle")
-                  }
-                  onClick={() => void selectTake(activeNode.node_id, take.output_hash)}
-                >
-                  {t("inspector.takeChip", { n: index + 1 })}
-                </button>
-              ))}
+              {activeNode.takes?.map((take, index) => {
+                // Selecting restores the take's whole identity, model
+                // included: a cloud take re-renders on the user's own API
+                // key. That is a decision they may make here — the app is
+                // the one surface where choosing cloud is allowed — but not
+                // one to discover from a bill, so the chip says it costs.
+                const billed = !take.current && (take.model ?? "").startsWith("cloud:");
+                return (
+                  <button
+                    key={take.output_hash}
+                    className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
+                    disabled={pinned || take.current}
+                    aria-pressed={take.current}
+                    title={
+                      take.current
+                        ? t("inspector.takeCurrentTitle")
+                        : billed
+                          ? t("inspector.takeCloudTitle", { model: take.model ?? "" })
+                          : take.available
+                            ? t("inspector.takeSwitchTitle")
+                            : t("inspector.takeMissingTitle")
+                    }
+                    onClick={() => void selectTake(activeNode.node_id, take.output_hash)}
+                  >
+                    {t("inspector.takeChip", { n: index + 1 })}
+                    {billed && <span aria-hidden="true"> ☁</span>}
+                  </button>
+                );
+              })}
             </div>
           )}
 

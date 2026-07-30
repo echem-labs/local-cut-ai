@@ -60,5 +60,6 @@
   "takeChip": "Take {n}",
   "takeCurrentTitle": "The take you're seeing now",
   "takeSwitchTitle": "Switch to this take — instant, it's still on disk",
-  "takeMissingTitle": "This take's file is gone — switching re-renders it"
+  "takeMissingTitle": "This take's file is gone — switching re-renders it",
+  "takeCloudTitle": "Switch to this take — it was made with {model}, so it re-renders on your own API key and bills again"
 }
