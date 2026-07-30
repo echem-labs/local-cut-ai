@@ -70,7 +70,7 @@ from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
-from ..service import ConflictError, ProjectService
+from ..service import CLOUD_SPEND_ALLOWED, CloudSpendRefused, ConflictError, ProjectService
 from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
@@ -520,6 +520,45 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         await send({"type": "http.response.body", "body": body})
 
     app.add_middleware(BodyLimitMiddleware)
+
+    class CloudSpendMiddleware:
+        """Let a client declare that it may not spend the user's BYOK keys.
+
+        A header rather than a body field so it covers every route at once,
+        including ones written later - the point of moving this rule to the
+        queue was that per-route opt-ins are what kept leaking. Absent, the
+        answer is "allowed", so the app and the CLI are unaffected; the MCP
+        server sends it on every request it makes.
+
+        Deliberately NOT BaseHTTPMiddleware: that runs the rest of the app
+        in a separate task, and a ContextVar set there would not be visible
+        to the endpoint. A plain ASGI wrapper shares the task, and each
+        request gets its own context, so the value cannot leak across
+        requests.
+        """
+
+        def __init__(self, app) -> None:
+            self.app = app
+
+        async def __call__(self, scope, receive, send) -> None:
+            if scope["type"] == "http":
+                for name, value in scope.get("headers") or []:
+                    if name == b"x-localcut-cloud-spend":
+                        if value.strip().lower() == b"deny":
+                            CLOUD_SPEND_ALLOWED.set(False)
+                        break
+            await self.app(scope, receive, send)
+
+    app.add_middleware(CloudSpendMiddleware)
+
+    @app.exception_handler(CloudSpendRefused)
+    async def _cloud_spend_refused(request: Request, exc: CloudSpendRefused) -> JSONResponse:
+        """403 rather than 422: the request was well-formed and the caller is
+        simply not permitted to commit this spend. Registered app-wide so
+        every route that can enqueue is covered without naming any of them.
+        """
+        del request
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     @app.exception_handler(ProjectTooNew)
     async def _project_too_new(request: Request, exc: ProjectTooNew) -> JSONResponse:
