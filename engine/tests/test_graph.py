@@ -453,3 +453,30 @@ def test_removing_the_script_is_refused_even_mid_patch():
         )
 
     assert "script" in g.nodes
+
+
+def test_clearing_a_param_returns_to_the_unset_hash():
+    """ "Back to the default" must land on the identity the node had before
+    the value was ever set, or the artifact already rendered for that state
+    can never be a cache hit again — an export toggled to 30 fps and back
+    to Auto re-encoded the whole video for a result it already had."""
+    graph = small_graph()
+    pristine = graph.output_hash("clip")
+
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": 30})])
+    assert graph.output_hash("clip") != pristine  # a real change re-renders
+
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
+    assert "fps" not in graph.nodes["clip"].params
+    assert graph.output_hash("clip") == pristine
+
+
+def test_clearing_one_param_leaves_the_others_alone():
+    graph = small_graph()
+    apply_patch(
+        graph,
+        [PatchOp(op="set_params", node_id="clip", params={"fps": 30, "resolution": 720})],
+    )
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
+    assert graph.nodes["clip"].params["resolution"] == 720
+    assert "fps" not in graph.nodes["clip"].params

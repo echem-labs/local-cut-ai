@@ -27,10 +27,16 @@ export function Composer() {
     undoEdit,
   } = useApp();
   const [text, setText] = useState("");
-  // The transient reply's Undo covers the edit that just landed — offered
-  // only while it is still the newest recorded mutation (an edit-shaped
-  // undo top), so the button never silently reverts something else.
-  const undoable = history?.undo_top?.kind === "edit" && (history?.undo_depth ?? 0) > 0;
+  // Did the reply on screen actually change the graph? An edit that
+  // compiles to no ops records no history entry, so the newest recorded
+  // mutation is still some EARLIER edit — offering Undo beside "No changes
+  // made" would revert that one instead of the reply the user is reading.
+  const [replyApplied, setReplyApplied] = useState(false);
+  // Undo covers the edit that just landed: it applied something, and it is
+  // still the newest recorded mutation (an edit-shaped undo top — a later
+  // regenerate or inspector patch retires the offer).
+  const undoable =
+    replyApplied && history?.undo_top?.kind === "edit" && (history?.undo_depth ?? 0) > 0;
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -46,6 +52,7 @@ export function Composer() {
     setLog(projectId ? loadLog(projectId) : []);
     setScopeOverride(null);
     setFeedback(null);
+    setReplyApplied(false);
     setError(null);
   }, [projectId]);
 
@@ -126,6 +133,7 @@ export function Composer() {
     if (!instruction || editBusy) return;
     setError(null);
     setFeedback(null);
+    setReplyApplied(false);
     try {
       const result: EditResult | null = await edit(instruction, scope);
       if (result) {
@@ -139,6 +147,7 @@ export function Composer() {
         const skipped =
           result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
         setFeedback(summary + skipped);
+        setReplyApplied(result.ops > 0);
         pushLog({
           at: Date.now(),
           instruction,
@@ -324,6 +333,7 @@ export function Composer() {
               title={t("composer.undoTitle")}
               onClick={() => {
                 setFeedback(null);
+                setReplyApplied(false);
                 void undoEdit().then((message) => setError(message));
               }}
             >
