@@ -24,6 +24,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from ..aspects import (
+    EXPORT_AUDIO_KBPS_BOUNDS,
+    EXPORT_FPS_CHOICES,
+    EXPORT_SHORT_SIDE_CHOICES,
+    EXPORT_VIDEO_KBPS_BOUNDS,
+)
 from .model import NodeKind, StoryGraph, scene_sort_key
 from .patch import PatchOp
 
@@ -39,7 +45,7 @@ EDITABLE_PARAMS: dict[NodeKind, frozenset[str]] = {
     NodeKind.TIMELINE: frozenset(
         {"order", "trims", "transitions", "overlays", "ducking", "beat_align"}
     ),
-    NodeKind.EXPORT: frozenset({"captions"}),
+    NodeKind.EXPORT: frozenset({"captions", "fps", "resolution", "video_kbps", "audio_kbps"}),
 }
 
 _TRANSITIONS = {"cut", "crossfade", "dip"}
@@ -69,6 +75,8 @@ rate (1.0 normal, 0.5-1.5).
 transition out of that scene: one of cut, crossfade, dip; "trims" maps a scene id to \
 {"in": seconds, "out": seconds} of the source clip; "ducking" (bool, default true) dips the \
 music under narration; "beat_align" (bool) snaps scene cuts to the music's beat.
+- the export node: "captions" is burn or sidecar; "fps" one of 24/25/30/50/60; "resolution" \
+the frame's short side (480/720/1080); "video_kbps"/"audio_kbps" encode bitrates.
 - never edit nodes marked "pinned": true — the user locked them.
 - remove_scene only when the instruction clearly asks for removal or shortening.
 - If nothing applies, return {"summary": "why", "edits": []}."""
@@ -199,6 +207,24 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
             return value
         warnings.append(f"{label}: must be one of {sorted(_CAPTION_MODES)}")
         return _DROP
+    if kind is NodeKind.EXPORT and key in ("fps", "resolution"):
+        choices = EXPORT_FPS_CHOICES if key == "fps" else EXPORT_SHORT_SIDE_CHOICES
+        try:
+            if not isinstance(value, bool) and int(float(value)) in choices:
+                return int(float(value))
+        except (TypeError, ValueError):
+            pass
+        warnings.append(f"{label}: must be one of {list(choices)}")
+        return _DROP
+    if kind is NodeKind.EXPORT and key in ("video_kbps", "audio_kbps"):
+        lo, hi = EXPORT_VIDEO_KBPS_BOUNDS if key == "video_kbps" else EXPORT_AUDIO_KBPS_BOUNDS
+        try:
+            if isinstance(value, bool):
+                raise TypeError
+            return min(hi, max(lo, int(float(value))))
+        except (TypeError, ValueError):
+            warnings.append(f"{label}: not a number")
+            return _DROP
     if kind is NodeKind.TIMELINE:
         if key == "order":
             if not isinstance(value, list):
