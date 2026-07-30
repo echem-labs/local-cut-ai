@@ -53,8 +53,10 @@ class PatchOp(BaseModel):
         "connect",
         "disconnect",
         "select_take",
+        "add_scene",
     ]
-    node_id: str
+    # add_scene allocates its own ids, so it is the one op with no target.
+    node_id: str = ""
     params: dict[str, Any] | None = None
     seed: int | None = None
     model: str | None = None
@@ -67,6 +69,8 @@ class PatchOp(BaseModel):
     # The service resolves it against takes.json into the full identity
     # (params/seed/model) before apply_patch sees the op.
     take: str | None = None
+    # add_scene: the scene id to insert after (None appends at the end).
+    after: str | None = None
 
 
 def check_restorable(graph: StoryGraph) -> None:
@@ -200,6 +204,11 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 node.params = {k: v for k, v in op.params.items() if k not in RESERVED_PARAMS}
                 node.seed = op.seed if op.seed is not None else 0
                 node.model = op.model
+            case "add_scene":
+                # Needs id allocation and multi-node construction against
+                # scene conventions this module does not know — the service
+                # compiles it into add_node/connect/set_params ops first.
+                raise ValueError("add_scene must be resolved by the project service")
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")
