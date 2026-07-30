@@ -1429,6 +1429,51 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # so a client-side download="name" would be ignored).
         return FileResponse(path, filename=filename, content_disposition_type="inline")
 
+    # A dedicated decoder instance rather than a chain lookup: the chain may
+    # not include an ffmpeg backend at all (all-mock demo config), and peaks
+    # are a read-model concern, not a render.
+    peaks_decoder = FFmpegBackend(ffmpeg_bin=config.resolved_ffmpeg_bin)
+
+    @app.get("/projects/{project_id}/artifacts/{output_hash}/peaks", dependencies=[Authed])
+    async def artifact_peaks(
+        project_id: ProjectId,
+        output_hash: OutputHash,
+        bins: Annotated[int, Query(ge=16, le=4096)] = 512,
+    ) -> dict:
+        """Waveform peaks for an audio artifact — the audio-lane shape,
+        computed engine-side once instead of every client decoding whole
+        tracks through WebAudio. Cached per (artifact, bins) in cache/,
+        which storage cleanup may drop at any time (it just recomputes)."""
+        await _get_project(project_id)
+        path = await asyncio.to_thread(store.resolve_artifact, project_id, output_hash)
+        if path is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        cache_file = store.project_dir(project_id) / "cache" / f"peaks-{output_hash}-{bins}.json"
+        if cache_file.exists():
+            try:
+                return json.loads(await asyncio.to_thread(cache_file.read_text, "utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass  # torn or swept mid-read — recompute below
+        try:
+            result = await peaks_decoder.audio_peaks(path, bins)
+        except GenerationError as exc:
+            # The ffmpeg binary itself is missing — an install problem, not
+            # a property of this artifact.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if result is None:
+            raise HTTPException(status_code=422, detail="artifact is not decodable audio")
+        payload = {"bins": bins, **result}
+
+        def cache_write() -> None:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            # Plain write on purpose: a torn cache entry is recomputed by the
+            # JSONDecodeError path above, so the atomic-writer ceremony state
+            # files need would buy nothing here.
+            cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        await asyncio.to_thread(cache_write)
+        return payload
+
     # -- events (progress streaming end to end) --------------------------
 
     @app.websocket("/ws")
