@@ -75,6 +75,10 @@ export interface NodeNotice {
 export interface TakeInfo {
   output_hash: string;
   seed: number;
+  /** The model this take was rendered with. Selecting a take restores its
+   * whole identity, model included — so a `cloud:*` take re-renders on the
+   * user's BYOK key. The picker has to say so before it is clicked. */
+  model: string | null;
   /** Recorded time; null for the live identity's synthetic row. */
   at: number | null;
   available: boolean;
