@@ -1246,7 +1246,11 @@ export const useApp = create<AppState>((set, get) => {
       const generation = ++historyGen;
       try {
         const history = await client.history(projectId);
-        if (generation !== historyGen || get().currentProject?.id !== projectId) return;
+        // Same three guards refreshGraph uses: a superseded read, a project
+        // the user has navigated away from, and an engine swapped underneath
+        // us (pair/unpair) must all drop their result rather than paint it.
+        if (generation !== historyGen) return;
+        if (get().client !== client || get().currentProject?.id !== projectId) return;
         set({ history });
       } catch {
         // Depths are a convenience read model — keep the last known ones
