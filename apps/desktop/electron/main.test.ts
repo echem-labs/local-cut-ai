@@ -21,12 +21,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 /** Where the fake EngineManager will claim the local engine is listening.
  * Mutable so beforeEach can point it at this test's loopback server. */
 const localEngine = vi.hoisted(() => ({ url: "http://127.0.0.1:1", token: "local-token" }));
+/** The EngineManager main.ts constructed, plus a hook to make its teardown
+ * slow — the quit path must wait for it rather than exiting first. */
+const engineMock = vi.hoisted(() => ({
+  instance: null as { stopped: number; waited: number } | null,
+  teardown: null as Promise<void> | null,
+}));
 
 vi.mock("./engine", () => {
   class EngineConflictError extends Error {}
   class EngineManager {
     connection: { url: string; token: string } | null = null;
     stopped = 0;
+    waited = 0;
+    constructor() {
+      engineMock.instance = this;
+    }
     async start(): Promise<{ url: string; token: string }> {
       this.connection = { ...localEngine };
       return this.connection;
@@ -34,6 +44,12 @@ vi.mock("./engine", () => {
     stop(): void {
       this.stopped += 1;
       this.connection = null;
+    }
+    async stopAndWait(): Promise<void> {
+      this.waited += 1;
+      this.stop();
+      // Stand in for an engine that outlives its SIGTERM.
+      if (engineMock.teardown) await engineMock.teardown;
     }
   }
   return { EngineConflictError, EngineManager };
@@ -78,6 +94,7 @@ beforeEach(async () => {
   pairingFile = path.join(dir, "remote-engine.json");
   keysFile = path.join(dir, "provider-keys.json");
   engineCalls = [];
+  engineMock.teardown = null;
   healthStatus = 200;
   engineStatus = 200;
 
@@ -811,6 +828,46 @@ describe("the window", () => {
     expect(window.downloads).toEqual([artifact]);
     expect(window.navigateTo(`http://127.0.0.1:${deadPort}/projects/p1/artifacts/abc123`)).toBe(false);
     expect(window.downloads).toEqual([artifact]);
+  });
+
+  it("holds the quit open until the engine tree is actually gone", async () => {
+    // `engine.stop()` only sends SIGTERM; its SIGKILL backstop is an unref'd
+    // timer, so an app that exits milliseconds later never fires it. An
+    // engine that does not honour SIGTERM promptly (uvicorn's lifespan
+    // shutdown outliving its socket) was left orphaned holding the data dir
+    // and a few hundred MB of RSS until the next launch reclaimed the port.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    let releaseTeardown!: () => void;
+    engineMock.teardown = new Promise<void>((resolve) => {
+      releaseTeardown = resolve;
+    });
+    const quitsBefore = electron.quitCount();
+
+    let prevented = false;
+    electron.emitApp("before-quit", { preventDefault: () => (prevented = true) });
+
+    expect(prevented).toBe(true);
+    expect(engineMock.instance!.waited).toBe(1);
+    // Still torn down, still not quit: the app is waiting on the engine.
+    expect(electron.quitCount()).toBe(quitsBefore);
+
+    releaseTeardown();
+    await settle(() => electron.quitCount() > quitsBefore);
+    expect(electron.quitCount()).toBe(quitsBefore + 1);
+  });
+
+  it("lets the second quit through instead of looping on itself", async () => {
+    // The re-issued quit must not be intercepted again, or the app never exits.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    engineMock.teardown = null;
+
+    electron.emitApp("before-quit", { preventDefault: () => {} });
+    await settle(() => electron.quitCount() > 0);
+
+    let preventedAgain = false;
+    electron.emitApp("before-quit", { preventDefault: () => (preventedAgain = true) });
+    expect(preventedAgain).toBe(false);
+    expect(engineMock.instance!.waited).toBe(1); // not torn down twice
   });
 
   it("denies every window-open request", async () => {

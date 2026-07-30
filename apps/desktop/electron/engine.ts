@@ -14,6 +14,9 @@ const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_INTERVAL_MS = 250;
 /** How long a terminated process group gets before it is SIGKILLed. */
 const TERM_GRACE_MS = 3_000;
+/** How long SIGKILL gets to land before the app stops waiting on it. The
+ * kernel does not negotiate, so this only bounds a pathological wait. */
+const KILL_GRACE_MS = 2_000;
 /** How long to wait for a killed orphan to release the port before retrying. */
 const PORT_RELEASE_MS = 4_000;
 /** The loopback port the local engine binds. ONE definition: `command()` and
@@ -204,6 +207,58 @@ export class EngineManager {
     // Drop the connection too: a stopped engine's URL/token is dead, and a
     // later failed restart must read as "no connection", not a stale one.
     this.connection = null;
+  }
+
+  /**
+   * Stop the engine and wait for the process tree to actually be gone.
+   *
+   * `stop()` is fire-and-forget: its SIGKILL backstop is an unref'd timer, so
+   * on the quit path — the only path that backstop exists for — the app exits
+   * milliseconds later and the timer never fires. An engine that does not
+   * honour SIGTERM promptly (uvicorn closes its socket well before the
+   * lifespan shutdown finishes) was then left running with the data dir and
+   * a few hundred MB of RSS, until the next launch's `reclaimPort` found it.
+   *
+   * Await this from `before-quit` so the escalation is reachable.
+   */
+  async stopAndWait(): Promise<void> {
+    const child = this.child;
+    this.stop();
+    if (!child || child.pid === undefined) return;
+    if (await exited(child, TERM_GRACE_MS)) return;
+    console.warn("[engine] did not exit on SIGTERM; killing the process group");
+    forceKillTree(child);
+    await exited(child, KILL_GRACE_MS);
+  }
+}
+
+/** Resolve true if the child is already gone, or exits within `ms`. */
+function exited(child: ChildProcess, ms: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const done = (value: boolean) => {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      resolve(value);
+    };
+    const onExit = () => done(true);
+    const timer = setTimeout(() => done(false), ms);
+    child.once("exit", onExit);
+  });
+}
+
+/** SIGKILL the group now, rather than on the unref'd timer `killTree` arms. */
+function forceKillTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  if (process.platform === "win32") {
+    // killTree already ran `taskkill /T /F`, which does not negotiate.
+    child.kill("SIGKILL");
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL"); // negative pid = the whole group
+  } catch {
+    /* already gone — the normal case */
   }
 }
 
