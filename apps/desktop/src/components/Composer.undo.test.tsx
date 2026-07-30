@@ -41,8 +41,23 @@ const AFTER_AN_EDIT = {
 let edit: ReturnType<typeof vi.fn>;
 let undoEdit: ReturnType<typeof vi.fn>;
 
-function mount(result: EditResult) {
-  edit = vi.fn().mockResolvedValue(result);
+/** `recorded` mirrors what the engine does: the real `edit` action awaits a
+ * board refresh (which re-reads /history) before it resolves, so by the time
+ * the reply is on screen the store already knows whether a snapshot was
+ * pushed. Only a mutation that actually changed the graph pushes one. */
+function mount(result: EditResult, recorded = false) {
+  edit = vi.fn().mockImplementation(() => {
+    if (recorded) {
+      useApp.setState({
+        history: {
+          ...AFTER_AN_EDIT,
+          undo_depth: 2,
+          undo_top: { kind: "edit", summary: result.summary, node_id: null },
+        },
+      } as never);
+    }
+    return Promise.resolve(result);
+  });
   undoEdit = vi.fn().mockResolvedValue(null);
   useApp.setState({
     board: BOARD,
@@ -70,7 +85,7 @@ beforeEach(() => {
 
 describe("composer reply Undo", () => {
   it("offers Undo when the edit actually changed something", async () => {
-    mount({ summary: "made it night", ops: 1, dirty: ["s1.clip"], warnings: [] });
+    mount({ summary: "made it night", ops: 1, dirty: ["s1.clip"], warnings: [] }, true);
     await submit("make it night");
 
     const undo = await screen.findByRole("button", { name: /undo/i });
@@ -85,6 +100,20 @@ describe("composer reply Undo", () => {
     await submit("do something impossible");
 
     await screen.findByText(/no changes made/i);
+    expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
+    expect(undoEdit).not.toHaveBeenCalled();
+  });
+
+  it("does not offer Undo when ops were compiled but nothing was recorded", async () => {
+    // A plan can emit ops that leave the graph byte-identical — an LLM
+    // echoing a prompt back unchanged is the ordinary case — and the engine
+    // then pushes no snapshot at all. The reply still reads as a success,
+    // so `ops > 0` offered Undo for an edit the history does not contain,
+    // and clicking it reverted the previous, unrelated one.
+    mount({ summary: "made it night", ops: 1, dirty: ["s1.clip"], warnings: [] }, false);
+    await submit("make it night");
+
+    await screen.findByText(/made it night/i);
     expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();
     expect(undoEdit).not.toHaveBeenCalled();
   });

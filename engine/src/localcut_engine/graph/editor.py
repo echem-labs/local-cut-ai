@@ -28,6 +28,7 @@ from ..aspects import (
     EXPORT_AUDIO_KBPS_BOUNDS,
     EXPORT_FPS_CHOICES,
     EXPORT_SHORT_SIDE_CHOICES,
+    EXPORT_USER_PARAMS,
     EXPORT_VIDEO_KBPS_BOUNDS,
 )
 from .model import NodeKind, StoryGraph, scene_sort_key
@@ -45,7 +46,9 @@ EDITABLE_PARAMS: dict[NodeKind, frozenset[str]] = {
     NodeKind.TIMELINE: frozenset(
         {"order", "trims", "transitions", "overlays", "ducking", "beat_align"}
     ),
-    NodeKind.EXPORT: frozenset({"captions", "fps", "resolution", "video_kbps", "audio_kbps"}),
+    # The same set expand_screenplay carries across a re-expansion: what the
+    # user owns on the export node is exactly what a plan may set.
+    NodeKind.EXPORT: EXPORT_USER_PARAMS,
 }
 
 _TRANSITIONS = {"cut", "crossfade", "dip"}

@@ -81,12 +81,13 @@ describe("Inspector takes", () => {
     expect(screen.queryByRole("group", { name: /takes/i })).toBeNull();
   });
 
-  it("says a cloud take bills before it is clicked", () => {
-    // Selecting restores the take's whole identity, model included, so a
-    // cloud take re-renders on the user's own key. The app is the surface
-    // where that choice is allowed — but it must not be a surprise.
+  it("says a cloud take bills when its artifact is gone", () => {
+    // Only then does selecting it actually re-render: the restored identity
+    // no longer resolves to a file in the cache, so the engine queues the
+    // job — on the user's own key. The app is the surface where that choice
+    // is allowed, but it must not be a surprise.
     mount([
-      take("a".repeat(64), false, true, "cloud:kling-2.5"),
+      take("a".repeat(64), false, false, "cloud:kling-2.5"),
       take("b".repeat(64), true, true, null),
     ]);
     const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
@@ -95,9 +96,30 @@ describe("Inspector takes", () => {
     expect(chip.className).toContain("billed");
   });
 
-  it("does not call a local take billed", () => {
-    mount([take("a".repeat(64), false, true, "local:ltx"), take("b".repeat(64), true)]);
+  it("does not warn about a cloud take that is still on disk", () => {
+    // The regression: selecting an AVAILABLE take lands on a hash the cache
+    // already holds, so nothing is queued and nothing is billed however the
+    // take was first rendered. Warning here talked users out of the common
+    // case — stepping back to the take they had just left.
+    mount([
+      take("a".repeat(64), false, true, "cloud:kling-2.5"),
+      take("b".repeat(64), true, true, null),
+    ]);
     const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
     expect(chip.className).not.toContain("billed");
+    expect(chip.title).not.toMatch(/bills again/i);
+  });
+
+  it("does not call a local take billed", () => {
+    mount([take("a".repeat(64), false, false, "local:ltx"), take("b".repeat(64), true)]);
+    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    expect(chip.className).not.toContain("billed");
+  });
+
+  it("shows the engine's refusal instead of a chip that does nothing", async () => {
+    mount([take("a".repeat(64), false), take("b".repeat(64), true)]);
+    selectTake.mockResolvedValue("engine 422: s1.clip has no recorded take");
+    fireEvent.click(screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!);
+    expect(await screen.findByRole("status")).toHaveTextContent("no recorded take");
   });
 });

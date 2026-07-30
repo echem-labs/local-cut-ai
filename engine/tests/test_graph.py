@@ -368,6 +368,26 @@ def test_reexpansion_keeps_user_only_narration_params():
     assert g.output_hash("s1.narration") == edited
 
 
+def test_reexpansion_keeps_user_only_export_params():
+    """The encode choices are the user's, not the screenplay's. Only
+    `captions` survived re-expansion, so a frame rate or resolution picked
+    in the board menu reverted to Auto the next time the script rendered —
+    silently, with the menu still showing the old choice until it refreshed."""
+    g = prompt_template_graph("tide pools", target_duration_s=24)
+    screenplay = mock_screenplay("tide pools", 24, "9:16", seed=0)
+    expand_screenplay(g, screenplay)
+    export = g.nodes["export"]
+    export.params.update({"captions": "sidecar", "fps": 60, "resolution": 1080, "video_kbps": 9000})
+    edited = g.output_hash("export")
+
+    expand_screenplay(g, mock_screenplay("tide pools", 24, "9:16", seed=0))
+    assert g.nodes["export"].params["captions"] == "sidecar"
+    assert g.nodes["export"].params["fps"] == 60
+    assert g.nodes["export"].params["resolution"] == 1080
+    assert g.nodes["export"].params["video_kbps"] == 9000
+    assert g.output_hash("export") == edited
+
+
 def test_music_tool_honours_the_request_up_to_the_generator_ceiling():
     """The standalone tool is not the looped assembly bed, so it keeps the
     length the user asked for — but never past what the generator accepts,

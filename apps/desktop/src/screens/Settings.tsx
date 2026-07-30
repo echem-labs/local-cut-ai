@@ -127,9 +127,14 @@ function ModelDefaultsPanel() {
   const [llmNames, setLlmNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // `client` in the deps, not just the (stable) store action: switchEngine
+  // blanks modelDefaults on a pair/unpair, and a zustand action identity never
+  // changes — so with only the action here the effect ran once per mount and
+  // the panel stayed blank for the rest of it. Same dependency as the
+  // llmModels effect below, for the same reason.
   useEffect(() => {
     void refreshModelDefaults();
-  }, [refreshModelDefaults]);
+  }, [refreshModelDefaults, client]);
 
   useEffect(() => {
     if (!client) return;
@@ -160,9 +165,19 @@ function ModelDefaultsPanel() {
         const names = current && !llmNames.includes(current) ? [current, ...llmNames] : llmNames;
         choices = names.map((name) => ({ value: name, label: name }));
       } else {
-        choices = models
+        const installed = models
           .filter((row) => row.task === task && (row.downloaded || row.custom))
           .map((row) => ({ value: row.id, label: displayModelName(row.family, row.version) }));
+        // Same rule as text.llm above: a stored default whose weights were
+        // since deleted is STILL what the engine renders with (set_default
+        // only requires the manifest to know the id, and load_defaults keeps
+        // returning it). Without it on the list, Dropdown falls back to its
+        // first option and the row reports "Auto" — the stale choice becomes
+        // both invisible and impossible to clear from here.
+        choices =
+          current && !installed.some((option) => option.value === current)
+            ? [{ value: current, label: current }, ...installed]
+            : installed;
       }
       return { task, current, options: [auto, ...choices] };
     })
