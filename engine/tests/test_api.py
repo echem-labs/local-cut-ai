@@ -1453,3 +1453,24 @@ async def test_artifact_peaks_serves_a_waveform_and_caches_it(tmp_path):
             (generated / f"{not_audio}.txt").write_text("not audio", encoding="utf-8")
             refused = await http.get(f"/projects/{pid}/artifacts/{not_audio}/peaks")
             assert refused.status_code == 422
+
+
+async def test_system_etas_calibrate_from_completed_jobs(client):
+    """GET /system/etas: per-kind medians from this machine's own finished
+    renders — empty until something has rendered, never a hand-written
+    guess dressed up as data."""
+    fresh = await client.get("/system/etas")
+    assert fresh.status_code == 200
+    assert fresh.json()["etas"] == {}
+
+    created = await client.post("/projects", json={"prompt": "x"})
+    assert created.status_code == 200
+    async with asyncio.timeout(15):
+        while True:
+            etas = (await client.get("/system/etas")).json()["etas"]
+            if "script" in etas:
+                break
+            await asyncio.sleep(0.05)
+    script = etas["script"]["draft"]
+    assert script["samples"] >= 1
+    assert script["seconds"] >= 0
