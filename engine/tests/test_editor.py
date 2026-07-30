@@ -361,3 +361,40 @@ def test_non_scalar_prose_is_rejected_not_stringified():
     plan.edits[0].params = {"text": "real text"}
     ops, _ = compile_edits(graph, plan)
     assert [op.params for op in ops] == [{"text": "real text"}]
+
+
+def test_export_encode_params_clamp_and_land():
+    graph = make_graph()
+    ops, warnings = compile_edits(
+        graph,
+        plan(
+            {
+                "action": "update",
+                "node_id": "export",
+                "params": {"fps": 30, "resolution": 720, "video_kbps": 999999, "audio_kbps": 8},
+            }
+        ),
+        "project",
+    )
+    assert warnings == []
+    (op,) = ops
+    assert op.params == {"fps": 30, "resolution": 720, "video_kbps": 50000, "audio_kbps": 64}
+
+
+def test_export_encode_params_reject_off_menu_values():
+    """fps/resolution are closed choices, not free numbers: 23.976-style
+    requests drop with a warning instead of landing an unencodable value."""
+    graph = make_graph()
+    ops, warnings = compile_edits(
+        graph,
+        plan(
+            {
+                "action": "update",
+                "node_id": "export",
+                "params": {"fps": 23, "resolution": 999},
+            }
+        ),
+        "project",
+    )
+    assert not ops
+    assert len(warnings) == 2

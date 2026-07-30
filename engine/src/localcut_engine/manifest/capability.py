@@ -12,6 +12,7 @@ import logging
 
 from ..config import EngineConfig
 from ..graph.model import NodeKind
+from .defaults import DefaultsTooNew, load_defaults
 from .downloads import is_downloaded
 from .loader import load_manifest
 
@@ -56,6 +57,20 @@ def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
             )
             continue
         ready.setdefault(entry.task, []).append(entry.id)
+    # A configured per-task default jumps its task's queue: the first
+    # installed id with a template is what _template_for_installed renders
+    # with when a node names no model, so order IS the choice here.
+    try:
+        preferred = load_defaults(config)
+    except DefaultsTooNew:
+        # The routes surface the refusal; capability must keep rendering
+        # with the manifest order rather than take every job down.
+        preferred = {}
+    for task, model_id in preferred.items():
+        ids = ready.get(task, [])
+        if model_id in ids:
+            ids.remove(model_id)
+            ids.insert(0, model_id)
     return {
         kind: [mid for task in tasks for mid in ready.get(task, [])]
         for kind, tasks in COMFY_TASKS.items()

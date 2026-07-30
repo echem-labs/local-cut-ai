@@ -1,8 +1,11 @@
 import asyncio
 import hashlib
 import json
+import math
 import os
+import shutil
 import threading
+import wave
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -501,6 +504,51 @@ async def test_patch_input_errors_are_422_not_500(client):
     assert response.status_code == 422
 
 
+async def test_undo_redo_and_savepoints_over_the_api(client):
+    created = await client.post("/projects", json={"prompt": "a red door"})
+    pid = created.json()["id"]
+
+    empty = await client.post(f"/projects/{pid}/undo")
+    assert empty.status_code == 409  # nothing recorded yet
+
+    saved = await client.post(f"/projects/{pid}/savepoints", json={"label": "start"})
+    assert saved.status_code == 200
+    savepoint = saved.json()["savepoints"][0]
+
+    patched = await client.post(
+        f"/projects/{pid}/patch",
+        json={
+            "ops": [{"op": "set_params", "node_id": "script", "params": {"prompt": "a blue door"}}]
+        },
+    )
+    assert patched.status_code == 200
+    info = await client.get(f"/projects/{pid}/history")
+    assert info.json()["undo_depth"] == 1
+    assert info.json()["undo_top"]["kind"] == "patch"
+
+    undone = await client.post(f"/projects/{pid}/undo")
+    assert undone.status_code == 200
+    assert undone.json()["redo_depth"] == 1
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a red door"
+
+    assert (await client.post(f"/projects/{pid}/redo")).status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a blue door"
+
+    restored = await client.post(f"/projects/{pid}/savepoints/{savepoint['id']}/restore")
+    assert restored.status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a red door"
+
+    assert (await client.delete(f"/projects/{pid}/savepoints/{savepoint['id']}")).status_code == 200
+    missing = await client.post(f"/projects/{pid}/savepoints/{savepoint['id']}/restore")
+    assert missing.status_code == 404
+
+    unlabeled = await client.post(f"/projects/{pid}/savepoints", json={"label": ""})
+    assert unlabeled.status_code == 422
+
+
 def test_data_dir_override_relocates_models_dir(tmp_path, monkeypatch):
     """The CLI rebuilds the config from from_env().model_dump() + overrides;
     a --data-dir override must carry the derived models_dir with it."""
@@ -816,6 +864,68 @@ async def test_voice_samples_are_consent_gated(client):
     image = await client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]
+
+
+async def test_edit_dry_run_previews_without_committing(client, monkeypatch):
+    """dry_run compiles the plan and reports the ops and the dirty cone,
+    but the graph, the undo history and the queue are untouched; the plan
+    then lands through /edit/apply with no second LLM call."""
+    from localcut_engine.backends.llm import LLMScriptBackend
+
+    created = await client.post("/projects", json={"prompt": "city of glass"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+
+    async def fake_complete(self, prompt, system, max_tokens=None):
+        return json.dumps(
+            {
+                "summary": "night mode",
+                "edits": [
+                    {
+                        "action": "update",
+                        "node_id": "s1.keyframe",
+                        "params": {"prompt": "night city"},
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", fake_complete)
+    preview = await client.post(
+        f"/projects/{pid}/edit", json={"instruction": "night", "dry_run": True}
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["ops"] == 1
+    assert body["planned"][0]["op"] == "set_params"
+    assert "s1.clip" in body["dirty"]  # the cone apply would re-render
+    assert body["plan"]["summary"] == "night mode"
+
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["s1.keyframe"]["params"]["prompt"] != "night city"
+    history = (await client.get(f"/projects/{pid}/history")).json()
+    assert history["undo_depth"] == 0  # nothing to undo: nothing happened
+
+    applied = await client.post(
+        f"/projects/{pid}/edit/apply",
+        json={"plan": body["plan"], "revision": body["revision"]},
+    )
+    assert applied.status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["s1.keyframe"]["params"]["prompt"] == "night city"
+
+    # The revision the preview was built against is stale now.
+    stale = await client.post(
+        f"/projects/{pid}/edit/apply",
+        json={"plan": body["plan"], "revision": body["revision"]},
+    )
+    assert stale.status_code == 409
 
 
 async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypatch):
@@ -1287,3 +1397,80 @@ async def test_enhance_notes_do_not_outlive_the_render_they_asked_for(client):
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert "feedback" not in graph["nodes"]["script"]["params"]
     assert "base_screenplay" not in graph["nodes"]["script"]["params"]
+
+
+_PEAKS_FFMPEG = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
+
+
+@pytest.mark.skipif(_PEAKS_FFMPEG is None, reason="ffmpeg not installed")
+async def test_artifact_peaks_serves_a_waveform_and_caches_it(tmp_path):
+    """GET .../artifacts/{hash}/peaks: the audio-lane shape, computed
+    engine-side (and cached) instead of every client decoding whole tracks
+    through WebAudio."""
+    config = EngineConfig(
+        data_dir=tmp_path, token="test-token", backend="mock", ffmpeg_bin=_PEAKS_FFMPEG
+    )
+    app = create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+    ):
+        async with app.router.lifespan_context(app):
+            created = await http.post("/projects", json={"prompt": "x"})
+            pid = created.json()["id"]
+            generated = tmp_path / "projects" / f"{pid}.lcut" / "generated"
+            generated.mkdir(parents=True, exist_ok=True)
+
+            voiced = "ab" * 32
+            with wave.open(str(generated / f"{voiced}.wav"), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(22050)
+                frames = bytearray()
+                for i in range(22050):
+                    value = int(20000 * math.sin(2 * math.pi * 220 * i / 22050))
+                    frames += value.to_bytes(2, "little", signed=True)
+                handle.writeframes(bytes(frames))
+
+            response = await http.get(f"/projects/{pid}/artifacts/{voiced}/peaks?bins=64")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["bins"] == 64 and len(body["peaks"]) == 64
+            assert abs(body["duration_s"] - 1.0) < 0.1
+            assert max(body["peaks"]) > 0.3
+            cache_file = tmp_path / "projects" / f"{pid}.lcut" / "cache" / f"peaks-{voiced}-64.json"
+            assert cache_file.exists()
+
+            missing = await http.get(f"/projects/{pid}/artifacts/{'cd' * 32}/peaks")
+            assert missing.status_code == 404
+
+            not_audio = "ef" * 32
+            (generated / f"{not_audio}.txt").write_text("not audio", encoding="utf-8")
+            refused = await http.get(f"/projects/{pid}/artifacts/{not_audio}/peaks")
+            assert refused.status_code == 422
+
+
+async def test_system_etas_calibrate_from_completed_jobs(client):
+    """GET /system/etas: per-kind medians from this machine's own finished
+    renders — empty until something has rendered, never a hand-written
+    guess dressed up as data."""
+    fresh = await client.get("/system/etas")
+    assert fresh.status_code == 200
+    assert fresh.json()["etas"] == {}
+
+    created = await client.post("/projects", json={"prompt": "x"})
+    assert created.status_code == 200
+    async with asyncio.timeout(15):
+        while True:
+            etas = (await client.get("/system/etas")).json()["etas"]
+            if "script" in etas:
+                break
+            await asyncio.sleep(0.05)
+    script = etas["script"]["draft"]
+    assert script["samples"] >= 1
+    assert script["seconds"] >= 0
