@@ -36,6 +36,11 @@ class ProjectTooNew(RuntimeError):
     the loss, so the read is refused instead (maps to HTTP 409)."""
 
 
+class HistoryTooNew(ProjectTooNew):
+    """history.json written by a newer engine. Subclasses ProjectTooNew so
+    the API's existing refuse-when-newer handler answers for it too."""
+
+
 _PROJECT_ID_LEN = 10
 
 # The API's path-param validation is built from this — the id generator and
@@ -128,6 +133,74 @@ class Project(BaseModel):
     # rather than as a dangling reference worth reporting.
     promoted_to: list[str] = []  # on a tool:script session: the videos made
     promoted_from: str | None = None  # on a video: the session it came from
+
+
+HISTORY_VERSION = 1
+
+# Whole-graph snapshots, not inverse ops: graphs are small JSON, and because
+# artifacts are content-addressed, restoring a prior graph re-references
+# hashes whose renders are still on disk — an undo is a metadata operation
+# that never re-renders anything that existed before.
+UNDO_LIMIT = 50
+SAVEPOINT_LIMIT = 20
+# Alternate takes kept per node. Old takes stay reachable only while their
+# artifact survives in generated/, so a deep list would mostly be dead ends.
+TAKE_LIMIT = 8
+
+# What a history entry records having changed. A wire contract like
+# SCENE_NODE_STATUSES: the desktop labels undo/redo actions from these ids,
+# and a kind it does not know renders with no label (test_ui_contract).
+SNAPSHOT_KINDS = ("patch", "edit", "regenerate", "restore")
+
+
+class Snapshot(BaseModel):
+    """The graph as it stood BEFORE the mutation this entry describes."""
+
+    kind: str  # one of SNAPSHOT_KINDS
+    at: float
+    summary: str | None = None  # NL-edit summary / restored save point label
+    node_id: str | None = None  # regenerate target
+    graph: dict
+
+
+class SavePoint(BaseModel):
+    id: str
+    label: str
+    at: float
+    graph: dict
+
+
+class TakeRecord(BaseModel):
+    """A node identity (params/seed/model) it held before a regenerate. The
+    artifact under output_hash is already content-addressed in generated/,
+    so selecting this take back is a cache hit, not a re-render."""
+
+    output_hash: str
+    seed: int
+    model: str | None = None
+    params: dict
+    at: float
+
+
+class GraphHistory(BaseModel):
+    version: int = HISTORY_VERSION
+    undo: list[Snapshot] = []
+    redo: list[Snapshot] = []
+    savepoints: list[SavePoint] = []
+    next_savepoint: int = 1
+    takes: dict[str, list[TakeRecord]] = {}
+
+    def push(self, snapshot: Snapshot) -> None:
+        """Record a mutation. Any new edit forks history, so the redo stack
+        — states reachable only by walking back — is cleared."""
+        self.undo.append(snapshot)
+        del self.undo[:-UNDO_LIMIT]
+        self.redo.clear()
+
+    def record_take(self, node_id: str, take: TakeRecord) -> None:
+        takes = [t for t in self.takes.get(node_id, []) if t.output_hash != take.output_hash]
+        takes.append(take)
+        self.takes[node_id] = takes[-TAKE_LIMIT:]
 
 
 class ProjectStore:
@@ -334,6 +407,43 @@ class ProjectStore:
         if timeline is not None and timeline.params.get("edl_version") != EDL_VERSION:
             timeline.params["edl_version"] = EDL_VERSION
         return graph
+
+    def load_history(self, project_id: str) -> GraphHistory:
+        """The project's undo/redo stacks, save points and take records.
+
+        Missing file → empty history (projects predate the feature). A file
+        from a newer build is refused like project.json — validating it here
+        would silently drop the fields this build doesn't know and the next
+        push would persist the loss. An unreadable file, though, resets to
+        empty: history is a convenience record over state that lives
+        elsewhere, and refusing to load it would take patching down with it.
+        """
+        path = self._dir(project_id) / "history.json"
+        if not path.exists():
+            return GraphHistory()
+        try:
+            raw = json.loads(_read_text_retry(path))
+        except (json.JSONDecodeError, OSError):
+            logger.warning("resetting unreadable history: %s", path)
+            return GraphHistory()
+        version = raw.get("version", 1) if isinstance(raw, dict) else 1
+        if not isinstance(version, int) or version > HISTORY_VERSION:
+            raise HistoryTooNew(
+                f"this project's edit history was written by a newer version of LocalCut AI "
+                f"(history format v{version}, this engine reads up to v{HISTORY_VERSION}) — "
+                "update the engine. It has not been modified."
+            )
+        try:
+            return GraphHistory.model_validate(raw)
+        except ValidationError:
+            logger.warning("resetting invalid history: %s", path)
+            return GraphHistory()
+
+    def save_history(self, project_id: str, history: GraphHistory) -> None:
+        history.version = HISTORY_VERSION
+        # Compact on purpose: unlike project.json this file holds dozens of
+        # graph snapshots, and it is rewritten on every recorded mutation.
+        _write_atomic(self._dir(project_id) / "history.json", history.model_dump_json())
 
     # -- artifact index: generated/ files are named {output_hash}{suffix} --
 

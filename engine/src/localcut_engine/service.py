@@ -20,14 +20,21 @@ from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
-from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch
+from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch, check_restorable
 from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
 from .otio import edl_to_otio
-from .project.store import Project, ProjectStore
+from .project.store import (
+    SAVEPOINT_LIMIT,
+    GraphHistory,
+    Project,
+    ProjectStore,
+    SavePoint,
+    Snapshot,
+)
 from .schema import Screenplay
 
 logger = logging.getLogger(__name__)
@@ -303,13 +310,36 @@ class ProjectService:
     def patch(self, project_id: str, ops: list[PatchOp]) -> set[str]:
         with self._lock:
             graph = self.store.load_graph(project_id)
+            before = graph.model_dump(mode="json")
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
+            self._record_history(project_id, before, graph, kind="patch")
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
         return dirty
+
+    def _record_history(
+        self,
+        project_id: str,
+        before: dict,
+        graph: StoryGraph,
+        *,
+        kind: str,
+        summary: str | None = None,
+        node_id: str | None = None,
+    ) -> None:
+        """Under the lock, after a mutation: push the pre-mutation graph onto
+        the undo stack — but only when the mutation changed anything, so a
+        no-op patch does not burn an undo step on nothing."""
+        if graph.model_dump(mode="json") == before:
+            return
+        history = self.store.load_history(project_id)
+        history.push(
+            Snapshot(kind=kind, at=time.time(), summary=summary, node_id=node_id, graph=before)
+        )
+        self.store.save_history(project_id, history)
 
     @staticmethod
     def _sync_caption_texts(graph: StoryGraph) -> set[str]:
@@ -390,6 +420,7 @@ class ProjectService:
                 raise ConflictError(
                     "the project changed while the edit was being generated — please retry"
                 )
+            before = graph.model_dump(mode="json")
             ops, warnings = compile_edits(graph, plan, scope)
             dirty = apply_patch(graph, ops) if ops else set()
             # Same ground-truth sync as patch(): an NL edit rewrites narration
@@ -402,6 +433,7 @@ class ProjectService:
             # graph can never reproduce — re-rendering forever.
             if ops or dirty:
                 self.store.save_graph(project_id, graph)
+                self._record_history(project_id, before, graph, kind="edit", summary=plan.summary)
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             if ops or dirty:
@@ -415,14 +447,138 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
+            before = graph.model_dump(mode="json")
             node.seed = seed if seed is not None else node.seed + 1
             # A new take is of the node's configuration. Carrying a finished
             # revision's notes here would re-ask them against a draft that
             # the revision itself has already superseded.
             node.params = {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS}
             self.store.save_graph(project_id, graph)
+            self._record_history(project_id, before, graph, kind="regenerate", node_id=node_id)
             self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
+
+    # -- undo/redo & save points --------------------------------------------
+
+    def history_info(self, project_id: str) -> dict:
+        with self._lock:
+            return self._history_info(self.store.load_history(project_id))
+
+    def undo(self, project_id: str) -> dict:
+        return self._step_history(project_id, "undo")
+
+    def redo(self, project_id: str) -> dict:
+        return self._step_history(project_id, "redo")
+
+    def _step_history(self, project_id: str, direction: str) -> dict:
+        """Walk the undo/redo stacks one step. The two directions are one
+        mechanism: pop a snapshot, park the current graph on the opposite
+        stack under the same descriptor, restore. Because artifacts are
+        content-addressed, the re-plan after a restore is cache hits for
+        everything that ever rendered — undo never re-renders old work."""
+        with self._lock:
+            history = self.store.load_history(project_id)
+            source = history.undo if direction == "undo" else history.redo
+            target = history.redo if direction == "undo" else history.undo
+            if not source:
+                raise ConflictError(f"nothing to {direction}")
+            entry = source.pop()
+            restored = self._restorable_graph(entry.graph)
+            current = self.store.load_graph(project_id)
+            target.append(entry.model_copy(update={"graph": current.model_dump(mode="json")}))
+            self.store.save_graph(project_id, restored)
+            self.store.save_history(project_id, history)
+            self._enqueue_dirty(project_id, restored)
+            self._refresh_meta_locked(project_id, restored)
+            info = self._history_info(history)
+        self.events.publish("project.restored", project_id=project_id, direction=direction)
+        return info
+
+    def create_savepoint(self, project_id: str, label: str) -> dict:
+        label = label.strip()[:80]
+        if not label:
+            raise ValueError("save point label is empty")
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            history = self.store.load_history(project_id)
+            if len(history.savepoints) >= SAVEPOINT_LIMIT:
+                raise ValueError(
+                    f"a project holds at most {SAVEPOINT_LIMIT} save points - delete one first"
+                )
+            history.savepoints.append(
+                SavePoint(
+                    id=f"sp{history.next_savepoint}",
+                    label=label,
+                    at=time.time(),
+                    graph=graph.model_dump(mode="json"),
+                )
+            )
+            history.next_savepoint += 1
+            self.store.save_history(project_id, history)
+            return self._history_info(history)
+
+    def restore_savepoint(self, project_id: str, savepoint_id: str) -> dict:
+        with self._lock:
+            history = self.store.load_history(project_id)
+            savepoint = next((s for s in history.savepoints if s.id == savepoint_id), None)
+            if savepoint is None:
+                raise KeyError(savepoint_id)
+            restored = self._restorable_graph(savepoint.graph)
+            current = self.store.load_graph(project_id)
+            if restored.model_dump(mode="json") != current.model_dump(mode="json"):
+                # Restoring is itself an undoable mutation, so Ctrl+Z walks
+                # back out of a save point like out of any other edit.
+                history.push(
+                    Snapshot(
+                        kind="restore",
+                        at=time.time(),
+                        summary=savepoint.label,
+                        graph=current.model_dump(mode="json"),
+                    )
+                )
+                self.store.save_graph(project_id, restored)
+                self._enqueue_dirty(project_id, restored)
+                self._refresh_meta_locked(project_id, restored)
+            self.store.save_history(project_id, history)
+            info = self._history_info(history)
+        self.events.publish("project.restored", project_id=project_id, direction="savepoint")
+        return info
+
+    def delete_savepoint(self, project_id: str, savepoint_id: str) -> dict:
+        with self._lock:
+            history = self.store.load_history(project_id)
+            kept = [s for s in history.savepoints if s.id != savepoint_id]
+            if len(kept) == len(history.savepoints):
+                raise KeyError(savepoint_id)
+            history.savepoints = kept
+            self.store.save_history(project_id, history)
+            return self._history_info(history)
+
+    @staticmethod
+    def _restorable_graph(dump: dict) -> StoryGraph:
+        """A snapshot as a validated StoryGraph. check_restorable re-runs the
+        patch chokepoint's structural gates (cycles, voice consent): the
+        snapshots are engine-written, but they live in an editable file."""
+        graph = StoryGraph.model_validate(dump)
+        check_restorable(graph)
+        return graph
+
+    @staticmethod
+    def _history_info(history: GraphHistory) -> dict:
+        def descriptor(snapshot: Snapshot) -> dict:
+            return {
+                "kind": snapshot.kind,
+                "summary": snapshot.summary,
+                "node_id": snapshot.node_id,
+            }
+
+        return {
+            "undo_depth": len(history.undo),
+            "redo_depth": len(history.redo),
+            "undo_top": descriptor(history.undo[-1]) if history.undo else None,
+            "redo_top": descriptor(history.redo[-1]) if history.redo else None,
+            "savepoints": [{"id": s.id, "label": s.label, "at": s.at} for s in history.savepoints],
+        }
 
     def enhance_script(self, project_id: str, notes: str) -> set[str]:
         """Revise the script from user feedback: the notes and the screenplay
