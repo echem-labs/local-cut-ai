@@ -599,4 +599,18 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => engine.stop());
+// Quitting must not outrun the engine teardown. `engine.stop()` only sends
+// SIGTERM, and its SIGKILL backstop is an unref'd timer that a quitting app
+// never lives long enough to fire — so an engine slow to honour SIGTERM was
+// orphaned holding the data dir and a few hundred MB of RSS. Hold the quit
+// open until the process tree is gone, then re-issue it.
+let engineTornDown = false;
+app.on("before-quit", (event: Electron.Event) => {
+  if (engineTornDown) return; // the re-issued quit; let it through
+  engineTornDown = true;
+  event.preventDefault();
+  void engine
+    .stopAndWait()
+    .catch((err) => console.error("[engine] teardown failed:", err))
+    .finally(() => app.quit());
+});
