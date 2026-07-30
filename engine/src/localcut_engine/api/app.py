@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import secrets
+import statistics
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
@@ -47,7 +48,7 @@ from ..comfy import allowlist as comfy_allowlist
 from ..comfy import workflows
 from ..config import EngineConfig
 from ..events import EventBus
-from ..graph.editor import EDIT_SYSTEM_PROMPT, parse_edit_plan
+from ..graph.editor import EDIT_SYSTEM_PROMPT, EditPlan, parse_edit_plan
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..graph.template_io import TemplateError, cloud_models, from_template
@@ -57,13 +58,19 @@ from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.capability import installed_comfy_kinds, installed_comfy_models
 from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
+from ..manifest.defaults import (
+    DEFAULTABLE_TASKS,
+    DefaultsTooNew,
+    load_defaults,
+    set_default,
+)
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
-from ..service import ConflictError, ProjectService
+from ..service import CLOUD_SPEND_ALLOWED, CloudSpendRefused, ConflictError, ProjectService
 from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
@@ -182,6 +189,11 @@ _TASK_KINDS = (
 )
 
 
+# Newest completed renders considered per (kind, quality) when computing the
+# calibrated ETA — enough to smooth run-to-run variance, few enough that a
+# GPU/driver/model change stops dominating the estimate within a session.
+_ETA_SAMPLES_PER_KEY = 20
+
 _FILENAME_SLUG_MAX = 60
 # Bound on reading a screenplay back for its title. Screenplays are a few KB;
 # anything past this is not one, and serving must never block on a large read.
@@ -252,6 +264,21 @@ def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
         return None
 
 
+def _llm_default_reader(config: EngineConfig):
+    """The persisted text.llm default as a live read — the picker can change
+    it mid-session and the next script job must see it. A defaults file
+    from a newer build refuses on its own routes; script jobs fall back to
+    the engine-config model instead of failing."""
+
+    def read() -> str | None:
+        try:
+            return load_defaults(config).get("text.llm")
+        except DefaultsTooNew:
+            return None
+
+    return read
+
+
 def _build_backends(config: EngineConfig) -> BackendRegistry:
     """Build the backend chain from config; first registered wins per node
     kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
@@ -272,6 +299,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         base_url=config.llm_url,
                         model=config.llm_model,
                         timeout_s=config.llm_timeout_s,
+                        default_model=_llm_default_reader(config),
                     )
                 )
             case "comfy":
@@ -493,6 +521,45 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     app.add_middleware(BodyLimitMiddleware)
 
+    class CloudSpendMiddleware:
+        """Let a client declare that it may not spend the user's BYOK keys.
+
+        A header rather than a body field so it covers every route at once,
+        including ones written later - the point of moving this rule to the
+        queue was that per-route opt-ins are what kept leaking. Absent, the
+        answer is "allowed", so the app and the CLI are unaffected; the MCP
+        server sends it on every request it makes.
+
+        Deliberately NOT BaseHTTPMiddleware: that runs the rest of the app
+        in a separate task, and a ContextVar set there would not be visible
+        to the endpoint. A plain ASGI wrapper shares the task, and each
+        request gets its own context, so the value cannot leak across
+        requests.
+        """
+
+        def __init__(self, app) -> None:
+            self.app = app
+
+        async def __call__(self, scope, receive, send) -> None:
+            if scope["type"] == "http":
+                for name, value in scope.get("headers") or []:
+                    if name == b"x-localcut-cloud-spend":
+                        if value.strip().lower() == b"deny":
+                            CLOUD_SPEND_ALLOWED.set(False)
+                        break
+            await self.app(scope, receive, send)
+
+    app.add_middleware(CloudSpendMiddleware)
+
+    @app.exception_handler(CloudSpendRefused)
+    async def _cloud_spend_refused(request: Request, exc: CloudSpendRefused) -> JSONResponse:
+        """403 rather than 422: the request was well-formed and the caller is
+        simply not permitted to commit this spend. Registered app-wide so
+        every route that can enqueue is covered without naming any of them.
+        """
+        del request
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
     @app.exception_handler(ProjectTooNew)
     async def _project_too_new(request: Request, exc: ProjectTooNew) -> JSONResponse:
         """A project written by a newer engine is a conflict the user can fix
@@ -587,7 +654,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend if isinstance(backend, LLMScriptBackend) else None
 
-        unavailable = {"available": False, "default": config.llm_model, "models": []}
+        llm_default = _llm_default_reader(config)
+        unavailable = {
+            "available": False,
+            "default": llm_default() or config.llm_model,
+            "models": [],
+        }
         backend = await asyncio.to_thread(script_llm)
         if backend is None:
             return unavailable
@@ -595,7 +667,61 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             models = await backend.list_models()
         except httpx.HTTPError:
             return unavailable
-        return {"available": True, "default": backend.model, "models": models}
+        # The effective default (persisted per-task choice, then config) —
+        # what a job with no explicit model actually renders with.
+        return {"available": True, "default": backend.resolve_model(None), "models": models}
+
+    @app.get("/system/etas", dependencies=[Authed])
+    async def system_etas() -> dict:
+        """Calibrated render-time estimates per node kind and quality, from
+        this machine's own completed jobs. Medians of the newest samples:
+        medians because OOM-ladder retries and cold model loads skew a mean
+        badly, newest-first so a hardware or model change ages out of the
+        estimate instead of haunting it. Empty until something has rendered
+        — an honest 'no data yet' beats a hand-written guess."""
+        durations = await asyncio.to_thread(queue.completed_durations)
+        by_key: dict[tuple[str, str], list[float]] = {}
+        for kind, quality, seconds in durations:  # newest first
+            samples = by_key.setdefault((kind, quality), [])
+            if len(samples) < _ETA_SAMPLES_PER_KEY:
+                samples.append(seconds)
+        etas: dict[str, dict[str, dict]] = {}
+        for (kind, quality), samples in sorted(by_key.items()):
+            etas.setdefault(kind, {})[quality] = {
+                "seconds": round(statistics.median(samples), 2),
+                "samples": len(samples),
+            }
+        return {"etas": etas}
+
+    @app.get("/models/defaults", dependencies=[Authed])
+    async def model_defaults() -> dict:
+        """The persisted per-task default models, plus which tasks accept
+        one — the picker renders rows only for tasks the engine honors."""
+        try:
+            defaults = await asyncio.to_thread(load_defaults, config)
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
+
+    class ModelDefaultBody(BaseModel):
+        task: str = Field(max_length=32)
+        # None/empty clears the task's default (back to engine defaults).
+        model: str | None = Field(default=None, max_length=128)
+
+    @app.put("/models/defaults", dependencies=[Authed])
+    async def set_model_default(body: ModelDefaultBody) -> dict:
+        try:
+            defaults = await asyncio.to_thread(set_default, config, body.task, body.model)
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown model: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            # The override manifest could not be read to validate against.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
 
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
@@ -1138,6 +1264,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # None → the local script LLM; "cloud:*" → BYOK textgen. Cloud is
         # opt-in per request: an edit must never silently spend the user's key.
         model: str | None = None
+        # Propose-then-act: preview the compiled plan without committing it.
+        # The response carries the plan and the graph revision it was built
+        # against, which /edit/apply takes to land it later.
+        dry_run: bool = False
 
     @app.post("/projects/{project_id}/edit", dependencies=[Authed])
     async def edit_project(project_id: ProjectId, body: EditBody) -> dict:
@@ -1175,18 +1305,51 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                     base_url=config.llm_url,
                     model=config.llm_model,
                     timeout_s=config.llm_timeout_s,
+                    default_model=_llm_default_reader(config),
                 ).complete(prompt, system=EDIT_SYSTEM_PROMPT, max_tokens=EDIT_MAX_TOKENS)
             plan = parse_edit_plan(raw)
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
             # The model or its transport failed us, not the client.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         try:
+            if body.dry_run:
+                result = await asyncio.to_thread(
+                    service.preview_edit_plan, project_id, plan, body.scope, view.get("revision")
+                )
+                return {
+                    "summary": plan.summary,
+                    "plan": plan.model_dump(),
+                    "revision": view.get("revision"),
+                    **result,
+                }
             result = await asyncio.to_thread(
                 service.apply_edit_plan, project_id, plan, body.scope, view.get("revision")
             )
         except ConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"summary": plan.summary, **result}
+
+    class EditApplyBody(BaseModel):
+        plan: EditPlan
+        scope: str = Field(default="project", pattern=NODE_ID_PATTERN)
+        # The revision the plan was previewed against — the same stale-plan
+        # refusal /edit itself uses when the graph moves mid-flight.
+        revision: str | None = None
+
+    @app.post("/projects/{project_id}/edit/apply", dependencies=[Authed])
+    async def edit_apply(project_id: ProjectId, body: EditApplyBody) -> dict:
+        """Second half of propose-then-act: land a plan a dry-run /edit
+        returned, without a second LLM round trip. The plan is a client
+        document here, but compile_edits re-validates every part of it
+        against the whitelist exactly as it does the LLM's own output."""
+        await _get_project(project_id)
+        try:
+            result = await asyncio.to_thread(
+                service.apply_edit_plan, project_id, body.plan, body.scope, body.revision
+            )
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"summary": body.plan.summary, **result}
 
     class EnhanceBody(BaseModel):
         notes: str = Field(min_length=1, max_length=2000)
@@ -1218,6 +1381,70 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             await asyncio.to_thread(service.regenerate, project_id, node_id, body.seed)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"unknown node: {exc}") from exc
+        return {"ok": True}
+
+    # -- undo/redo & save points --------------------------------------------
+
+    @app.get("/projects/{project_id}/history", dependencies=[Authed])
+    async def project_history(project_id: ProjectId) -> dict:
+        """Stack depths, the descriptors of the next undo/redo step, and the
+        save point list — never the snapshots themselves (each one is a whole
+        graph, and this is polled alongside the board)."""
+        await _get_project(project_id)
+        return await asyncio.to_thread(service.history_info, project_id)
+
+    @app.post("/projects/{project_id}/undo", dependencies=[Authed])
+    async def undo_project(project_id: ProjectId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.undo, project_id)
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            # The snapshot failed the restore gate (cycle / consent) — the
+            # stored history is bad, not the server.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/redo", dependencies=[Authed])
+    async def redo_project(project_id: ProjectId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.redo, project_id)
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    class SavePointBody(BaseModel):
+        label: str = Field(min_length=1, max_length=80)
+
+    SavePointId = Annotated[str, PathParam(pattern=r"^sp\d{1,9}$")]
+
+    @app.post("/projects/{project_id}/savepoints", dependencies=[Authed])
+    async def create_savepoint(project_id: ProjectId, body: SavePointBody) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.create_savepoint, project_id, body.label)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/savepoints/{savepoint_id}/restore", dependencies=[Authed])
+    async def restore_savepoint(project_id: ProjectId, savepoint_id: SavePointId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.restore_savepoint, project_id, savepoint_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown save point: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/projects/{project_id}/savepoints/{savepoint_id}", dependencies=[Authed])
+    async def delete_savepoint(project_id: ProjectId, savepoint_id: SavePointId) -> dict:
+        await _get_project(project_id)
+        try:
+            await asyncio.to_thread(service.delete_savepoint, project_id, savepoint_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown save point: {exc}") from exc
         return {"ok": True}
 
     class FinalizeBody(BaseModel):
@@ -1328,6 +1555,51 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # desktop's bare <a download> saves it (the engine is another origin,
         # so a client-side download="name" would be ignored).
         return FileResponse(path, filename=filename, content_disposition_type="inline")
+
+    # A dedicated decoder instance rather than a chain lookup: the chain may
+    # not include an ffmpeg backend at all (all-mock demo config), and peaks
+    # are a read-model concern, not a render.
+    peaks_decoder = FFmpegBackend(ffmpeg_bin=config.resolved_ffmpeg_bin)
+
+    @app.get("/projects/{project_id}/artifacts/{output_hash}/peaks", dependencies=[Authed])
+    async def artifact_peaks(
+        project_id: ProjectId,
+        output_hash: OutputHash,
+        bins: Annotated[int, Query(ge=16, le=4096)] = 512,
+    ) -> dict:
+        """Waveform peaks for an audio artifact — the audio-lane shape,
+        computed engine-side once instead of every client decoding whole
+        tracks through WebAudio. Cached per (artifact, bins) in cache/,
+        which storage cleanup may drop at any time (it just recomputes)."""
+        await _get_project(project_id)
+        path = await asyncio.to_thread(store.resolve_artifact, project_id, output_hash)
+        if path is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        cache_file = store.project_dir(project_id) / "cache" / f"peaks-{output_hash}-{bins}.json"
+        if cache_file.exists():
+            try:
+                return json.loads(await asyncio.to_thread(cache_file.read_text, "utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass  # torn or swept mid-read — recompute below
+        try:
+            result = await peaks_decoder.audio_peaks(path, bins)
+        except GenerationError as exc:
+            # The ffmpeg binary itself is missing — an install problem, not
+            # a property of this artifact.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        if result is None:
+            raise HTTPException(status_code=422, detail="artifact is not decodable audio")
+        payload = {"bins": bins, **result}
+
+        def cache_write() -> None:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            # Plain write on purpose: a torn cache entry is recomputed by the
+            # JSONDecodeError path above, so the atomic-writer ceremony state
+            # files need would buy nothing here.
+            cache_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        await asyncio.to_thread(cache_write)
+        return payload
 
     # -- events (progress streaming end to end) --------------------------
 

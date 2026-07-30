@@ -55,3 +55,30 @@ def test_nearest_beat_prefers_in_window_over_globally_closest():
     # 1.72 is closest to 1.5 (out of window) but 2.0 is inside [1.52, 2.07].
     assert nearest_beat(1.72, beats, period=None, lo=1.52, hi=2.07) == 2.0
     assert nearest_beat(1.72, beats, period=3.0, lo=1.52, hi=2.07) == 2.0
+
+
+def test_waveform_peaks_shape_and_bounds():
+    from localcut_engine.audio import waveform_peaks
+
+    t = np.linspace(0, 1, ANALYSIS_RATE, endpoint=False)
+    sine = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    peaks = waveform_peaks(sine, 64)
+    assert len(peaks) == 64
+    assert all(0.0 <= p <= 0.5001 for p in peaks)
+    assert max(peaks) > 0.49
+
+
+def test_waveform_peaks_short_signal_pads_with_zeros():
+    """A clip shorter than the bin count must keep the lane's width: bins
+    past the signal read silence, they do not shrink the array."""
+    from localcut_engine.audio import waveform_peaks
+
+    peaks = waveform_peaks(np.ones(10, dtype=np.float32), 32)
+    assert len(peaks) == 32
+    assert peaks[0] == 1.0 and peaks[-1] == 0.0
+
+
+def test_waveform_peaks_of_nothing_is_silence():
+    from localcut_engine.audio import waveform_peaks
+
+    assert waveform_peaks(np.zeros(0, dtype=np.float32), 8) == [0.0] * 8

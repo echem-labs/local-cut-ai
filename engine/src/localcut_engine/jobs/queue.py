@@ -197,6 +197,25 @@ class JobQueue:
             rows = self._db.execute(query, (*params, limit)).fetchall()
         return self._hydrate(rows)
 
+    def completed_durations(self, limit: int = 500) -> list[tuple[str, str, float]]:
+        """(kind, quality, seconds) for the newest finished renders across
+        EVERY project — render time is a property of this machine, not of
+        one project. This is the calibration data behind /system/etas: what
+        a clip actually takes here beats any hand-written perf class."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (JobStatus.DONE, limit),
+            ).fetchall()
+        durations: list[tuple[str, str, float]] = []
+        for job in self._hydrate(rows):
+            if job.started_at is None or job.finished_at is None:
+                continue
+            seconds = job.finished_at - job.started_at
+            if seconds > 0:
+                durations.append((job.spec.kind.value, job.spec.quality, seconds))
+        return durations
+
     def active(self, project_id: str) -> list[Job]:
         """Queued/rendering jobs only — indexed, so callers that just need
         the in-flight set skip hydrating the whole history."""

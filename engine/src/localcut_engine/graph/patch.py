@@ -52,8 +52,11 @@ class PatchOp(BaseModel):
         "remove_node",
         "connect",
         "disconnect",
+        "select_take",
+        "add_scene",
     ]
-    node_id: str
+    # add_scene allocates its own ids, so it is the one op with no target.
+    node_id: str = ""
     params: dict[str, Any] | None = None
     seed: int | None = None
     model: str | None = None
@@ -62,6 +65,29 @@ class PatchOp(BaseModel):
     # (connect only), `port` the input being rewired.
     src: str | None = None
     port: str | None = None
+    # select_take: the output hash of the recorded take to switch back to.
+    # The service resolves it against takes.json into the full identity
+    # (params/seed/model) before apply_patch sees the op.
+    take: str | None = None
+    # add_scene: the scene id to insert after (None appends at the end).
+    after: str | None = None
+
+
+def check_restorable(graph: StoryGraph) -> None:
+    """Gate for graphs that arrive whole rather than op-by-op — history
+    snapshots and save points being restored. A restore is another route
+    that can write an edge, so it has to re-establish what the `connect`
+    op guarantees below: no cycles (output_hash would recurse forever),
+    and voice_ref fed only by a consented voice-sample asset. Snapshots
+    are engine-written, but the file they live in is plain JSON on disk;
+    trusting it would make editing history.json a consent bypass."""
+    graph.topological_order()  # raises ValueError on a cycle
+    for edge in graph.edges:
+        if edge.port != VOICE_REF_PORT:
+            continue
+        src = graph.nodes.get(edge.src)
+        if src is None or src.kind is not NodeKind.ASSET or not src.params.get("voice_consent"):
+            raise ValueError("voice_ref accepts only a consented voice-sample asset")
 
 
 def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
@@ -162,6 +188,27 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                     e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
                 ]
                 graph.connect(op.src, op.node_id, port=op.port)
+            case "select_take":
+                node = graph.nodes[op.node_id]
+                # Assets carry server-stamped params (sha256, voice_consent)
+                # and scripts rebuild the whole pipeline; neither is a node
+                # whose identity may be swapped wholesale from a record.
+                if node.kind in (NodeKind.ASSET, NodeKind.SCRIPT):
+                    raise ValueError(f"{node.kind.value} nodes do not have takes")
+                if op.params is None:
+                    raise ValueError("select_take requires a resolved take")
+                # Wholesale replacement, not a merge: the point of selecting a
+                # take is landing on EXACTLY the recorded identity, so its
+                # output hash resolves to the artifact already on disk. A
+                # merge would keep params added since and miss the cache.
+                node.params = {k: v for k, v in op.params.items() if k not in RESERVED_PARAMS}
+                node.seed = op.seed if op.seed is not None else 0
+                node.model = op.model
+            case "add_scene":
+                # Needs id allocation and multi-node construction against
+                # scene conventions this module does not know — the service
+                # compiles it into add_node/connect/set_params ops first.
+                raise ValueError("add_scene must be resolved by the project service")
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")
