@@ -256,6 +256,7 @@ class LLMScriptBackend(ExecutionBackend):
         model: str = "qwen3:14b",
         unload_after: bool = True,
         timeout_s: int = 600,
+        default_model: Callable[[], str | None] | None = None,
     ) -> None:
         base = base_url.rstrip("/")
         # Accept both http://host:port and http://host:port/v1 — the chat
@@ -263,6 +264,11 @@ class LLMScriptBackend(ExecutionBackend):
         self.root_url = base.removesuffix("/v1")
         self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
+        # Live read of the user's persisted per-task default (Settings →
+        # Models); the ctor `model` stays the engine-config fallback. A
+        # callable, not a value: the default can change mid-session and the
+        # next job must see it without a backend rebuild.
+        self.default_model = default_model
         self.timeout_s = timeout_s
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
         # before image/video jobs run (LLM → unload → image batch).
@@ -292,12 +298,15 @@ class LLMScriptBackend(ExecutionBackend):
         return sorted(str(row["id"]) for row in data if isinstance(row, dict) and row.get("id"))
 
     def resolve_model(self, requested: str | None) -> str:
-        """The Ollama model a node's `model` choice lands on: the configured
-        default when unset, otherwise the requested name (with the `local:`
-        routing prefix stripped — the server knows only bare names)."""
-        if not requested:
-            return self.model
-        return requested.removeprefix("local:")
+        """The Ollama model a node's `model` choice lands on: an explicit
+        request wins (with the `local:` routing prefix stripped — the server
+        knows only bare names); otherwise the user's persisted text.llm
+        default, and only then the engine-config model."""
+        if requested:
+            return requested.removeprefix("local:")
+        if self.default_model is not None and (configured := self.default_model()):
+            return configured
+        return self.model
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         if spec.model is not None and spec.model.startswith("cloud:"):
@@ -345,7 +354,7 @@ class LLMScriptBackend(ExecutionBackend):
         must release the model for image/video work afterwards."""
         # The one place the configured default is applied — the private
         # helpers below take a resolved name so it cannot drift between them.
-        model = model or self.model
+        model = self.resolve_model(model)
         raw = await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
         if self.unload_after:
             await self._unload(model)
