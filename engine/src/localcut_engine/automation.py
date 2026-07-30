@@ -77,7 +77,7 @@ class EngineClient:
         token: str = "",
         *,
         cert: Path | None = None,
-        timeout: float = 30.0,
+        timeout: float | httpx.Timeout = 30.0,
     ) -> None:
         self.url = url.rstrip("/")
         self.token = token
@@ -147,6 +147,16 @@ class EngineClient:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc
 
         if response.status_code == 401:
+            # Say which failure it was. With no token configured, no
+            # Authorization header went out at all, and "rejected the token"
+            # sends the operator to debug a value that was never sent —
+            # `--token ""` or an env var that templated to empty is the
+            # ordinary way to get here.
+            if not self.token:
+                raise EngineError(
+                    "the engine requires a token and none was sent - pass --token, or set "
+                    "LOCALCUT_TOKEN to the value the engine printed at startup"
+                )
             raise EngineError(
                 "the engine rejected the token - pass --token, or set LOCALCUT_TOKEN "
                 "to the value the engine printed at startup"
@@ -265,13 +275,26 @@ def _detail(response: httpx.Response) -> str:
 
 def active_jobs(client: EngineClient, project_id: str) -> list[dict]:
     """Jobs still to finish for a project."""
-    return _outstanding(client.get("/jobs", params={"project_id": project_id}) or [])
+    return outstanding_jobs(client.get("/jobs", params={"project_id": project_id}) or [])
 
 
-def _outstanding(jobs: list[dict]) -> list[dict]:
-    """Jobs not in a terminal state. One definition, so the --no-wait count
-    and the waiting loop can never disagree about what is outstanding."""
+def outstanding_jobs(jobs: list[dict]) -> list[dict]:
+    """Jobs not in a terminal state. One definition, so the --no-wait count,
+    the waiting loop and the MCP render_status can never disagree about what
+    is outstanding. Public because mcp_server builds on it: an in-module
+    rename here has an external caller to break."""
     return [job for job in jobs if str(job.get("status")) not in _TERMINAL]
+
+
+def failed_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> list[dict]:
+    """Rows that failed and are not excused as an earlier render's. The one
+    definition of "a failure of THIS render", shared by wait_for_render and
+    the MCP render_status for the same reason outstanding_jobs is."""
+    return [
+        job
+        for job in jobs
+        if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
+    ]
 
 
 def settled_jobs(client: EngineClient, project_id: str) -> frozenset[str]:
@@ -312,15 +335,11 @@ def wait_for_render(
     deadline = time.monotonic() + timeout_s
     while True:
         jobs = client.get("/jobs", params={"project_id": project_id}) or []
-        pending = _outstanding(jobs)
+        pending = outstanding_jobs(jobs)
         if on_progress is not None:
             on_progress(jobs, pending)
         if not pending:
-            return [
-                job
-                for job in jobs
-                if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
-            ]
+            return failed_jobs(jobs, not_mine=not_mine)
         if time.monotonic() >= deadline:
             raise EngineError(
                 f"still rendering after {timeout_s:.0f}s ({len(pending)} job(s) outstanding) - "
@@ -336,6 +355,16 @@ def export_hash(board: dict) -> str | None:
     export = (board.get("aux") or {}).get("export") or {}
     artifact = export.get("artifact_hash")
     return str(artifact) if artifact else None
+
+
+def finished_cut_hash(client: EngineClient, project_id: str) -> str | None:
+    """Where the finished cut lives, resolved the one way every surface must
+    agree on: project document -> board -> export slot -> artifact hash. The
+    CLI export, the MCP export and the MCP render_status all answer "is
+    there a cut?" through this, so a change to the board's export shape is a
+    change in one place."""
+    board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
+    return export_hash(board)
 
 
 def render_summary(jobs: list[dict]) -> dict[str, int]:
