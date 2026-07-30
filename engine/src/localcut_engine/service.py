@@ -19,10 +19,18 @@ from .events import EventBus
 from .fcpxml import edl_to_fcpxml
 from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
-from .graph.model import OPTIONAL_PORTS, Node, NodeKind, StoryGraph, scene_sort_key
+from .graph.model import (
+    KEYFRAME_PORT,
+    OPTIONAL_PORTS,
+    SCENE_AUDIO_SUFFIX,
+    Node,
+    NodeKind,
+    StoryGraph,
+    scene_sort_key,
+)
 from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch, check_restorable
 from .graph.template_io import GraphTemplate, build_graph, to_template
-from .graph.templates import expand_screenplay, prompt_template_graph, tool_graph
+from .graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
@@ -325,6 +333,7 @@ class ProjectService:
             graph = self.store.load_graph(project_id)
             before = graph.model_dump(mode="json")
             ops = self._resolve_select_takes(project_id, graph, ops)
+            ops = self._resolve_add_scenes(graph, ops)
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
@@ -369,6 +378,138 @@ class ProjectService:
             )
         self.store.save_takes(project_id, takes)
         return resolved
+
+    def _resolve_add_scenes(self, graph: StoryGraph, ops: list[PatchOp]) -> list[PatchOp]:
+        """Compile each add_scene op into the primitive ops that build a
+        scene subgraph — through apply_patch like every other edit, so the
+        cycle check and the consent gate cover added scenes for free.
+
+        The screenplay stays the source of truth: like a scene removed by
+        the NL editor, an added scene lives until the script itself
+        re-renders, at which point expansion rebuilds the scene set from
+        the new screenplay.
+        """
+        resolved: list[PatchOp] = []
+        # Ops are compiled against the unmutated graph, so a second
+        # add_scene in the same patch must see the order the first one
+        # built, not recompute it from the graph and overwrite it.
+        carried_order: list[str] | None = None
+        for op in ops:
+            if op.op == "add_scene":
+                compiled = self._compile_add_scene(graph, op, resolved, carried_order)
+                carried_order = list(compiled[-1].params["order"])
+                resolved.extend(compiled)
+            else:
+                resolved.append(op)
+        return resolved
+
+    @staticmethod
+    def _compile_add_scene(
+        graph: StoryGraph,
+        op: PatchOp,
+        pending: list[PatchOp],
+        carried_order: list[str] | None,
+    ) -> list[PatchOp]:
+        if "timeline" not in graph.nodes or "script" not in graph.nodes:
+            raise ValueError("this project has no timeline to add a scene to")
+        params = op.params or {}
+        prompt = str(params.get("prompt", ""))
+        narration = str(params.get("narration", ""))
+        try:
+            duration_s = float(params.get("duration_s", 5.0))
+        except (TypeError, ValueError):
+            duration_s = 5.0
+        # One clip only: past MAX_CLIP_S a scene splits into sequential
+        # takes, which is expansion's job to construct, not a patch op's.
+        duration_s = min(max(duration_s, 1.0), MAX_CLIP_S)
+
+        # Never reuse a scene number: trims/transitions in the timeline
+        # params are keyed by scene id and survive scene removal, so a
+        # recycled id would inherit a removed scene's edits. Ids pending in
+        # this same patch count too, or two add_scene ops collide.
+        used = {
+            n.split(".")[0] for n in graph.nodes if "." in n and n.split(".")[0].startswith("s")
+        }
+        timeline = graph.nodes["timeline"]
+        order = (
+            list(carried_order)
+            if carried_order is not None
+            else list(timeline.params.get("order") or [])
+        )
+        used |= set(order)
+        used |= set((timeline.params.get("trims") or {}).keys())
+        used |= set((timeline.params.get("transitions") or {}).keys())
+        used |= {p.node_id.split(".")[0] for p in pending if p.op == "add_node"}
+        numbers = [int(s[1:]) for s in used if s[1:].isdigit()]
+        sid = f"s{max(numbers, default=0) + 1}"
+
+        scene_ids = sorted(
+            {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")},
+            key=scene_sort_key,
+        )
+        if not order:
+            order = scene_ids
+        if op.after is not None:
+            if op.after not in order:
+                raise ValueError(f"unknown scene: {op.after}")
+            order.insert(order.index(op.after) + 1, sid)
+        else:
+            order.append(sid)
+
+        aspect = graph.nodes["script"].params.get("aspect") or timeline.params.get("aspect")
+        # Voice is a project-wide style choice; a new scene should speak
+        # like its neighbours, not fall back to the backend default.
+        voice = next(
+            (
+                node.params["voice"]
+                for node in graph.nodes.values()
+                if node.kind is NodeKind.NARRATION and node.params.get("voice")
+            ),
+            None,
+        )
+        keyframe_params = {"prompt": prompt}
+        clip_params = {
+            "prompt": prompt,
+            "motion": str(params.get("motion", "")),
+            "duration_s": duration_s,
+            "mode": "i2v",
+        }
+        if aspect:
+            keyframe_params["aspect"] = aspect
+            clip_params["aspect"] = aspect
+        narration_params: dict = {"text": narration}
+        if voice:
+            narration_params["voice"] = voice
+
+        kf_id, clip_id, narr_id = f"{sid}.keyframe", f"{sid}.clip", f"{sid}.narration"
+        return [
+            PatchOp(
+                op="add_node",
+                node_id=kf_id,
+                node=Node(id=kf_id, kind=NodeKind.KEYFRAME, params=keyframe_params),
+            ),
+            PatchOp(
+                op="add_node",
+                node_id=clip_id,
+                node=Node(id=clip_id, kind=NodeKind.CLIP, params=clip_params),
+            ),
+            PatchOp(
+                op="add_node",
+                node_id=narr_id,
+                node=Node(id=narr_id, kind=NodeKind.NARRATION, params=narration_params),
+            ),
+            PatchOp(op="connect", node_id=kf_id, src="script", port="default"),
+            PatchOp(op="connect", node_id=narr_id, src="script", port="default"),
+            PatchOp(op="connect", node_id=clip_id, src=kf_id, port=KEYFRAME_PORT),
+            PatchOp(op="connect", node_id="timeline", src=clip_id, port=sid),
+            PatchOp(
+                op="connect",
+                node_id="timeline",
+                src=narr_id,
+                port=f"{sid}{SCENE_AUDIO_SUFFIX}",
+            ),
+            PatchOp(op="set_params", node_id="timeline", params={"order": order}),
+        ]
 
     @staticmethod
     def _current_take(graph: StoryGraph, node_id: str, memo: dict[str, str]) -> TakeRecord:
