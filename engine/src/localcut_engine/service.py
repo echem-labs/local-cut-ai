@@ -710,10 +710,25 @@ class ProjectService:
             for job in active_jobs
             if job.id not in superseded
         }
+        # That upgrade path must not run in reverse. Every caller but
+        # `finalize` re-plans at draft, so a clip finishing mid-finalize
+        # enqueued a draft alongside the queued final for the same hash —
+        # and, landing last, marked the node `draft`. The export node then
+        # never read `final` and the header offered "Create final video"
+        # forever, with no way to download the video it had just made.
+        # A draft is never worth running at an address a final already owns:
+        # identical bytes for an assembly node, worse for a generation one.
+        active_finals = {
+            job.spec.output_hash
+            for job in active_jobs
+            if job.id not in superseded and job.spec.quality == "final"
+        }
         project = self.store.get(project_id)
         enqueued = 0
         for spec in plan.jobs:
             if (spec.output_hash, spec.quality) in active:
+                continue
+            if spec.quality != "final" and spec.output_hash in active_finals:
                 continue
             if not self._checkpoint_open(project, spec.kind):
                 continue  # released later by POST .../approve
