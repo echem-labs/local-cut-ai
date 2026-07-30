@@ -34,6 +34,7 @@ from .project.store import (
     ProjectStore,
     SavePoint,
     Snapshot,
+    TakeRecord,
 )
 from .schema import Screenplay
 
@@ -56,6 +57,18 @@ SCENE_NODE_STATUSES = (
 
 class ConflictError(RuntimeError):
     """A request lost a race with concurrent state (maps to HTTP 409)."""
+
+
+# Nodes whose regenerate keeps the displaced identity as a selectable take.
+# Assets are never regenerated; the script rebuilds the whole pipeline, so a
+# screenplay "take" is a different feature from an alternate render.
+TAKE_KINDS = (
+    NodeKind.KEYFRAME,
+    NodeKind.CLIP,
+    NodeKind.NARRATION,
+    NodeKind.MUSIC,
+    NodeKind.THUMBNAIL,
+)
 
 
 class ProjectService:
@@ -311,6 +324,7 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             before = graph.model_dump(mode="json")
+            ops = self._resolve_select_takes(project_id, graph, ops)
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
             self.store.save_graph(project_id, graph)
@@ -319,6 +333,53 @@ class ProjectService:
                 self._enqueue_dirty(project_id, graph)
             self._refresh_meta_locked(project_id, graph)
         return dirty
+
+    def _resolve_select_takes(
+        self, project_id: str, graph: StoryGraph, ops: list[PatchOp]
+    ) -> list[PatchOp]:
+        """Fill each select_take op with the recorded identity its `take`
+        hash names, and park the node's current identity as a take of its
+        own — so switching is always a round trip, never a one-way door."""
+        if not any(op.op == "select_take" for op in ops):
+            return ops
+        takes = self.store.load_takes(project_id)
+        memo = {nid: n.frozen_hash for nid, n in graph.nodes.items() if n.pinned and n.frozen_hash}
+        resolved: list[PatchOp] = []
+        for op in ops:
+            if op.op != "select_take":
+                resolved.append(op)
+                continue
+            node = graph.nodes.get(op.node_id)
+            if node is None:
+                raise KeyError(op.node_id)
+            record = next(
+                (t for t in takes.takes.get(op.node_id, []) if t.output_hash == op.take), None
+            )
+            if record is None:
+                raise ValueError(f"{op.node_id} has no recorded take {op.take}")
+            takes.record(op.node_id, self._current_take(graph, op.node_id, memo))
+            resolved.append(
+                PatchOp(
+                    op="select_take",
+                    node_id=op.node_id,
+                    params=dict(record.params),
+                    seed=record.seed,
+                    model=record.model,
+                )
+            )
+        self.store.save_takes(project_id, takes)
+        return resolved
+
+    @staticmethod
+    def _current_take(graph: StoryGraph, node_id: str, memo: dict[str, str]) -> TakeRecord:
+        node = graph.nodes[node_id]
+        return TakeRecord(
+            output_hash=graph.output_hash(node_id, memo),
+            seed=node.seed,
+            model=node.model,
+            params={k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS},
+            at=time.time(),
+        )
 
     def _record_history(
         self,
@@ -448,6 +509,18 @@ class ProjectService:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
             before = graph.model_dump(mode="json")
+            if node.kind in TAKE_KINDS:
+                # The identity being displaced stays selectable: its artifact
+                # is content-addressed on disk, so switching back later is a
+                # cache hit, not a re-render.
+                takes = self.store.load_takes(project_id)
+                memo = {
+                    nid: n.frozen_hash
+                    for nid, n in graph.nodes.items()
+                    if n.pinned and n.frozen_hash
+                }
+                takes.record(node_id, self._current_take(graph, node_id, memo))
+                self.store.save_takes(project_id, takes)
             node.seed = seed if seed is not None else node.seed + 1
             # A new take is of the node's configuration. Carrying a finished
             # revision's notes here would re-ask them against a draft that
@@ -1203,6 +1276,7 @@ class ProjectService:
 
     def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
+        recorded_takes = self.store.load_takes(project_id).takes
         history = self.queue.list(project_id, 1000)
         # Keyed by IDENTITY — (node, output hash) — not by node id alone. The
         # newest job for a node id can belong to an output the graph has since
@@ -1261,7 +1335,7 @@ class ProjectService:
                 status = "final" if (job and job.spec.quality == "final") else "draft"
             else:
                 status = "queued"
-            return {
+            state = {
                 "node_id": node_id,
                 "status": status,
                 "progress": job.progress if job else 0.0,
@@ -1281,6 +1355,33 @@ class ProjectService:
                 "model": node.model,
                 "pinned": node.pinned,
             }
+            # Alternate takes a regenerate moved past (distinct from a split
+            # scene's sequential clip_takes below). The node's live identity
+            # is listed too, marked current, so a picker is one flat row.
+            records = recorded_takes.get(node_id, [])
+            if records:
+                takes = [
+                    {
+                        "output_hash": r.output_hash,
+                        "seed": r.seed,
+                        "at": r.at,
+                        "available": r.output_hash in cached,
+                        "current": r.output_hash == out_hash,
+                    }
+                    for r in records
+                ]
+                if not any(t["current"] for t in takes):
+                    takes.append(
+                        {
+                            "output_hash": out_hash,
+                            "seed": node.seed,
+                            "at": None,
+                            "available": out_hash in cached,
+                            "current": True,
+                        }
+                    )
+                state["takes"] = takes
+            return state
 
         scenes = []
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}
