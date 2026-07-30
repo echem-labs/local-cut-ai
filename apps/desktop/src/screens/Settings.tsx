@@ -118,10 +118,6 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
   cloud: "settings.backends.names.cloud",
 };
 
-/** Settings (review 4): an overlay layer with a VS Code-style left category
- * nav — General · Defaults · Providers · Models · Storage · Engine · About.
- * Key material flows through the shell (OS keychain → engine), so this
- * screen only ever renders presence and status. */
 /** Per-task default models (engine-persisted): what renders each kind of
  * work when a node names no model. Rows come from the engine's own list of
  * defaultable tasks, so a task the engine cannot honor never grows a knob;
@@ -199,6 +195,10 @@ function ModelDefaultsPanel() {
   );
 }
 
+/** Settings (review 4): an overlay layer with a VS Code-style left category
+ * nav — General · Defaults · Providers · Models · Storage · Engine · About.
+ * Key material flows through the shell (OS keychain → engine), so this
+ * screen only ever renders presence and status. */
 export function Settings() {
   const {
     client,

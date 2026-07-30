@@ -102,7 +102,27 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # consent flag): drop them so the value on the node is only
                 # ever what the server itself stamped.
                 incoming = {k: v for k, v in (op.params or {}).items() if k not in RESERVED_PARAMS}
-                node.params = {**node.params, **incoming}
+                # null REMOVES the key rather than storing None. "Back to the
+                # default" has to land on the same params — and so the same
+                # output hash — as never having set the value at all, or the
+                # artifact already rendered for that state can never be a
+                # cache hit again. An export switched to 30 fps and back to
+                # Auto re-encoded the whole video against a hash carrying
+                # `{"fps": None}`, which no earlier render could match; this
+                # is the failure normalize_params exists to prevent, one
+                # level up. Reading None as absent at every READER would be
+                # the wrong fix: params.get("captions", "burn") returns None
+                # for a stored null, and None is not "burn".
+                #
+                # Only keys THIS op cleared are dropped: a null already on
+                # the node is left alone, so an unrelated edit never moves a
+                # node's hash as a side effect of tidying it.
+                cleared = {key for key, value in incoming.items() if value is None}
+                node.params = {
+                    key: value
+                    for key, value in {**node.params, **incoming}.items()
+                    if key not in cleared
+                }
             case "set_seed":
                 graph.nodes[op.node_id].seed = op.seed if op.seed is not None else 0
             case "set_model":

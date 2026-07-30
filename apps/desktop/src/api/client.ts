@@ -284,12 +284,6 @@ export class EngineClient {
     });
   }
 
-  /** Calibrated render times per node kind/quality, from this machine's
-   * own completed jobs — {} until something has rendered. */
-  etas(): Promise<{ etas: Record<string, Record<string, { seconds: number; samples: number }>> }> {
-    return this.request("/system/etas");
-  }
-
   addCustomModel(body: {
     name: string;
     task: string;
@@ -325,16 +319,6 @@ export class EngineClient {
 
   artifactUrl(projectId: string, hash: string): string {
     return `${this.connection.url}/projects/${projectId}/artifacts/${hash}?token=${this.connection.token}`;
-  }
-
-  /** Engine-computed waveform peaks for an audio artifact — the audio-lane
-   * shape without decoding whole tracks through WebAudio client-side. */
-  peaks(
-    projectId: string,
-    hash: string,
-    bins = 512,
-  ): Promise<{ bins: number; duration_s: number; peaks: number[] }> {
-    return this.request(`/projects/${projectId}/artifacts/${hash}/peaks?bins=${bins}`);
   }
 
   /** Pro-NLE handoff downloads (409 while the timeline hasn't rendered). */
