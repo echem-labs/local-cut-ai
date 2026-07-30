@@ -1529,6 +1529,12 @@ class ProjectService:
                     {
                         "output_hash": r.output_hash,
                         "seed": r.seed,
+                        # The model the take was rendered with. Selecting a
+                        # take restores its whole identity, model included,
+                        # so without this a picker cannot tell a client
+                        # which takes put a cloud model back on the node -
+                        # and the MCP surface has to refuse exactly those.
+                        "model": r.model,
                         "at": r.at,
                         "available": r.output_hash in cached,
                         "current": r.output_hash == out_hash,
@@ -1540,6 +1546,7 @@ class ProjectService:
                         {
                             "output_hash": out_hash,
                             "seed": node.seed,
+                            "model": node.model,
                             "at": None,
                             "available": out_hash in cached,
                             "current": True,

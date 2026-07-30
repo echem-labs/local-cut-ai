@@ -67,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
         help="serve this engine's projects to MCP agents over stdio "
         "(configure the agent host to run this command)",
     )
+    mcp.add_argument(
+        "--export-dir",
+        default=None,
+        help="directory export_video may write into, and the root its paths resolve against "
+        "(default $LOCALCUT_MCP_EXPORT_DIR, else ~/LocalCut)",
+    )
     _add_connection_flags(mcp)
 
     _add_automation_commands(subcommands)
@@ -320,8 +326,11 @@ def _mcp_command(args: argparse.Namespace) -> int:
     from .mcp_server import build_server
 
     url, token, cert = _resolve_connection(args)
+    export_dir = args.export_dir or os.environ.get("LOCALCUT_MCP_EXPORT_DIR")
     try:
-        server = build_server(url, token, cert=cert)
+        server = build_server(
+            url, token, cert=cert, export_dir=Path(export_dir) if export_dir else None
+        )
     except EngineError as exc:
         # Only what can never work fails here (--cert against http://, a
         # missing PEM). An engine that is merely down is not startup's
