@@ -606,6 +606,30 @@ class ProjectService:
         with self._lock:
             return graph_view(self.store.load_graph(project_id), scope)
 
+    def preview_edit_plan(
+        self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
+    ) -> dict:
+        """Compile an edit plan and report what it WOULD do — the planned
+        ops, the warnings, and the dirty cone — committing nothing: no
+        save, no enqueue, no history entry, no event. The dirty preview
+        applies the ops to a throwaway copy of the graph, so it is the
+        same answer apply would give, not an estimate."""
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            if revision is not None and graph_revision(graph, scope) != revision:
+                raise ConflictError(
+                    "the project changed while the edit was being generated — please retry"
+                )
+            ops, warnings = compile_edits(graph, plan, scope)
+            scratch = graph.model_copy(deep=True)
+            dirty = apply_patch(scratch, ops) if ops else set()
+        return {
+            "ops": len(ops),
+            "planned": [op.model_dump(exclude_none=True) for op in ops],
+            "dirty": sorted(dirty),
+            "warnings": warnings,
+        }
+
     def apply_edit_plan(
         self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
     ) -> dict:
