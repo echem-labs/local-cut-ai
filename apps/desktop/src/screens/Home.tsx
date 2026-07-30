@@ -206,6 +206,19 @@ export function Home() {
     };
   }, []);
 
+  // Coming back to Home re-mounts it (App swaps it out while a project is
+  // open), and the WS refreshes the home read model only on OFF-project
+  // lifecycle edges — a render left running in the project just closed emits
+  // nothing but progress ticks for minutes at a time. Without this refetch
+  // the tiles and the tray's engine-wide queue show the world as it was when
+  // Home last happened to refresh.
+  useEffect(() => {
+    void useApp
+      .getState()
+      .refreshHome()
+      .catch((err) => console.warn("home refresh failed:", err));
+  }, []);
+
   // "/" focuses search when no field owns the keyboard (review 4 §H4).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

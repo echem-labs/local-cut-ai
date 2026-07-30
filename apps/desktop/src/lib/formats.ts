@@ -47,3 +47,8 @@ export const spokenSeconds = (narration: string): number => {
   const words = narration.split(/\s+/).filter(Boolean).length;
   return words / SPEECH_WORDS_PER_S + NARRATION_PAD_S;
 };
+
+/** Seconds for a label, at most one decimal. Planned durations come out of
+ * divisions (a 20s scene split into 3 takes plans 6.667s each) and the raw
+ * float must not reach the UI as "~6.667s". */
+export const displaySeconds = (seconds: number): number => Math.round(seconds * 10) / 10;
