@@ -136,6 +136,7 @@ class Project(BaseModel):
 
 
 HISTORY_VERSION = 1
+TAKES_VERSION = 1
 
 # Whole-graph snapshots, not inverse ops: graphs are small JSON, and because
 # artifacts are content-addressed, restoring a prior graph re-references
@@ -182,13 +183,26 @@ class TakeRecord(BaseModel):
     at: float
 
 
+class NodeTakes(BaseModel):
+    """takes.json — prior identities per node id. Kept apart from
+    history.json on purpose: the scene board reads this on every poll, and
+    it must not have to parse fifty graph snapshots to answer."""
+
+    version: int = TAKES_VERSION
+    takes: dict[str, list[TakeRecord]] = {}
+
+    def record(self, node_id: str, take: TakeRecord) -> None:
+        kept = [t for t in self.takes.get(node_id, []) if t.output_hash != take.output_hash]
+        kept.append(take)
+        self.takes[node_id] = kept[-TAKE_LIMIT:]
+
+
 class GraphHistory(BaseModel):
     version: int = HISTORY_VERSION
     undo: list[Snapshot] = []
     redo: list[Snapshot] = []
     savepoints: list[SavePoint] = []
     next_savepoint: int = 1
-    takes: dict[str, list[TakeRecord]] = {}
 
     def push(self, snapshot: Snapshot) -> None:
         """Record a mutation. Any new edit forks history, so the redo stack
@@ -196,11 +210,6 @@ class GraphHistory(BaseModel):
         self.undo.append(snapshot)
         del self.undo[:-UNDO_LIMIT]
         self.redo.clear()
-
-    def record_take(self, node_id: str, take: TakeRecord) -> None:
-        takes = [t for t in self.takes.get(node_id, []) if t.output_hash != take.output_hash]
-        takes.append(take)
-        self.takes[node_id] = takes[-TAKE_LIMIT:]
 
 
 class ProjectStore:
@@ -408,42 +417,55 @@ class ProjectStore:
             timeline.params["edl_version"] = EDL_VERSION
         return graph
 
-    def load_history(self, project_id: str) -> GraphHistory:
-        """The project's undo/redo stacks, save points and take records.
+    def _load_sidecar(self, path: Path, model_cls, max_version: int, what: str):
+        """Shared discipline for the history/takes sidecar files.
 
-        Missing file → empty history (projects predate the feature). A file
+        Missing file → empty document (projects predate the feature). A file
         from a newer build is refused like project.json — validating it here
         would silently drop the fields this build doesn't know and the next
-        push would persist the loss. An unreadable file, though, resets to
-        empty: history is a convenience record over state that lives
-        elsewhere, and refusing to load it would take patching down with it.
+        save would persist the loss. An unreadable file, though, resets to
+        empty: these are convenience records over state that lives elsewhere,
+        and refusing to load one would take patching down with it.
         """
-        path = self._dir(project_id) / "history.json"
         if not path.exists():
-            return GraphHistory()
+            return model_cls()
         try:
             raw = json.loads(_read_text_retry(path))
         except (json.JSONDecodeError, OSError):
-            logger.warning("resetting unreadable history: %s", path)
-            return GraphHistory()
+            logger.warning("resetting unreadable %s: %s", what, path)
+            return model_cls()
         version = raw.get("version", 1) if isinstance(raw, dict) else 1
-        if not isinstance(version, int) or version > HISTORY_VERSION:
+        if not isinstance(version, int) or version > max_version:
             raise HistoryTooNew(
-                f"this project's edit history was written by a newer version of LocalCut AI "
-                f"(history format v{version}, this engine reads up to v{HISTORY_VERSION}) — "
+                f"this project's {what} was written by a newer version of LocalCut AI "
+                f"(format v{version}, this engine reads up to v{max_version}) — "
                 "update the engine. It has not been modified."
             )
         try:
-            return GraphHistory.model_validate(raw)
+            return model_cls.model_validate(raw)
         except ValidationError:
-            logger.warning("resetting invalid history: %s", path)
-            return GraphHistory()
+            logger.warning("resetting invalid %s: %s", what, path)
+            return model_cls()
+
+    def load_history(self, project_id: str) -> GraphHistory:
+        """The project's undo/redo stacks and save points."""
+        path = self._dir(project_id) / "history.json"
+        return self._load_sidecar(path, GraphHistory, HISTORY_VERSION, "edit history")
 
     def save_history(self, project_id: str, history: GraphHistory) -> None:
         history.version = HISTORY_VERSION
         # Compact on purpose: unlike project.json this file holds dozens of
         # graph snapshots, and it is rewritten on every recorded mutation.
         _write_atomic(self._dir(project_id) / "history.json", history.model_dump_json())
+
+    def load_takes(self, project_id: str) -> NodeTakes:
+        """Prior takes per node — the identities a regenerate moved past."""
+        path = self._dir(project_id) / "takes.json"
+        return self._load_sidecar(path, NodeTakes, TAKES_VERSION, "take history")
+
+    def save_takes(self, project_id: str, takes: NodeTakes) -> None:
+        takes.version = TAKES_VERSION
+        _write_atomic(self._dir(project_id) / "takes.json", takes.model_dump_json())
 
     # -- artifact index: generated/ files are named {output_hash}{suffix} --
 

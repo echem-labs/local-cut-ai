@@ -52,6 +52,7 @@ class PatchOp(BaseModel):
         "remove_node",
         "connect",
         "disconnect",
+        "select_take",
     ]
     node_id: str
     params: dict[str, Any] | None = None
@@ -62,6 +63,10 @@ class PatchOp(BaseModel):
     # (connect only), `port` the input being rewired.
     src: str | None = None
     port: str | None = None
+    # select_take: the output hash of the recorded take to switch back to.
+    # The service resolves it against takes.json into the full identity
+    # (params/seed/model) before apply_patch sees the op.
+    take: str | None = None
 
 
 def check_restorable(graph: StoryGraph) -> None:
@@ -179,6 +184,22 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                     e for e in graph.edges if not (e.dst == op.node_id and e.port == op.port)
                 ]
                 graph.connect(op.src, op.node_id, port=op.port)
+            case "select_take":
+                node = graph.nodes[op.node_id]
+                # Assets carry server-stamped params (sha256, voice_consent)
+                # and scripts rebuild the whole pipeline; neither is a node
+                # whose identity may be swapped wholesale from a record.
+                if node.kind in (NodeKind.ASSET, NodeKind.SCRIPT):
+                    raise ValueError(f"{node.kind.value} nodes do not have takes")
+                if op.params is None:
+                    raise ValueError("select_take requires a resolved take")
+                # Wholesale replacement, not a merge: the point of selecting a
+                # take is landing on EXACTLY the recorded identity, so its
+                # output hash resolves to the artifact already on disk. A
+                # merge would keep params added since and miss the cache.
+                node.params = {k: v for k, v in op.params.items() if k not in RESERVED_PARAMS}
+                node.seed = op.seed if op.seed is not None else 0
+                node.model = op.model
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")
