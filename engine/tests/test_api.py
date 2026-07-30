@@ -863,6 +863,68 @@ async def test_voice_samples_are_consent_gated(client):
     assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]
 
 
+async def test_edit_dry_run_previews_without_committing(client, monkeypatch):
+    """dry_run compiles the plan and reports the ops and the dirty cone,
+    but the graph, the undo history and the queue are untouched; the plan
+    then lands through /edit/apply with no second LLM call."""
+    from localcut_engine.backends.llm import LLMScriptBackend
+
+    created = await client.post("/projects", json={"prompt": "city of glass"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+
+    async def fake_complete(self, prompt, system, max_tokens=None):
+        return json.dumps(
+            {
+                "summary": "night mode",
+                "edits": [
+                    {
+                        "action": "update",
+                        "node_id": "s1.keyframe",
+                        "params": {"prompt": "night city"},
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", fake_complete)
+    preview = await client.post(
+        f"/projects/{pid}/edit", json={"instruction": "night", "dry_run": True}
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["ops"] == 1
+    assert body["planned"][0]["op"] == "set_params"
+    assert "s1.clip" in body["dirty"]  # the cone apply would re-render
+    assert body["plan"]["summary"] == "night mode"
+
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["s1.keyframe"]["params"]["prompt"] != "night city"
+    history = (await client.get(f"/projects/{pid}/history")).json()
+    assert history["undo_depth"] == 0  # nothing to undo: nothing happened
+
+    applied = await client.post(
+        f"/projects/{pid}/edit/apply",
+        json={"plan": body["plan"], "revision": body["revision"]},
+    )
+    assert applied.status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["s1.keyframe"]["params"]["prompt"] == "night city"
+
+    # The revision the preview was built against is stale now.
+    stale = await client.post(
+        f"/projects/{pid}/edit/apply",
+        json={"plan": body["plan"], "revision": body["revision"]},
+    )
+    assert stale.status_code == 409
+
+
 async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypatch):
     """If the graph is re-expanded (scene renumbering) while the LLM is
     thinking, the stale plan must 409, not land on content it never saw."""
