@@ -711,25 +711,41 @@ class ProjectService:
             if job.id not in superseded
         }
         # That upgrade path must not run in reverse. Every caller but
-        # `finalize` re-plans at draft, so a clip finishing mid-finalize
-        # enqueued a draft alongside the queued final for the same hash —
-        # and, landing last, marked the node `draft`. The export node then
-        # never read `final` and the header offered "Create final video"
-        # forever, with no way to download the video it had just made.
-        # A draft is never worth running at an address a final already owns:
-        # identical bytes for an assembly node, worse for a generation one.
-        active_finals = {
+        # `finalize` re-plans at draft, so a draft kept landing on a hash a
+        # final owned — once from a clip finishing mid-finalize (a draft
+        # queued alongside the still-running final), and once after the final
+        # had already finished, when a slower upstream completed and
+        # invalidated it downstream. Either way the draft ran last, the node
+        # reported `draft`, and the project header offered "Create final
+        # video" forever with no Download for the video it had just made.
+        #
+        # Quality is not in the hash, so the same address can only ever hold
+        # one of the two: keep the final. Already in flight, and nothing to
+        # rebuild -> the draft is redundant, drop it. Already delivered once
+        # but the artifact has since been invalidated -> it does need
+        # rebuilding, but at the quality it had, so promote rather than drop.
+        finals_in_flight = {
             job.spec.output_hash
             for job in active_jobs
             if job.id not in superseded and job.spec.quality == "final"
+        }
+        finals_delivered = {
+            job.spec.output_hash
+            for job in history
+            if job.spec.quality == "final" and job.status is JobStatus.DONE
         }
         project = self.store.get(project_id)
         enqueued = 0
         for spec in plan.jobs:
             if (spec.output_hash, spec.quality) in active:
                 continue
-            if spec.quality != "final" and spec.output_hash in active_finals:
-                continue
+            if spec.quality != "final":
+                if spec.output_hash in finals_in_flight:
+                    continue
+                if spec.output_hash in finals_delivered:
+                    spec = spec.model_copy(update={"quality": "final"})
+                    if (spec.output_hash, "final") in active:
+                        continue
             if not self._checkpoint_open(project, spec.kind):
                 continue  # released later by POST .../approve
             self.queue.put(Job(project_id=project_id, spec=spec))
