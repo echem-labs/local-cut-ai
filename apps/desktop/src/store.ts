@@ -360,6 +360,11 @@ let boardGen = 0;
 let graphGen = 0;
 // And for the history depths, which every board refresh keeps in step too.
 let historyGen = 0;
+// Shape-stable and small (two ints and two flat descriptors plus the save
+// point list), and the engine emits its keys in a fixed order, so this is a
+// sound equality for "the depths did not move".
+const sameHistory = (a: HistoryInfo | null, b: HistoryInfo): boolean =>
+  a !== null && JSON.stringify(a) === JSON.stringify(b);
 // Called with the id of any project created while a refreshHome is in
 // flight — that request's snapshot predates it, so the tab prune must not
 // treat it as deleted.
@@ -583,6 +588,45 @@ export const useApp = create<AppState>((set, get) => {
       return messageOf(err);
     }
     return null;
+  };
+
+  /**
+   * A mutation of the engine's graph history — undo, redo, and the save
+   * point create/restore. Each route answers with the new HistoryInfo, so
+   * the response IS the fresh read model.
+   *
+   * Returns the engine's rejection rather than throwing, like patchGraph:
+   * "nothing to undo" is a sentence to put beside the control, not an
+   * unwound promise chain. `null` means it applied.
+   */
+  const historyAction = async (
+    call: (client: EngineClient, projectId: string) => Promise<HistoryInfo>,
+    { redraw = false }: { redraw?: boolean } = {},
+  ): Promise<string | null> => {
+    const { client, currentProject } = get();
+    if (!client || !currentProject) return t("errors.engineUnavailable");
+    const projectId = currentProject.id;
+    try {
+      // A debounced inspector patch still in flight is the newest edit; it
+      // must land (and be recorded) before any of these names a step.
+      await flushPatches();
+      const history = await call(client, projectId);
+      // Retire in-flight refreshHistory reads. One that started before this
+      // mutation still satisfies its OWN generation check, so it would paint
+      // the pre-mutation depths back over what the engine just returned —
+      // and after createSavepoint nothing would ever correct it, because no
+      // event fires and no board refresh follows. The new save point simply
+      // stayed invisible.
+      historyGen++;
+      // The same engine/project re-check every other write in this file
+      // makes: switching tabs during the round trip must not land these
+      // depths on the project the user just opened.
+      if (get().client === client && get().currentProject?.id === projectId) set({ history });
+      if (redraw) await get().refreshBoard();
+      return null;
+    } catch (err) {
+      return messageOf(err);
+    }
   };
 
   const applyAuxParams = (nodeId: string, params: Record<string, unknown>) => {
@@ -1251,6 +1295,12 @@ export const useApp = create<AppState>((set, get) => {
         // us (pair/unpair) must all drop their result rather than paint it.
         if (generation !== historyGen) return;
         if (get().client !== client || get().currentProject?.id !== projectId) return;
+        // Only when it actually moved. This rides every board refresh, which
+        // during a render is several a second, and the depths change only on
+        // a graph mutation — so almost every poll would otherwise be a second
+        // store write per refresh, re-rendering every useApp() consumer for a
+        // freshly parsed object identical to the one on screen.
+        if (sameHistory(get().history, history)) return;
         set({ history });
       } catch {
         // Depths are a convenience read model — keep the last known ones
@@ -1259,56 +1309,25 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     undoEdit: async () => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        // A debounced inspector patch still in flight is the newest edit;
-        // it must land (and be recorded) before "undo" names anything.
-        await flushPatches();
-        set({ history: await client.undo(currentProject.id) });
-        await get().refreshBoard();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
+      // A debounced inspector patch still in flight is the newest edit; it
+      // must land (and be recorded) before "undo" names anything.
+      return historyAction((client, projectId) => client.undo(projectId), { redraw: true });
     },
 
     redoEdit: async () => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        await flushPatches();
-        set({ history: await client.redo(currentProject.id) });
-        await get().refreshBoard();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
+      return historyAction((client, projectId) => client.redo(projectId), { redraw: true });
     },
 
     createSavepoint: async (label) => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        await flushPatches();
-        set({ history: await client.createSavepoint(currentProject.id, label) });
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
+      // No redraw: naming a version does not change the graph.
+      return historyAction((client, projectId) => client.createSavepoint(projectId, label));
     },
 
     restoreSavepoint: async (savepointId) => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        await flushPatches();
-        set({ history: await client.restoreSavepoint(currentProject.id, savepointId) });
-        await get().refreshBoard();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
+      return historyAction(
+        (client, projectId) => client.restoreSavepoint(projectId, savepointId),
+        { redraw: true },
+      );
     },
 
     deleteSavepoint: async (savepointId) => {
@@ -1365,7 +1384,12 @@ export const useApp = create<AppState>((set, get) => {
       const { client } = get();
       if (!client) return;
       try {
-        set({ modelDefaults: await client.modelDefaults() });
+        const modelDefaults = await client.modelDefaults();
+        // Guarded like refreshModels: these are engine-scoped, switchEngine
+        // already blanked them, and landing the OLD box's per-task defaults
+        // on the new one is exactly the bleed it prevents.
+        if (get().client !== client) return;
+        set({ modelDefaults });
       } catch (err) {
         console.warn("model defaults refresh failed:", err);
       }
@@ -1375,7 +1399,9 @@ export const useApp = create<AppState>((set, get) => {
       const { client } = get();
       if (!client) return t("errors.engineUnavailable");
       try {
-        set({ modelDefaults: await client.setModelDefault(task, model) });
+        const modelDefaults = await client.setModelDefault(task, model);
+        if (get().client !== client) return null;
+        set({ modelDefaults });
         return null;
       } catch (err) {
         return messageOf(err);

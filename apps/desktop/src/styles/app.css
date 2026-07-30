@@ -4771,6 +4771,14 @@ button.link:hover {
   margin-top: 8px;
 }
 
+/* Matches `.inspector label`, minus the block layout that would break the
+   flex row — the row's caption has to read as a field label like every
+   other one in the panel, not as body text among 11px chips. */
+.take-row .field-label {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .take-row .chip {
   border: 1px solid var(--border);
   border-radius: 999px;

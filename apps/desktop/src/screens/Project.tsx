@@ -48,10 +48,14 @@ const scrollToScene = (sceneId: string, options: ScrollIntoViewOptions = { block
 
 const INTRO_KEY = "localcut.pipelineTaught";
 
-// The menu offers the common choices; the NL editor accepts the full engine
-// sets (formats.ts mirrors them for the contract test).
-const BOARD_FPS_CHOICES = EXPORT_FPS_CHOICES.filter((fps) => [24, 30, 60].includes(fps));
-const BOARD_SHORT_SIDES = [...EXPORT_SHORT_SIDE_CHOICES].reverse().filter((px) => px !== 480);
+// The engine's full closed sets, not a curated subset. A menuitemradio group
+// has to be able to show what the node actually holds, and the NL editor, a
+// raw /patch and the MCP surface all accept every member — so "export at 25
+// fps" left the Frame rate group with NOTHING checked (Auto is unchecked too,
+// fps being non-null), reporting a state the menu did not contain.
+// Resolution reads large-to-small; formats.ts mirrors both for the contract test.
+const BOARD_FPS_CHOICES = EXPORT_FPS_CHOICES;
+const BOARD_SHORT_SIDES = [...EXPORT_SHORT_SIDE_CHOICES].reverse();
 
 /** One-time teaching strip on the user's first project: how the pipeline
  * flows, with the live stage highlighted. Structural teaching — no modal
@@ -116,6 +120,11 @@ function BoardMenu() {
   const resetLayout = useWorkspace((state) => state.resetLayout);
   const [open, setOpen] = useState(false);
   const [savePointsOpen, setSavePointsOpen] = useState(false);
+  // The rows stay enabled off the last known depths (refreshHistory keeps
+  // them on a failed poll rather than flashing the affordances), so they are
+  // clickable exactly when the engine is unreachable. Discarding the message
+  // the action returns made that a no-op with nothing on screen.
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -158,7 +167,10 @@ function BoardMenu() {
           <button
             role="menuitem"
             disabled={!history?.undo_depth}
-            onClick={() => void undoEdit()}
+            onClick={() => {
+              setHistoryError(null);
+              void undoEdit().then(setHistoryError);
+            }}
           >
             <span className="check" />
             {t("project.menu.undo")}
@@ -167,12 +179,20 @@ function BoardMenu() {
           <button
             role="menuitem"
             disabled={!history?.redo_depth}
-            onClick={() => void redoEdit()}
+            onClick={() => {
+              setHistoryError(null);
+              void redoEdit().then(setHistoryError);
+            }}
           >
             <span className="check" />
             {t("project.menu.redo")}
             <small>{kindLabel(history?.redo_top?.kind)}</small>
           </button>
+          {historyError && (
+            <div role="status" className="banner error">
+              {historyError}
+            </div>
+          )}
           <button
             role="menuitem"
             onClick={() => {
@@ -310,6 +330,11 @@ export function Project() {
   const density = useWorkspace((state) => state.density);
   const setDensity = useWorkspace((state) => state.setDensity);
   const [finalizing, setFinalizing] = useState(false);
+  // The keyboard path has no control to look at, so a refused undo (409
+  // "nothing to undo" after a concurrent CLI edit, 422 for a snapshot that
+  // fails the restore gate, or no engine at all) would otherwise be
+  // indistinguishable from a board that simply did not move.
+  const [historyKeyError, setHistoryKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshBoard();
@@ -344,10 +369,11 @@ export function Project() {
         if (formOwned) return;
         event.preventDefault();
         const state = useApp.getState();
+        setHistoryKeyError(null);
         if (event.shiftKey) {
-          if (state.history?.redo_depth) void state.redoEdit();
+          if (state.history?.redo_depth) void state.redoEdit().then(setHistoryKeyError);
         } else if (state.history?.undo_depth) {
-          void state.undoEdit();
+          void state.undoEdit().then(setHistoryKeyError);
         }
         return;
       }
@@ -612,6 +638,11 @@ export function Project() {
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
+      {historyKeyError && (
+        <div role="status" className="banner error">
+          {historyKeyError}
+        </div>
+      )}
 
       {board.scenes.length === 0 ? (
         <div className="banner">
