@@ -47,7 +47,7 @@ from ..comfy import allowlist as comfy_allowlist
 from ..comfy import workflows
 from ..config import EngineConfig
 from ..events import EventBus
-from ..graph.editor import EDIT_SYSTEM_PROMPT, parse_edit_plan
+from ..graph.editor import EDIT_SYSTEM_PROMPT, EditPlan, parse_edit_plan
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..graph.template_io import TemplateError, cloud_models, from_template
@@ -1138,6 +1138,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # None → the local script LLM; "cloud:*" → BYOK textgen. Cloud is
         # opt-in per request: an edit must never silently spend the user's key.
         model: str | None = None
+        # Propose-then-act: preview the compiled plan without committing it.
+        # The response carries the plan and the graph revision it was built
+        # against, which /edit/apply takes to land it later.
+        dry_run: bool = False
 
     @app.post("/projects/{project_id}/edit", dependencies=[Authed])
     async def edit_project(project_id: ProjectId, body: EditBody) -> dict:
@@ -1181,12 +1185,44 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # The model or its transport failed us, not the client.
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         try:
+            if body.dry_run:
+                result = await asyncio.to_thread(
+                    service.preview_edit_plan, project_id, plan, body.scope, view.get("revision")
+                )
+                return {
+                    "summary": plan.summary,
+                    "plan": plan.model_dump(),
+                    "revision": view.get("revision"),
+                    **result,
+                }
             result = await asyncio.to_thread(
                 service.apply_edit_plan, project_id, plan, body.scope, view.get("revision")
             )
         except ConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"summary": plan.summary, **result}
+
+    class EditApplyBody(BaseModel):
+        plan: EditPlan
+        scope: str = Field(default="project", pattern=NODE_ID_PATTERN)
+        # The revision the plan was previewed against — the same stale-plan
+        # refusal /edit itself uses when the graph moves mid-flight.
+        revision: str | None = None
+
+    @app.post("/projects/{project_id}/edit/apply", dependencies=[Authed])
+    async def edit_apply(project_id: ProjectId, body: EditApplyBody) -> dict:
+        """Second half of propose-then-act: land a plan a dry-run /edit
+        returned, without a second LLM round trip. The plan is a client
+        document here, but compile_edits re-validates every part of it
+        against the whitelist exactly as it does the LLM's own output."""
+        await _get_project(project_id)
+        try:
+            result = await asyncio.to_thread(
+                service.apply_edit_plan, project_id, body.plan, body.scope, body.revision
+            )
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"summary": body.plan.summary, **result}
 
     class EnhanceBody(BaseModel):
         notes: str = Field(min_length=1, max_length=2000)
