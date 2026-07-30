@@ -20,7 +20,9 @@ Output is designed to be read by two audiences at once: a human sees lines,
 
 from __future__ import annotations
 
+import contextlib
 import json
+import secrets
 import ssl
 import sys
 import time
@@ -77,7 +79,8 @@ class EngineClient:
         token: str = "",
         *,
         cert: Path | None = None,
-        timeout: float = 30.0,
+        timeout: float | httpx.Timeout = 30.0,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self.token = token
@@ -101,9 +104,15 @@ class EngineClient:
             # desktop does it.
             context.check_hostname = False
             verify = context
+        # `headers` rides every request this client makes, which is the
+        # point: a capability a caller gives up (see the MCP server's
+        # cloud-spend header) must not depend on remembering it per call.
         self._client = httpx.Client(
             base_url=self.url,
-            headers={"Authorization": f"Bearer {self.token}"} if self.token else {},
+            headers={
+                **({"Authorization": f"Bearer {self.token}"} if self.token else {}),
+                **(headers or {}),
+            },
             timeout=timeout,
             verify=verify,
         )
@@ -147,6 +156,16 @@ class EngineClient:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc
 
         if response.status_code == 401:
+            # Say which failure it was. With no token configured, no
+            # Authorization header went out at all, and "rejected the token"
+            # sends the operator to debug a value that was never sent —
+            # `--token ""` or an env var that templated to empty is the
+            # ordinary way to get here.
+            if not self.token:
+                raise EngineError(
+                    "the engine requires a token and none was sent - pass --token, or set "
+                    "LOCALCUT_TOKEN to the value the engine printed at startup"
+                )
             raise EngineError(
                 "the engine rejected the token - pass --token, or set LOCALCUT_TOKEN "
                 "to the value the engine printed at startup"
@@ -213,21 +232,53 @@ class EngineClient:
                 # must not leave a truncated file wearing the name of a
                 # finished export, which is exactly what a later step in the
                 # same script would pick up.
-                partial = destination.with_name(destination.name + ".part")
+                #
+                # The neighbour gets a UNIQUE name. A fixed `<name>.part` is
+                # a second destination this function writes without being
+                # asked to: `export --out report.mp4` silently truncated an
+                # unrelated `report.mp4.part`, and no overwrite check
+                # upstream can see it, because callers only ever get to
+                # approve `destination`.
+                #
+                # Opened "xb" rather than through tempfile.mkstemp: mkstemp
+                # forces 0600, so every exported video arrived unreadable by
+                # the web server, sync agent or second user it was written
+                # for - and exit 0 said it had worked. "x" keeps the umask
+                # the operator set while still refusing to open a file that
+                # already exists. The name is truncated because it costs
+                # NAME_MAX budget the destination needs more than we do.
                 written = 0
+                partial = destination.with_name(
+                    f".{destination.name[:40]}.{secrets.token_hex(4)}.part"
+                )
+                landed = False
                 try:
-                    with partial.open("wb") as sink:
+                    with partial.open("xb") as sink:
                         for chunk in response.iter_bytes():
                             sink.write(chunk)
                             written += len(chunk)
                     partial.replace(destination)
+                    landed = True
                 except OSError as exc:
                     # A missing directory or a full disk is something the
                     # operator fixes, not a traceback to decode. Every other
                     # failure this CLI can hit reports a sentence and an exit
                     # status, and `export --out build/cut.mp4` before `build/`
-                    # exists is the ordinary way to reach this one.
-                    raise EngineError(f"could not write {destination}: {exc}") from exc
+                    # exists is the ordinary way to reach this one. Name the
+                    # destination and the reason, never the scratch file -
+                    # the operator never chose that name and cannot act on it.
+                    raise EngineError(
+                        f"could not write {destination}: {exc.strerror or exc}"
+                    ) from exc
+                finally:
+                    # Covers the TRANSPORT failures too, not just OSError: a
+                    # link that drops mid-stream raises httpx.HTTPError past
+                    # the handler above, and a scratch file that is both
+                    # uniquely named and dot-prefixed would otherwise pile up
+                    # invisibly, one per attempt.
+                    if not landed:
+                        with contextlib.suppress(OSError):
+                            partial.unlink(missing_ok=True)
                 return written
         except httpx.HTTPError as exc:
             raise EngineError(f"could not reach {self.url}: {exc}", unreachable=True) from exc
@@ -265,13 +316,26 @@ def _detail(response: httpx.Response) -> str:
 
 def active_jobs(client: EngineClient, project_id: str) -> list[dict]:
     """Jobs still to finish for a project."""
-    return _outstanding(client.get("/jobs", params={"project_id": project_id}) or [])
+    return outstanding_jobs(client.get("/jobs", params={"project_id": project_id}) or [])
 
 
-def _outstanding(jobs: list[dict]) -> list[dict]:
-    """Jobs not in a terminal state. One definition, so the --no-wait count
-    and the waiting loop can never disagree about what is outstanding."""
+def outstanding_jobs(jobs: list[dict]) -> list[dict]:
+    """Jobs not in a terminal state. One definition, so the --no-wait count,
+    the waiting loop and the MCP render_status can never disagree about what
+    is outstanding. Public because mcp_server builds on it: an in-module
+    rename here has an external caller to break."""
     return [job for job in jobs if str(job.get("status")) not in _TERMINAL]
+
+
+def failed_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> list[dict]:
+    """Rows that failed and are not excused as an earlier render's. The one
+    definition of "a failure of THIS render", shared by wait_for_render and
+    the MCP render_status for the same reason outstanding_jobs is."""
+    return [
+        job
+        for job in jobs
+        if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
+    ]
 
 
 def settled_jobs(client: EngineClient, project_id: str) -> frozenset[str]:
@@ -312,15 +376,11 @@ def wait_for_render(
     deadline = time.monotonic() + timeout_s
     while True:
         jobs = client.get("/jobs", params={"project_id": project_id}) or []
-        pending = _outstanding(jobs)
+        pending = outstanding_jobs(jobs)
         if on_progress is not None:
             on_progress(jobs, pending)
         if not pending:
-            return [
-                job
-                for job in jobs
-                if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
-            ]
+            return failed_jobs(jobs, not_mine=not_mine)
         if time.monotonic() >= deadline:
             raise EngineError(
                 f"still rendering after {timeout_s:.0f}s ({len(pending)} job(s) outstanding) - "
@@ -336,6 +396,16 @@ def export_hash(board: dict) -> str | None:
     export = (board.get("aux") or {}).get("export") or {}
     artifact = export.get("artifact_hash")
     return str(artifact) if artifact else None
+
+
+def finished_cut_hash(client: EngineClient, project_id: str) -> str | None:
+    """Where the finished cut lives, resolved the one way every surface must
+    agree on: project document -> board -> export slot -> artifact hash. The
+    CLI export, the MCP export and the MCP render_status all answer "is
+    there a cut?" through this, so a change to the board's export shape is a
+    change in one place."""
+    board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
+    return export_hash(board)
 
 
 def render_summary(jobs: list[dict]) -> dict[str, int]:

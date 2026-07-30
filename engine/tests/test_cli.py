@@ -236,7 +236,7 @@ def test_a_retuned_stream_degrades_an_impossible_character(monkeypatch):
     assert stream.buffer.getvalue().decode("cp1252") == "shutting down \\u2192 goodbye\n"
 
 
-@pytest.mark.parametrize("module", ["cli", "automation"])
+@pytest.mark.parametrize("module", ["cli", "automation", "mcp_server"])
 def test_every_string_the_cli_can_print_is_ascii(module):
     """The rule, rather than the instances of it.
 
