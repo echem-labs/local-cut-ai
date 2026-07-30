@@ -141,6 +141,35 @@ async def test_draft_replan_does_not_undercut_an_active_final(tmp_path):
     assert qualities == {("script", "final")}
 
 
+async def test_rebuilding_a_delivered_final_keeps_it_final(tmp_path):
+    """The other half of the same bug, and the one that actually shipped.
+
+    `export` runs, then its slower upstream `captions` finishes and
+    invalidates it downstream. By then no final is in flight, so skipping is
+    not enough — the artifact is genuinely gone and has to be rebuilt. It
+    must be rebuilt at the quality it already had, or the finished render
+    silently reverts to `draft` and the header loses its Download button.
+    """
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)  # no scheduler: jobs stay queued
+    project = service.create_from_prompt("tide pools", target_duration_s=24)
+    for job in queue.list(project.id, 100):
+        queue.cancel(job.id)
+
+    # A final that ran to completion, then lost its artifact.
+    assert service.finalize(project.id) == 1
+    final = next(j for j in queue.active(project.id) if j.spec.quality == "final")
+    final.status = JobStatus.DONE
+    queue.update(final)
+
+    graph = store.load_graph(project.id)
+    assert service._enqueue_dirty(project.id, graph) == 1
+    rebuilt = [j for j in queue.active(project.id)]
+    assert [(j.spec.node_id, j.spec.quality) for j in rebuilt] == [("script", "final")]
+
+
 async def test_cancel_project_stops_inflight_jobs(tmp_path):
     events = EventBus()
     store = ProjectStore(tmp_path / "projects")
