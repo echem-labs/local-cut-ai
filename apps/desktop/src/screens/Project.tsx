@@ -210,7 +210,7 @@ function BoardMenu() {
 /** Project window: header chrome over the dockable workspace (board,
  * monitor, details, timeline). Tool sessions get a focused single panel. */
 export function Project() {
-  const { currentProject, board, refreshBoard, finalize, client } = useApp();
+  const { currentProject, board, refreshBoard, finalize, regenerate, client } = useApp();
   const view = useWorkspace((state) => state.view);
   const setView = useWorkspace((state) => state.setView);
   const density = useWorkspace((state) => state.density);
@@ -507,9 +507,19 @@ export function Project() {
 
       {board.scenes.length === 0 ? (
         <div className="banner">
-          {script?.status === "failed"
-            ? t("project.scriptFailed", { error: script.error ?? "" })
-            : t("project.writingScript")}
+          {script?.status === "failed" ? (
+            <>
+              {t("project.scriptFailed", { error: script.error ?? "" })}
+              {/* With no scenes there is no board, composer or inspector to
+                  regenerate from — the banner is the only surface left, so
+                  it carries the retry itself. */}
+              <button className="btn-secondary" onClick={() => void regenerate("script")}>
+                {t("project.retryScript")}
+              </button>
+            </>
+          ) : (
+            t("project.writingScript")
+          )}
         </div>
       ) : (
         <>

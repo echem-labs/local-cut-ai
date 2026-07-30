@@ -153,6 +153,8 @@ export class BrowserWindow {
   readonly options: Record<string, unknown>;
   readonly loaded: string[] = [];
   readonly overlays: unknown[] = [];
+  /** URLs handed to webContents.downloadURL by the navigation handler. */
+  readonly downloads: string[] = [];
   minimized = false;
   focused = false;
   restored = false;
@@ -166,6 +168,9 @@ export class BrowserWindow {
     },
     setWindowOpenHandler: (handler: () => unknown) => {
       this.windowOpenHandler = handler;
+    },
+    downloadURL: (url: string) => {
+      this.downloads.push(url);
     },
   };
 
