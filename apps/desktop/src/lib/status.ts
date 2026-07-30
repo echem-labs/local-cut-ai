@@ -16,6 +16,16 @@ import type { NodeStatus } from "../api/types";
  * imports this — a fourth copy is how the two halves of the gate came to
  * disagree in the first place.
  */
-export const SETTLED: readonly NodeStatus[] = ["draft", "final", "pinned", "skipped"];
+export const SETTLED: readonly NodeStatus[] = [
+  "draft",
+  "final",
+  "pinned",
+  "skipped",
+  // `blocked` counts for the same reason `skipped` does, and it is the same
+  // bug if it does not: the compiler never enqueues it, so a gate that waits
+  // for it waits forever. It is pending on a person, not on the queue — and
+  // the board says so in the tile, which is where that belongs.
+  "blocked",
+];
 
 export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(status);

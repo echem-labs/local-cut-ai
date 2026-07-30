@@ -58,7 +58,11 @@ export type NodeStatus =
   // Deliberately not rendered: the compiler skips a node that feeds nothing,
   // e.g. the keyframe of a scene conditioned on an uploaded image. Mirrors
   // SCENE_NODE_STATUSES in the engine — test_ui_contract compares the two.
-  | "skipped";
+  | "skipped"
+  // Waiting on a person, not on the queue: a scene added from the board has
+  // no prompt or narration until someone writes one, and nothing downstream
+  // of it can render either. The compiler enqueues none of them.
+  | "blocked";
 
 /** A non-fatal signal from a job that finished — `error` means it did not.
  * The code is an id (mirrors NOTICE_CODES in the engine's notices.py;
