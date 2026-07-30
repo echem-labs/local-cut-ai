@@ -139,3 +139,50 @@ def test_add_scene_is_undoable(tmp_path):
     graph = service.store.load_graph(pid)
     assert "s2.clip" not in graph.nodes
     assert [card["scene_id"] for card in service.scene_board(pid)["scenes"]] == ["s1"]
+
+
+def test_a_scene_with_nothing_written_in_it_renders_nothing(tmp_path):
+    """The desktop's "+ add a scene" card sends the op with no params at all,
+    because the whole point is that you write the prompt afterwards. That
+    queued a narration with empty text -- which both TTS backends refuse
+    outright -- so the tile went red seconds after it appeared, before the
+    user had typed anything, and the keyframe burned a full image generation
+    on an empty prompt. Nothing in the new scene may reach the queue, and the
+    board has to say why rather than spin on `queued` for work that will
+    never be created."""
+    service, pid = _service(tmp_path)
+    before = {job.spec.node_id for job in service.queue.list(pid)}
+
+    _add(service, pid)  # exactly what the desktop sends: no prompt, no narration
+
+    queued = {job.spec.node_id for job in service.queue.list(pid)} - before
+    assert not {"s2.keyframe", "s2.clip", "s2.narration"} & queued, (
+        f"an unwritten scene reached the queue: {sorted(queued)}"
+    )
+
+    board = service.scene_board(pid)
+    card = next(c for c in board["scenes"] if c["scene_id"] == "s2")
+    assert card["keyframe"]["status"] == "blocked"
+    assert card["narration"]["status"] == "blocked"
+    assert card["clip"]["status"] == "blocked"
+
+
+def test_writing_the_scene_lets_it_render(tmp_path):
+    """The other half: `blocked` is a state the user leaves by typing, not a
+    permanent refusal. Filling in the prompt and the narration has to put the
+    whole scene -- and the assembly the cone had stopped -- back in the queue."""
+    service, pid = _service(tmp_path)
+    _add(service, pid)
+    service.patch(
+        pid,
+        [
+            PatchOp(op="set_params", node_id="s2.keyframe", params={"prompt": "a lighthouse"}),
+            PatchOp(op="set_params", node_id="s2.narration", params={"text": "the light turns"}),
+        ],
+    )
+
+    board = service.scene_board(pid)
+    card = next(c for c in board["scenes"] if c["scene_id"] == "s2")
+    assert card["keyframe"]["status"] != "blocked"
+    assert card["narration"]["status"] != "blocked"
+    assert board["aux"]["export"]["status"] != "blocked"

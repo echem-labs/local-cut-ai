@@ -18,7 +18,12 @@ from pathlib import Path
 from .backends.base import BackendRegistry, GenerationError
 from .events import EventBus
 from .fcpxml import edl_to_fcpxml
-from .graph.compiler import QUALITY_SENSITIVE_KINDS, compile_graph, orphaned_nodes
+from .graph.compiler import (
+    QUALITY_SENSITIVE_KINDS,
+    compile_graph,
+    orphaned_nodes,
+    unready_nodes,
+)
 from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
 from .graph.model import (
     KEYFRAME_PORT,
@@ -61,6 +66,10 @@ SCENE_NODE_STATUSES = (
     "cancelled",
     "pinned",
     "skipped",
+    # Content the user has not written yet, or something downstream of it.
+    # Distinct from `skipped`: that one reads "not needed", and this node is
+    # very much needed — it is waiting on a person, not on the queue.
+    "blocked",
 )
 
 
@@ -1504,6 +1513,9 @@ class ProjectService:
         # board has to agree, or the tile spins on "queued" forever waiting
         # for work that was deliberately never enqueued.
         skipped = orphaned_nodes(graph)
+        # Same contract as `skipped`, different reason: the compiler enqueues
+        # neither, so the board must not report either as `queued`.
+        blocked = unready_nodes(graph)
 
         def node_state(node_id: str) -> dict | None:
             node = graph.nodes.get(node_id)
@@ -1536,6 +1548,11 @@ class ProjectService:
                 # live job so a render already in flight when the user
                 # conditioned the scene still reports itself honestly.
                 status = "skipped"
+            elif node_id in blocked:
+                # Ranked below a live job for the same reason `skipped` is: a
+                # render still in flight when the user cleared the prompt
+                # reports itself honestly until it lands.
+                status = "blocked"
             elif out_hash in cached:
                 status = "final" if (job and job.spec.quality == "final") else "draft"
             else:
