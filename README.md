@@ -133,6 +133,29 @@ validated patch ops the inspector uses — only the dirty subgraph re-renders.
 Edits run on the local script LLM by default; pass `model: "cloud:…"` to
 opt a single edit into a BYOK provider.
 
+**MCP agents.** `localcut-engine mcp` serves a running engine to MCP hosts
+(Claude, goose, IDE agents) over stdio: create/render/status/export, the
+prompt-based editor in propose-then-act form (edits preview by default and
+land via a second tool), raw patch ops, undo/redo. It is a client of the
+engine exactly like the automation CLI — same `--engine`/`--token`/`--cert`
+flags and env vars, any doc-02 topology — and an agent's edits compile into
+the same validated patch ops as everyone else's, so the cycle check and the
+voice-consent gate hold. Deliberately not exposed to agents: node-pack
+enabling (that's an operator's code-execution acknowledgment), provider
+keys, and BYOK cloud spend. A host config for a dev checkout:
+
+```json
+{
+  "mcpServers": {
+    "localcut": {
+      "command": "uv",
+      "args": ["run", "--project", "engine", "localcut-engine", "mcp"],
+      "env": { "LOCALCUT_TOKEN": "<the token the engine printed>" }
+    }
+  }
+}
+```
+
 **Remote engine.** The engine is a server the app happens to launch — so it
 can just as well run headless on a GPU box while a laptop drives it:
 
