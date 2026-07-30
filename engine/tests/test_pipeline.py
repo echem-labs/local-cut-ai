@@ -111,6 +111,36 @@ async def test_finalize_enqueues_over_active_draft(tmp_path):
     assert service._enqueue_dirty(project.id, graph) == 0
 
 
+async def test_draft_replan_does_not_undercut_an_active_final(tmp_path):
+    """The mirror of the case above, and the reason it matters.
+
+    A clip finishing mid-finalize re-plans at draft quality (every caller of
+    `_enqueue_dirty` but `finalize` does). Keying the dedupe on
+    (hash, quality) let that draft slip past an already-queued final for the
+    SAME hash — and, running last, it stamped the node `draft`. The export
+    node then never reported `final`, so the project header offered "Create
+    final video" forever and the finished video had no Download button.
+
+    Same hash means the draft is never worth running: identical bytes for an
+    assembly node, worse bytes for a quality-sensitive one, at one address.
+    """
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)  # no scheduler: jobs stay queued
+    project = service.create_from_prompt("tide pools", target_duration_s=24)
+
+    # Drain the draft script so a final is the only thing in flight.
+    for job in queue.list(project.id, 100):
+        queue.cancel(job.id)
+    assert service.finalize(project.id) == 1
+    graph = store.load_graph(project.id)
+
+    assert service._enqueue_dirty(project.id, graph) == 0
+    qualities = {(j.spec.node_id, j.spec.quality) for j in queue.active(project.id)}
+    assert qualities == {("script", "final")}
+
+
 async def test_cancel_project_stops_inflight_jobs(tmp_path):
     events = EventBus()
     store = ProjectStore(tmp_path / "projects")
