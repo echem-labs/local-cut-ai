@@ -37,8 +37,8 @@ def engine(tmp_path):
         yield url
 
 
-def build(url: str, token: str = TOKEN):
-    return mcp_server.build_server(url, token)
+def build(url: str, token: str = TOKEN, export_dir=None):
+    return mcp_server.build_server(url, token, export_dir=export_dir)
 
 
 def _text(result) -> str:
@@ -86,13 +86,12 @@ async def until_done(client: Client, project_id: str, ignore: list[str] | None =
 async def test_a_prompt_becomes_a_rendered_file_over_mcp(engine, tmp_path):
     """The Phase 0 exit criterion, driven by an agent: create, render, poll,
     export — each step usable from the ids the previous one returned."""
-    async with Client(build(engine)) as client:
+    async with Client(build(engine, export_dir=tmp_path)) as client:
         project = await call(client, "create_project", {"prompt": "a short film about tides"})
         project_id = project["id"]
 
         started = await call(client, "start_render", {"project_id": project_id})
-        assert isinstance(started["enqueued"], int)
-        assert isinstance(started["earlier_failures"], list)
+        assert started["earlier_failures"] == []
 
         status = await until_done(client, project_id, ignore=started["earlier_failures"])
         assert status["failed"] == []
@@ -119,6 +118,10 @@ async def test_the_finalize_pass_renders_over_mcp(engine):
         await until_done(client, project["id"])
 
         started = await call(client, "start_render", {"project_id": project["id"], "final": True})
+        # A real count read out of the POST body - a typo'd key would report
+        # 0 forever. Asserted here rather than on the draft flow, where 0 is
+        # the honest answer: creation had already queued that work.
+        assert started["enqueued"] > 0
         status = await until_done(client, project["id"], ignore=started["earlier_failures"])
 
     assert status["failed"] == []
@@ -228,19 +231,20 @@ async def test_a_missing_token_is_not_reported_as_a_rejected_one(engine):
     assert "none was sent" in message
 
 
-async def test_exporting_before_a_render_names_the_tools_to_run_first(engine):
+async def test_exporting_before_a_render_names_the_tools_to_run_first(engine, tmp_path):
     """The automation CLI says "run `render` first"; an agent has to be told
     in its own vocabulary, or the advice points at a command it cannot run."""
-    async with Client(build(engine)) as client:
+    async with Client(build(engine, export_dir=tmp_path)) as client:
         project = await call(client, "create_project", {"prompt": "unrendered"})
         message = await refusal(
             client,
             "export_video",
-            {"project_id": project["id"], "out_path": "/nonexistent/never-written.mp4"},
+            {"project_id": project["id"], "out_path": "never-written.mp4"},
         )
 
     assert "start_render" in message
     assert "render_status" in message
+    assert not (tmp_path / "never-written.mp4").exists()
 
 
 # -- edits ride the same chokepoint as every other client ----------------------
@@ -302,11 +306,14 @@ async def test_a_stale_revision_refuses_to_land(engine):
                 "project_id": project["id"],
                 "plan": {"summary": "late", "edits": []},
                 "scope": "project",
-                "revision": "0" * 12,
+                # Well-formed (graph_revision returns 16 hex) but not this
+                # graph's: a malformed value would also be refused, by a
+                # different rule than the one this test names.
+                "revision": "0" * 16,
             },
         )
 
-    assert "changed" in message
+    assert "while the edit was being generated" in message
 
 
 async def test_a_patch_applies_and_undo_reverses_it(engine):
@@ -393,6 +400,13 @@ async def test_an_agent_cannot_set_a_cloud_model_through_patch(engine):
                 "op": "add_node",
                 "node": {"id": "expensive", "kind": "clip", "model": "cloud:veo-3.1-fast"},
             },
+            # Spelling variants the ENGINE's exact-prefix routing would send
+            # to a local backend today - but they persist onto the node, and
+            # the day any normalization appears on the routing side they are
+            # real spend. Refusing costs nothing; agreeing with a bug does.
+            {"op": "set_model", "node_id": "s1.clip", "model": "CLOUD:kling-pro"},
+            {"op": "set_model", "node_id": "s1.clip", "model": " cloud:kling-pro"},
+            {"op": "set_model", "node_id": "s1.clip", "model": "﻿cloud:kling-pro"},
         ):
             message = await refusal(
                 client, "patch_project", {"project_id": project_id, "ops": [op]}
@@ -451,6 +465,129 @@ async def test_an_empty_id_is_refused_not_broadened(engine):
     assert "not a project id" in message
 
 
+async def test_a_take_rendered_on_a_cloud_model_cannot_be_restored(engine, tmp_path):
+    """select_take names only an output hash - the engine substitutes the
+    recorded params, seed AND model - so a take rendered on a cloud model
+    puts that model back on the node and re-renders it. That is the BYOK
+    spend this surface refuses, reached without an agent ever naming a
+    model, which is why the refusal cannot be a scan of the ops alone.
+
+    The cloud take is recorded the way it really arises: over the HTTP API,
+    as the app does when the user picks a cloud model themselves."""
+    import httpx
+
+    async with Client(build(engine, export_dir=tmp_path)) as client:
+        project = await call(client, "create_project", {"prompt": "a pricey take"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+
+        api = httpx.Client(base_url=engine, headers={"Authorization": f"Bearer {TOKEN}"})
+        with api:
+            # The app's own path: set a cloud model, then regenerate, which
+            # parks the previous identity in takes.json as a take.
+            api.post(
+                f"/projects/{project_id}/patch",
+                json={
+                    "ops": [{"op": "set_model", "node_id": "s1.clip", "model": "cloud:kling-2.5"}]
+                },
+            ).raise_for_status()
+            api.post(f"/projects/{project_id}/nodes/s1.clip/regenerate", json={}).raise_for_status()
+        await until_done(client, project_id)
+
+        board = await call(client, "get_project", {"project_id": project_id})
+        takes = [
+            take
+            for scene in board["board"]["scenes"]
+            for take in ((scene.get("clip") or {}).get("takes") or [])
+        ]
+        billed = [t["output_hash"] for t in takes if (t.get("model") or "").startswith("cloud:")]
+        assert billed, f"no cloud take was recorded to test against: {takes}"
+
+        message = await refusal(
+            client,
+            "patch_project",
+            {
+                "project_id": project_id,
+                "ops": [{"op": "select_take", "node_id": "s1.clip", "take": billed[0]}],
+            },
+        )
+
+    assert "provider key" in message
+
+
+async def test_export_cannot_write_outside_its_export_directory(engine, tmp_path):
+    """out_path is a model-authored string and the bytes land on the machine
+    running the MCP server. Unconfined it is an arbitrary write: pointed at
+    the engine's own project.json it empties a project, and nothing in the
+    toolset can undo that. Relative paths resolve against the export root
+    rather than whatever cwd the agent host spawned us with."""
+    exports = tmp_path / "exports"
+    outside = tmp_path / "precious" / "project.json"
+    outside.parent.mkdir()
+    outside.write_text("the user's own state", encoding="utf-8")
+
+    async with Client(build(engine, export_dir=exports)) as client:
+        project = await call(client, "create_project", {"prompt": "contained"})
+        project_id = project["id"]
+        started = await call(client, "start_render", {"project_id": project_id})
+        await until_done(client, project_id, ignore=started["earlier_failures"])
+
+        for escape in (str(outside), "../precious/project.json", "/etc/hosts"):
+            message = await refusal(
+                client,
+                "export_video",
+                {"project_id": project_id, "out_path": escape, "overwrite": True},
+            )
+            assert "outside the export directory" in message
+
+        # A symlink is resolved BEFORE the containment test, so it cannot be
+        # used as a door out of the root.
+        (exports).mkdir(parents=True, exist_ok=True)
+        (exports / "door.mp4").symlink_to(outside)
+        message = await refusal(
+            client,
+            "export_video",
+            {"project_id": project_id, "out_path": "door.mp4", "overwrite": True},
+        )
+        assert "outside the export directory" in message
+
+        # And a plain relative path lands inside the root, subdirectories
+        # created for it.
+        result = await call(
+            client,
+            "export_video",
+            {"project_id": project_id, "out_path": "cuts/final.mp4"},
+        )
+
+    assert result["path"] == str((exports / "cuts" / "final.mp4").resolve())
+    assert outside.read_text(encoding="utf-8") == "the user's own state"
+
+
+async def test_export_does_not_clobber_a_neighbouring_part_file(engine, tmp_path):
+    """The download writes a scratch file beside the destination before
+    renaming it into place. Named `<destination>.part` it was a SECOND
+    destination nobody approved: one unrelated user file destroyed per
+    export, with overwrite=false and no error, because the overwrite check
+    can only ever see the path the caller named."""
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    bystander = exports / "cut.mp4.part"
+    bystander.write_text("somebody else's work", encoding="utf-8")
+
+    async with Client(build(engine, export_dir=exports)) as client:
+        project = await call(client, "create_project", {"prompt": "tidy"})
+        project_id = project["id"]
+        started = await call(client, "start_render", {"project_id": project_id})
+        await until_done(client, project_id, ignore=started["earlier_failures"])
+
+        await call(client, "export_video", {"project_id": project_id, "out_path": "cut.mp4"})
+
+    assert bystander.read_text(encoding="utf-8") == "somebody else's work"
+    assert (exports / "cut.mp4").stat().st_size > 0
+    # The scratch file is cleaned up, not merely uniquely named.
+    assert sorted(p.name for p in exports.iterdir()) == ["cut.mp4", "cut.mp4.part"]
+
+
 async def test_export_refuses_to_replace_an_existing_file_unless_told(engine, tmp_path):
     """An agent's mistyped out_path must not cost the user a file: the CLI
     operator typing --out sees what they typed, an agent's caller does not.
@@ -458,7 +595,7 @@ async def test_export_refuses_to_replace_an_existing_file_unless_told(engine, tm
     target = tmp_path / "precious.mp4"
     target.write_bytes(b"the user's own bytes")
 
-    async with Client(build(engine)) as client:
+    async with Client(build(engine, export_dir=tmp_path)) as client:
         project = await call(client, "create_project", {"prompt": "careful"})
         project_id = project["id"]
         started = await call(client, "start_render", {"project_id": project_id})
@@ -519,14 +656,28 @@ def test_outstanding_rows_carry_the_stall_signal():
     ]
 
 
-def test_the_export_answer_belongs_to_the_caller():
-    """The payload trusts export_hash as given — the caller owns both the
-    mid-render skip (a board build is not free) and therefore the nulling.
-    One owner, so the two can never disagree."""
+def test_a_settled_render_reports_its_cut():
     payload = mcp_server.render_status_payload([], export_hash="c" * 64, ignore_job_ids=[])
 
     assert payload["export_ready"] is True
     assert payload["export_hash"] == "c" * 64
+
+
+def test_a_mid_render_poll_never_reports_the_previous_cut_as_ready():
+    """Re-rendering a project that already exported once: the OLD cut's
+    hash is still on the board while new jobs are queued. Reporting it
+    ready is an agent promising the user a file that is the previous
+    render. The tool's board-fetch skip happens to avoid asking mid-render,
+    but that skip is a cost decision - the guarantee has to live here, or
+    relaxing the skip silently reintroduces the lie."""
+    payload = mcp_server.render_status_payload(
+        [{"id": "j1", "status": "queued", "spec": {"node_id": "s1.clip"}}],
+        export_hash="c" * 64,
+        ignore_job_ids=[],
+    )
+
+    assert payload["export_ready"] is False
+    assert payload["export_hash"] is None
 
 
 # -- the toolset stops where operator decisions begin --------------------------
@@ -606,8 +757,8 @@ def test_mcp_serves_stdio_against_the_resolved_engine(monkeypatch):
         def run(self, transport):
             seen["transport"] = transport
 
-    def fake_build(url, token, cert=None):
-        seen.update(url=url, token=token, cert=cert)
+    def fake_build(url, token, cert=None, export_dir=None):
+        seen.update(url=url, token=token, cert=cert, export_dir=export_dir)
         return FakeServer()
 
     monkeypatch.setattr(mcp_module, "build_server", fake_build)
@@ -621,4 +772,5 @@ def test_mcp_serves_stdio_against_the_resolved_engine(monkeypatch):
         "url": "http://10.0.0.5:7830",
         "token": "env-token",
         "cert": None,
+        "export_dir": None,
     }

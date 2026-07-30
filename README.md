@@ -144,8 +144,11 @@ and an agent's edits compile into the same validated patch ops as everyone
 else's, so the cycle check and the voice-consent gate hold. Deliberately not
 exposed to agents: node-pack enabling (that's an operator's code-execution
 acknowledgment), provider keys, and BYOK cloud spend — patch ops naming a
-`cloud:*` model are refused, keeping that a decision made in the app. A host
-config for a dev checkout:
+`cloud:*` model are refused, as is restoring a take that was rendered on one,
+keeping that a decision made in the app. Exports are confined to one
+directory (`--export-dir`, `$LOCALCUT_MCP_EXPORT_DIR`, default `~/LocalCut`):
+`out_path` is a model-authored string, and an unconfined one is an arbitrary
+file write. A host config for a dev checkout:
 
 ```json
 {

@@ -66,6 +66,13 @@ _PROJECT_ID = re.compile(PROJECT_ID_PATTERN)
 # an async EngineClient, a change of its own.
 _EDIT_TIMEOUT = httpx.Timeout(600.0, connect=30.0)
 
+# Where export_video may write when nothing else is configured. Under the
+# home directory rather than the process cwd: an agent host spawns this
+# server from wherever it happens to be, and "next to whatever the host was
+# doing" is not somewhere a user can find their video - nor somewhere it is
+# safe to write.
+DEFAULT_EXPORT_DIR = Path.home() / "LocalCut"
+
 _INSTRUCTIONS = """LocalCut turns a prompt or a script into a finished video \
 (clips, narration, music, captions) on the user's own GPU.
 
@@ -103,6 +110,26 @@ def _project_id(value: str) -> str:
     return value
 
 
+# Written as an escape, not the character: every string literal in this
+# module has to stay ASCII (test_cli.py::test_every_string_the_cli_can_print
+# _is_ascii covers it, because these sentences reach a console).
+_BOM = chr(0xFEFF)
+
+
+def _is_cloud_model(value: Any) -> bool:
+    """Would this model string route to a paid provider?
+
+    Normalized before the prefix test, deliberately stricter than the
+    engine's own exact `startswith("cloud:")`: " CLOUD:veo" does not reach a
+    provider today, but it persists onto the node, and the day any
+    normalization appears on the routing side it becomes real spend. A
+    refusal here costs nothing; agreeing with a bug does not.
+    """
+    if not isinstance(value, str):
+        return False
+    return value.strip().strip(_BOM).strip().casefold().startswith("cloud:")
+
+
 def _refuse_cloud_models(ops: list[dict[str, Any]]) -> None:
     """The BYOK line, held for raw ops.
 
@@ -110,17 +137,81 @@ def _refuse_cloud_models(ops: list[dict[str, Any]]) -> None:
     a set_model op (or an add_node carrying a model) reaches the same spend
     one tool down, so the same refusal applies here. Local models pass —
     they are the user's own GPU.
+
+    `select_take` carries no model and is checked by the caller instead: the
+    identity it restores lives in takes.json, so only the engine's own board
+    can say whether it is a cloud one.
     """
     for op in ops:
         if not isinstance(op, dict):
             continue
         node = op.get("node") if isinstance(op.get("node"), dict) else {}
         for model in (op.get("model"), node.get("model")):
-            if isinstance(model, str) and model.startswith("cloud:"):
+            if _is_cloud_model(model):
                 raise EngineError(
                     f"{model}: choosing a cloud model spends the user's provider key - "
                     "that is a per-request decision made in the app, not over MCP"
                 )
+
+
+def _cloud_take_hashes(board: Any) -> set[str]:
+    """Output hashes on the board whose recorded take used a cloud model.
+
+    Walks the board rather than reading a fixed path into it: take rows hang
+    off scene cards and aux nodes alike, and an output hash is
+    content-addressed, so the hash alone is the answer to "would selecting
+    this bill the user".
+    """
+    found: set[str] = set()
+    stack = [board]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            takes = item.get("takes")
+            if isinstance(takes, list):
+                for take in takes:
+                    if isinstance(take, dict) and _is_cloud_model(take.get("model")):
+                        found.add(str(take.get("output_hash")))
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def _export_destination(out_path: str, root: Path, *, overwrite: bool) -> Path:
+    """Where export_video is allowed to write, or a refusal.
+
+    `out_path` is a model-authored string and the bytes land on the machine
+    running THIS process (the agent host, not necessarily the engine's), so
+    an unconfined path is an arbitrary file write: pointed at the engine's
+    own project.json it silently empties a project, and nothing in the
+    toolset can undo that. Everything is therefore resolved inside one
+    export root - a relative path against it rather than against whatever
+    cwd the agent host happened to spawn us with, and an absolute path only
+    if it lands inside. Resolving before the containment test is what makes
+    a symlink out of the root a refusal rather than a way through it.
+    """
+    root = root.expanduser()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EngineError(f"could not create the export directory {root}: {exc}") from exc
+    root = root.resolve()
+    # `root / candidate` IS candidate when candidate is absolute, so one
+    # expression covers both spellings and the check below judges both.
+    destination = (root / Path(out_path).expanduser()).resolve()
+    if destination != root and root not in destination.parents:
+        raise EngineError(
+            f"{destination} is outside the export directory {root} - pass a path inside it, "
+            "or start the server with --export-dir to allow somewhere else"
+        )
+    if destination.exists() and not overwrite:
+        raise EngineError(f"{destination} already exists - pass overwrite=true to replace it")
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise EngineError(f"could not create {destination.parent}: {exc}") from exc
+    return destination
 
 
 def render_status_payload(
@@ -133,13 +224,17 @@ def render_status_payload(
     history — nothing deletes rows — so without it one clip that failed
     weeks ago is reported as a failure of every render since.
 
-    `export_hash` is trusted as given: the caller owns the decision not to
-    resolve it mid-render (a board build is not free), and one owner means
-    the two never disagree. history_counts is named for its population —
-    every job the project ever ran, not this render — so it can never read
-    as contradicting the filtered `failed` list beside it.
+    A cut is only ready when nothing is outstanding, and that conjunction
+    lives HERE rather than in the caller's board-fetch skip: the skip is a
+    cost decision (a board build scans the project directory) and would one
+    day be relaxed, whereas reporting a stale cut as ready mid-render is an
+    agent promising the user a file that is the PREVIOUS render.
+    history_counts is named for its population — every job the project ever
+    ran, not this render — so it can never read as contradicting the
+    filtered `failed` list beside it.
     """
     outstanding = automation.outstanding_jobs(jobs)
+    ready = not outstanding and export_hash is not None
     return {
         "done": not outstanding,
         # status+progress, not bare node ids: progress that stops moving
@@ -162,18 +257,27 @@ def render_status_payload(
             for job in automation.failed_jobs(jobs, not_mine=set(ignore_job_ids))
         ],
         "history_counts": automation.render_summary(jobs),
-        "export_ready": export_hash is not None,
-        "export_hash": export_hash,
+        "export_ready": ready,
+        "export_hash": export_hash if ready else None,
     }
 
 
 def build_server(
-    url: str = DEFAULT_ENGINE_URL, token: str = "", *, cert: Path | None = None
+    url: str = DEFAULT_ENGINE_URL,
+    token: str = "",
+    *,
+    cert: Path | None = None,
+    export_dir: Path | None = None,
 ) -> MCPServer:
     """The MCP server for one engine. Tools open a fresh EngineClient per
     call: this process sits idle for hours between an agent's requests, and a
     pooled connection to an engine that restarted in the meantime would
-    report a running server as unreachable."""
+    report a running server as unreachable.
+
+    `export_dir` bounds every file export_video can write (see
+    _export_destination); it defaults under the user's home rather than the
+    process cwd, which on an agent host is arbitrary."""
+    export_root = export_dir or DEFAULT_EXPORT_DIR
     server = MCPServer("localcut", instructions=_INSTRUCTIONS, version=__version__)
 
     def connect(**kwargs: Any) -> EngineClient:
@@ -256,10 +360,15 @@ def build_server(
     @server.tool()
     def start_render(project_id: str, final: bool = False) -> dict[str, Any]:
         """Enqueue a draft render (or with final=true the final-quality
-        pass). Returns the enqueued job count and earlier_failures: job ids
-        that had already failed BEFORE this render. Keep them and pass them
-        to render_status as ignore_job_ids so an old failure is not blamed
-        on this render, then poll render_status."""
+        pass), then poll render_status.
+
+        `enqueued` counts the jobs THIS call added: 0 is normal and does not
+        mean nothing is happening - a project renders as soon as it is
+        created, so work is often already queued. render_status is the
+        authority on what is outstanding. `earlier_failures` lists job ids
+        that had already failed BEFORE this render; keep them and pass them
+        to render_status as ignore_job_ids so an old failure is never
+        blamed on this one."""
         project_id = _project_id(project_id)
         with connect() as client:
             # Snapshot BEFORE the trigger: taken after, a job of this render
@@ -345,11 +454,31 @@ def build_server(
         and return the dirtied node ids. This is the same validated /patch
         every other client uses: cycles are refused, and voice_ref accepts
         only a consented voice sample. Ops naming a cloud:* model are
-        refused here - cloud spend is the user's decision, made in the
-        app."""
+        refused here - cloud spend is the user's decision, made in the app -
+        and so is a select_take that would restore one."""
         project_id = _project_id(project_id)
         _refuse_cloud_models(ops)
+        wanted_takes = [
+            str(op.get("take"))
+            for op in ops
+            if isinstance(op, dict) and op.get("op") == "select_take" and op.get("take")
+        ]
         with connect() as client:
+            if wanted_takes:
+                # A select_take op names only an output hash; the engine
+                # substitutes the params, seed AND MODEL recorded for it, so
+                # a take rendered on a cloud model puts that model back on
+                # the node and the dirty cone re-renders it - the BYOK spend
+                # this surface refuses, reached without ever naming a model.
+                # Only the engine knows which takes those are, hence the ask.
+                board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
+                billed = _cloud_take_hashes(board)
+                for take in wanted_takes:
+                    if take in billed:
+                        raise EngineError(
+                            f"take {take} was rendered on a cloud model - restoring it would "
+                            "spend the user's provider key, which is a decision made in the app"
+                        )
             return client.post(f"/projects/{project_id}/patch", json={"ops": ops})
 
     @server.tool()
@@ -380,14 +509,13 @@ def build_server(
         project_id: str, out_path: str, format: str = "mp4", overwrite: bool = False
     ) -> dict[str, Any]:
         """Write the finished cut (mp4) or an NLE handoff (otio, fcpxml) to a
-        file on this machine. Returns the resolved path and bytes written.
-        mp4 requires a completed render. Refuses to replace an existing file
-        unless overwrite=true: a mistyped path must not cost the user a
-        file, and unlike the CLI's --out there is no operator watching."""
+        file. Returns the resolved path and bytes written; mp4 requires a
+        completed render. out_path is taken relative to the server's export
+        directory and cannot leave it, and an existing file is replaced only
+        with overwrite=true - a mistyped path must not cost the user a file,
+        and unlike the CLI's --out there is no operator watching."""
         project_id = _project_id(project_id)
-        destination = Path(out_path).expanduser().resolve()
-        if destination.exists() and not overwrite:
-            raise EngineError(f"{destination} already exists - pass overwrite=true to replace it")
+        destination = _export_destination(out_path, export_root, overwrite=overwrite)
         with connect() as client:
             if format in ("otio", "fcpxml"):
                 written = client.download(f"/projects/{project_id}/export/{format}", destination)

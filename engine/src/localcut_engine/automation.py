@@ -21,8 +21,10 @@ Output is designed to be read by two audiences at once: a human sees lines,
 from __future__ import annotations
 
 import json
+import os
 import ssl
 import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -223,15 +225,32 @@ class EngineClient:
                 # must not leave a truncated file wearing the name of a
                 # finished export, which is exactly what a later step in the
                 # same script would pick up.
-                partial = destination.with_name(destination.name + ".part")
+                #
+                # The neighbour gets a UNIQUE name. A fixed `<name>.part` is
+                # a second destination this function writes without being
+                # asked to: `export --out report.mp4` silently truncated an
+                # unrelated `report.mp4.part`, and no overwrite check
+                # upstream can see it, because callers only ever get to
+                # approve `destination`.
                 written = 0
+                partial = None
                 try:
-                    with partial.open("wb") as sink:
+                    handle, temp_name = tempfile.mkstemp(
+                        dir=str(destination.parent),
+                        prefix=f".{destination.name}.",
+                        suffix=".part",
+                    )
+                    partial = Path(temp_name)
+                    with os.fdopen(handle, "wb") as sink:
                         for chunk in response.iter_bytes():
                             sink.write(chunk)
                             written += len(chunk)
                     partial.replace(destination)
                 except OSError as exc:
+                    # Never leave the scratch file behind: it is invisible to
+                    # the caller, who cannot clean up a name they never saw.
+                    if partial is not None:
+                        partial.unlink(missing_ok=True)
                     # A missing directory or a full disk is something the
                     # operator fixes, not a traceback to decode. Every other
                     # failure this CLI can hit reports a sentence and an exit
