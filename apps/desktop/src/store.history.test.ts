@@ -129,4 +129,33 @@ describe("savepoints", () => {
     expect(restoreSavepoint).toHaveBeenCalledWith("p1", "sp1");
     expect(useApp.getState().history?.undo_depth).toBe(1);
   });
+
+  it("a new save point survives a poll that was already in flight", async () => {
+    // refreshHistory guarded only against ITSELF, so a read issued before
+    // the create still satisfied its own generation check and painted the
+    // pre-create list back on top. Nothing corrected it afterwards: creating
+    // a save point publishes no event and triggers no board refresh, so the
+    // dialog went on reading "No save points yet" for one that exists.
+    const withSavepoint = {
+      ...HISTORY(0, 0),
+      savepoints: [{ id: "sp1", label: "before", at: 1 }],
+    };
+    let landStalePoll = (): void => {};
+    const stale = new Promise((resolve) => {
+      landStalePoll = () => resolve(HISTORY(0, 0));
+    });
+    const client = fakeClient({
+      createSavepoint: vi.fn().mockResolvedValue(withSavepoint),
+      history: vi.fn().mockReturnValue(stale),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useApp.setState({ client, currentProject: PROJECT as any });
+
+    const polling = useApp.getState().refreshHistory(); // in flight, pre-create
+    expect(await useApp.getState().createSavepoint("before")).toBeNull();
+    landStalePoll(); // the engine's pre-create answer arrives late
+    await polling;
+
+    expect(useApp.getState().history?.savepoints).toHaveLength(1);
+  });
 });

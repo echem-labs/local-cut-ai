@@ -27,16 +27,25 @@ export function Composer() {
     undoEdit,
   } = useApp();
   const [text, setText] = useState("");
-  // Did the reply on screen actually change the graph? An edit that
-  // compiles to no ops records no history entry, so the newest recorded
-  // mutation is still some EARLIER edit — offering Undo beside "No changes
-  // made" would revert that one instead of the reply the user is reading.
+  // Did the reply on screen actually change the graph? Not `ops > 0`: the
+  // engine records no history entry for a plan whose ops leave the graph
+  // byte-identical (an LLM that echoes a prompt back unchanged still emits
+  // one), so the newest recorded mutation is still some EARLIER edit —
+  // offering Undo on that reply reverts the earlier one. Only the history
+  // top moving proves this reply is what the next undo would revert.
   const [replyApplied, setReplyApplied] = useState(false);
-  // Undo covers the edit that just landed: it applied something, and it is
-  // still the newest recorded mutation (an edit-shaped undo top — a later
-  // regenerate or inspector patch retires the offer).
-  const undoable =
-    replyApplied && history?.undo_top?.kind === "edit" && (history?.undo_depth ?? 0) > 0;
+  // Depth alone is not that proof: it stops growing at the engine's
+  // UNDO_LIMIT, so the top's identity has to be part of the mark.
+  const historyMark = (): string => {
+    const top = useApp.getState().history;
+    return [top?.undo_depth ?? 0, top?.undo_top?.kind ?? "", top?.undo_top?.summary ?? ""].join(
+      " ",
+    );
+  };
+  // Undo covers the edit that just landed: it recorded something, and that
+  // something is still the newest recorded mutation (an edit-shaped undo
+  // top — a later regenerate or inspector patch retires the offer).
+  const undoable = replyApplied && history?.undo_top?.kind === "edit";
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -135,6 +144,7 @@ export function Composer() {
     setFeedback(null);
     setReplyApplied(false);
     try {
+      const before = historyMark();
       const result: EditResult | null = await edit(instruction, scope);
       if (result) {
         const summary =
@@ -147,7 +157,7 @@ export function Composer() {
         const skipped =
           result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
         setFeedback(summary + skipped);
-        setReplyApplied(result.ops > 0);
+        setReplyApplied(historyMark() !== before);
         pushLog({
           at: Date.now(),
           instruction,

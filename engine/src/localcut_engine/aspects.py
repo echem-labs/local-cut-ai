@@ -39,6 +39,14 @@ EXPORT_SHORT_SIDE_CHOICES = (480, 720, 1080)
 EXPORT_VIDEO_KBPS_BOUNDS = (1000, 50000)
 EXPORT_AUDIO_KBPS_BOUNDS = (64, 320)
 
+# Export params that are the USER's choice rather than the screenplay's.
+# One declaration, because two places need the same answer: the NL editor's
+# whitelist (what a plan may set) and expand_screenplay's rebuild of the
+# export node (what must survive it). _ensure_node replaces params wholesale,
+# so a key the rebuild forgets is deleted — which is how a frame rate picked
+# in the board menu reverted to Auto the next time the script rendered.
+EXPORT_USER_PARAMS = frozenset({"captions", "fps", "resolution", "video_kbps", "audio_kbps"})
+
 
 def resolution_for(table: dict[str, tuple[int, int]], aspect: str) -> tuple[int, int]:
     return table.get(aspect, table[DEFAULT_ASPECT])

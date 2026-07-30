@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 
+from ..aspects import EXPORT_USER_PARAMS
 from ..schema import Screenplay
 from .model import (
     EDL_VERSION,
@@ -383,9 +384,13 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             "format": "mp4",
             "preset": "youtube",
             "aspect": aspect,
-            # The burn/sidecar choice is the user's, not the screenplay's —
-            # it survives re-expansion.
-            "captions": old_export.get("captions", "burn"),
+            "captions": "burn",
+            # Every user-set encode choice carried forward, not just the
+            # captions mode: _ensure_node replaces params wholesale, so a key
+            # missing from this dict is deleted on the next re-expansion.
+            # Frame rate and resolution reverted to Auto that way — silently,
+            # the next time the script rendered.
+            **{k: old_export[k] for k in sorted(EXPORT_USER_PARAMS) if k in old_export},
         },
     )
     _ensure_edge(graph, "timeline", "export")
