@@ -64,6 +64,23 @@ class PatchOp(BaseModel):
     port: str | None = None
 
 
+def check_restorable(graph: StoryGraph) -> None:
+    """Gate for graphs that arrive whole rather than op-by-op — history
+    snapshots and save points being restored. A restore is another route
+    that can write an edge, so it has to re-establish what the `connect`
+    op guarantees below: no cycles (output_hash would recurse forever),
+    and voice_ref fed only by a consented voice-sample asset. Snapshots
+    are engine-written, but the file they live in is plain JSON on disk;
+    trusting it would make editing history.json a consent bypass."""
+    graph.topological_order()  # raises ValueError on a cycle
+    for edge in graph.edges:
+        if edge.port != VOICE_REF_PORT:
+            continue
+        src = graph.nodes.get(edge.src)
+        if src is None or src.kind is not NodeKind.ASSET or not src.params.get("voice_consent"):
+            raise ValueError("voice_ref accepts only a consented voice-sample asset")
+
+
 def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
     """Apply ops in order; returns the set of dirtied node ids (each touched
     node plus its downstream cone), which the caller re-compiles."""

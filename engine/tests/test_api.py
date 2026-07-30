@@ -501,6 +501,51 @@ async def test_patch_input_errors_are_422_not_500(client):
     assert response.status_code == 422
 
 
+async def test_undo_redo_and_savepoints_over_the_api(client):
+    created = await client.post("/projects", json={"prompt": "a red door"})
+    pid = created.json()["id"]
+
+    empty = await client.post(f"/projects/{pid}/undo")
+    assert empty.status_code == 409  # nothing recorded yet
+
+    saved = await client.post(f"/projects/{pid}/savepoints", json={"label": "start"})
+    assert saved.status_code == 200
+    savepoint = saved.json()["savepoints"][0]
+
+    patched = await client.post(
+        f"/projects/{pid}/patch",
+        json={
+            "ops": [{"op": "set_params", "node_id": "script", "params": {"prompt": "a blue door"}}]
+        },
+    )
+    assert patched.status_code == 200
+    info = await client.get(f"/projects/{pid}/history")
+    assert info.json()["undo_depth"] == 1
+    assert info.json()["undo_top"]["kind"] == "patch"
+
+    undone = await client.post(f"/projects/{pid}/undo")
+    assert undone.status_code == 200
+    assert undone.json()["redo_depth"] == 1
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a red door"
+
+    assert (await client.post(f"/projects/{pid}/redo")).status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a blue door"
+
+    restored = await client.post(f"/projects/{pid}/savepoints/{savepoint['id']}/restore")
+    assert restored.status_code == 200
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert graph["nodes"]["script"]["params"]["prompt"] == "a red door"
+
+    assert (await client.delete(f"/projects/{pid}/savepoints/{savepoint['id']}")).status_code == 200
+    missing = await client.post(f"/projects/{pid}/savepoints/{savepoint['id']}/restore")
+    assert missing.status_code == 404
+
+    unlabeled = await client.post(f"/projects/{pid}/savepoints", json={"label": ""})
+    assert unlabeled.status_code == 422
+
+
 def test_data_dir_override_relocates_models_dir(tmp_path, monkeypatch):
     """The CLI rebuilds the config from from_env().model_dump() + overrides;
     a --data-dir override must carry the derived models_dir with it."""

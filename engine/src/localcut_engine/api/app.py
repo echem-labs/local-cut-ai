@@ -1220,6 +1220,70 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown node: {exc}") from exc
         return {"ok": True}
 
+    # -- undo/redo & save points --------------------------------------------
+
+    @app.get("/projects/{project_id}/history", dependencies=[Authed])
+    async def project_history(project_id: ProjectId) -> dict:
+        """Stack depths, the descriptors of the next undo/redo step, and the
+        save point list — never the snapshots themselves (each one is a whole
+        graph, and this is polled alongside the board)."""
+        await _get_project(project_id)
+        return await asyncio.to_thread(service.history_info, project_id)
+
+    @app.post("/projects/{project_id}/undo", dependencies=[Authed])
+    async def undo_project(project_id: ProjectId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.undo, project_id)
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            # The snapshot failed the restore gate (cycle / consent) — the
+            # stored history is bad, not the server.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/redo", dependencies=[Authed])
+    async def redo_project(project_id: ProjectId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.redo, project_id)
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    class SavePointBody(BaseModel):
+        label: str = Field(min_length=1, max_length=80)
+
+    SavePointId = Annotated[str, PathParam(pattern=r"^sp\d{1,9}$")]
+
+    @app.post("/projects/{project_id}/savepoints", dependencies=[Authed])
+    async def create_savepoint(project_id: ProjectId, body: SavePointBody) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.create_savepoint, project_id, body.label)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/projects/{project_id}/savepoints/{savepoint_id}/restore", dependencies=[Authed])
+    async def restore_savepoint(project_id: ProjectId, savepoint_id: SavePointId) -> dict:
+        await _get_project(project_id)
+        try:
+            return await asyncio.to_thread(service.restore_savepoint, project_id, savepoint_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown save point: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.delete("/projects/{project_id}/savepoints/{savepoint_id}", dependencies=[Authed])
+    async def delete_savepoint(project_id: ProjectId, savepoint_id: SavePointId) -> dict:
+        await _get_project(project_id)
+        try:
+            await asyncio.to_thread(service.delete_savepoint, project_id, savepoint_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown save point: {exc}") from exc
+        return {"ok": True}
+
     class FinalizeBody(BaseModel):
         # The shell's Settings → Defaults video model; absent/None falls back
         # to the engine-configured final_clip_model. Validated: an unbounded
