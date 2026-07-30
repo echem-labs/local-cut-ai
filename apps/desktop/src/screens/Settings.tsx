@@ -122,6 +122,83 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
  * nav — General · Defaults · Providers · Models · Storage · Engine · About.
  * Key material flows through the shell (OS keychain → engine), so this
  * screen only ever renders presence and status. */
+/** Per-task default models (engine-persisted): what renders each kind of
+ * work when a node names no model. Rows come from the engine's own list of
+ * defaultable tasks, so a task the engine cannot honor never grows a knob;
+ * a task with nothing installed to choose stays hidden too. */
+function ModelDefaultsPanel() {
+  const { models, modelDefaults, refreshModelDefaults, setModelDefault, client } = useApp();
+  const [llmNames, setLlmNames] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void refreshModelDefaults();
+  }, [refreshModelDefaults]);
+
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    client
+      .llmModels()
+      .then((info) => {
+        if (!cancelled) setLlmNames(info.models);
+      })
+      .catch(() => {
+        /* no LLM server — the text.llm row hides itself below */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  if (!modelDefaults) return null;
+  const taskLabels = m().models.taskLabels as Record<string, string>;
+  const rows = modelDefaults.tasks
+    .map((task) => {
+      const auto = { value: "", label: t("settings.models.defaultsAuto") };
+      const current = modelDefaults.defaults[task] ?? "";
+      let choices: { value: string; label: string }[];
+      if (task === "text.llm") {
+        // Ollama-served names, plus the stored one even when the server is
+        // down — the picker must show the truth, not silently blank it.
+        const names = current && !llmNames.includes(current) ? [current, ...llmNames] : llmNames;
+        choices = names.map((name) => ({ value: name, label: name }));
+      } else {
+        choices = models
+          .filter((row) => row.task === task && (row.downloaded || row.custom))
+          .map((row) => ({ value: row.id, label: displayModelName(row.family, row.version) }));
+      }
+      return { task, current, options: [auto, ...choices] };
+    })
+    .filter((row) => row.options.length > 1);
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="model-defaults">
+      <h3>{t("settings.models.defaultsHeading")}</h3>
+      <p className="hint">{t("settings.models.defaultsHint")}</p>
+      {rows.map(({ task, current, options }) => (
+        <div className="model-default-row" key={task}>
+          <span>{taskLabels[task] ?? task}</span>
+          <Dropdown
+            value={current}
+            options={options}
+            ariaLabel={taskLabels[task] ?? task}
+            onChange={(value) => {
+              void setModelDefault(task, value === "" ? null : String(value)).then(setError);
+            }}
+          />
+        </div>
+      ))}
+      {error && (
+        <div role="status" className="banner error">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Settings() {
   const {
     client,
@@ -709,6 +786,7 @@ export function Settings() {
                 {t("settings.models.heading")}
               </h2>
               <p className="hint">{t("settings.models.hint")}</p>
+              <ModelDefaultsPanel />
               <ModelLibrary showActions showAddCustom />
             </section>
           )}

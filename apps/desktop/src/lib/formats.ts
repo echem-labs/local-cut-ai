@@ -34,6 +34,12 @@ export const CLIP_MAX_S = 15.0;
 export const SPEED_MIN = 0.5;
 export const SPEED_MAX = 1.5;
 
+/** Export encode choices — aspects.py `EXPORT_FPS_CHOICES` /
+ * `EXPORT_SHORT_SIDE_CHOICES`. Closed sets: the export node refuses
+ * off-menu values, so the UI must offer exactly these. */
+export const EXPORT_FPS_CHOICES = [24, 25, 30, 50, 60] as const;
+export const EXPORT_SHORT_SIDE_CHOICES = [480, 720, 1080] as const;
+
 /** The engine's narration timing model — backends/llm.py
  * `SPEECH_WORDS_PER_S` and backends/ffmpeg.py `NARRATION_PAD_S`. A scene
  * lasts as long as its narration takes to speak (plus breathing room), NOT

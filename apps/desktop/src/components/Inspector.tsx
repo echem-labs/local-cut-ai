@@ -29,6 +29,7 @@ export function Inspector() {
     applyTimeline,
     conditionScene,
     applyClonedVoice,
+    selectTake,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
@@ -566,6 +567,30 @@ export function Inspector() {
             <RotateCw size={12} strokeWidth={1.8} />
             {t("inspector.newTake")}
           </button>
+
+          {(activeNode.takes?.length ?? 0) > 1 && (
+            <div className="take-row" role="group" aria-label={t("inspector.takesAria")}>
+              <span className="field-label">{t("inspector.takes")}</span>
+              {activeNode.takes?.map((take, index) => (
+                <button
+                  key={take.output_hash}
+                  className={`chip${take.current ? " selected" : ""}`}
+                  disabled={pinned || take.current}
+                  aria-pressed={take.current}
+                  title={
+                    take.current
+                      ? t("inspector.takeCurrentTitle")
+                      : take.available
+                        ? t("inspector.takeSwitchTitle")
+                        : t("inspector.takeMissingTitle")
+                  }
+                  onClick={() => void selectTake(activeNode.node_id, take.output_hash)}
+                >
+                  {t("inspector.takeChip", { n: index + 1 })}
+                </button>
+              ))}
+            </div>
+          )}
 
           {activeNode.error && <div className="banner error">{activeNode.error}</div>}
         </>
