@@ -62,11 +62,21 @@ def main(argv: list[str] | None = None) -> int:
     download.add_argument("model_id")
     download.add_argument("--models-dir", default=None)
 
+    mcp = subcommands.add_parser(
+        "mcp",
+        help="serve this engine's projects to MCP agents over stdio "
+        "(configure the agent host to run this command)",
+    )
+    _add_connection_flags(mcp, include_json=False)
+
     _add_automation_commands(subcommands)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     _survive_console_encoding()
+
+    if args.command == "mcp":
+        return _mcp_command(args)
 
     if args.command == "probe":
         from .hardware.probe import probe_hardware
@@ -301,6 +311,32 @@ def _models_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mcp_command(args: argparse.Namespace) -> int:
+    """`localcut-engine mcp` - an MCP stdio server that is a client of a
+    running engine, exactly as the automation commands are (see
+    mcp_server.py). stdout belongs to the protocol from here on; everything
+    human-readable, including logging, goes to stderr."""
+    from .automation import DEFAULT_ENGINE_URL, EngineError, fail
+    from .mcp_server import build_server
+
+    url = args.engine or os.environ.get("LOCALCUT_ENGINE_URL") or DEFAULT_ENGINE_URL
+    token = args.api_token or os.environ.get("LOCALCUT_TOKEN") or ""
+    try:
+        server = build_server(url, token, cert=Path(args.cert) if args.cert else None)
+    except EngineError as exc:
+        # Only what can never work fails here (--cert against http://, a
+        # missing PEM). An engine that is merely down is not startup's
+        # business: each tool call reports it as a sentence the agent reads.
+        return fail(str(exc))
+    try:
+        server.run(transport="stdio")
+    except KeyboardInterrupt:
+        # A foreground server interrupted at the terminal is a shutdown, not
+        # a failed operation - same contract `serve` has under uvicorn.
+        pass
+    return 0
+
+
 # -- automation: a client of the headless engine (Phase 3) -------------------
 #
 # Every command here talks HTTP to a running engine rather than opening the
@@ -317,8 +353,12 @@ def _models_command(args: argparse.Namespace) -> int:
 # functions it names — see _AUTOMATION_COMMANDS there.
 
 
-def _add_connection_flags(parser: argparse.ArgumentParser) -> None:
-    """Where to find the engine. Env defaults so a CI job sets them once."""
+def _add_connection_flags(parser: argparse.ArgumentParser, *, include_json: bool = True) -> None:
+    """Where to find the engine. Env defaults so a CI job sets them once.
+
+    `include_json=False` is for `mcp`, whose stdout is the protocol channel:
+    a --json flag there would promise an output mode the command cannot have.
+    """
     parser.add_argument(
         "--engine",
         default=None,
@@ -332,7 +372,8 @@ def _add_connection_flags(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="PEM of a remote engine's self-signed certificate, pinned as the only trusted CA",
     )
-    parser.add_argument("--json", action="store_true", help="print the raw JSON result")
+    if include_json:
+        parser.add_argument("--json", action="store_true", help="print the raw JSON result")
 
 
 def _add_automation_commands(subcommands) -> None:
