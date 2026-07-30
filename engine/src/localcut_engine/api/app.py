@@ -58,6 +58,12 @@ from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
 from ..manifest.capability import installed_comfy_kinds, installed_comfy_models
 from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
+from ..manifest.defaults import (
+    DEFAULTABLE_TASKS,
+    DefaultsTooNew,
+    load_defaults,
+    set_default,
+)
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
@@ -258,6 +264,21 @@ def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
         return None
 
 
+def _llm_default_reader(config: EngineConfig):
+    """The persisted text.llm default as a live read — the picker can change
+    it mid-session and the next script job must see it. A defaults file
+    from a newer build refuses on its own routes; script jobs fall back to
+    the engine-config model instead of failing."""
+
+    def read() -> str | None:
+        try:
+            return load_defaults(config).get("text.llm")
+        except DefaultsTooNew:
+            return None
+
+    return read
+
+
 def _build_backends(config: EngineConfig) -> BackendRegistry:
     """Build the backend chain from config; first registered wins per node
     kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
@@ -278,6 +299,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         base_url=config.llm_url,
                         model=config.llm_model,
                         timeout_s=config.llm_timeout_s,
+                        default_model=_llm_default_reader(config),
                     )
                 )
             case "comfy":
@@ -593,7 +615,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend if isinstance(backend, LLMScriptBackend) else None
 
-        unavailable = {"available": False, "default": config.llm_model, "models": []}
+        llm_default = _llm_default_reader(config)
+        unavailable = {
+            "available": False,
+            "default": llm_default() or config.llm_model,
+            "models": [],
+        }
         backend = await asyncio.to_thread(script_llm)
         if backend is None:
             return unavailable
@@ -601,7 +628,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             models = await backend.list_models()
         except httpx.HTTPError:
             return unavailable
-        return {"available": True, "default": backend.model, "models": models}
+        # The effective default (persisted per-task choice, then config) —
+        # what a job with no explicit model actually renders with.
+        return {"available": True, "default": backend.resolve_model(None), "models": models}
 
     @app.get("/system/etas", dependencies=[Authed])
     async def system_etas() -> dict:
@@ -624,6 +653,36 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 "samples": len(samples),
             }
         return {"etas": etas}
+
+    @app.get("/models/defaults", dependencies=[Authed])
+    async def model_defaults() -> dict:
+        """The persisted per-task default models, plus which tasks accept
+        one — the picker renders rows only for tasks the engine honors."""
+        try:
+            defaults = await asyncio.to_thread(load_defaults, config)
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
+
+    class ModelDefaultBody(BaseModel):
+        task: str = Field(max_length=32)
+        # None/empty clears the task's default (back to engine defaults).
+        model: str | None = Field(default=None, max_length=128)
+
+    @app.put("/models/defaults", dependencies=[Authed])
+    async def set_model_default(body: ModelDefaultBody) -> dict:
+        try:
+            defaults = await asyncio.to_thread(set_default, config, body.task, body.model)
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown model: {exc}") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            # The override manifest could not be read to validate against.
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
 
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:
@@ -1207,6 +1266,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                     base_url=config.llm_url,
                     model=config.llm_model,
                     timeout_s=config.llm_timeout_s,
+                    default_model=_llm_default_reader(config),
                 ).complete(prompt, system=EDIT_SYSTEM_PROMPT, max_tokens=EDIT_MAX_TOKENS)
             plan = parse_edit_plan(raw)
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
