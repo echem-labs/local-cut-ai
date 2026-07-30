@@ -69,6 +69,18 @@ export interface NodeNotice {
   data: Record<string, string | number>;
 }
 
+/** One alternate take of a node — a prior identity a regenerate displaced
+ * (distinct from a split scene's sequential `clip_takes`). Selecting one is
+ * a metadata swap onto an artifact already on disk when `available`. */
+export interface TakeInfo {
+  output_hash: string;
+  seed: number;
+  /** Recorded time; null for the live identity's synthetic row. */
+  at: number | null;
+  available: boolean;
+  current: boolean;
+}
+
 export interface NodeState {
   node_id: string;
   status: NodeStatus;
@@ -81,6 +93,8 @@ export interface NodeState {
   seed: number;
   model: string | null;
   pinned: boolean;
+  /** Present only once the node has recorded takes. */
+  takes?: TakeInfo[];
 }
 
 /** The Story Graph itself, as GET /projects/{id}/graph returns it.
@@ -230,6 +244,37 @@ export interface EditResult {
   warnings: string[];
 }
 
+/** What the next undo/redo step would revert — mirrors SNAPSHOT_KINDS in
+ * the engine's project/store.py (test_ui_contract compares the kinds
+ * against the historyKinds catalog). */
+export interface HistoryDescriptor {
+  kind: string;
+  summary: string | null;
+  node_id: string | null;
+}
+
+export interface SavePointInfo {
+  id: string;
+  label: string;
+  at: number;
+}
+
+/** GET /projects/:id/history — depths and descriptors, never snapshots. */
+export interface HistoryInfo {
+  undo_depth: number;
+  redo_depth: number;
+  undo_top: HistoryDescriptor | null;
+  redo_top: HistoryDescriptor | null;
+  savepoints: SavePointInfo[];
+}
+
+/** GET/PUT /models/defaults — persisted per-task default models. `tasks`
+ * lists the tasks the engine honors; the picker renders only those. */
+export interface ModelDefaults {
+  defaults: Record<string, string>;
+  tasks: string[];
+}
+
 export interface Job {
   id: string;
   project_id: string;
@@ -281,6 +326,8 @@ export type EngineEvent =
   | { type: "project.compiled"; project_id: string; enqueued: number }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
+  // An undo/redo or save point restore replaced the graph wholesale.
+  | { type: "project.restored"; project_id: string; direction: string }
   | { type: "project.renamed"; project_id: string; title: string }
   // A post-completion hook failed — most often a screenplay the expander
   // could not apply. The job itself succeeded, so nothing else reports it.

@@ -14,9 +14,23 @@ import { ModelsPopover } from "./ModelsPopover";
  * it from anywhere. The activity log above it keeps the session's
  * conversation ("what changed my scene 3?"). */
 export function Composer() {
-  const { board, currentProject, selectedNode, select, edit, editBusy, regenerate, togglePin } =
-    useApp();
+  const {
+    board,
+    currentProject,
+    selectedNode,
+    select,
+    edit,
+    editBusy,
+    regenerate,
+    togglePin,
+    history,
+    undoEdit,
+  } = useApp();
   const [text, setText] = useState("");
+  // The transient reply's Undo covers the edit that just landed — offered
+  // only while it is still the newest recorded mutation (an edit-shaped
+  // undo top), so the button never silently reverts something else.
+  const undoable = history?.undo_top?.kind === "edit" && (history?.undo_depth ?? 0) > 0;
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -301,7 +315,23 @@ export function Composer() {
         </div>
       </div>
       {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}
-      {feedback && !editBusy && <div className="hint composer-hint">{feedback}</div>}
+      {feedback && !editBusy && (
+        <div className="hint composer-hint">
+          {feedback}
+          {undoable && (
+            <button
+              className="composer-undo"
+              title={t("composer.undoTitle")}
+              onClick={() => {
+                setFeedback(null);
+                void undoEdit().then((message) => setError(message));
+              }}
+            >
+              {t("composer.undo")}
+            </button>
+          )}
+        </div>
+      )}
       {error && <div className="banner error" style={{ marginTop: 8 }}>{error}</div>}
     </div>
   );
