@@ -16,6 +16,7 @@ model.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 import time
 
@@ -122,6 +123,44 @@ async def test_a_prompt_becomes_a_rendered_file_over_mcp(engine, tmp_path):
     assert out.stat().st_size > 0
     assert result["bytes"] == out.stat().st_size
     assert result["path"] == str(out)
+
+
+async def test_the_finalize_pass_renders_over_mcp(engine):
+    """`final=True` posts /finalize with no body, which the route accepts
+    (FinalizeBody defaults engine-side). The draft flow above cannot catch a
+    regression here - this is the path a script's `render --final` also
+    depends on."""
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "final quality"})
+        await until_done(client, project["id"])
+
+        started = await call(client, "start_render", {"project_id": project["id"], "final": True})
+        status = await until_done(client, project["id"], ignore=started["settled_before"])
+
+    assert status["failed"] == []
+
+
+async def test_the_console_command_serves_a_real_agent_over_stdio(engine):
+    """test_mcp_serves_stdio_against_the_resolved_engine fakes the server;
+    this one does not: the actual `localcut-engine mcp` process, spawned the
+    way an agent host spawns it, answering JSON-RPC over its own stdin/stdout
+    against a live engine. What the in-memory sessions cannot prove: the
+    console entry point, the argparse routing and the SDK's stdio framing
+    agree end to end - and nothing else the CLI prints leaks onto the
+    protocol channel."""
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "localcut_engine.cli", "mcp", "--engine", engine, "--token", TOKEN],
+    )
+    async with Client(stdio_client(params)) as client:
+        tools = {tool.name for tool in (await client.list_tools()).tools}
+        assert "create_project" in tools
+
+        listing = await call(client, "list_projects")
+
+    assert listing == {"projects": []}
 
 
 async def test_a_project_is_listed_once_it_exists(engine):
@@ -236,6 +275,97 @@ async def test_a_patch_applies_and_undo_reverses_it(engine):
         await call(client, "redo", {"project_id": project_id})
         graph = await call(client, "get_graph", {"project_id": project_id})
         assert graph["nodes"]["script"]["pinned"] is True
+
+
+async def test_an_agent_cannot_fabricate_voice_consent_through_patch(engine):
+    """The doc-02 chokepoint, observed from the far side of MCP: add_node
+    strips server-owned params, and connect re-checks the edge - so an agent
+    that CLAIMS consent on a hand-built asset node still cannot wire it into
+    a narration's voice_ref. The consent affirmation lives on the upload
+    route alone."""
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "a cloned voice"})
+        project_id = project["id"]
+        await until_done(client, project_id)
+        graph = await call(client, "get_graph", {"project_id": project_id})
+        narration = next(
+            node_id for node_id, node in graph["nodes"].items() if node["kind"] == "narration"
+        )
+
+        message = await refusal(
+            client,
+            "patch_project",
+            {
+                "project_id": project_id,
+                "ops": [
+                    {
+                        "op": "add_node",
+                        "node": {
+                            "id": "fakesample",
+                            "kind": "asset",
+                            "params": {"voice_consent": True},
+                        },
+                    },
+                    {
+                        "op": "connect",
+                        "node_id": narration,
+                        "src": "fakesample",
+                        "port": "voice_ref",
+                    },
+                ],
+            },
+        )
+
+    assert "consent" in message
+
+
+# -- the client cannot be steered off its own routes ----------------------------
+
+
+async def test_a_crafted_id_cannot_slide_a_tool_onto_a_different_route(engine):
+    """Tool arguments become URL path segments, and tool inputs come from a
+    model. Unchecked, a project_id of "<real id>/graph" turns get_project
+    into a successful request against the GRAPH route - the toolset's
+    deny-list bypassed by string-building, answering with a document the
+    tool never meant to fetch. The percent form is the same attack after one
+    decode: the ASGI server unescapes %2F before the framework routes, so
+    quoting is no defense and both spellings must be refused before any
+    request is sent."""
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "smuggle"})
+
+        for smuggled in (project["id"] + "/graph", project["id"] + "%2Fgraph"):
+            message = await refusal(client, "get_project", {"project_id": smuggled})
+            assert "not a valid id" in message
+
+
+async def test_export_refuses_to_replace_an_existing_file_unless_told(engine, tmp_path):
+    """An agent's mistyped out_path must not cost the user a file: the CLI
+    operator typing --out sees what they typed, an agent's caller does not.
+    overwrite=true is the explicit form of the decision."""
+    target = tmp_path / "precious.mp4"
+    target.write_bytes(b"the user's own bytes")
+
+    async with Client(build(engine)) as client:
+        project = await call(client, "create_project", {"prompt": "careful"})
+        project_id = project["id"]
+        started = await call(client, "start_render", {"project_id": project_id})
+        await until_done(client, project_id, ignore=started["settled_before"])
+
+        message = await refusal(
+            client, "export_video", {"project_id": project_id, "out_path": str(target)}
+        )
+        assert "already exists" in message
+        assert target.read_bytes() == b"the user's own bytes"
+
+        result = await call(
+            client,
+            "export_video",
+            {"project_id": project_id, "out_path": str(target), "overwrite": True},
+        )
+
+    assert result["bytes"] == target.stat().st_size
+    assert target.read_bytes() != b"the user's own bytes"
 
 
 # -- what render_status has to mean to an agent --------------------------------

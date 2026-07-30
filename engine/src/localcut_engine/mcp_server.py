@@ -38,6 +38,29 @@ from mcp.server import MCPServer
 from . import __version__, automation
 from .automation import DEFAULT_ENGINE_URL, EngineClient, EngineError
 
+# Characters that would let an id restructure the request path. "%" belongs
+# here as much as "/": the ASGI server decodes percent-escapes before the
+# framework routes, so an id of "x%2Fgraph" ARRIVES at the router as
+# "x/graph" — which is why quoting is not a defense either (a quoted "/"
+# becomes "%2F" on the wire and a real "/" again at the router).
+_SEGMENT_UNSAFE = frozenset("/?#%\\")
+
+
+def _segment(value: str) -> str:
+    """A tool argument about to become one URL path segment, or a refusal.
+
+    Tool inputs come from a model: unquoted, a project_id of "<id>/graph"
+    turns get_project into a successful request against the GRAPH route —
+    the toolset's deny-list bypassed by string-building. No engine id ever
+    contains path structure, so anything that does is refused here with a
+    sentence instead of being sent. (The automation CLI does not need this:
+    its ids come from the operator's own argv.)
+    """
+    if not value or any(ch in _SEGMENT_UNSAFE or ord(ch) < 0x20 for ch in value):
+        raise EngineError(f"not a valid id for a request path: {value!r}")
+    return value
+
+
 # An interactive /edit runs a local LLM round trip that can take minutes on
 # the same GPU a render is using; the default client timeout would cut it
 # off mid-generation and report a transport error for a working engine.
@@ -149,7 +172,7 @@ def build_server(
         narration, and the export slot. This is what to read before and after
         edits."""
         with connect() as client:
-            return client.get(f"/projects/{project_id}")
+            return client.get(f"/projects/{_segment(project_id)}")
 
     @server.tool()
     def get_graph(project_id: str) -> dict[str, Any]:
@@ -157,7 +180,7 @@ def build_server(
         pinned state, and the edges between them. Read this before
         patch_project to see what an op would target."""
         with connect() as client:
-            return client.get(f"/projects/{project_id}/graph")
+            return client.get(f"/projects/{_segment(project_id)}/graph")
 
     @server.tool()
     def start_render(project_id: str, final: bool = False) -> dict[str, Any]:
@@ -170,7 +193,7 @@ def build_server(
             # failed instantly would be classified as somebody else's.
             settled = automation.settled_jobs(client, project_id)
             action = "finalize" if final else "render"
-            client.post(f"/projects/{project_id}/{action}")
+            client.post(f"/projects/{_segment(project_id)}/{action}")
             pending = automation.active_jobs(client, project_id)
         return {"pending": len(pending), "settled_before": sorted(settled)}
 
@@ -185,7 +208,7 @@ def build_server(
             # when the answer can be "ready" - mid-render it cannot.
             artifact = None
             if not automation._outstanding(jobs):
-                board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
+                board = (client.get(f"/projects/{_segment(project_id)}") or {}).get("board") or {}
                 artifact = automation.export_hash(board)
         return render_status_payload(
             jobs, export_hash=artifact, ignore_job_ids=ignore_job_ids or []
@@ -203,7 +226,7 @@ def build_server(
         on real GPU time. scope narrows the edit to one scene id."""
         body = {"instruction": instruction, "scope": scope, "dry_run": dry_run}
         with connect(timeout=_EDIT_TIMEOUT_S) as client:
-            return client.post(f"/projects/{project_id}/edit", json=body)
+            return client.post(f"/projects/{_segment(project_id)}/edit", json=body)
 
     @server.tool()
     def apply_edit(
@@ -217,7 +240,7 @@ def build_server(
         revision is refused if the graph moved in between."""
         body = {"plan": plan, "scope": scope, "revision": revision}
         with connect() as client:
-            return client.post(f"/projects/{project_id}/edit/apply", json=body)
+            return client.post(f"/projects/{_segment(project_id)}/edit/apply", json=body)
 
     @server.tool()
     def patch_project(project_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
@@ -227,39 +250,47 @@ def build_server(
         every other client uses: cycles are refused, and voice_ref accepts
         only a consented voice sample."""
         with connect() as client:
-            return client.post(f"/projects/{project_id}/patch", json={"ops": ops})
+            return client.post(f"/projects/{_segment(project_id)}/patch", json={"ops": ops})
 
     @server.tool()
     def undo(project_id: str) -> dict[str, Any]:
         """Revert the most recent graph edit. Re-renders nothing that already
         existed: prior artifacts are content-addressed and still cached."""
         with connect() as client:
-            return client.post(f"/projects/{project_id}/undo")
+            return client.post(f"/projects/{_segment(project_id)}/undo")
 
     @server.tool()
     def redo(project_id: str) -> dict[str, Any]:
         """Re-apply the edit the last undo reverted."""
         with connect() as client:
-            return client.post(f"/projects/{project_id}/redo")
+            return client.post(f"/projects/{_segment(project_id)}/redo")
 
     @server.tool()
     def project_history(project_id: str) -> dict[str, Any]:
         """Undo/redo stack depths, what the next undo or redo would change,
         and the save points. Read this before undoing blind."""
         with connect() as client:
-            return client.get(f"/projects/{project_id}/history")
+            return client.get(f"/projects/{_segment(project_id)}/history")
 
     @server.tool()
-    def export_video(project_id: str, out_path: str, format: str = "mp4") -> dict[str, Any]:
+    def export_video(
+        project_id: str, out_path: str, format: str = "mp4", overwrite: bool = False
+    ) -> dict[str, Any]:
         """Write the finished cut (mp4) or an NLE handoff (otio, fcpxml) to a
         file on this machine. Returns the resolved path and bytes written.
-        mp4 requires a completed render."""
+        mp4 requires a completed render. Refuses to replace an existing file
+        unless overwrite=true: a mistyped path must not cost the user a
+        file, and unlike the CLI's --out there is no operator watching."""
         destination = Path(out_path).expanduser().resolve()
+        if destination.exists() and not overwrite:
+            raise EngineError(f"{destination} already exists - pass overwrite=true to replace it")
         with connect() as client:
             if format in ("otio", "fcpxml"):
-                written = client.download(f"/projects/{project_id}/export/{format}", destination)
+                written = client.download(
+                    f"/projects/{_segment(project_id)}/export/{format}", destination
+                )
             elif format == "mp4":
-                board = (client.get(f"/projects/{project_id}") or {}).get("board") or {}
+                board = (client.get(f"/projects/{_segment(project_id)}") or {}).get("board") or {}
                 artifact = automation.export_hash(board)
                 if artifact is None:
                     raise EngineError(
@@ -267,7 +298,7 @@ def build_server(
                         "render_status until it reports export_ready, then export"
                     )
                 written = client.download(
-                    f"/projects/{project_id}/artifacts/{artifact}", destination
+                    f"/projects/{_segment(project_id)}/artifacts/{_segment(artifact)}", destination
                 )
             else:
                 raise EngineError(f"unknown format: {format} (use mp4, otio or fcpxml)")
