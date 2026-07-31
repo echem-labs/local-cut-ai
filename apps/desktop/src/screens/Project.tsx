@@ -23,14 +23,20 @@ import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
-import { isSettled } from "../lib/status";
+import { isDone, isSettled } from "../lib/status";
 import { useWorkspace } from "../lib/workspace";
 import { useApp } from "../store";
 
-/** One pipeline stage in the header: done ✓ · working ● · failed ! · —. */
+/** One pipeline stage in the header: done ✓ · working ● · failed ! · —.
+ *
+ * `isDone`, not `isSettled`: a blocked node is settled (nothing is coming
+ * from the queue) but has produced nothing, so it falls through to "off" —
+ * the same muted dash `cancelled` gets, and for the same reason. Nothing is
+ * happening here and there is no result. Ticking it green claimed a project
+ * was exported while an unwritten scene held the whole assembly back. */
 function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" | "off" {
   if (!node) return "off";
-  if (isSettled(node.status)) return "done";
+  if (isDone(node.status)) return "done";
   if (node.status === "rendering" || node.status === "queued") return "work";
   if (node.status === "failed") return "fail";
   return "off";
@@ -442,12 +448,20 @@ export function Project() {
   const scenes = orderedScenes(board);
 
   // The header's pipeline indicator: the project's story arc at a glance.
-  const clipDone = scenes.filter((scene) => isSettled(scene.clip.status)).length;
+  // Everything counted here is REPORTED as progress, so it asks isDone — a
+  // scene nobody has written yet is not one of the videos that are ready.
+  const clipDone = scenes.filter((scene) => isDone(scene.clip.status)).length;
   const clipFailed = scenes.filter((scene) => scene.clip.status === "failed").length;
   const clipsRendering = scenes.some(
     (scene) => scene.clip.status === "rendering" || scene.clip.status === "queued",
   );
-  const keyframesAllReady =
+  const keyframesAllDone =
+    scenes.length > 0 && scenes.every((scene) => !scene.keyframe || isDone(scene.keyframe.status));
+  // The beginner checkpoint is a gate, not a report: it asks isSettled so it
+  // opens on a keyframe that is never coming (see lib/status.ts). Splitting
+  // the two is the point — the banner must not hang, and the header must not
+  // claim a storyboard is finished when a scene is still waiting on a prompt.
+  const keyframesAllSettled =
     scenes.length > 0 &&
     scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
   const audioNodes = [board.aux.voiceover, board.aux.music].filter(
@@ -456,7 +470,7 @@ export function Project() {
   const audioStage =
     audioNodes.length === 0
       ? ("off" as const)
-      : audioNodes.every((node) => isSettled(node.status))
+      : audioNodes.every((node) => isDone(node.status))
         ? ("done" as const)
         : audioNodes.some((node) => node.status === "failed")
           ? ("fail" as const)
@@ -475,7 +489,7 @@ export function Project() {
     { id: "script", state: stageOf(script) },
     {
       id: "storyboard",
-      state: scenes.length === 0 ? "off" : keyframesAllReady ? "done" : "work",
+      state: scenes.length === 0 ? "off" : keyframesAllDone ? "done" : "work",
     },
     {
       id: "videos",
@@ -496,7 +510,7 @@ export function Project() {
         scenes.length > 0
           ? () => {
               const target =
-                scenes.find((scene) => !isSettled(scene.clip.status)) ?? scenes[0];
+                scenes.find((scene) => !isDone(scene.clip.status)) ?? scenes[0];
               scrollToScene(target.scene_id, { behavior: "smooth", block: "center" });
             }
           : undefined,
@@ -514,9 +528,11 @@ export function Project() {
   const checkpointPending =
     currentProject.mode === "beginner" &&
     ((!approvals.includes("script") && scriptReady) ||
-      (approvals.includes("script") && !approvals.includes("storyboard") && keyframesAllReady));
-  const allReady =
-    scenes.length > 0 && scenes.every((scene) => isSettled(scene.clip.status));
+      (approvals.includes("script") && !approvals.includes("storyboard") && keyframesAllSettled));
+  // The CTA is an offer to do work, so it asks isDone: with a blocked clip
+  // there is nothing to enqueue, and the button would refresh the board and
+  // change nothing — a primary action that silently does nothing at all.
+  const allReady = scenes.length > 0 && scenes.every((scene) => isDone(scene.clip.status));
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
