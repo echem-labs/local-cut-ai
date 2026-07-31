@@ -230,3 +230,61 @@ def test_unreadable_history_resets_instead_of_bricking_edits(tmp_path):
     # The next mutation records normally over the reset file.
     _set_prompt(service, project_id, "recovered")
     assert service.history_info(project_id)["undo_depth"] == 1
+
+
+def test_a_refused_cloud_spend_leaves_the_project_exactly_as_it_was(tmp_path):
+    """The rule is "an agent cannot CHOOSE cloud", and choosing is the write.
+
+    The gate lives at the queue because that is where the money is committed
+    — three client-side gates leaked in turn before it moved there. But every
+    mutating path saved the graph BEFORE calling it, so a refused caller got
+    its 403 with the `cloud:*` model already persisted on the node. Nothing
+    was queued, which is what the message says; what it does not say is that
+    the next render the USER starts from the app spends. The refusal has to
+    be a no-op, not a failed queue over a completed write.
+    """
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED, CloudSpendRefused
+
+    service, project_id = _service(tmp_path)
+    _set_prompt(service, project_id, "a lighthouse")
+    before_graph = service.store.load_graph(project_id).model_dump(mode="json")
+    before_history = service.store.load_history(project_id).model_dump(mode="json")
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        with pytest.raises(CloudSpendRefused):
+            service.patch(
+                project_id,
+                [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")],
+            )
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    assert service.store.load_graph(project_id).nodes["s1.clip"].model != "cloud:kling-2.5"
+    assert service.store.load_graph(project_id).model_dump(mode="json") == before_graph
+    # And the refusal did not consume an undo step for a change that never happened.
+    assert service.store.load_history(project_id).model_dump(mode="json") == before_history
+
+
+def test_a_refused_undo_does_not_spend_the_history_step(tmp_path):
+    """Undo restores a whole snapshot, which is how the rule was broken the
+    third time: the model comes back without the caller naming one. Refusing
+    after the stacks were rewritten left the snapshot both applied and popped
+    — the change landed AND there was no way back to it."""
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED, CloudSpendRefused
+
+    service, project_id = _service(tmp_path)
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="local:ltx-video")])
+    before_graph = service.store.load_graph(project_id).model_dump(mode="json")
+    before_depth = service.history_info(project_id)["undo_depth"]
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        with pytest.raises(CloudSpendRefused):
+            service.undo(project_id)
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    assert service.store.load_graph(project_id).model_dump(mode="json") == before_graph
+    assert service.history_info(project_id)["undo_depth"] == before_depth

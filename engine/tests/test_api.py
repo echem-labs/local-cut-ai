@@ -1474,3 +1474,39 @@ async def test_system_etas_calibrate_from_completed_jobs(client):
     script = etas["script"]["draft"]
     assert script["samples"] >= 1
     assert script["seconds"] >= 0
+
+
+async def test_a_caller_that_may_not_spend_cannot_buy_a_cloud_edit(client):
+    """The cloud-spend rule names an outcome, not a list of routes.
+
+    `/edit` is the one spend that never reaches the queue: with a `model`, it
+    calls the BYOK text provider inline on the request path, so the gate at
+    `_enqueue_dirty` never sees it. The MCP surface omits `model` from its
+    tool schema, but that is a client-side gate over a route -- the exact
+    shape that leaked three times before the rule moved to the queue, and the
+    reason a fourth client (or a hand-rolled HTTP call from an agent host)
+    must not be the only thing standing in the way.
+
+    A 403 BEFORE the provider is resolved, so no key is read and no request
+    is made -- not a 400 about a missing key, which would leak whether one is
+    configured and would still have spent it where one is.
+    """
+    created = await client.post("/projects", json={"prompt": "a quiet harbour"})
+    project_id = created.json()["id"]
+
+    response = await client.post(
+        f"/projects/{project_id}/edit",
+        json={"instruction": "make it colder", "model": "cloud:claude-sonnet-4-5", "dry_run": True},
+        headers={"X-LocalCut-Cloud-Spend": "deny"},
+    )
+
+    assert response.status_code == 403
+    assert "provider key" in response.json()["detail"]
+
+    # The local path is untouched: refusing the spend must not refuse editing.
+    allowed = await client.post(
+        f"/projects/{project_id}/edit",
+        json={"instruction": "make it colder", "dry_run": True},
+        headers={"X-LocalCut-Cloud-Spend": "deny"},
+    )
+    assert allowed.status_code != 403

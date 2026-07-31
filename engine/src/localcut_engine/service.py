@@ -20,6 +20,7 @@ from .events import EventBus
 from .fcpxml import edl_to_fcpxml
 from .graph.compiler import (
     QUALITY_SENSITIVE_KINDS,
+    CompiledPlan,
     compile_graph,
     orphaned_nodes,
     unready_nodes,
@@ -44,6 +45,7 @@ from .otio import edl_to_otio
 from .project.store import (
     SAVEPOINT_LIMIT,
     GraphHistory,
+    NodeTakes,
     Project,
     ProjectStore,
     SavePoint,
@@ -365,10 +367,15 @@ class ProjectService:
         with self._lock:
             graph = self.store.load_graph(project_id)
             before = graph.model_dump(mode="json")
-            ops = self._resolve_select_takes(project_id, graph, ops)
+            ops, takes = self._resolve_select_takes(project_id, graph, ops)
             ops = self._resolve_add_scenes(graph, ops)
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
+            # Nothing is on disk yet: a refusal here leaves the project
+            # exactly as the caller found it, takes.json included.
+            self._refuse_cloud_spend(project_id, graph)
+            if takes is not None:
+                self.store.save_takes(project_id, takes)
             self.store.save_graph(project_id, graph)
             self._record_history(project_id, before, graph, kind="patch")
             if dirty:
@@ -378,12 +385,16 @@ class ProjectService:
 
     def _resolve_select_takes(
         self, project_id: str, graph: StoryGraph, ops: list[PatchOp]
-    ) -> list[PatchOp]:
+    ) -> tuple[list[PatchOp], NodeTakes | None]:
         """Fill each select_take op with the recorded identity its `take`
         hash names, and park the node's current identity as a take of its
-        own — so switching is always a round trip, never a one-way door."""
+        own — so switching is always a round trip, never a one-way door.
+
+        Returns the takes to persist rather than persisting them, because
+        the patch can still be refused (a take can carry a cloud model) and
+        a refused request must not leave a take recorded behind it."""
         if not any(op.op == "select_take" for op in ops):
-            return ops
+            return ops, None
         takes = self.store.load_takes(project_id)
         memo = {nid: n.frozen_hash for nid, n in graph.nodes.items() if n.pinned and n.frozen_hash}
         resolved: list[PatchOp] = []
@@ -409,8 +420,7 @@ class ProjectService:
                     model=record.model,
                 )
             )
-        self.store.save_takes(project_id, takes)
-        return resolved
+        return resolved, takes
 
     def _resolve_add_scenes(self, graph: StoryGraph, ops: list[PatchOp]) -> list[PatchOp]:
         """Compile each add_scene op into the primitive ops that build a
@@ -756,6 +766,11 @@ class ProjectService:
             entry = source.pop()
             restored = self._restorable_graph(entry.graph)
             current = self.store.load_graph(project_id)
+            # Before the stacks are rewritten: a snapshot can hold a cloud
+            # model the caller may not spend on, and restoring one is how the
+            # rule was broken the third time. Refusing after the pop would
+            # consume the history step as well as landing the model.
+            self._refuse_cloud_spend(project_id, restored)
             target.append(entry.model_copy(update={"graph": current.model_dump(mode="json")}))
             self.store.save_graph(project_id, restored)
             self.store.save_history(project_id, history)
@@ -797,6 +812,12 @@ class ProjectService:
             restored = self._restorable_graph(savepoint.graph)
             current = self.store.load_graph(project_id)
             if restored.model_dump(mode="json") != current.model_dump(mode="json"):
+                # Same rule, and the same reason, as undo/redo above. Here it
+                # also protects the save point itself: the refusal used to
+                # fire between save_graph and save_history, which restored the
+                # graph and then dropped the "restore" snapshot that was the
+                # only way back to what the user had.
+                self._refuse_cloud_spend(project_id, restored)
                 # Restoring is itself an undoable mutation, so Ctrl+Z walks
                 # back out of a save point like out of any other edit.
                 history.push(
@@ -894,6 +915,10 @@ class ProjectService:
                         node.model = clip_model
                         changed = True
                 if changed:
+                    # The ladder's model upgrade is itself a write that can
+                    # put every clip on a cloud model, so it is refused
+                    # before it lands, not after.
+                    self._refuse_cloud_spend(project_id, graph, quality="final")
                     self.store.save_graph(project_id, graph)
             enqueued = self._enqueue_dirty(project_id, graph, quality="final")
             self._refresh_meta_locked(project_id, graph)
@@ -1097,8 +1122,14 @@ class ProjectService:
                 distrusted.add(out_hash)
         return distrusted
 
-    def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
-        history = self.queue.list(project_id, 1000)
+    def _plan(
+        self, project_id: str, graph: StoryGraph, history: list[Job], quality: str = "draft"
+    ) -> CompiledPlan:
+        """What rendering this graph would do right now, against the cache.
+
+        Takes the job history rather than reading it, because `_enqueue_dirty`
+        needs the same rows again afterwards and it is the one query here that
+        is not free."""
         cached = self._trusted_cache(project_id, history)
         frozen = self._frozen_pins(graph, history, cached)
         if quality == "final":
@@ -1112,17 +1143,60 @@ class ProjectService:
                 if node.kind in QUALITY_SENSITIVE_KINDS and not node.pinned
             }
             cached -= clip_hashes
-        plan = compile_graph(graph, cached, quality=quality, frozen=frozen)
+        return compile_graph(graph, cached, quality=quality, frozen=frozen)
+
+    @staticmethod
+    def _billable(plan: CompiledPlan) -> list[str]:
+        """The nodes in this plan that would bill the user's provider keys.
+        The test is the exact prefix BackendRegistry.resolve routes on, so
+        what this names is precisely what would reach a provider."""
+        return sorted(
+            {spec.node_id for spec in plan.jobs if (spec.model or "").startswith("cloud:")}
+        )
+
+    def _refuse_cloud_spend(
+        self, project_id: str, graph: StoryGraph, quality: str = "draft"
+    ) -> None:
+        """Refuse BEFORE the mutation that would bill is written down.
+
+        `_enqueue_dirty` enforces the same rule at the queue, which is where
+        the money is committed - and that is still the backstop, because it
+        covers paths that never come through here. But every mutating path
+        calls it AFTER `save_graph`, so a refused caller got its 403 with the
+        `cloud:*` model already persisted on the node. Nothing was queued,
+        which is what the message says and is true; what it does not say is
+        that the next render the USER starts from the app now spends. The
+        guarantee is "an agent cannot CHOOSE cloud", and choosing is the
+        write, not the queue - three client-side gates leaked in turn before
+        the rule moved here, and this is the fourth shape of the same leak.
+
+        Costs nothing on the path that matters: the app declares no header,
+        so `CLOUD_SPEND_ALLOWED` is true and this returns before planning.
+        Only a caller that has already said it may not spend pays for the
+        second plan.
+        """
+        if CLOUD_SPEND_ALLOWED.get():
+            return
+        history = self.queue.list(project_id, 1000)
+        billed = self._billable(self._plan(project_id, graph, history, quality))
+        if billed:
+            raise CloudSpendRefused(
+                f"{', '.join(billed)} would render on a cloud model, and this caller may "
+                "not spend the user's provider keys - nothing was changed. Choosing cloud "
+                "models is a decision made in the app."
+            )
+
+    def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
+        history = self.queue.list(project_id, 1000)
+        plan = self._plan(project_id, graph, history, quality)
 
         # Before anything is queued or superseded: a caller that may not
         # spend gets nothing enqueued at all, rather than a partial render
-        # that stops at the first billable node. The test is the exact
-        # prefix BackendRegistry.resolve routes on, so what is refused here
-        # is precisely what would have reached a provider.
+        # that stops at the first billable node. Callers that mutate state
+        # first ask `_refuse_cloud_spend` before they persist anything; this
+        # stays as the backstop for every path that does not.
         if not CLOUD_SPEND_ALLOWED.get():
-            billed = sorted(
-                {spec.node_id for spec in plan.jobs if (spec.model or "").startswith("cloud:")}
-            )
+            billed = self._billable(plan)
             if billed:
                 raise CloudSpendRefused(
                     f"{', '.join(billed)} would render on a cloud model, and this caller may "
