@@ -8,6 +8,7 @@ import { app } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { EngineConnection } from "../src/api/types";
 
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -51,6 +52,13 @@ const mirrorEngineOutput = (
   write: (line: string) => void,
 ): void => {
   if (!stream) return;
+  // Decoding each Buffer on its own splits any multi-byte character that
+  // straddles a chunk boundary into two replacement characters — and the
+  // engine's stderr is where a traceback carrying a project title or a
+  // model's own em-dashed warning lands, i.e. exactly the text someone is
+  // reading when a launch has gone wrong. StringDecoder holds the partial
+  // sequence back until the continuation bytes arrive.
+  const decoder = new StringDecoder("utf8");
   let pending = "";
   const emit = (line: string): void => {
     if (!line.trim()) return;
@@ -62,14 +70,23 @@ const mirrorEngineOutput = (
     write(`[engine] ${safe}`);
   };
   stream.on("data", (chunk: Buffer) => {
-    const lines = (pending + chunk.toString()).split("\n");
+    const lines = (pending + decoder.write(chunk)).split("\n");
     pending = lines.pop() ?? "";
     for (const line of lines) emit(line);
   });
   // A last line with no trailing newline would otherwise sit in the buffer
-  // and be lost — including the exit-time message that says why.
-  stream.on("end", () => {
-    emit(pending);
+  // and be lost — including the exit-time message that says why. On `close`
+  // rather than `end`: a stream that is destroyed instead of reaching EOF
+  // (the pipe of a force-killed child) emits only `close`, and that is the
+  // exit whose reason is most worth having.
+  stream.on("close", () => {
+    emit(pending + decoder.end());
+    pending = "";
+  });
+  // An 'error' on a stream with no listener is re-thrown, which here would
+  // take down the main process over a broken pipe from an engine that is
+  // already going away.
+  stream.on("error", () => {
     pending = "";
   });
 };

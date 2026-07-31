@@ -35,7 +35,13 @@ from .graph.model import (
     StoryGraph,
     scene_sort_key,
 )
-from .graph.patch import TRANSIENT_PARAMS, PatchOp, apply_patch, check_restorable
+from .graph.patch import (
+    TRANSIENT_PARAMS,
+    PatchOp,
+    apply_patch,
+    check_restorable,
+    stored_params,
+)
 from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph, tool_graph
 from .jobs.models import Job, JobStatus
@@ -149,6 +155,7 @@ class ProjectService:
             style_preset=style_preset,
         )
         with self._lock:
+            self._refuse_new_graph_spend(graph)
             project = self.store.create(
                 title=prompt,
                 graph=graph,
@@ -165,6 +172,7 @@ class ProjectService:
         graph = tool_graph(tool, params)
         title = str(params.get("prompt") or params.get("text") or tool)
         with self._lock:
+            self._refuse_new_graph_spend(graph)
             project = self.store.create(
                 title=title,
                 graph=graph,
@@ -189,6 +197,11 @@ class ProjectService:
 
     def duplicate(self, project_id: str) -> Project:
         with self._lock:
+            # An unknown id used to surface as `store.duplicate` returning
+            # None; the spend check below reads the source graph first, so
+            # the KeyError contract is established before anything reads it.
+            if self.store.get(project_id) is None:
+                raise KeyError(project_id)
             # Job history is keyed by project id and does NOT travel with the
             # copy, so `_distrusted_hashes` would have nothing to work from
             # there: every placeholder in the copied generated/ would come
@@ -197,8 +210,14 @@ class ProjectService:
             # history, and drop those artifacts from the copy so they
             # re-render under the backend that serves the kind today.
             source_history = self.queue.list(project_id, 1000)
-            distrusted = self._distrusted_hashes(
-                source_history, self.store.cached_hashes(project_id)
+            source_cached = self.store.cached_hashes(project_id)
+            distrusted = self._distrusted_hashes(source_history, source_cached)
+            # Against the cache the COPY will start with, not an empty one:
+            # a fully-rendered source duplicates into a fully-cached project
+            # that enqueues nothing, and refusing that would refuse more than
+            # the rule asks for.
+            self._refuse_new_graph_spend(
+                self.store.load_graph(project_id), source_cached - distrusted
             )
             copy = self.store.duplicate(project_id)
             if copy is None:
@@ -240,6 +259,11 @@ class ProjectService:
         """
         graph = build_graph(template)
         with self._lock:
+            # A template is legitimately allowed to carry cloud models (see
+            # `cloud_models` in template_io), which makes importing one a
+            # choice to spend on the author's providers - refused before the
+            # project exists, or the 403 leaves it in the user's list anyway.
+            self._refuse_new_graph_spend(graph)
             project = self.store.create(
                 title=title or template.name,
                 graph=graph,
@@ -299,6 +323,11 @@ class ProjectService:
             )
             new_graph.nodes["script"].seed = script.seed
             expand_screenplay(new_graph, screenplay)
+            # The screenplay is copied in below, so the script node arrives
+            # cached and must not count as a spend; everything else in the
+            # expanded graph does.
+            out_hash = new_graph.output_hash("script", {})
+            self._refuse_new_graph_spend(new_graph, {out_hash})
             project = self.store.create(
                 title=screenplay.title or str(params.get("prompt", "")),
                 graph=new_graph,
@@ -307,7 +336,6 @@ class ProjectService:
             )
             # Seed the artifact under the new script node's hash: cached, so
             # the pipeline starts at keyframes instead of re-running the LLM.
-            out_hash = new_graph.output_hash("script", {})
             dest = self.store.generated_dir(project.id)
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy(artifact, dest / f"{out_hash}.screenplay.json")
@@ -335,12 +363,19 @@ class ProjectService:
             project = self.store.get(project_id)
             if project is None:
                 raise KeyError(project_id)
+            graph = self.store.load_graph(project_id)
+            # Passing a checkpoint is what RELEASES the jobs it was holding
+            # back, so it is a cloud decision even though it names no model —
+            # and there is no un-approve, so a refusal after `save_meta` left
+            # the gate permanently open for the user's next action to spend
+            # through.
+            self._refuse_cloud_spend(project_id, graph)
             if checkpoint not in project.approvals:
                 project.approvals.append(checkpoint)
                 project.updated_at = time.time()
                 self.store.save_meta(project)
             self.events.publish("project.approved", project_id=project_id, checkpoint=checkpoint)
-            return self._enqueue_dirty(project_id, self.store.load_graph(project_id))
+            return self._enqueue_dirty(project_id, graph)
 
     def render(self, project_id: str) -> int:
         """Plan whatever is stale, at draft quality. Returns jobs enqueued.
@@ -463,7 +498,14 @@ class ProjectService:
     ) -> list[PatchOp]:
         if "timeline" not in graph.nodes or "script" not in graph.nodes:
             raise ValueError("this project has no timeline to add a scene to")
-        params = op.params or {}
+        # This op reads its params before the add_node ops it compiles to
+        # reach `stored_params`, and it reads them through `str(...)` with a
+        # default written for an ABSENT key: `str(None)` is the string
+        # "None", so a null here mints a scene whose keyframe renders that
+        # word, whose narration speaks it, and which `unready_nodes` reads
+        # as written rather than blocked. `null` for a field the caller has
+        # not filled in is exactly what an LLM emits into `ops`.
+        params = stored_params(op.params or {})
         prompt = str(params.get("prompt", ""))
         narration = str(params.get("narration", ""))
         try:
@@ -564,12 +606,21 @@ class ProjectService:
 
     @staticmethod
     def _current_take(graph: StoryGraph, node_id: str, memo: dict[str, str]) -> TakeRecord:
+        """The node's identity, as `select_take` will restore it.
+
+        Recorded through `stored_params` because `select_take` restores it
+        through `stored_params`: a null written here is dropped on the way
+        back, landing the node one hash away from the artifact this record
+        names and re-rendering a take that was supposed to be a cache hit.
+        Safe to strip RESERVED_PARAMS here too - TAKE_KINDS holds no asset
+        or script node, so nothing in this record carries one.
+        """
         node = graph.nodes[node_id]
         return TakeRecord(
             output_hash=graph.output_hash(node_id, memo),
             seed=node.seed,
             model=node.model,
-            params={k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS},
+            params=stored_params(node.params, drop=TRANSIENT_PARAMS),
             at=time.time(),
         )
 
@@ -708,6 +759,13 @@ class ProjectService:
             # (a graph whose texts drifted), and enqueueing work derived from a
             # graph that was never saved would render under a hash the stored
             # graph can never reproduce — re-rendering forever.
+            # Same rule, and the same placement, as patch(): nothing is on
+            # disk yet, so a refusal here leaves the project as the caller
+            # found it. This is the route an agent host reaches for most, and
+            # an NL edit that only rewrites a prompt still re-dirties a clip
+            # the user put on a cloud model.
+            if dirty:
+                self._refuse_cloud_spend(project_id, graph)
             if ops or dirty:
                 self.store.save_graph(project_id, graph)
                 self._record_history(project_id, before, graph, kind="edit", summary=plan.summary)
@@ -725,6 +783,7 @@ class ProjectService:
             graph = self.store.load_graph(project_id)
             node = graph.nodes[node_id]
             before = graph.model_dump(mode="json")
+            takes: NodeTakes | None = None
             if node.kind in TAKE_KINDS:
                 # The identity being displaced stays selectable: its artifact
                 # is content-addressed on disk, so switching back later is a
@@ -736,12 +795,24 @@ class ProjectService:
                     if n.pinned and n.frozen_hash
                 }
                 takes.record(node_id, self._current_take(graph, node_id, memo))
-                self.store.save_takes(project_id, takes)
             node.seed = seed if seed is not None else node.seed + 1
             # A new take is of the node's configuration. Carrying a finished
             # revision's notes here would re-ask them against a draft that
             # the revision itself has already superseded.
+            #
+            # Not `stored_params`: this runs on any node the route names,
+            # assets included, and those hold the RESERVED_PARAMS the patch
+            # chokepoint gates on - stripping `voice_consent` here would make
+            # every later restore fail check_restorable.
             node.params = {k: v for k, v in node.params.items() if k not in TRANSIENT_PARAMS}
+            # Nothing is on disk yet, same as patch(). The seed bump is
+            # exactly what makes this node uncached, so a refusal after the
+            # write parks the graph on a cloud identity with no artifact
+            # behind it - and the user's next render from the app pays for
+            # the choice the refused caller made.
+            self._refuse_cloud_spend(project_id, graph)
+            if takes is not None:
+                self.store.save_takes(project_id, takes)
             self.store.save_graph(project_id, graph)
             self._record_history(project_id, before, graph, kind="regenerate", node_id=node_id)
             self._enqueue_dirty(project_id, graph)
@@ -1018,6 +1089,7 @@ class ProjectService:
                     graph.add_node(Node(id=node_id, kind=kind, params=params))
                 else:
                     node.params = params  # re-package follows the current script
+            self._refuse_cloud_spend(project_id, graph)
             self.store.save_graph(project_id, graph)
             self._enqueue_dirty(project_id, graph)
             return ["thumbnail", "metadata"]
@@ -1162,6 +1234,31 @@ class ProjectService:
             {spec.node_id for spec in plan.jobs if (spec.model or "").startswith("cloud:")}
         )
 
+    @staticmethod
+    def _refusal(billed: list[str], outcome: str) -> CloudSpendRefused:
+        """One wording for the refusal, whichever gate raised it.
+
+        The message is the agent-facing contract for this 403 and it reaches
+        a console through `automation.py`, so it is also ASCII-constrained.
+        Three copies of it (two here, one on the `/edit` route) is three
+        places for that to drift; only the outcome clause differs, so only
+        the outcome clause is a parameter.
+        """
+        return CloudSpendRefused(
+            f"{', '.join(billed)} would render on a cloud model, and this caller may not "
+            f"spend the user's provider keys - {outcome}. Choosing cloud models is a "
+            "decision made in the app."
+        )
+
+    @staticmethod
+    def _carries_cloud_model(graph: StoryGraph) -> bool:
+        """Could any plan over this graph bill? `compile_graph` copies a
+        node's `model` onto the spec verbatim, so a graph with no `cloud:*`
+        model on any node provably cannot produce a billable job — and that
+        is the answer for nearly every project, arrived at without the
+        1000-row queue read and full compile a plan costs."""
+        return any((node.model or "").startswith("cloud:") for node in graph.nodes.values())
+
     def _refuse_cloud_spend(
         self, project_id: str, graph: StoryGraph, quality: str = "draft"
     ) -> None:
@@ -1169,8 +1266,8 @@ class ProjectService:
 
         `_enqueue_dirty` enforces the same rule at the queue, which is where
         the money is committed - and that is still the backstop, because it
-        covers paths that never come through here. But every mutating path
-        calls it AFTER `save_graph`, so a refused caller got its 403 with the
+        covers paths that never come through here. But a mutating path that
+        calls it AFTER `save_graph` hands a refused caller its 403 with the
         `cloud:*` model already persisted on the node. Nothing was queued,
         which is what the message says and is true; what it does not say is
         that the next render the USER starts from the app now spends. The
@@ -1179,20 +1276,37 @@ class ProjectService:
         the rule moved here, and this is the fourth shape of the same leak.
 
         Costs nothing on the path that matters: the app declares no header,
-        so `CLOUD_SPEND_ALLOWED` is true and this returns before planning.
-        Only a caller that has already said it may not spend pays for the
+        so `CLOUD_SPEND_ALLOWED` is true and this returns immediately. Nor on
+        the agent path for a project with no cloud model anywhere, which is
+        the common case even though the MCP client sends the deny header on
+        EVERY request - only a graph that could actually bill pays for the
         second plan.
         """
-        if CLOUD_SPEND_ALLOWED.get():
+        if CLOUD_SPEND_ALLOWED.get() or not self._carries_cloud_model(graph):
             return
         history = self.queue.list(project_id, 1000)
         billed = self._billable(self._plan(project_id, graph, history, quality))
         if billed:
-            raise CloudSpendRefused(
-                f"{', '.join(billed)} would render on a cloud model, and this caller may "
-                "not spend the user's provider keys - nothing was changed. Choosing cloud "
-                "models is a decision made in the app."
-            )
+            raise self._refusal(billed, "nothing was changed")
+
+    def _refuse_new_graph_spend(self, graph: StoryGraph, cached: set[str] | None = None) -> None:
+        """The same rule for a graph whose project is not on disk yet.
+
+        `_refuse_cloud_spend` plans against a stored project's queue history
+        and artifact cache; a create, a template import or a duplicate has
+        neither under the id it is about to write, so the plan is compiled
+        against the cache the new project will START with - empty for a
+        fresh graph, the copied `generated/` for a duplicate. Without this
+        the refusal lands after `store.create`, and a caller that may not
+        spend is told "nothing was changed" while a fully-formed project
+        carrying the author's cloud models sits in the user's list, one
+        click from rendering.
+        """
+        if CLOUD_SPEND_ALLOWED.get() or not self._carries_cloud_model(graph):
+            return
+        billed = self._billable(compile_graph(graph, cached if cached is not None else set()))
+        if billed:
+            raise self._refusal(billed, "nothing was created")
 
     def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
         history = self.queue.list(project_id, 1000)
@@ -1206,11 +1320,7 @@ class ProjectService:
         if not CLOUD_SPEND_ALLOWED.get():
             billed = self._billable(plan)
             if billed:
-                raise CloudSpendRefused(
-                    f"{', '.join(billed)} would render on a cloud model, and this caller may "
-                    "not spend the user's provider keys - nothing was queued. Choosing cloud "
-                    "models is a decision made in the app."
-                )
+                raise self._refusal(billed, "nothing was queued")
 
         # Supersede stale queued work: a re-plan that changed a node's hash
         # (seed bump, param edit) makes any still-queued job for that node

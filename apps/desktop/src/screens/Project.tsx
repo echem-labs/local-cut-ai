@@ -457,6 +457,12 @@ export function Project() {
   );
   const keyframesAllDone =
     scenes.length > 0 && scenes.every((scene) => !scene.keyframe || isDone(scene.keyframe.status));
+  // Nothing is coming and nothing was made: the stage is `off`, not `work`.
+  // Falling through to `work` gave a blocked keyframe a pulsing accent dot
+  // that never stops, which is the same lie as the green tick, animated.
+  const keyframesAnyRunning = scenes.some(
+    (scene) => scene.keyframe && !isSettled(scene.keyframe.status),
+  );
   // The beginner checkpoint is a gate, not a report: it asks isSettled so it
   // opens on a keyframe that is never coming (see lib/status.ts). Splitting
   // the two is the point — the banner must not hang, and the header must not
@@ -467,6 +473,11 @@ export function Project() {
   const audioNodes = [board.aux.voiceover, board.aux.music].filter(
     (node): node is NodeState => Boolean(node),
   );
+  // `work` is the fallback, so anything that is neither done nor failed has
+  // to be genuinely in flight to land there — otherwise a node that is
+  // settled-but-empty pulses "in progress" forever. `stageOf` states the
+  // rule for a single node; these two stages aggregate and so must apply it
+  // themselves.
   const audioStage =
     audioNodes.length === 0
       ? ("off" as const)
@@ -474,7 +485,9 @@ export function Project() {
         ? ("done" as const)
         : audioNodes.some((node) => node.status === "failed")
           ? ("fail" as const)
-          : ("work" as const);
+          : audioNodes.some((node) => !isSettled(node.status))
+            ? ("work" as const)
+            : ("off" as const);
   const exportNode = board.aux.export;
   const stages: {
     // Stable id: matched on for logic AND resolves the displayed label via
@@ -489,7 +502,14 @@ export function Project() {
     { id: "script", state: stageOf(script) },
     {
       id: "storyboard",
-      state: scenes.length === 0 ? "off" : keyframesAllDone ? "done" : "work",
+      state:
+        scenes.length === 0
+          ? "off"
+          : keyframesAllDone
+            ? "done"
+            : keyframesAnyRunning
+              ? "work"
+              : "off",
     },
     {
       id: "videos",

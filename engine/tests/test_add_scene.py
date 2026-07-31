@@ -200,3 +200,34 @@ def test_writing_the_scene_lets_it_render(tmp_path):
     # And the cone it had stopped is moving again: the export is downstream of
     # every scene, so it is the one that proves the whole assembly recovered.
     assert board["aux"]["export"]["status"] != "blocked"
+
+
+def test_a_null_in_the_op_is_an_unwritten_scene_not_the_word_none(tmp_path):
+    """`add_scene` reads its own params before the ops it compiles to reach
+    `stored_params`, and it reads them through `str(...)` with a default
+    written for an ABSENT key.
+
+    `str(None)` is the string "None", so a null -- which is exactly what an
+    LLM emits into `ops` for a field it has not filled in -- minted a scene
+    whose keyframe rendered that word, whose narration spoke it, and which
+    `unready_nodes` read as written rather than blocked. The scene was
+    enqueued and billed for.
+    """
+    service, pid = _service(tmp_path)
+    service.patch(
+        pid,
+        [PatchOp(op="add_scene", params={"prompt": None, "narration": None, "motion": None})],
+    )
+
+    graph = service.store.load_graph(pid)
+    # Blank, which is what "not written yet" is spelled as everywhere else --
+    # not "None", and not a stored null either.
+    assert graph.nodes["s2.keyframe"].params["prompt"] == ""
+    assert graph.nodes["s2.clip"].params["motion"] == ""
+    assert graph.nodes["s2.narration"].params["text"] == ""
+
+    # And the board says so: nobody has written this scene, so nothing is
+    # queued for it -- the same state "+ Add scene" with no params gives.
+    card = next(c for c in service.scene_board(pid)["scenes"] if c["scene_id"] == "s2")
+    assert card["keyframe"]["status"] == "blocked"
+    assert card["narration"]["status"] == "blocked"
