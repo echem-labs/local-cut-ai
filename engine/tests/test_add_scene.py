@@ -173,6 +173,7 @@ def test_writing_the_scene_lets_it_render(tmp_path):
     whole scene -- and the assembly the cone had stopped -- back in the queue."""
     service, pid = _service(tmp_path)
     _add(service, pid)
+    before = {job.spec.node_id for job in service.queue.list(pid)}
     service.patch(
         pid,
         [
@@ -181,8 +182,21 @@ def test_writing_the_scene_lets_it_render(tmp_path):
         ],
     )
 
+    # The queue, not the absence of a word. `blocked` is ranked below every
+    # job state on the board, so `!= "blocked"` is also what a node that was
+    # STILL never enqueued reports -- it falls through to `queued`, the
+    # board's answer for "no job, no artifact", which is the exact tile-spins-
+    # forever failure this pair of tests exists to catch. Asserting on the
+    # queue is asserting on the thing that actually has to happen.
+    queued = {job.spec.node_id for job in service.queue.list(pid)} - before
+    assert {"s2.keyframe", "s2.narration"} <= queued, (
+        f"writing the scene did not enqueue it: {sorted(queued)}"
+    )
+
     board = service.scene_board(pid)
     card = next(c for c in board["scenes"] if c["scene_id"] == "s2")
-    assert card["keyframe"]["status"] != "blocked"
-    assert card["narration"]["status"] != "blocked"
+    assert card["keyframe"]["status"] == "queued"
+    assert card["narration"]["status"] == "queued"
+    # And the cone it had stopped is moving again: the export is downstream of
+    # every scene, so it is the one that proves the whole assembly recovered.
     assert board["aux"]["export"]["status"] != "blocked"
