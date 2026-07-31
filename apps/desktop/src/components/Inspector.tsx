@@ -29,6 +29,7 @@ export function Inspector() {
     applyTimeline,
     conditionScene,
     applyClonedVoice,
+    selectTake,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
@@ -44,6 +45,11 @@ export function Inspector() {
   const [trimIn, setTrimIn] = useState("");
   const [trimOut, setTrimOut] = useState("");
   const [overlay, setOverlay] = useState("");
+  // A take the board still lists can be gone by the time it is clicked (the
+  // per-node list is capped, and another window may have regenerated past
+  // it). The engine refuses with a reason; discarding it left the chip
+  // looking simply dead.
+  const [takeError, setTakeError] = useState<string | null>(null);
 
   const sceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
   const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
@@ -566,6 +572,53 @@ export function Inspector() {
             <RotateCw size={12} strokeWidth={1.8} />
             {t("inspector.newTake")}
           </button>
+
+          {(activeNode.takes?.length ?? 0) > 1 && (
+            <div className="take-row" role="group" aria-label={t("inspector.takesAria")}>
+              <span className="field-label">{t("inspector.takes")}</span>
+              {activeNode.takes?.map((take, index) => {
+                // Selecting restores the take's whole identity, model
+                // included, so a cloud take CAN re-render on the user's own
+                // API key — but only when its artifact is gone. While
+                // `available`, the restored identity hashes to a file already
+                // in the cache and the engine queues no job at all, so the
+                // switch is free however it was originally rendered. Warning
+                // there talked users out of the common case: the round trip
+                // back to a take they had just left.
+                const billed =
+                  !take.current && !take.available && (take.model ?? "").startsWith("cloud:");
+                return (
+                  <button
+                    key={take.output_hash}
+                    className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
+                    disabled={pinned || take.current}
+                    aria-pressed={take.current}
+                    title={
+                      take.current
+                        ? t("inspector.takeCurrentTitle")
+                        : take.available
+                          ? t("inspector.takeSwitchTitle")
+                          : billed
+                            ? t("inspector.takeCloudTitle", { model: take.model ?? "" })
+                            : t("inspector.takeMissingTitle")
+                    }
+                    onClick={() => {
+                      setTakeError(null);
+                      void selectTake(activeNode.node_id, take.output_hash).then(setTakeError);
+                    }}
+                  >
+                    {t("inspector.takeChip", { n: index + 1 })}
+                    {billed && <span aria-hidden="true"> ☁</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {takeError && (
+            <div role="status" className="banner error">
+              {takeError}
+            </div>
+          )}
 
           {activeNode.error && <div className="banner error">{activeNode.error}</div>}
         </>

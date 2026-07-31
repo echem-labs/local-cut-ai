@@ -112,6 +112,45 @@ def orphaned_nodes(graph: StoryGraph) -> set[str]:
     }
 
 
+# The param holding a node's own content. Empty, there is nothing to render
+# *from* — not a slow render or a bad one, no input at all.
+_CONTENT_PARAM = {
+    NodeKind.KEYFRAME: "prompt",
+    NodeKind.NARRATION: "text",
+}
+
+
+def unready_nodes(graph: StoryGraph) -> set[str]:
+    """Nodes whose content is still empty, plus everything downstream.
+
+    Public for the same reason `orphaned_nodes` is: these are never enqueued,
+    so a board that does not know about them shows the tile as `queued`
+    forever, waiting for work that will never be created.
+
+    The case this exists for: `add_scene` mints a scene whose prompt and
+    narration the user has not written yet — which is the whole point of the
+    card, you fill it in afterwards. Enqueued as-is, the narration failed on
+    arrival (both TTS backends raise "narration node has no text" outright)
+    and the keyframe burned a full image generation on an empty prompt. The
+    tile went red seconds after it appeared, before anyone had typed.
+
+    Unlike `orphaned_nodes` this IS a transitive sweep, because the failure
+    propagates: a clip whose keyframe never rendered has no input artifact to
+    read and would fail the moment it ran. The cone reaching the export is
+    correct too — a video cannot be assembled around a scene nobody wrote.
+    Today that same graph reached the queue and failed there instead; the
+    only thing lost is the wasted render and a red tile blaming the engine
+    for a prompt the user has not written.
+    """
+    empty = {
+        node_id
+        for node_id, node in graph.nodes.items()
+        if (param := _CONTENT_PARAM.get(node.kind)) is not None
+        and not str(node.params.get(param, "")).strip()
+    }
+    return empty.union(*(graph.downstream_of(node_id) for node_id in empty)) if empty else set()
+
+
 def compile_graph(
     graph: StoryGraph,
     cache_hashes: set[str] | None = None,
@@ -137,6 +176,7 @@ def compile_graph(
     jobs: list[JobSpec] = []
     cached: list[str] = []
     orphans = orphaned_nodes(graph)
+    unready = unready_nodes(graph)
 
     for node_id in order:
         node = graph.nodes[node_id]
@@ -144,6 +184,8 @@ def compile_graph(
             continue
         if node_id in orphans:
             continue  # nothing consumes it — see orphaned_nodes
+        if node_id in unready:
+            continue  # nothing to render from yet — see unready_nodes
         if node.pinned and node_id in frozen:
             cached.append(node_id)
             continue

@@ -58,7 +58,11 @@ export type NodeStatus =
   // Deliberately not rendered: the compiler skips a node that feeds nothing,
   // e.g. the keyframe of a scene conditioned on an uploaded image. Mirrors
   // SCENE_NODE_STATUSES in the engine — test_ui_contract compares the two.
-  | "skipped";
+  | "skipped"
+  // Waiting on a person, not on the queue: a scene added from the board has
+  // no prompt or narration until someone writes one, and nothing downstream
+  // of it can render either. The compiler enqueues none of them.
+  | "blocked";
 
 /** A non-fatal signal from a job that finished — `error` means it did not.
  * The code is an id (mirrors NOTICE_CODES in the engine's notices.py;
@@ -67,6 +71,22 @@ export type NodeStatus =
 export interface NodeNotice {
   code: string;
   data: Record<string, string | number>;
+}
+
+/** One alternate take of a node — a prior identity a regenerate displaced
+ * (distinct from a split scene's sequential `clip_takes`). Selecting one is
+ * a metadata swap onto an artifact already on disk when `available`. */
+export interface TakeInfo {
+  output_hash: string;
+  seed: number;
+  /** The model this take was rendered with. Selecting a take restores its
+   * whole identity, model included — so a `cloud:*` take re-renders on the
+   * user's BYOK key. The picker has to say so before it is clicked. */
+  model: string | null;
+  /** Recorded time; null for the live identity's synthetic row. */
+  at: number | null;
+  available: boolean;
+  current: boolean;
 }
 
 export interface NodeState {
@@ -81,6 +101,8 @@ export interface NodeState {
   seed: number;
   model: string | null;
   pinned: boolean;
+  /** Present only once the node has recorded takes. */
+  takes?: TakeInfo[];
 }
 
 /** The Story Graph itself, as GET /projects/{id}/graph returns it.
@@ -230,6 +252,37 @@ export interface EditResult {
   warnings: string[];
 }
 
+/** What the next undo/redo step would revert — mirrors SNAPSHOT_KINDS in
+ * the engine's project/store.py (test_ui_contract compares the kinds
+ * against the historyKinds catalog). */
+export interface HistoryDescriptor {
+  kind: string;
+  summary: string | null;
+  node_id: string | null;
+}
+
+export interface SavePointInfo {
+  id: string;
+  label: string;
+  at: number;
+}
+
+/** GET /projects/:id/history — depths and descriptors, never snapshots. */
+export interface HistoryInfo {
+  undo_depth: number;
+  redo_depth: number;
+  undo_top: HistoryDescriptor | null;
+  redo_top: HistoryDescriptor | null;
+  savepoints: SavePointInfo[];
+}
+
+/** GET/PUT /models/defaults — persisted per-task default models. `tasks`
+ * lists the tasks the engine honors; the picker renders only those. */
+export interface ModelDefaults {
+  defaults: Record<string, string>;
+  tasks: string[];
+}
+
 export interface Job {
   id: string;
   project_id: string;
@@ -281,6 +334,8 @@ export type EngineEvent =
   | { type: "project.compiled"; project_id: string; enqueued: number }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
+  // An undo/redo or save point restore replaced the graph wholesale.
+  | { type: "project.restored"; project_id: string; direction: string }
   | { type: "project.renamed"; project_id: string; title: string }
   // A post-completion hook failed — most often a screenplay the expander
   // could not apply. The job itself succeeded, so nothing else reports it.

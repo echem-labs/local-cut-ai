@@ -14,10 +14,12 @@ import type { NodeState } from "../api/types";
 import { CheckpointBanner } from "../components/CheckpointBanner";
 import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
+import { SavePoints } from "../components/SavePoints";
 import { ToolSession } from "../components/ToolSession";
 import { PromotedFrom } from "../components/Provenance";
 import { Workspace } from "../components/Workspace";
-import { t } from "../i18n";
+import { m, t } from "../i18n";
+import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
@@ -45,6 +47,15 @@ const scrollToScene = (sceneId: string, options: ScrollIntoViewOptions = { block
   document.querySelector(`.scene-grid [data-scene="${sceneId}"]`)?.scrollIntoView(options);
 
 const INTRO_KEY = "localcut.pipelineTaught";
+
+// The engine's full closed sets, not a curated subset. A menuitemradio group
+// has to be able to show what the node actually holds, and the NL editor, a
+// raw /patch and the MCP surface all accept every member — so "export at 25
+// fps" left the Frame rate group with NOTHING checked (Auto is unchecked too,
+// fps being non-null), reporting a state the menu did not contain.
+// Resolution reads large-to-small; formats.ts mirrors both for the contract test.
+const BOARD_FPS_CHOICES = EXPORT_FPS_CHOICES;
+const BOARD_SHORT_SIDES = [...EXPORT_SHORT_SIDE_CHOICES].reverse();
 
 /** One-time teaching strip on the user's first project: how the pipeline
  * flows, with the live stage highlighted. Structural teaching — no modal
@@ -93,12 +104,27 @@ function PipelineIntro({
   );
 }
 
-/** Header overflow menu (⋯): audio behavior, caption mode, pro-editor
- * handoff, and layout reset. */
+/** Header overflow menu (⋯): history, audio behavior, caption mode, export
+ * encode choices, pro-editor handoff, and layout reset. */
 function BoardMenu() {
-  const { board, client, currentProject, applyTimeline, applyExport } = useApp();
+  const {
+    board,
+    client,
+    currentProject,
+    applyTimeline,
+    applyExport,
+    history,
+    undoEdit,
+    redoEdit,
+  } = useApp();
   const resetLayout = useWorkspace((state) => state.resetLayout);
   const [open, setOpen] = useState(false);
+  const [savePointsOpen, setSavePointsOpen] = useState(false);
+  // The rows stay enabled off the last known depths (refreshHistory keeps
+  // them on a failed poll rather than flashing the affordances), so they are
+  // clickable exactly when the engine is unreachable. Discarding the message
+  // the action returns made that a no-op with nothing on screen.
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -116,6 +142,13 @@ function BoardMenu() {
   const ducking = timeline?.params.ducking !== false;
   const beatAlign = timeline?.params.beat_align === true;
   const captions = String(exportNode?.params.captions ?? "burn");
+  const fps = typeof exportNode?.params.fps === "number" ? exportNode.params.fps : null;
+  const shortSide =
+    typeof exportNode?.params.resolution === "number" ? exportNode.params.resolution : null;
+  const kindLabel = (kind: string | undefined): string => {
+    const catalog = m().project.historyKinds as Record<string, string>;
+    return kind && catalog[kind] ? ` — ${catalog[kind]}` : "";
+  };
 
   return (
     <div className="board-menu" ref={ref}>
@@ -130,6 +163,46 @@ function BoardMenu() {
       </button>
       {open && (
         <div className="menu-pop" role="menu">
+          <div className="menu-label">{t("project.menu.history")}</div>
+          <button
+            role="menuitem"
+            disabled={!history?.undo_depth}
+            onClick={() => {
+              setHistoryError(null);
+              void undoEdit().then(setHistoryError);
+            }}
+          >
+            <span className="check" />
+            {t("project.menu.undo")}
+            <small>{kindLabel(history?.undo_top?.kind)}</small>
+          </button>
+          <button
+            role="menuitem"
+            disabled={!history?.redo_depth}
+            onClick={() => {
+              setHistoryError(null);
+              void redoEdit().then(setHistoryError);
+            }}
+          >
+            <span className="check" />
+            {t("project.menu.redo")}
+            <small>{kindLabel(history?.redo_top?.kind)}</small>
+          </button>
+          {historyError && (
+            <div role="status" className="banner error">
+              {historyError}
+            </div>
+          )}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setSavePointsOpen(true);
+              setOpen(false);
+            }}
+          >
+            <span className="check" />
+            {t("project.menu.savePoints")}
+          </button>
           {timeline && (
             <>
               <div className="menu-label">{t("project.menu.audio")}</div>
@@ -174,6 +247,46 @@ function BoardMenu() {
                 <span className="check">{captions === "sidecar" ? "✓" : ""}</span>
                 {t("project.menu.captionsSidecar")}
               </button>
+              <div className="menu-label">{t("project.menu.frameRate")}</div>
+              <button
+                role="menuitemradio"
+                aria-checked={fps === null}
+                onClick={() => applyExport({ fps: null })}
+              >
+                <span className="check">{fps === null ? "✓" : ""}</span>
+                {t("project.menu.fpsAuto")}
+              </button>
+              {BOARD_FPS_CHOICES.map((choice) => (
+                <button
+                  key={choice}
+                  role="menuitemradio"
+                  aria-checked={fps === choice}
+                  onClick={() => applyExport({ fps: choice })}
+                >
+                  <span className="check">{fps === choice ? "✓" : ""}</span>
+                  {t("project.menu.fpsValue", { fps: choice })}
+                </button>
+              ))}
+              <div className="menu-label">{t("project.menu.resolution")}</div>
+              <button
+                role="menuitemradio"
+                aria-checked={shortSide === null}
+                onClick={() => applyExport({ resolution: null })}
+              >
+                <span className="check">{shortSide === null ? "✓" : ""}</span>
+                {t("project.menu.resolutionAuto")}
+              </button>
+              {BOARD_SHORT_SIDES.map((choice) => (
+                <button
+                  key={choice}
+                  role="menuitemradio"
+                  aria-checked={shortSide === choice}
+                  onClick={() => applyExport({ resolution: choice })}
+                >
+                  <span className="check">{shortSide === choice ? "✓" : ""}</span>
+                  {t("project.menu.resolutionValue", { px: choice })}
+                </button>
+              ))}
             </>
           )}
           {exportNode?.artifact_hash && client && (
@@ -203,6 +316,7 @@ function BoardMenu() {
           </button>
         </div>
       )}
+      {savePointsOpen && <SavePoints onClose={() => setSavePointsOpen(false)} />}
     </div>
   );
 }
@@ -216,6 +330,11 @@ export function Project() {
   const density = useWorkspace((state) => state.density);
   const setDensity = useWorkspace((state) => state.setDensity);
   const [finalizing, setFinalizing] = useState(false);
+  // The keyboard path has no control to look at, so a refused undo (409
+  // "nothing to undo" after a concurrent CLI edit, 422 for a snapshot that
+  // fails the restore gate, or no engine at all) would otherwise be
+  // indistinguishable from a board that simply did not move.
+  const [historyKeyError, setHistoryKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshBoard();
@@ -243,6 +362,21 @@ export function Project() {
       if (document.querySelector(".settings-layer, .modal-backdrop, .cmdk")) return;
       const formOwned =
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+      // Ctrl+Z / Ctrl+Shift+Z — graph-level undo/redo. Text fields keep
+      // their native text undo; the graph chord only owns the key when no
+      // form control does.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        if (formOwned) return;
+        event.preventDefault();
+        const state = useApp.getState();
+        setHistoryKeyError(null);
+        if (event.shiftKey) {
+          if (state.history?.redo_depth) void state.redoEdit().then(setHistoryKeyError);
+        } else if (state.history?.undo_depth) {
+          void state.undoEdit().then(setHistoryKeyError);
+        }
+        return;
+      }
       if (event.code === "Space") {
         if (formOwned || target.tagName === "BUTTON") return;
         event.preventDefault();
@@ -504,6 +638,11 @@ export function Project() {
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
+      {historyKeyError && (
+        <div role="status" className="banner error">
+          {historyKeyError}
+        </div>
+      )}
 
       {board.scenes.length === 0 ? (
         <div className="banner">

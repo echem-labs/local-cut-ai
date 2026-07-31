@@ -53,7 +53,10 @@
   },
   "models": {
     "heading": "Model library",
-    "hint": "Download more local models any time — jobs pick them up immediately."
+    "hint": "Download more local models any time — jobs pick them up immediately.",
+    "defaultsHeading": "Default models",
+    "defaultsHint": "What renders each kind of work when a scene doesn't name a model.",
+    "defaultsAuto": "Auto"
   },
   "storage": {
     "hint": "Everything LocalCut AI keeps on this machine. Projects and models can be removed here.",

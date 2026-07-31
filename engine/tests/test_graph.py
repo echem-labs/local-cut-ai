@@ -368,6 +368,26 @@ def test_reexpansion_keeps_user_only_narration_params():
     assert g.output_hash("s1.narration") == edited
 
 
+def test_reexpansion_keeps_user_only_export_params():
+    """The encode choices are the user's, not the screenplay's. Only
+    `captions` survived re-expansion, so a frame rate or resolution picked
+    in the board menu reverted to Auto the next time the script rendered —
+    silently, with the menu still showing the old choice until it refreshed."""
+    g = prompt_template_graph("tide pools", target_duration_s=24)
+    screenplay = mock_screenplay("tide pools", 24, "9:16", seed=0)
+    expand_screenplay(g, screenplay)
+    export = g.nodes["export"]
+    export.params.update({"captions": "sidecar", "fps": 60, "resolution": 1080, "video_kbps": 9000})
+    edited = g.output_hash("export")
+
+    expand_screenplay(g, mock_screenplay("tide pools", 24, "9:16", seed=0))
+    assert g.nodes["export"].params["captions"] == "sidecar"
+    assert g.nodes["export"].params["fps"] == 60
+    assert g.nodes["export"].params["resolution"] == 1080
+    assert g.nodes["export"].params["video_kbps"] == 9000
+    assert g.output_hash("export") == edited
+
+
 def test_music_tool_honours_the_request_up_to_the_generator_ceiling():
     """The standalone tool is not the looped assembly bed, so it keeps the
     length the user asked for — but never past what the generator accepts,
@@ -453,3 +473,30 @@ def test_removing_the_script_is_refused_even_mid_patch():
         )
 
     assert "script" in g.nodes
+
+
+def test_clearing_a_param_returns_to_the_unset_hash():
+    """ "Back to the default" must land on the identity the node had before
+    the value was ever set, or the artifact already rendered for that state
+    can never be a cache hit again — an export toggled to 30 fps and back
+    to Auto re-encoded the whole video for a result it already had."""
+    graph = small_graph()
+    pristine = graph.output_hash("clip")
+
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": 30})])
+    assert graph.output_hash("clip") != pristine  # a real change re-renders
+
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
+    assert "fps" not in graph.nodes["clip"].params
+    assert graph.output_hash("clip") == pristine
+
+
+def test_clearing_one_param_leaves_the_others_alone():
+    graph = small_graph()
+    apply_patch(
+        graph,
+        [PatchOp(op="set_params", node_id="clip", params={"fps": 30, "resolution": 720})],
+    )
+    apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
+    assert graph.nodes["clip"].params["resolution"] == 720
+    assert "fps" not in graph.nodes["clip"].params

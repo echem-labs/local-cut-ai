@@ -118,6 +118,98 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
   cloud: "settings.backends.names.cloud",
 };
 
+/** Per-task default models (engine-persisted): what renders each kind of
+ * work when a node names no model. Rows come from the engine's own list of
+ * defaultable tasks, so a task the engine cannot honor never grows a knob;
+ * a task with nothing installed to choose stays hidden too. */
+function ModelDefaultsPanel() {
+  const { models, modelDefaults, refreshModelDefaults, setModelDefault, client } = useApp();
+  const [llmNames, setLlmNames] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // `client` in the deps, not just the (stable) store action: switchEngine
+  // blanks modelDefaults on a pair/unpair, and a zustand action identity never
+  // changes — so with only the action here the effect ran once per mount and
+  // the panel stayed blank for the rest of it. Same dependency as the
+  // llmModels effect below, for the same reason.
+  useEffect(() => {
+    void refreshModelDefaults();
+  }, [refreshModelDefaults, client]);
+
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    client
+      .llmModels()
+      .then((info) => {
+        if (!cancelled) setLlmNames(info.models);
+      })
+      .catch(() => {
+        /* no LLM server — the text.llm row hides itself below */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  if (!modelDefaults) return null;
+  const taskLabels = m().models.taskLabels as Record<string, string>;
+  const rows = modelDefaults.tasks
+    .map((task) => {
+      const auto = { value: "", label: t("settings.models.defaultsAuto") };
+      const current = modelDefaults.defaults[task] ?? "";
+      let choices: { value: string; label: string }[];
+      if (task === "text.llm") {
+        // Ollama-served names, plus the stored one even when the server is
+        // down — the picker must show the truth, not silently blank it.
+        const names = current && !llmNames.includes(current) ? [current, ...llmNames] : llmNames;
+        choices = names.map((name) => ({ value: name, label: name }));
+      } else {
+        const installed = models
+          .filter((row) => row.task === task && (row.downloaded || row.custom))
+          .map((row) => ({ value: row.id, label: displayModelName(row.family, row.version) }));
+        // Same rule as text.llm above: a stored default whose weights were
+        // since deleted is STILL what the engine renders with (set_default
+        // only requires the manifest to know the id, and load_defaults keeps
+        // returning it). Without it on the list, Dropdown falls back to its
+        // first option and the row reports "Auto" — the stale choice becomes
+        // both invisible and impossible to clear from here.
+        choices =
+          current && !installed.some((option) => option.value === current)
+            ? [{ value: current, label: current }, ...installed]
+            : installed;
+      }
+      return { task, current, options: [auto, ...choices] };
+    })
+    .filter((row) => row.options.length > 1);
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="model-defaults">
+      <h3>{t("settings.models.defaultsHeading")}</h3>
+      <p className="hint">{t("settings.models.defaultsHint")}</p>
+      {rows.map(({ task, current, options }) => (
+        <div className="model-default-row" key={task}>
+          <span>{taskLabels[task] ?? task}</span>
+          <Dropdown
+            value={current}
+            options={options}
+            ariaLabel={taskLabels[task] ?? task}
+            onChange={(value) => {
+              void setModelDefault(task, value === "" ? null : String(value)).then(setError);
+            }}
+          />
+        </div>
+      ))}
+      {error && (
+        <div role="status" className="banner error">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Settings (review 4): an overlay layer with a VS Code-style left category
  * nav — General · Defaults · Providers · Models · Storage · Engine · About.
  * Key material flows through the shell (OS keychain → engine), so this
@@ -709,6 +801,7 @@ export function Settings() {
                 {t("settings.models.heading")}
               </h2>
               <p className="hint">{t("settings.models.hint")}</p>
+              <ModelDefaultsPanel />
               <ModelLibrary showActions showAddCustom />
             </section>
           )}
