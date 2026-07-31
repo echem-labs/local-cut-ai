@@ -89,7 +89,7 @@ afterEach(() => {
  * to taskkill / netstat / lsof through the same mock. */
 const engineSpawns = () => spawned.calls.filter((call) => call.args.includes("serve"));
 const firstSpawn = () => engineSpawns()[0]!;
-/** The engine flags, with the dev-mode `uv run localcut-engine` prefix cut. */
+/** The engine flags, with the dev-mode `uv run localcut` prefix cut. */
 const serveArgs = () => {
   const { args } = firstSpawn();
   return args.slice(args.indexOf("serve"));
@@ -167,7 +167,7 @@ describe("spawn options", () => {
   it("runs from the repo checkout in development", async () => {
     await new EngineManager().start();
     expect(firstSpawn().cmd).toBe("uv");
-    expect(firstSpawn().args.slice(0, 2)).toEqual(["run", "localcut-engine"]);
+    expect(firstSpawn().args.slice(0, 2)).toEqual(["run", "localcut"]);
     expect(String(firstSpawn().options.cwd)).toMatch(/engine$/);
   });
 

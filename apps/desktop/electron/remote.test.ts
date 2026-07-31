@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parsePairingCode, RemoteEngineStore } from "./remote";
 import { resetElectron, state } from "./test/electron-stub";
 
-/** A pairing code the way `localcut-engine serve --host …` prints it:
+/** A pairing code the way `localcut serve --host …` prints it:
  * base64url of the JSON payload, with the `=` padding stripped. */
 const codeFor = (payload: unknown): string =>
   Buffer.from(JSON.stringify(payload), "utf8").toString("base64url").replace(/=+$/, "");

@@ -47,4 +47,4 @@ EXPOSE 7830
 
 # --token comes from LOCALCUT_TOKEN (compose enforces it); network bind
 # serves HTTPS with a self-signed cert pinned by the pairing code.
-ENTRYPOINT ["uv", "run", "localcut-engine", "serve", "--host", "0.0.0.0"]
+ENTRYPOINT ["uv", "run", "localcut", "serve", "--host", "0.0.0.0"]

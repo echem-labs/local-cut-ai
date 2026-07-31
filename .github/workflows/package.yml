@@ -24,7 +24,7 @@ on:
   #     - "apps/desktop/package.json"
   #     - "apps/desktop/scripts/check-engine.mjs"
   #     - "apps/desktop/build/**"
-  #     - "engine/localcut-engine.spec"
+  #     - "engine/localcut.spec"
   #     - "engine/packaging/**"
   #     - ".github/workflows/package.yml"
 
@@ -58,21 +58,21 @@ jobs:
           - os: macos-latest
             label: macOS dmg (arm64)
             script: package:mac
-            engine_bin: dist/localcut-engine/localcut-engine
+            engine_bin: dist/localcut/localcut
             artifact: localcut-macos-arm64
             glob: |
               apps/desktop/release/*.dmg
           - os: windows-latest
             label: Windows installer (x64)
             script: package
-            engine_bin: dist/localcut-engine/localcut-engine.exe
+            engine_bin: dist/localcut/localcut.exe
             artifact: localcut-windows-x64
             glob: |
               apps/desktop/release/*.exe
           - os: ubuntu-latest
             label: Linux AppImage + deb (x64)
             script: package:linux
-            engine_bin: dist/localcut-engine/localcut-engine
+            engine_bin: dist/localcut/localcut
             artifact: localcut-linux-x64
             glob: |
               apps/desktop/release/*.AppImage
@@ -101,7 +101,7 @@ jobs:
         working-directory: engine
         run: |
           uv sync --all-groups
-          uv run pyinstaller --noconfirm localcut-engine.spec
+          uv run pyinstaller --noconfirm localcut.spec
 
       - name: The frozen engine actually runs
         # An installer whose engine cannot start is the exact failure this

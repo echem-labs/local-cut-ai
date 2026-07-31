@@ -73,7 +73,7 @@ class KokoroBackend(ExecutionBackend):
         if self._engine is None:
             if not self.model_path.exists() or not self.voices_path.exists():
                 raise GenerationError(
-                    "Kokoro model files missing — run: localcut-engine download kokoro-82m"
+                    "Kokoro model files missing - run: localcut download kokoro-82m"
                 )
             from kokoro_onnx import Kokoro
 
