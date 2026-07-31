@@ -75,12 +75,12 @@ export class EngineManager {
       if (cmd) return { cmd, args: [...prefix, ...args], env, connection };
     }
     if (app.isPackaged) {
-      const exe = process.platform === "win32" ? "localcut-engine.exe" : "localcut-engine";
+      const exe = process.platform === "win32" ? "localcut.exe" : "localcut";
       const bundled = path.join(process.resourcesPath, "engine", exe);
       return { cmd: bundled, args, env, connection };
     }
     const engineDir = path.resolve(__dirname, "..", "..", "..", "..", "engine");
-    return { cmd: "uv", args: ["run", "localcut-engine", ...args], cwd: engineDir, env, connection };
+    return { cmd: "uv", args: ["run", "localcut", ...args], cwd: engineDir, env, connection };
   }
 
   private starting: Promise<EngineConnection> | null = null;

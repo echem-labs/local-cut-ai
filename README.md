@@ -54,9 +54,9 @@ same verdict CI gives. `--no-verify` skips them.
 ```bash
 cd engine
 uv sync
-uv run pytest                    # test suite
-uv run localcut-engine probe     # hardware profile + tier
-uv run localcut-engine serve --backend mock   # API on 127.0.0.1:7830
+uv run pytest                          # test suite
+uv run localcut probe                  # hardware profile + tier
+uv run localcut serve --backend mock   # API on 127.0.0.1:7830
 ```
 
 `--backend mock` runs the whole pipeline with deterministic placeholder artifacts —
@@ -66,9 +66,9 @@ no GPU, models, or ComfyUI needed.
 that serves a node kind wins, so a trailing `mock` gives a hybrid pipeline:
 
 ```bash
-uv run localcut-engine models                    # manifest + download status
-uv run localcut-engine download sdxl-base-1.0    # resumable, checksummed → ~/.localcut/models
-uv run localcut-engine serve --backend local,mock
+uv run localcut models                 # manifest + download status
+uv run localcut download sdxl-base-1.0 # resumable, checksummed → ~/.localcut/models
+uv run localcut serve --backend local,mock
 ```
 
 `local` expands to `llm,comfy,kokoro,align,ffmpeg`: `llm` speaks any
@@ -77,8 +77,8 @@ OpenAI-compatible server (Ollama/llama.cpp, `LOCALCUT_LLM_URL`,
 workflow-JSON templates (packaged defaults for SDXL keyframes/thumbnails,
 LTX-Video clips, Wan 2.2 I2V, and ACE-Step music; override per-file in
 `~/.localcut/comfy-templates/`); `kokoro` synthesizes narration on CPU
-(`localcut-engine download kokoro-82m`); `align` turns narration into
-word-timed captions (`localcut-engine download faster-whisper-base-en`, CPU);
+(`localcut download kokoro-82m`); `align` turns narration into
+word-timed captions (`localcut download faster-whisper-base-en`, CPU);
 `ffmpeg` handles assembly/export (`LOCALCUT_FFMPEG_BIN`) — captions burn in by
 default (set the export node's `captions` param to `sidecar` to keep the
 `.srt` external), on-screen titles render from the screenplay, and the
@@ -133,7 +133,7 @@ validated patch ops the inspector uses — only the dirty subgraph re-renders.
 Edits run on the local script LLM by default; pass `model: "cloud:…"` to
 opt a single edit into a BYOK provider.
 
-**MCP agents.** `localcut-engine mcp` serves a running engine to MCP hosts
+**MCP agents.** `localcut mcp` serves a running engine to MCP hosts
 (Claude, goose, IDE agents) over stdio: create/render/status/export,
 checkpoint approval for beginner-mode projects, the prompt-based editor in
 propose-then-act form (edits preview by default and land via a second tool
@@ -150,7 +150,7 @@ directory (`--export-dir`, `$LOCALCUT_MCP_EXPORT_DIR`, default `~/LocalCut`):
 `out_path` is a model-authored string, and an unconfined one is an arbitrary
 file write. A host config for a dev checkout:
 
-The engine must already be running (`localcut-engine serve`) — this command
+The engine must already be running (`localcut serve`) — this command
 is a client of it, not a second engine. Use an absolute `--project` path: an
 MCP host launches the server from an arbitrary working directory.
 
@@ -159,7 +159,7 @@ MCP host launches the server from an arbitrary working directory.
   "mcpServers": {
     "localcut": {
       "command": "uv",
-      "args": ["run", "--project", "/path/to/local-cut-ai/engine", "localcut-engine", "mcp"],
+      "args": ["run", "--project", "/path/to/local-cut-ai/engine", "localcut", "mcp"],
       "env": { "LOCALCUT_TOKEN": "<the token the engine printed>" }
     }
   }
@@ -170,7 +170,7 @@ MCP host launches the server from an arbitrary working directory.
 can just as well run headless on a GPU box while a laptop drives it:
 
 ```bash
-localcut-engine serve --host 0.0.0.0 --token "$(openssl rand -base64 32)"
+localcut serve --host 0.0.0.0 --token "$(openssl rand -base64 32)"
 # or, with Docker (engine + Ollama; see deploy/docker-compose.yml):
 LOCALCUT_TOKEN="$(openssl rand -base64 32)" docker compose -f deploy/docker-compose.yml up -d
 ```
@@ -208,13 +208,13 @@ The desktop shell spawns and owns the engine process; set `LOCALCUT_ENGINE_CMD` 
 
 Two steps: freeze the engine with PyInstaller, then wrap it and the shell
 with electron-builder — the packaged app spawns the bundled
-`resources/engine/localcut-engine[.exe]` instead of `uv run`. PyInstaller
+`resources/engine/localcut[.exe]` instead of `uv run`. PyInstaller
 does not cross-compile: freeze on the OS you're packaging for.
 
 ```bash
 cd engine
 uv sync --group build
-uv run pyinstaller --noconfirm localcut-engine.spec   # → engine/dist/localcut-engine/
+uv run pyinstaller --noconfirm localcut.spec   # → engine/dist/localcut/
 
 cd ../apps/desktop
 npm install
