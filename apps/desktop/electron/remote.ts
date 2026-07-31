@@ -27,7 +27,7 @@ export interface RemotePairing {
 }
 
 /** Decode and validate a pairing code (base64url JSON printed by
- * `localcut-engine serve --host …`). Throws with a user-facing message. */
+ * `localcut serve --host …`). Throws with a user-facing message. */
 export function parsePairingCode(code: string): RemotePairing {
   let payload: unknown;
   try {

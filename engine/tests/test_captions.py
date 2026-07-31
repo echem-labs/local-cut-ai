@@ -274,7 +274,7 @@ def test_burned_captions_use_the_frame_the_export_encodes(tmp_path):
 async def test_missing_model_gives_actionable_error(tmp_path):
     backend = AlignBackend(models_dir=tmp_path)
     (tmp_path / "edl.json").write_text('{"video": []}')
-    with pytest.raises(GenerationError, match="localcut-engine download"):
+    with pytest.raises(GenerationError, match="localcut download"):
         await backend.execute(
             make_spec(NodeKind.CAPTIONS, output_hash="f" * 64),
             ExecutionContext(

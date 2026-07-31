@@ -1,5 +1,5 @@
-# PyInstaller spec — freezes the engine into dist/localcut-engine/ (onedir).
-# Build:  uv sync --group build && uv run pyinstaller --noconfirm localcut-engine.spec
+# PyInstaller spec — freezes the engine into dist/localcut/ (onedir).
+# Build:  uv sync --group build && uv run pyinstaller --noconfirm localcut.spec
 # The desktop package picks the output up as an extraResource
 # (apps/desktop/electron-builder.yml).
 from PyInstaller.utils.hooks import collect_data_files
@@ -27,7 +27,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="localcut-engine",
+    name="localcut",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -41,5 +41,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="localcut-engine",
+    name="localcut",
 )

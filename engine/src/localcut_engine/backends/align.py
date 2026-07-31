@@ -43,7 +43,7 @@ class AlignBackend(ExecutionBackend):
         if self._model is None:
             if not (self.model_dir / "model.bin").exists():
                 raise GenerationError(
-                    "alignment model missing — run: localcut-engine download faster-whisper-base-en"
+                    "alignment model missing — run: localcut download faster-whisper-base-en"
                 )
             from faster_whisper import WhisperModel
 
@@ -53,7 +53,7 @@ class AlignBackend(ExecutionBackend):
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         if not (self.model_dir / "model.bin").exists():
             raise GenerationError(
-                "alignment model missing — run: localcut-engine download faster-whisper-base-en"
+                "alignment model missing — run: localcut download faster-whisper-base-en"
             )
         timeline_path = ctx.input_artifacts.get(DEFAULT_PORT)
         if timeline_path is None or not Path(timeline_path).exists():

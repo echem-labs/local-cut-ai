@@ -1,7 +1,7 @@
 """PyInstaller entry point for the frozen engine executable.
 
 The desktop shell spawns this binary with the same flags and handshake as
-the dev-mode `uv run localcut-engine` (see apps/desktop/electron/engine.ts).
+the dev-mode `uv run localcut` (see apps/desktop/electron/engine.ts).
 """
 
 import multiprocessing

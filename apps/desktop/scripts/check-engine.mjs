@@ -2,10 +2,10 @@
 /**
  * Refuse to package an engine binary that cannot run on the target OS.
  *
- * electron-builder copies `engine/dist/localcut-engine` verbatim into the
+ * electron-builder copies `engine/dist/localcut` verbatim into the
  * installer, and `npm run package` never rebuilt or checked it. PyInstaller
  * does not cross-compile, so freezing on one OS and packaging for another
- * produced an installer whose `localcut-engine.exe` does not exist (or is not
+ * produced an installer whose `localcut.exe` does not exist (or is not
  * executable) on the user's machine — with no installer-time error. The app
  * then opened permanently disconnected, which reads as a broken app rather
  * than a broken build.
@@ -20,27 +20,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ENGINE_DIR = path.resolve(HERE, "..", "..", "..", "engine", "dist", "localcut-engine");
+const ENGINE_DIR = path.resolve(HERE, "..", "..", "..", "engine", "dist", "localcut");
 
 /** Executable name and magic bytes per target. */
 const TARGETS = {
   win: {
     label: "Windows",
-    exe: "localcut-engine.exe",
+    exe: "localcut.exe",
     // "MZ" — the DOS header every PE image starts with.
     looksRight: (b) => b[0] === 0x4d && b[1] === 0x5a,
     describe: "a Windows PE executable",
   },
   linux: {
     label: "Linux",
-    exe: "localcut-engine",
+    exe: "localcut",
     // "\x7fELF"
     looksRight: (b) => b[0] === 0x7f && b[1] === 0x45 && b[2] === 0x4c && b[3] === 0x46,
     describe: "an ELF executable",
   },
   mac: {
     label: "macOS",
-    exe: "localcut-engine",
+    exe: "localcut",
     // Mach-O 64-bit (LE/BE) or a universal "fat" binary.
     looksRight: (b) => {
       const magic = b.readUInt32BE(0);
@@ -92,7 +92,7 @@ if (target === "mac" && !["arm64", "x64"].includes(archArg ?? "")) {
 const fail = (message) => {
   console.error(`\n  Cannot package for ${spec.label}: ${message}\n`);
   console.error(`  The engine is frozen separately, on the target OS:`);
-  console.error(`    cd engine && uv run pyinstaller localcut-engine.spec\n`);
+  console.error(`    cd engine && uv run pyinstaller localcut.spec\n`);
   console.error(`  PyInstaller does not cross-compile — freeze on ${spec.label} itself`);
   console.error(`  (a CI runner for that OS is the usual answer).\n`);
   process.exit(1);

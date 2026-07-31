@@ -35,7 +35,7 @@ def engine(tmp_path):
 
 
 def run(engine_url: str, *args: str, token: str = TOKEN) -> int:
-    """`localcut-engine <args>` against the test engine."""
+    """`localcut <args>` against the test engine."""
     return cli.main([*args, "--engine", engine_url, "--token", token])
 
 
@@ -95,7 +95,7 @@ def test_an_unreachable_engine_exits_2_and_says_how_to_start_one(capsys):
 
     error = capsys.readouterr().err
     assert "no engine at" in error
-    assert "localcut-engine serve" in error
+    assert "localcut serve" in error
 
 
 def test_a_bad_token_says_which_flag_fixes_it(engine, capsys):
