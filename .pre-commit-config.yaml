@@ -46,11 +46,26 @@ repos:
       #
       # `pass_filenames: false` because these are suite-level commands, but
       # `files:` still gates them — a desktop-only push does not run pytest.
+      #
+      # The engine gate lists the files outside engine/ that engine tests
+      # assert against, for the reason ci-engine.yml's path filter does: the
+      # CLI-name contract reads the desktop's spawn path, the package guard,
+      # the electron-builder copy path and the release matrix, and a gate that
+      # omits them lets the one edit it exists to catch through untested.
+      # Keep the two lists in step.
       - id: engine-tests
         name: engine tests (pytest)
         entry: bash -c 'cd engine && uv run pytest -q -rs'
         language: system
-        files: ^engine/
+        files: |
+          (?x)^(
+            engine/
+            |\.github/workflows/package\.yml
+            |apps/desktop/electron-builder\.yml
+            |apps/desktop/electron/engine\.ts
+            |apps/desktop/scripts/check-engine\.mjs
+            |apps/desktop/src/screens/Settings\.tsx
+          )
         pass_filenames: false
         stages: [pre-push]
 
