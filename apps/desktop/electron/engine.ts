@@ -28,6 +28,46 @@ const enginePort = (): string => process.env.LOCALCUT_ENGINE_PORT ?? DEFAULT_ENG
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
 
+/**
+ * Mirror a child stream into the app log, a line at a time, with the engine's
+ * bearer token taken out of it.
+ *
+ * `localcut serve` announces `LOCALCUT_ENGINE {"host":…,"token":"…"}` on
+ * stdout for whoever launched it — which here is us, and we generated that
+ * token ourselves. Delivering it through the environment rather than argv
+ * already keeps it out of `ps` and /proc/<pid>/cmdline (see command()); the
+ * app log is the same class of sink and needs the same answer, because a
+ * packaged macOS/Linux build's console output lands in the system log, where
+ * it outlives the engine that issued it. The engine redacts tokens from its
+ * OWN logs for this reason (install_log_redaction); this is the other half.
+ *
+ * Splitting on the literal token cannot miss it the way a pattern could, and
+ * buffering to line boundaries means a token divided across two chunks is
+ * whole again before it is matched.
+ */
+const mirrorEngineOutput = (
+  stream: NodeJS.ReadableStream | null | undefined,
+  token: string,
+  write: (line: string) => void,
+): void => {
+  if (!stream) return;
+  let pending = "";
+  const emit = (line: string): void => {
+    if (line.trim()) write(`[engine] ${line.trimEnd().split(token).join("<token redacted>")}`);
+  };
+  stream.on("data", (chunk: Buffer) => {
+    const lines = (pending + chunk.toString()).split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) emit(line);
+  });
+  // A last line with no trailing newline would otherwise sit in the buffer
+  // and be lost — including the exit-time message that says why.
+  stream.on("end", () => {
+    emit(pending);
+    pending = "";
+  });
+};
+
 export class EngineManager {
   private child: ChildProcess | null = null;
   // Published to the renderer over IPC only once the engine proves healthy;
@@ -133,12 +173,8 @@ export class EngineManager {
       detached: process.platform !== "win32",
     });
     this.child = child;
-    child.stdout?.on("data", (chunk: Buffer) =>
-      console.log(`[engine] ${chunk.toString().trimEnd()}`),
-    );
-    child.stderr?.on("data", (chunk: Buffer) =>
-      console.error(`[engine] ${chunk.toString().trimEnd()}`),
-    );
+    mirrorEngineOutput(child.stdout, connection.token, (line) => console.log(line));
+    mirrorEngineOutput(child.stderr, connection.token, (line) => console.error(line));
     // Only clear this.child if THIS child is still the current one: a
     // previously-killed child's late 'error'/'exit' must not detach a newer
     // child that has since replaced it (which would orphan the healthy engine

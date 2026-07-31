@@ -106,6 +106,39 @@ describe("how the token reaches the engine", () => {
     expect(firstSpawn().options.env).toMatchObject({ LOCALCUT_TOKEN: connection.token });
   });
 
+  it("never reaches the app log, which outlives the engine that issued it", async () => {
+    // `localcut serve` announces its connection info — token included — on
+    // stdout for whoever launched it. Mirroring that verbatim undoes the
+    // care taken above: on a packaged macOS/Linux build the main process's
+    // console output goes to the system log, so the live bearer token for
+    // every project on the machine ends up in a file that outlasts it.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    const connection = await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+    const announce = `LOCALCUT_ENGINE {"host": "127.0.0.1", "port": 7830, "token": "${connection.token}"}`;
+
+    // What actually happens: one print(), one chunk, whole line.
+    stdout.emit("data", Buffer.from(`${announce}\nINFO: started\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+
+    // And what a stream is entitled to do instead: the same line delivered in
+    // two pieces that divide the token. Buffering to the newline is what
+    // keeps this from being a hole in the case above rather than a test of
+    // its own — matching per chunk would let exactly this through.
+    logged.length = 0;
+    const cut = announce.length - 8;
+    stdout.emit("data", Buffer.from(announce.slice(0, cut)));
+    stdout.emit("data", Buffer.from(`${announce.slice(cut)}\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+
+    // Still legible: everything but the secret survives.
+    expect(logged.join("\n")).toContain("LOCALCUT_ENGINE");
+  });
+
   it("is fresh every launch and long enough to be worth having", async () => {
     const first = await new EngineManager().start();
     const second = await new EngineManager().start();
