@@ -1638,9 +1638,19 @@ button.link:hover {
   gap: var(--space-2);
 }
 
+/* A real button (the card root is a group — see SceneCard), styled as the
+   line of text it has always been. */
 .scene-card .scene-name {
   font-size: var(--text-xs);
   font-weight: 500;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .scene-card .scene-dur {
