@@ -373,7 +373,15 @@ class ProjectService:
             dirty |= self._sync_caption_texts(graph)
             # Nothing is on disk yet: a refusal here leaves the project
             # exactly as the caller found it, takes.json included.
-            self._refuse_cloud_spend(project_id, graph)
+            #
+            # Under the same `if dirty` as the enqueue below, so this moves
+            # WHEN the refusal happens and never WHICH patches it refuses. An
+            # op that dirties nothing (a pin) plans no jobs, so it never
+            # reached the check before — refusing one because some unrelated
+            # node happens to sit on a cloud model would deny an agent an
+            # edit that cannot bill anyone.
+            if dirty:
+                self._refuse_cloud_spend(project_id, graph)
             if takes is not None:
                 self.store.save_takes(project_id, takes)
             self.store.save_graph(project_id, graph)

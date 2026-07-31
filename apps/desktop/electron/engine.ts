@@ -53,7 +53,13 @@ const mirrorEngineOutput = (
   if (!stream) return;
   let pending = "";
   const emit = (line: string): void => {
-    if (line.trim()) write(`[engine] ${line.trimEnd().split(token).join("<token redacted>")}`);
+    if (!line.trim()) return;
+    // `split("")` on an empty needle splits into characters, which would
+    // replace every gap in the line. Unreachable today — the token is 24
+    // random bytes — but the failure is a log rendered unreadable, so it is
+    // not worth leaving to the caller.
+    const safe = token ? line.trimEnd().split(token).join("<token redacted>") : line.trimEnd();
+    write(`[engine] ${safe}`);
   };
   stream.on("data", (chunk: Buffer) => {
     const lines = (pending + chunk.toString()).split("\n");
