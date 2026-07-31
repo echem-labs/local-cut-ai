@@ -991,7 +991,7 @@ export function Settings() {
                 </h2>
                 <p className="hint">
                   {t("settings.remote.hintBefore")}
-                  <code>localcut-engine serve --host 0.0.0.0 --token …</code>
+                  <code>localcut serve --host 0.0.0.0 --token …</code>
                   {t("settings.remote.hintAfter")}
                 </p>
                 {remotePaired ? (

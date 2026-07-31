@@ -1,6 +1,6 @@
 """Serving the engine to MCP agents.
 
-Phase 3's ecosystem follow-on to CLI automation: `localcut-engine mcp` speaks
+Phase 3's ecosystem follow-on to CLI automation: `localcut mcp` speaks
 Model Context Protocol over stdio to an agent host (a chat assistant, goose,
 an IDE) and the engine's HTTP API on the other side. Like automation.py,
 this is a *client* of a running engine, never a second way into its data
@@ -107,7 +107,7 @@ only inside the export directory engine_info reports.
 
 If a tool says it cannot reach the engine, the fix is in this MCP server's \
 own configuration (the command and environment your host launches it with, \
-and whether `localcut-engine serve` is running) - the message names CLI \
+and whether `localcut serve` is running) - the message names CLI \
 flags, which are not something you can pass.
 
 mode="beginner" projects pause at the script and storyboard checkpoints for \
