@@ -15,6 +15,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _VALID_DAYS = 3650
+# Deliberately NOT the CLI's name (`localcut`). This is baked into every
+# certificate already written to disk and pinned by every pairing code issued
+# from one, so changing it invalidates paired desktops; and it names the
+# service, not the command. Leave it when the command is renamed.
 _COMMON_NAME = "localcut-engine"
 
 
