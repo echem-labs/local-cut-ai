@@ -142,8 +142,7 @@ class EngineClient:
                     unreachable=True,
                 ) from exc
             raise EngineError(
-                f"no engine at {self.url} - start one with `localcut-engine serve`, "
-                "or pass --engine",
+                f"no engine at {self.url} - start one with `localcut serve`, or pass --engine",
                 unreachable=True,
             ) from exc
         except ssl.SSLError as exc:

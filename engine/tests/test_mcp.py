@@ -155,7 +155,7 @@ async def test_a_beginner_project_advances_through_approve(engine):
 
 async def test_the_console_command_serves_a_real_agent_over_stdio(engine):
     """test_mcp_serves_stdio_against_the_resolved_engine fakes the server;
-    this one does not: the actual `localcut-engine mcp` process, spawned the
+    this one does not: the actual `localcut mcp` process, spawned the
     way an agent host spawns it, answering JSON-RPC over its own stdin/stdout
     against a live engine. What the in-memory sessions cannot prove: the
     console entry point, the argparse routing and the SDK's stdio framing
@@ -210,7 +210,7 @@ async def test_an_unreachable_engine_reads_as_a_sentence_not_a_traceback():
             message = await refusal(client, "list_projects")
 
     assert "no engine at" in message
-    assert "localcut-engine serve" in message
+    assert "localcut serve" in message
 
 
 async def test_a_wrong_token_names_the_fix(engine):

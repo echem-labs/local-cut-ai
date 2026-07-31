@@ -1,4 +1,4 @@
-"""CLI: `localcut-engine serve` — the one engine binary with three homes:
+"""CLI: `localcut serve` — the one engine binary with three homes:
 auto-spawned locally by the app, headless on a GPU box, or hosted.
 """
 
@@ -21,7 +21,7 @@ from .config import EngineConfig
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="localcut-engine")
+    parser = argparse.ArgumentParser(prog="localcut")
     parser.add_argument("--version", action="version", version=__version__)
     subcommands = parser.add_subparsers(dest="command", required=True)
 
@@ -318,7 +318,7 @@ def _models_command(args: argparse.Namespace) -> int:
 
 
 def _mcp_command(args: argparse.Namespace) -> int:
-    """`localcut-engine mcp` - an MCP stdio server that is a client of a
+    """`localcut mcp` - an MCP stdio server that is a client of a
     running engine, exactly as the automation commands are (see
     mcp_server.py). stdout belongs to the protocol from here on; everything
     human-readable, including logging, goes to stderr."""
