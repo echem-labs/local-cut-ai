@@ -115,7 +115,15 @@ export function SceneCard({
         .filter(Boolean)
         .join(" ")}
       onClick={() => select(primary.node_id)}
-      role="button"
+      // A GROUP, not a button, even though the whole card is clickable: play,
+      // regenerate, pin, edit, the two failure choices and the narration
+      // textarea are all real controls inside it, and ARIA specifies the
+      // children of a `button` as presentational — nesting them inside one
+      // hides every action on the card from assistive technology, however
+      // reachable they stay by Tab. NodeCanvas resolves the same shape the
+      // same way. The card keeps its focus and its shortcut keys; its select
+      // affordance is the scene name below, which is a real button.
+      role="group"
       tabIndex={0}
       aria-label={t("scene.cardAria", { n: sceneNo, status: t(`status.${clip.status}`) })}
       onKeyDown={(event) => {
@@ -306,7 +314,20 @@ export function SceneCard({
       </div>
       <div className="body">
         <div className="scene-line">
-          <span className="scene-name">{t("scene.sceneName", { n: sceneNo })}</span>
+          {/* The card's own "select this scene" action, as a real control:
+              the root is a group now, so without this the only way to open a
+              scene in the Inspector would be a click on non-interactive
+              chrome — which is not an action assistive tech can find. */}
+          <button
+            className="scene-name"
+            aria-pressed={selected}
+            onClick={(event) => {
+              event.stopPropagation();
+              select(primary.node_id);
+            }}
+          >
+            {t("scene.sceneName", { n: sceneNo })}
+          </button>
           {/* design mock: — while rendering/failed, ~4s while queued */}
           <span className="scene-dur">
             {rendering || failed
