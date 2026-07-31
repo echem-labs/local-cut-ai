@@ -27,6 +27,7 @@ import { ASPECTS } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { shortcutLabel } from "../lib/platform";
 import { relativeTime, shortDuration } from "../lib/time";
+import { TOOL_KINDS, isToolSession, toolKindOf } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { useApp } from "../store";
 
@@ -35,26 +36,30 @@ const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
 const ICON_FEATURE = { size: 17, strokeWidth: 1.8 } as const;
 const ICON_ILLUSTRATIVE = { size: 22, strokeWidth: 1.5 } as const;
 
-/* stable ids + icons only — display copy resolves from the catalog */
-const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = [
-  { kind: "script", icon: FileText },
-  { kind: "thumbnail", icon: ImageIcon },
-  { kind: "voiceover", icon: Mic },
-  { kind: "image", icon: Aperture },
-  { kind: "music", icon: Music },
-  { kind: "clip", icon: Film },
-];
+/* stable ids + icons only — display copy resolves from the catalog. The
+   kinds come from lib/tools so the palette and this screen cannot disagree
+   about which ones this build knows; a kind added there without an icon
+   here is a compile error. */
+const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
+  script: FileText,
+  thumbnail: ImageIcon,
+  voiceover: Mic,
+  image: Aperture,
+  music: Music,
+  clip: Film,
+};
+const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = TOOL_KINDS.map((kind) => ({
+  kind,
+  icon: TOOL_ICONS[kind],
+}));
 
 type SortKey = "recent" | "created" | "name";
 
 type TileStatus = "generating" | "failed" | "ready" | "final" | "draft";
 
-const KNOWN_TOOLS = new Set<string>(TOOLS.map((entry) => entry.kind));
-
-/** Every `tool:` project, whether or not this build knows the kind. A session
- * made by a newer engine is still history: it must still be listed, opened
- * and deleted, so membership is deliberately looser than `toolKindOf`. */
-export const isToolSession = (project: Project): boolean => project.mode.startsWith("tool:");
+// Re-exported: App and this screen's own tests have always reached for them
+// here, and the palette now takes them from lib/tools directly.
+export { isToolSession, toolKindOf };
 
 /** The rail lists only the most recent few sessions; its overflow row asks
  * Home to reveal the whole list. Home may not be mounted when the ask is
@@ -67,15 +72,6 @@ export function revealToolHistory() {
   revealPending = true;
   window.dispatchEvent(new Event(TOOL_HISTORY_EVENT));
 }
-
-/** The kind, only when there is copy and an icon for it. An unknown kind
- * resolves to null rather than indexing the catalog with a key it does not
- * have — `m().tools[kind].label` THROWS on a miss, which takes Home down
- * through the error boundary rather than degrading. */
-export const toolKindOf = (project: Project): ToolKind | null => {
-  const kind = isToolSession(project) ? project.mode.slice(5) : "";
-  return KNOWN_TOOLS.has(kind) ? (kind as ToolKind) : null;
-};
 
 /** Tile status from the global queue: active work wins, then a trailing
  * failure, then a finished output, else draft. Shared with the rail's

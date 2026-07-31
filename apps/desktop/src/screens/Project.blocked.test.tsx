@@ -50,6 +50,10 @@ const boardWithABlankScene: Board = {
   ],
   aux: {
     script: node("script", "draft"),
+    // The voiceover is downstream of every narration, so the blank scene
+    // blocks it too — and the audio stage aggregates rather than calling
+    // stageOf, so it needs its own case.
+    voiceover: node("voiceover", "blocked"),
     timeline: node("timeline", "blocked"),
     export: node("export", "blocked"),
   },
@@ -89,11 +93,39 @@ describe("a project with a scene nobody has written", () => {
 
     // The written scene's own stages still read honestly...
     expect(stage(/script/i)?.className).toContain("done");
-    // ...and every stage the blank scene holds back does not claim to be done.
-    expect(stage(/storyboard/i)?.className).not.toContain("done");
-    expect(stage(/export/i)?.className).not.toContain("done");
+    // ...and every stage the blank scene holds back reads as OFF, the muted
+    // dash `cancelled` gets. Asserting the state, not just "not done": with
+    // `work` as the fallback arm of these ternaries, a blocked node traded a
+    // green tick for an accent dot that pulses forever (`.pipeline .st.work
+    // i` carries an infinite animation) — a different lie about the same
+    // node. Nothing is happening here and there is no result.
+    expect(stage(/storyboard/i)?.className).toContain("off");
+    expect(stage(/export/i)?.className).toContain("off");
+    expect(stage(/audio/i)?.className).toContain("off");
+    for (const label of [/storyboard/i, /export/i, /audio/i]) {
+      expect(stage(label)?.className).not.toContain("done");
+      expect(stage(label)?.className).not.toContain("work");
+    }
     // "1 of 2", not "2 of 2": a scene with no prompt is not a video that is ready.
     expect(stage(/videos/i)?.textContent).toMatch(/1\s*\/\s*2|1 of 2/i);
+  });
+
+  it("still shows work in flight as work", () => {
+    // The `off` arm must not swallow a stage that IS running: the blank
+    // scene's keyframe is rendering rather than blocked.
+    mount({
+      ...boardWithABlankScene,
+      scenes: [
+        boardWithABlankScene.scenes[0],
+        { ...boardWithABlankScene.scenes[1], keyframe: node("s2.keyframe", "rendering") },
+      ],
+    });
+
+    const pipeline = screen.getByRole("status", { name: /progress/i });
+    const storyboard = Array.from(pipeline.children).find((el) =>
+      /storyboard/i.test(el.textContent ?? ""),
+    );
+    expect(storyboard?.className).toContain("work");
   });
 
   it("does not offer to create the final video", () => {

@@ -15,7 +15,7 @@ import type { ToolKind } from "../api/types";
 import { m, t } from "../i18n";
 import { fuzzyScore } from "../lib/fuzzy";
 import { relativeTime } from "../lib/time";
-import { toolKindOf } from "../screens/Home";
+import { toolKindOf } from "../lib/tools";
 import { applyTheme, resolvedTheme } from "../theme";
 import { useApp } from "../store";
 
@@ -101,7 +101,9 @@ export function Palette() {
       // which here takes the whole app down through the ErrorBoundary, from a
       // palette that is open over every screen. A newer engine driving an
       // older desktop is a documented topology, not a hypothetical, and a
-      // session it minted must still be findable and openable.
+      // session it minted must still be findable and openable. From lib, not
+      // from the Home screen: a component importing a screen closed a
+      // Palette -> Home -> Palette module cycle.
       const toolKind = toolKindOf(project);
       list.push({
         key: `p:${project.id}`,

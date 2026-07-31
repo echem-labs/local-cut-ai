@@ -83,3 +83,21 @@ describe("the scene card's controls", () => {
     expect(select).toHaveBeenCalled();
   });
 });
+
+describe("where the scene name leaves focus", () => {
+  it("hands it to the card, so the board keeps its keyboard", () => {
+    mount();
+
+    const name = screen.getByRole("button", { name: /^scene 1$/i });
+    name.click();
+
+    // Project's Space and Arrow handlers are window listeners that bail on
+    // `target.tagName === "BUTTON"` so a focused control keeps its own
+    // keyboard. The span this button replaced was not focusable, so the same
+    // click used to leave focus on the card root — leaving it on the button
+    // silently killed play-preview and scene-to-scene navigation, right
+    // after the gesture the card advertises as "select this scene".
+    expect(document.activeElement).toBe(name.closest(".scene-card"));
+    expect(document.activeElement?.tagName).not.toBe("BUTTON");
+  });
+});
