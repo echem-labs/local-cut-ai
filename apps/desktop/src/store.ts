@@ -8,7 +8,9 @@ import type {
   Checkpoint,
   EditResult,
   EngineEvent,
+  HistoryInfo,
   Job,
+  ModelDefaults,
   ModelRow,
   NodeState,
   Project,
@@ -119,6 +121,10 @@ interface AppState {
    * `currentProject`; the rest stay open but idle (no board, no polling). */
   openProjects: string[];
   board: Board | null;
+  /** Undo/redo depths and save points for the open project. */
+  history: HistoryInfo | null;
+  /** Persisted per-task default models (Settings → Models). */
+  modelDefaults: ModelDefaults | null;
   jobs: Job[];
   /** Unfiltered queue across all projects — Home tile status dots. */
   allJobs: Job[];
@@ -192,6 +198,20 @@ interface AppState {
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
   edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
+  refreshHistory: () => Promise<void>;
+  /** Walk back/forward one recorded graph mutation. */
+  undoEdit: () => Promise<string | null>;
+  redoEdit: () => Promise<string | null>;
+  createSavepoint: (label: string) => Promise<string | null>;
+  restoreSavepoint: (savepointId: string) => Promise<string | null>;
+  deleteSavepoint: (savepointId: string) => Promise<string | null>;
+  /** Swap a node back to a recorded take (a cache hit when its artifact
+   * survives on disk). */
+  selectTake: (nodeId: string, outputHash: string) => Promise<string | null>;
+  /** Append an empty scene (engine allocates the id) and select it. */
+  addScene: () => Promise<string | null>;
+  refreshModelDefaults: () => Promise<void>;
+  setModelDefault: (task: string, model: string | null) => Promise<string | null>;
   cancelJob: (jobId: string) => Promise<void>;
   conditionScene: (sceneId: string, file: File) => Promise<void>;
   applyClonedVoice: (file: File) => Promise<void>;
@@ -338,6 +358,13 @@ let boardGen = 0;
 // board refresh keeps it in step, so concurrent reads are routine and an
 // out-of-order landing would redraw a DAG the project has moved past.
 let graphGen = 0;
+// And for the history depths, which every board refresh keeps in step too.
+let historyGen = 0;
+// Shape-stable and small (two ints and two flat descriptors plus the save
+// point list), and the engine emits its keys in a fixed order, so this is a
+// sound equality for "the depths did not move".
+const sameHistory = (a: HistoryInfo | null, b: HistoryInfo): boolean =>
+  a !== null && JSON.stringify(a) === JSON.stringify(b);
 // Called with the id of any project created while a refreshHome is in
 // flight — that request's snapshot predates it, so the tab prune must not
 // treat it as deleted.
@@ -563,6 +590,45 @@ export const useApp = create<AppState>((set, get) => {
     return null;
   };
 
+  /**
+   * A mutation of the engine's graph history — undo, redo, and the save
+   * point create/restore. Each route answers with the new HistoryInfo, so
+   * the response IS the fresh read model.
+   *
+   * Returns the engine's rejection rather than throwing, like patchGraph:
+   * "nothing to undo" is a sentence to put beside the control, not an
+   * unwound promise chain. `null` means it applied.
+   */
+  const historyAction = async (
+    call: (client: EngineClient, projectId: string) => Promise<HistoryInfo>,
+    { redraw = false }: { redraw?: boolean } = {},
+  ): Promise<string | null> => {
+    const { client, currentProject } = get();
+    if (!client || !currentProject) return t("errors.engineUnavailable");
+    const projectId = currentProject.id;
+    try {
+      // A debounced inspector patch still in flight is the newest edit; it
+      // must land (and be recorded) before any of these names a step.
+      await flushPatches();
+      const history = await call(client, projectId);
+      // Retire in-flight refreshHistory reads. One that started before this
+      // mutation still satisfies its OWN generation check, so it would paint
+      // the pre-mutation depths back over what the engine just returned —
+      // and after createSavepoint nothing would ever correct it, because no
+      // event fires and no board refresh follows. The new save point simply
+      // stayed invisible.
+      historyGen++;
+      // The same engine/project re-check every other write in this file
+      // makes: switching tabs during the round trip must not land these
+      // depths on the project the user just opened.
+      if (get().client === client && get().currentProject?.id === projectId) set({ history });
+      if (redraw) await get().refreshBoard();
+      return null;
+    } catch (err) {
+      return messageOf(err);
+    }
+  };
+
   const applyAuxParams = (nodeId: string, params: Record<string, unknown>) => {
     const { board, client, currentProject } = get();
     const node = board?.aux[nodeId];
@@ -685,7 +751,8 @@ export const useApp = create<AppState>((set, get) => {
         } else if (
           event.type.startsWith("job.") ||
           event.type === "project.expanded" ||
-          event.type === "project.edited"
+          event.type === "project.edited" ||
+          event.type === "project.restored"
         ) {
           scheduleRefresh();
         } else if (event.type === "project.deleted") {
@@ -783,6 +850,8 @@ export const useApp = create<AppState>((set, get) => {
     set({
       currentProject: null,
       board: null,
+      history: null,
+      modelDefaults: null,
       jobs: [],
       projects: [],
       models: [],
@@ -808,6 +877,8 @@ export const useApp = create<AppState>((set, get) => {
     currentProject: null,
     openProjects: readOpenTabs(),
     board: null,
+    history: null,
+    modelDefaults: null,
     jobs: [],
     allJobs: [],
     storage: null,
@@ -924,7 +995,11 @@ export const useApp = create<AppState>((set, get) => {
         // draw the wrong DAG for however long the fetch takes.
         graph: null,
         graphError: null,
+        // Cleared then fetched: the previous project's undo depths must not
+        // enable Ctrl+Z against this one for however long the fetch takes.
+        history: null,
       });
+      void get().refreshHistory();
     },
 
     closeProject: () => {
@@ -934,6 +1009,7 @@ export const useApp = create<AppState>((set, get) => {
       set({
         currentProject: null,
         board: null,
+        history: null,
         jobs: [],
         selectedNode: null,
         graph: null,
@@ -1103,6 +1179,10 @@ export const useApp = create<AppState>((set, get) => {
       // It guards its own staleness (see refreshGraph), so it is safe to have
       // in flight across the checks below.
       const graphRefresh = get().graph ? get().refreshGraph() : null;
+      // History rides every board refresh for the same reason as the graph:
+      // everything that moves the board (a patch, an NL edit, a regenerate)
+      // is exactly what changes the undo depths.
+      const historyRefresh = get().refreshHistory();
       const [{ project, board }, jobs] = await Promise.all([
         client.getProject(projectId),
         client.listJobs(projectId),
@@ -1116,6 +1196,7 @@ export const useApp = create<AppState>((set, get) => {
       // waiting for both pictures to have redrawn before it decides what to
       // say about the edit.
       await graphRefresh;
+      await historyRefresh;
     },
 
     refreshGraph: async () => {
@@ -1199,6 +1280,131 @@ export const useApp = create<AppState>((set, get) => {
         return result;
       } finally {
         set({ editBusy: false });
+      }
+    },
+
+    refreshHistory: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return;
+      const projectId = currentProject.id;
+      const generation = ++historyGen;
+      try {
+        const history = await client.history(projectId);
+        // Same three guards refreshGraph uses: a superseded read, a project
+        // the user has navigated away from, and an engine swapped underneath
+        // us (pair/unpair) must all drop their result rather than paint it.
+        if (generation !== historyGen) return;
+        if (get().client !== client || get().currentProject?.id !== projectId) return;
+        // Only when it actually moved. This rides every board refresh, which
+        // during a render is several a second, and the depths change only on
+        // a graph mutation — so almost every poll would otherwise be a second
+        // store write per refresh, re-rendering every useApp() consumer for a
+        // freshly parsed object identical to the one on screen.
+        if (sameHistory(get().history, history)) return;
+        set({ history });
+      } catch {
+        // Depths are a convenience read model — keep the last known ones
+        // rather than flashing the Undo affordances on a failed poll.
+      }
+    },
+
+    undoEdit: async () => {
+      // A debounced inspector patch still in flight is the newest edit; it
+      // must land (and be recorded) before "undo" names anything.
+      return historyAction((client, projectId) => client.undo(projectId), { redraw: true });
+    },
+
+    redoEdit: async () => {
+      return historyAction((client, projectId) => client.redo(projectId), { redraw: true });
+    },
+
+    createSavepoint: async (label) => {
+      // No redraw: naming a version does not change the graph.
+      return historyAction((client, projectId) => client.createSavepoint(projectId, label));
+    },
+
+    restoreSavepoint: async (savepointId) => {
+      return historyAction(
+        (client, projectId) => client.restoreSavepoint(projectId, savepointId),
+        { redraw: true },
+      );
+    },
+
+    deleteSavepoint: async (savepointId) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.deleteSavepoint(currentProject.id, savepointId);
+        await get().refreshHistory();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    selectTake: async (nodeId, outputHash) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        await client.patch(currentProject.id, [
+          { op: "select_take", node_id: nodeId, take: outputHash },
+        ]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    addScene: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        const known = new Set((get().board?.scenes ?? []).map((scene) => scene.scene_id));
+        const { dirty } = await client.patch(currentProject.id, [
+          { op: "add_scene", node_id: "" },
+        ]);
+        // Select the new scene's keyframe so the Inspector opens on the
+        // prompt the user is about to write — an edit before the blank
+        // draft renders supersedes its queued job.
+        const added = dirty.find(
+          (id) => id.endsWith(".keyframe") && !known.has(id.split(".")[0]),
+        );
+        if (added) set({ selectedNode: added });
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    refreshModelDefaults: async () => {
+      const { client } = get();
+      if (!client) return;
+      try {
+        const modelDefaults = await client.modelDefaults();
+        // Guarded like refreshModels: these are engine-scoped, switchEngine
+        // already blanked them, and landing the OLD box's per-task defaults
+        // on the new one is exactly the bleed it prevents.
+        if (get().client !== client) return;
+        set({ modelDefaults });
+      } catch (err) {
+        console.warn("model defaults refresh failed:", err);
+      }
+    },
+
+    setModelDefault: async (task, model) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        const modelDefaults = await client.setModelDefault(task, model);
+        if (get().client !== client) return null;
+        set({ modelDefaults });
+        return null;
+      } catch (err) {
+        return messageOf(err);
       }
     },
 

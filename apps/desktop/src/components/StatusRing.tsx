@@ -11,6 +11,9 @@ const COLORS: Record<NodeStatus, string> = {
   pinned: "var(--status-pinned)",
   // The same muted tone as cancelled: nothing is wrong, and nothing is coming.
   skipped: "var(--text-tertiary)",
+  // Not muted and not red: nothing is broken, but this one is asking for
+  // something. The draft tone reads as "unfinished", which is what it is.
+  blocked: "var(--status-draft)",
 };
 
 /** The status word in the reserved colors, translated. */

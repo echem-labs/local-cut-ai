@@ -47,6 +47,14 @@
     {
       "keys": "?",
       "what": "This overlay"
+    },
+    {
+      "keys": "Ctrl Z",
+      "what": "Undo the last edit"
+    },
+    {
+      "keys": "Ctrl Shift Z",
+      "what": "Redo"
     }
   ],
   "panels": {

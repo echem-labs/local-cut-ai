@@ -27,5 +27,7 @@
   "cmdRegenHint": "new take · R",
   "cmdPin": "Pin scene {n}",
   "cmdUnpin": "Unpin scene {n}",
-  "cmdPinHint": "P"
+  "cmdPinHint": "P",
+  "undo": "Undo",
+  "undoTitle": "Undo this edit (Ctrl+Z)"
 }
