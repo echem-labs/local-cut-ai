@@ -92,12 +92,19 @@ def _code_only(path: Path, text: str) -> str:
     by comparing against nothing."
     """
     if path.suffix in _JS_SUFFIXES:
-        return _SLASH_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+        text = _SLASH_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
     # yml, Dockerfile, py. The .spec needs none: its own check is anchored to
     # the start of a line with `^\s*name`, which no `#` comment can satisfy.
-    if path.suffix in {".yml", ".yaml", ".py"} or path.name == "Dockerfile":
-        return _HASH_COMMENT.sub("", text)
-    return text
+    elif path.suffix in {".yml", ".yaml", ".py"} or path.name == "Dockerfile":
+        text = _HASH_COMMENT.sub("", text)
+    # Right-strip every line, because several patterns end in `$` and removing
+    # a trailing comment leaves the whitespace that stood in front of it.
+    # Without this, annotating a line whose name is already CORRECT --
+    # `engine_bin: dist/x/x  # the POSIX layout` -- reddens the engine suite,
+    # which is the false alarm this file warns about one docstring up: the
+    # cheapest way to green it is to weaken the pattern, and the pattern is
+    # the guard. A stray trailing space in the source would do the same.
+    return "\n".join(line.rstrip() for line in text.splitlines())
 
 
 def _assert_spelled(path: Path, name: str, expected: dict[str, int]) -> None:
