@@ -245,6 +245,14 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # take is landing on EXACTLY the recorded identity, so its
                 # output hash resolves to the artifact already on disk. A
                 # merge would keep params added since and miss the cache.
+                #
+                # `stored_params` is the one thing that may differ from the
+                # record, and only for a take written before that rule
+                # existed: a null in it is dropped, so the node lands one hash
+                # away from the recorded artifact and re-renders once. That is
+                # the right way round — restoring the null would put back a
+                # value that silently turns captions off and that no later
+                # edit can clear.
                 node.params = stored_params(op.params)
                 node.seed = op.seed if op.seed is not None else 0
                 node.model = op.model

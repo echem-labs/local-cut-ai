@@ -1504,9 +1504,14 @@ async def test_a_caller_that_may_not_spend_cannot_buy_a_cloud_edit(client):
     assert "provider key" in response.json()["detail"]
 
     # The local path is untouched: refusing the spend must not refuse editing.
+    # Asserted as "not a spend refusal" rather than on a status code, because
+    # what the local model does here depends on the machine -- 200 where an
+    # Ollama is running, 502 where there is none. Both mean it got past this
+    # gate and reached the model, which is the whole claim.
     allowed = await client.post(
         f"/projects/{project_id}/edit",
         json={"instruction": "make it colder", "dry_run": True},
         headers={"X-LocalCut-Cloud-Spend": "deny"},
     )
     assert allowed.status_code != 403
+    assert "provider key" not in allowed.text
