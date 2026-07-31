@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-localcut-engine = "localcut_engine.cli:main"
+localcut = "localcut_engine.cli:main"
 
 [dependency-groups]
 build = [

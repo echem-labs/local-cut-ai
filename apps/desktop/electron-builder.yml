@@ -1,6 +1,6 @@
 # electron-builder config — packages the desktop shell together with the
 # frozen engine (built first via `uv run pyinstaller` in engine/, see
-# engine/localcut-engine.spec). Output lands in apps/desktop/release/.
+# engine/localcut.spec). Output lands in apps/desktop/release/.
 appId: ai.localcut.desktop
 productName: LocalCut AI
 directories:
@@ -12,11 +12,11 @@ files:
   # electron + node builtins — no runtime node_modules needed.
   - "!node_modules"
 extraResources:
-  # PyInstaller onedir output → resources/engine/localcut-engine[.exe]
+  # PyInstaller onedir output → resources/engine/localcut[.exe]
   # (spawned by dist-electron/electron/engine.js when app.isPackaged).
   # Freeze the engine ON the target OS first — PyInstaller doesn't cross-
   # compile, so a Linux package needs the engine frozen on Linux.
-  - from: ../../engine/dist/localcut-engine
+  - from: ../../engine/dist/localcut
     to: engine
 asar: true
 npmRebuild: false

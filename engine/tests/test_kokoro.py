@@ -31,7 +31,7 @@ def narration_spec(text: str) -> JobSpec:
 
 async def test_missing_model_files_give_actionable_error(tmp_path):
     backend = KokoroBackend(models_dir=tmp_path)
-    with pytest.raises(GenerationError, match="localcut-engine download"):
+    with pytest.raises(GenerationError, match="localcut download"):
         await backend.execute(narration_spec("hello"), ExecutionContext(output_dir=tmp_path))
 
 
