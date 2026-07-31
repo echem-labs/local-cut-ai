@@ -44,5 +44,7 @@
       "hint": "opens details",
       "aria": "Edit scene"
     }
-  }
+  },
+  "addScene": "Add scene",
+  "addSceneTitle": "Add an empty scene at the end — write its prompt in Details"
 }

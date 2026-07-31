@@ -69,9 +69,11 @@ function useGroupMinHeight(api: IDockviewPanelProps["api"], minimumHeight: numbe
 const DRAFT_TEACH_KEY = "localcut.draftTaught";
 
 function BoardPanel(_props: IDockviewPanelProps) {
-  const { board, applyTimeline } = useApp();
+  const { board, applyTimeline, addScene } = useApp();
   const density = useWorkspace((state) => state.density);
   const [dragged, setDragged] = useState<string | null>(null);
+  const [addingScene, setAddingScene] = useState(false);
+  const [addSceneError, setAddSceneError] = useState<string | null>(null);
   const [draftTaught, setDraftTaught] = useState(
     () => localStorage.getItem(DRAFT_TEACH_KEY) === "1",
   );
@@ -131,7 +133,25 @@ function BoardPanel(_props: IDockviewPanelProps) {
               onTeachDismiss={markTaught}
             />
           ))}
+          {scenes.length > 0 && (
+            <button
+              className="scene-card scene-add"
+              disabled={addingScene}
+              title={t("scene.addSceneTitle")}
+              onClick={() => {
+                setAddingScene(true);
+                setAddSceneError(null);
+                void addScene()
+                  .then((error) => setAddSceneError(error))
+                  .finally(() => setAddingScene(false));
+              }}
+            >
+              <span aria-hidden="true">+</span>
+              {t("scene.addScene")}
+            </button>
+          )}
         </div>
+        {addSceneError && <div role="status">{addSceneError}</div>}
       </div>
     </div>
   );

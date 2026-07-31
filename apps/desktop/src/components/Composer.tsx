@@ -14,9 +14,38 @@ import { ModelsPopover } from "./ModelsPopover";
  * it from anywhere. The activity log above it keeps the session's
  * conversation ("what changed my scene 3?"). */
 export function Composer() {
-  const { board, currentProject, selectedNode, select, edit, editBusy, regenerate, togglePin } =
-    useApp();
+  const {
+    board,
+    currentProject,
+    selectedNode,
+    select,
+    edit,
+    editBusy,
+    regenerate,
+    togglePin,
+    history,
+    undoEdit,
+  } = useApp();
   const [text, setText] = useState("");
+  // Did the reply on screen actually change the graph? Not `ops > 0`: the
+  // engine records no history entry for a plan whose ops leave the graph
+  // byte-identical (an LLM that echoes a prompt back unchanged still emits
+  // one), so the newest recorded mutation is still some EARLIER edit —
+  // offering Undo on that reply reverts the earlier one. Only the history
+  // top moving proves this reply is what the next undo would revert.
+  const [replyApplied, setReplyApplied] = useState(false);
+  // Depth alone is not that proof: it stops growing at the engine's
+  // UNDO_LIMIT, so the top's identity has to be part of the mark.
+  const historyMark = (): string => {
+    const top = useApp.getState().history;
+    return [top?.undo_depth ?? 0, top?.undo_top?.kind ?? "", top?.undo_top?.summary ?? ""].join(
+      " ",
+    );
+  };
+  // Undo covers the edit that just landed: it recorded something, and that
+  // something is still the newest recorded mutation (an edit-shaped undo
+  // top — a later regenerate or inspector patch retires the offer).
+  const undoable = replyApplied && history?.undo_top?.kind === "edit";
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -32,6 +61,7 @@ export function Composer() {
     setLog(projectId ? loadLog(projectId) : []);
     setScopeOverride(null);
     setFeedback(null);
+    setReplyApplied(false);
     setError(null);
   }, [projectId]);
 
@@ -112,7 +142,9 @@ export function Composer() {
     if (!instruction || editBusy) return;
     setError(null);
     setFeedback(null);
+    setReplyApplied(false);
     try {
+      const before = historyMark();
       const result: EditResult | null = await edit(instruction, scope);
       if (result) {
         const summary =
@@ -125,6 +157,7 @@ export function Composer() {
         const skipped =
           result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
         setFeedback(summary + skipped);
+        setReplyApplied(historyMark() !== before);
         pushLog({
           at: Date.now(),
           instruction,
@@ -301,7 +334,24 @@ export function Composer() {
         </div>
       </div>
       {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}
-      {feedback && !editBusy && <div className="hint composer-hint">{feedback}</div>}
+      {feedback && !editBusy && (
+        <div className="hint composer-hint">
+          {feedback}
+          {undoable && (
+            <button
+              className="composer-undo"
+              title={t("composer.undoTitle")}
+              onClick={() => {
+                setFeedback(null);
+                setReplyApplied(false);
+                void undoEdit().then((message) => setError(message));
+              }}
+            >
+              {t("composer.undo")}
+            </button>
+          )}
+        </div>
+      )}
       {error && <div className="banner error" style={{ marginTop: 8 }}>{error}</div>}
     </div>
   );

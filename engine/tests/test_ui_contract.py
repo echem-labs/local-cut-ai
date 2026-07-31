@@ -206,3 +206,37 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in the UI {sorted(listed - set(TOOL_KINDS))}, "
         f"only in engine {sorted(set(TOOL_KINDS) - listed)}"
     )
+
+
+def test_history_kinds_have_labels_in_the_desktop_catalog():
+    """Every snapshot kind the engine records must have a word in the
+    desktop's historyKinds catalog (the undo/redo menu rows and tooltips
+    read it), and every catalog entry must be a kind the engine can
+    record — a stale one is dead copy."""
+    import json
+
+    from localcut_engine.project.store import SNAPSHOT_KINDS
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "project.json").read_text(encoding="utf-8")
+    )
+    labels = set(catalog.get("historyKinds", {}))
+    assert labels == set(SNAPSHOT_KINDS), (
+        f"historyKinds and SNAPSHOT_KINDS disagree: "
+        f"only in UI {sorted(labels - set(SNAPSHOT_KINDS))}, "
+        f"only in engine {sorted(set(SNAPSHOT_KINDS) - labels)}"
+    )
+
+
+def test_export_encode_choices_match_the_engine():
+    """The export node refuses off-menu fps/resolution values, so the UI
+    must offer exactly the engine's closed sets."""
+    from localcut_engine.aspects import EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES
+
+    def _list(name: str) -> tuple[int, ...]:
+        match = re.search(rf"export const {name} = \[([\d, ]+)\]", _source())
+        assert match, f"formats.ts no longer declares {name} — update this test with it"
+        return tuple(int(v) for v in match.group(1).split(","))
+
+    assert _list("EXPORT_FPS_CHOICES") == EXPORT_FPS_CHOICES
+    assert _list("EXPORT_SHORT_SIDE_CHOICES") == EXPORT_SHORT_SIDE_CHOICES

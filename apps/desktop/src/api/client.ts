@@ -9,8 +9,10 @@ import type {
   EditResult,
   EngineConnection,
   EngineEvent,
+  HistoryInfo,
   Job,
   LlmModels,
+  ModelDefaults,
   ModelRow,
   Project,
   Provider,
@@ -160,6 +162,10 @@ export class EngineClient {
        * upstream node, `port` the input being rewired. */
       src?: string;
       port?: string;
+      /** select_take: the recorded take's output hash. */
+      take?: string;
+      /** add_scene: the scene id to insert after (absent appends). */
+      after?: string;
     }[],
   ): Promise<{ dirty: string[] }> {
     return this.request(`/projects/${projectId}/patch`, {
@@ -184,6 +190,38 @@ export class EngineClient {
         body: await file.arrayBuffer(),
       },
     );
+  }
+
+  /** Undo/redo stack depths, next-step descriptors and save points. */
+  history(projectId: string): Promise<HistoryInfo> {
+    return this.request(`/projects/${projectId}/history`);
+  }
+
+  undo(projectId: string): Promise<HistoryInfo> {
+    return this.request(`/projects/${projectId}/undo`, { method: "POST" });
+  }
+
+  redo(projectId: string): Promise<HistoryInfo> {
+    return this.request(`/projects/${projectId}/redo`, { method: "POST" });
+  }
+
+  createSavepoint(projectId: string, label: string): Promise<HistoryInfo> {
+    return this.request(`/projects/${projectId}/savepoints`, {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    });
+  }
+
+  restoreSavepoint(projectId: string, savepointId: string): Promise<HistoryInfo> {
+    return this.request(`/projects/${projectId}/savepoints/${savepointId}/restore`, {
+      method: "POST",
+    });
+  }
+
+  deleteSavepoint(projectId: string, savepointId: string): Promise<{ ok: boolean }> {
+    return this.request(`/projects/${projectId}/savepoints/${savepointId}`, {
+      method: "DELETE",
+    });
   }
 
   /** Natural-language edit; scope is "project" or a scene id. */
@@ -231,6 +269,19 @@ export class EngineClient {
 
   deleteModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
     return this.request(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
+  /** Persisted per-task default models (Settings → Models). */
+  modelDefaults(): Promise<ModelDefaults> {
+    return this.request("/models/defaults");
+  }
+
+  /** Set (or clear, with null) the default model for one task. */
+  setModelDefault(task: string, model: string | null): Promise<ModelDefaults> {
+    return this.request("/models/defaults", {
+      method: "PUT",
+      body: JSON.stringify({ task, model }),
+    });
   }
 
   addCustomModel(body: {
