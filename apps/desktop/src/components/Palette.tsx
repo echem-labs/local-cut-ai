@@ -15,6 +15,7 @@ import type { ToolKind } from "../api/types";
 import { m, t } from "../i18n";
 import { fuzzyScore } from "../lib/fuzzy";
 import { relativeTime } from "../lib/time";
+import { toolKindOf } from "../screens/Home";
 import { applyTheme, resolvedTheme } from "../theme";
 import { useApp } from "../store";
 
@@ -95,9 +96,13 @@ export function Palette() {
           job.project_id === project.id &&
           (job.status === "queued" || job.status === "rendering"),
       );
-      const toolKind = project.mode.startsWith("tool:")
-        ? (project.mode.slice(5) as ToolKind)
-        : null;
+      // `toolKindOf`, not a cast: `mode` is a free string from the engine, and
+      // `m().tools[kind].label` THROWS on a key the catalog does not have —
+      // which here takes the whole app down through the ErrorBoundary, from a
+      // palette that is open over every screen. A newer engine driving an
+      // older desktop is a documented topology, not a hypothetical, and a
+      // session it minted must still be findable and openable.
+      const toolKind = toolKindOf(project);
       list.push({
         key: `p:${project.id}`,
         group: "projects",
