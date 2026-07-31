@@ -314,3 +314,84 @@ def test_a_refused_undo_does_not_spend_the_history_step(tmp_path):
 
     assert service.store.load_graph(project_id).model_dump(mode="json") == before_graph
     assert service.history_info(project_id)["undo_depth"] == before_depth
+
+
+def test_every_mutating_route_refuses_before_it_writes(tmp_path):
+    """The rule names an outcome, so it cannot be a list of four methods.
+
+    `patch`, `undo/redo` and `restore_savepoint` were hoisted in front of
+    their writes; the routes below were not, and each one wrote first and
+    refused at the queue afterwards. Each is a different way for a refused
+    caller to leave a `cloud:*` render staged for the user to pay for:
+
+      - `regenerate` bumps the seed, which is exactly what makes the node
+        uncached, and parks the displaced identity in takes.json;
+      - `apply_edit_plan` (the `/edit/apply` route, and the MCP editor --
+        the surface an agent host actually drives) rewrites params and
+        consumes an undo step;
+      - `approve` opens a beginner checkpoint, and there is no un-approve,
+        so the gate stays open for the user's next action to spend through.
+    """
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED, CloudSpendRefused
+
+    service, project_id = _service(tmp_path)
+    # The user, in the app, chooses a cloud model. Entirely permitted.
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+    before_graph = service.store.load_graph(project_id).model_dump(mode="json")
+    before_takes = service.store.load_takes(project_id).model_dump(mode="json")
+    before_history = service.store.load_history(project_id).model_dump(mode="json")
+    before_meta = service.store.get(project_id).model_dump(mode="json")
+
+    plan = EditPlan(
+        summary="colder",
+        edits=[Edit(action="update", node_id="s1.keyframe", params={"prompt": "a cold shore"})],
+    )
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        for call in (
+            lambda: service.regenerate(project_id, "s1.clip"),
+            lambda: service.apply_edit_plan(project_id, plan, scope="project"),
+            lambda: service.approve(project_id, "script"),
+        ):
+            with pytest.raises(CloudSpendRefused):
+                call()
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    assert service.store.load_graph(project_id).model_dump(mode="json") == before_graph
+    assert service.store.load_takes(project_id).model_dump(mode="json") == before_takes
+    assert service.store.load_history(project_id).model_dump(mode="json") == before_history
+    # The approval in particular: it is the one write with no way back.
+    assert service.store.get(project_id).model_dump(mode="json") == before_meta
+
+
+def test_a_refused_import_does_not_leave_the_project_behind(tmp_path):
+    """A template may legitimately carry the author's cloud models, so
+    importing one IS the choice to spend on them -- and the refusal used to
+    arrive after `store.create`, leaving a fully-formed project in the
+    user's list while the 403 said nothing was changed. One click renders
+    it.
+
+    Duplicating a cloud project is the same choice by another name.
+    """
+    from localcut_engine.graph.template_io import from_template, to_template
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED, CloudSpendRefused
+
+    service, project_id = _service(tmp_path)
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+    document = to_template(service.store.load_graph(project_id), name="Cloudy")
+    before = {p.id for p in service.store.list()}
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        with pytest.raises(CloudSpendRefused):
+            service.create_from_template(from_template(document.model_dump(mode="json")))
+        with pytest.raises(CloudSpendRefused):
+            service.duplicate(project_id)
+        # And a plain local prompt project is still creatable: refusing
+        # earlier must not refuse more.
+        local = service.create_from_prompt("a quiet harbour")
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    assert {p.id for p in service.store.list()} - before == {local.id}

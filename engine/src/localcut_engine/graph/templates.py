@@ -23,6 +23,7 @@ from .model import (
     NodeKind,
     StoryGraph,
 )
+from .patch import stored_params
 
 
 def prompt_template_graph(
@@ -171,7 +172,19 @@ GENERATOR_MAX_MUSIC_S = 1000
 
 def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) -> Node:
     """Add the node, or refresh its derived params in place — seed, pin and
-    frozen_hash are user state and survive re-expansion."""
+    frozen_hash are user state and survive re-expansion.
+
+    Through `stored_params` because this is the fourth route that replaces a
+    node's params wholesale, and the only one that runs on its own: the
+    user-state carry-forwards below (`captions`/`fps`/`resolution` on the
+    export, `ducking`/`beat_align` on the timeline, `speed` on a narration)
+    all test for the KEY, not for a value, so a null already on the node is
+    copied back over the correct default on every script render — silently
+    re-planting the `{"captions": None}` that stops an export burning the
+    captions it was asked for. Filtering here also makes expansion the
+    migration for a graph written before that rule existed.
+    """
+    params = stored_params(params)
     node = graph.nodes.get(node_id)
     if node is None:
         return graph.add_node(Node(id=node_id, kind=kind, params=params))
@@ -218,7 +231,11 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     # seeds and pins: a script re-run must not wipe it. Carry it over,
     # dropping references to scenes the new screenplay no longer has.
     scene_ids = {scene.id for scene in screenplay.scenes}
-    old_timeline = node.params if (node := graph.nodes.get("timeline")) else {}
+    # Through `stored_params` at the SOURCE, not just at `_ensure_node`: the
+    # carry-forwards below test for the key, so a null read from the old node
+    # would win over the correct default beside it and then be stripped,
+    # leaving the key absent rather than restored.
+    old_timeline = stored_params(node.params) if (node := graph.nodes.get("timeline")) else {}
     timeline_params = {
         "aspect": aspect,
         # edl_version is part of the node hash: bumping it invalidates
@@ -375,7 +392,9 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
     )
     _ensure_edge(graph, "timeline", "captions")
 
-    old_export = node.params if (node := graph.nodes.get("export")) else {}
+    # Same as the timeline above: a null carried forward here would displace
+    # the `"captions": "burn"` default it is spread over.
+    old_export = stored_params(node.params) if (node := graph.nodes.get("export")) else {}
     _ensure_node(
         graph,
         "export",

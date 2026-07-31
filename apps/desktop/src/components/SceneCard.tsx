@@ -324,6 +324,13 @@ export function SceneCard({
             onClick={(event) => {
               event.stopPropagation();
               select(primary.node_id);
+              // Hand focus to the card, which is what a selected scene means
+              // here: the board's Space and arrow keys are window listeners
+              // that bail on `target.tagName === "BUTTON"` so a focused
+              // control keeps its own keyboard, and leaving focus on this
+              // one killed play-preview and scene-to-scene navigation right
+              // after the gesture that advertises itself as "select".
+              event.currentTarget.closest<HTMLElement>(".scene-card")?.focus();
             }}
           >
             {t("scene.sceneName", { n: sceneNo })}

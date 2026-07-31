@@ -54,11 +54,17 @@ def stored_params(params: dict[str, Any], *, drop: frozenset[str] = frozenset())
     rendered for that state can never be a cache hit again.
 
     `set_params` states the rule in its own terms because a merge has to
-    REMOVE the key a null clears rather than filter it. Every route that
-    replaces a node's params wholesale comes through here — the `add_node`
-    and `select_take` ops, and template import and export, which is the
-    same list as RESERVED_PARAMS above and for the same reason: params
-    arriving from outside are covered on every path at once, or on one.
+    REMOVE the key a null clears rather than filter it. Every other route
+    that replaces a node's params wholesale comes through here — the
+    `add_node` and `select_take` ops, `add_scene`'s compilation, template
+    import and export, `_ensure_node` (screenplay expansion) and the take
+    records `select_take` reads back — for the same reason RESERVED_PARAMS
+    above is shared: params arriving from outside are covered on every path
+    at once, or on one.
+
+    The one deliberate exception is `regenerate`'s own filter, which runs
+    on any node the route names, assets included: those hold the reserved
+    params the consent gate checks, and this would strip them.
     """
     return {
         key: value
@@ -182,6 +188,16 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # smuggle a server-owned flag (e.g. voice_consent) in on a
                 # freshly added node, nor a null that no later edit can clear.
                 op.node.params = stored_params(op.node.params)
+                # `pinned`/`frozen_hash` are server-owned for the same reason
+                # and on the same node: the `pin` op computes the hash itself
+                # from the live graph, and `from_template` zeroes both. A
+                # client-supplied pair freezes the new node onto an artifact
+                # the CALLER chose -- `_frozen_pins` honours any frozen_hash
+                # that is in the project's cache, so every downstream node
+                # then hashes and resolves its input against that artifact
+                # rather than against what the graph would produce.
+                op.node.pinned = False
+                op.node.frozen_hash = None
                 graph.add_node(op.node)
             case "remove_node":
                 # The script node is the one removal with no way back, and it

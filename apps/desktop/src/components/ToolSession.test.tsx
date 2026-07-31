@@ -132,3 +132,38 @@ describe("ToolSession provenance", () => {
     expect(screen.queryByText("some-stale-model")).toBeNull();
   });
 });
+
+/**
+ * A session whose kind this build has no copy for.
+ *
+ * The palette resolves an unknown `tool:` mode to null so it can list and
+ * OPEN the session rather than crash — which lands the user here, on the
+ * screen that indexed the same catalog with the same raw wire value and
+ * threw. `m()` hands out the catalog unguarded, so the miss surfaces as
+ * `undefined.label` at render, from a component with no error handling of
+ * its own: the ErrorBoundary takes the whole app, which is exactly the
+ * outcome the palette fix set out to prevent.
+ *
+ * A newer engine driving an older desktop is a documented topology (laptop
+ * and GPU box on separate update schedules).
+ */
+describe("a tool session whose kind this build does not know", () => {
+  it("renders instead of taking the app to the ErrorBoundary", () => {
+    useApp.setState({
+      currentProject: { id: "p1", title: "an interview", mode: "tool:podcast" } as Project,
+      board: {
+        scenes: [],
+        aux: { podcast: { ...toolNode(), node_id: "podcast", status: "rendering" } },
+      } as Board,
+      client: null,
+      jobs: [],
+      allJobs: [],
+      actionError: null,
+    } as never);
+
+    expect(() => render(<ToolSession />)).not.toThrow();
+    // The engine's own word for the kind stands in for copy this build does
+    // not have — a name, not a blank and not a crash.
+    expect(screen.getByText(/podcast/i)).toBeInTheDocument();
+  });
+});

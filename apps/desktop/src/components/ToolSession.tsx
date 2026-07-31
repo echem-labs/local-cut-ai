@@ -6,6 +6,7 @@ import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
+import { toolLabel } from "../lib/tools";
 import { StatusRing } from "./StatusRing";
 import { PromotedTo } from "./Provenance";
 
@@ -186,10 +187,11 @@ export function ToolSession() {
   const shown = progressNode ?? node;
   // Route the stage through the catalog (the raw "keyframe"/tool id was
   // untranslatable and disagreed with QueueTray's nodeLabel).
-  const stageLabel =
-    shown === upstream
-      ? m().terms.kinds.keyframe
-      : (m().tools as Record<string, { label: string }>)[tool].label;
+  // `toolLabel`, not an unchecked cast: `tool` is the raw wire value out of
+  // `project.mode`, and indexing the catalog with a kind this build has no
+  // copy for THREW — from the screen the palette will happily open, since it
+  // lists a session whose kind it does not know rather than hiding it.
+  const stageLabel = shown === upstream ? m().terms.kinds.keyframe : toolLabel(tool);
   return (
     <div className="tool-session">
       <div className="tool-status">
