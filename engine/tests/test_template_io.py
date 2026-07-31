@@ -116,6 +116,29 @@ def test_server_owned_params_travel_in_neither_direction():
     assert "voice_consent" not in from_template(forged).nodes["s1.clip"].params
 
 
+def test_a_null_param_travels_in_neither_direction():
+    """A template is the other document node params arrive from outside on,
+    so it re-establishes the same rule the patch route does: a node never
+    holds a null.
+
+    An imported null is a value every reader acts on and no later edit can
+    clear — `set_params` removes only what THAT op cleared. The one with
+    teeth is `captions`, read as `params.get("captions", "burn")`: a template
+    carrying `{"captions": null}` builds a project that silently exports
+    without the captions it was asked for.
+    """
+    graph = _graph()
+    graph.nodes["s1.clip"].params["fps"] = None
+
+    assert "fps" not in to_template(graph, name="Null").nodes["s1.clip"].params
+
+    incoming = _document()
+    incoming["nodes"]["s1.clip"]["params"]["captions"] = None
+    params = from_template(incoming).nodes["s1.clip"].params
+    assert "captions" not in params
+    assert params.get("captions", "burn") == "burn"  # ffmpeg.py's own expression
+
+
 def test_the_cloud_models_a_template_would_spend_on_are_listed():
     """A template built around a cloud model is legitimate, but rendering it
     spends the importer's money on the author's choice of provider. That has
