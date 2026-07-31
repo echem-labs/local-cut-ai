@@ -500,3 +500,46 @@ def test_clearing_one_param_leaves_the_others_alone():
     apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
     assert graph.nodes["clip"].params["resolution"] == 720
     assert "fps" not in graph.nodes["clip"].params
+
+
+def test_no_op_can_store_a_null_on_a_node():
+    """The rule above is about the params a node MAY HOLD, not about one op.
+
+    `set_params` was the only route that enforced it, and it is not the only
+    route params arrive on. A null that lands by any other door is a value
+    every reader then acts on: `params.get("captions", "burn")` returns None,
+    so an export silently stops burning the captions it was asked for, and
+    nothing can clear the key again — `set_params` drops only what THIS op
+    cleared, by design.
+    """
+    reference = StoryGraph()
+    reference.add_node(Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}))
+    apply_patch(reference, [PatchOp(op="set_params", node_id="export", params={"captions": None})])
+    unset = reference.output_hash("export")
+
+    added = StoryGraph()
+    apply_patch(
+        added,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="export",
+                node=Node(id="export", kind=NodeKind.EXPORT, params={"captions": None}),
+            )
+        ],
+    )
+    assert added.nodes["export"].params == {}
+    assert added.output_hash("export") == unset
+    # The read that misfires, spelled out: this is ffmpeg.py's own expression.
+    assert added.nodes["export"].params.get("captions", "burn") == "burn"
+
+    # select_take restores a recorded identity wholesale, so a take recorded
+    # from a graph that predates this rule must not put the null back.
+    selected = StoryGraph()
+    selected.add_node(Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}))
+    apply_patch(
+        selected,
+        [PatchOp(op="select_take", node_id="export", params={"captions": None}, seed=0)],
+    )
+    assert selected.nodes["export"].params == {}
+    assert selected.output_hash("export") == unset

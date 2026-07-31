@@ -41,7 +41,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .. import __version__, jsondoc
 from ..aspects import EXPORT_RESOLUTIONS
 from .model import GRAPH_VERSION, VOICE_REF_PORT, Edge, Node, NodeKind, StoryGraph
-from .patch import RESERVED_PARAMS, TRANSIENT_PARAMS
+from .patch import TRANSIENT_PARAMS, stored_params
 
 # The template wire format. Same contract as GRAPH_VERSION: a document from a
 # newer engine is refused rather than silently reduced by pydantic's
@@ -104,11 +104,7 @@ def _portable_node(node: Node) -> Node:
     return Node(
         id=node.id,
         kind=node.kind,
-        params={
-            k: v
-            for k, v in node.params.items()
-            if k not in RESERVED_PARAMS and k not in TRANSIENT_PARAMS
-        },
+        params=stored_params(node.params, drop=TRANSIENT_PARAMS),
         seed=node.seed,
         model=node.model,
         # Pins freeze one artifact; there is no artifact in a template.
@@ -332,15 +328,14 @@ def from_template(document: Any) -> GraphTemplate:
     # Reserved params are stripped rather than rejected: unlike the checks
     # above, their presence is not evidence of a broken template — it is
     # exactly what a forged one looks like, and dropping them is what the
-    # patch path does with the same keys. Transient params ride along for a
-    # different reason: a hand-written template carrying someone else's
-    # feedback would replay it on the importer's first render.
+    # patch path does with the same keys. Nulls go with them, for the reason
+    # stored_params gives: a template is the other route params arrive from
+    # outside, and a null it plants is a value no later edit can clear.
+    # Transient params ride along for a different reason: a hand-written
+    # template carrying someone else's feedback would replay it on the
+    # importer's first render.
     for node in template.nodes.values():
-        node.params = {
-            k: v
-            for k, v in node.params.items()
-            if k not in RESERVED_PARAMS and k not in TRANSIENT_PARAMS
-        }
+        node.params = stored_params(node.params, drop=TRANSIENT_PARAMS)
         node.pinned = False
         node.frozen_hash = None
 
