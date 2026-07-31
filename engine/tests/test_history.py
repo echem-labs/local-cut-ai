@@ -266,6 +266,32 @@ def test_a_refused_cloud_spend_leaves_the_project_exactly_as_it_was(tmp_path):
     assert service.store.load_history(project_id).model_dump(mode="json") == before_history
 
 
+def test_refusing_earlier_does_not_refuse_more(tmp_path):
+    """Moving the gate in front of the write must change WHEN a patch is
+    refused, never WHICH patches are refused.
+
+    An op that dirties nothing — pinning — plans no jobs, so it never reached
+    the check at the queue: `_enqueue_dirty` runs only `if dirty`. Hoisting
+    the check without that guard denies an agent an edit that cannot bill
+    anyone, on the sole ground that some unrelated node in the project sits
+    on a cloud model the user chose themselves.
+    """
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED
+
+    service, project_id = _service(tmp_path)
+    # The user, in the app, puts a clip on a cloud model. Entirely permitted.
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        # A different node, an op with no render behind it.
+        assert service.patch(project_id, [PatchOp(op="pin", node_id="s1.keyframe")]) == set()
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    assert service.store.load_graph(project_id).nodes["s1.keyframe"].pinned
+
+
 def test_a_refused_undo_does_not_spend_the_history_step(tmp_path):
     """Undo restores a whole snapshot, which is how the rule was broken the
     third time: the model comes back without the caller naming one. Refusing
