@@ -41,6 +41,32 @@ TRANSIENT_PARAMS = frozenset({"feedback", "base_screenplay"})
 SCRIPT_NODE_ID = "script"
 
 
+def stored_params(params: dict[str, Any], *, drop: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Params as a node may hold them: no server-owned keys, and no nulls.
+
+    A stored null is not an absent key. Every reader treats it as a value,
+    and each one fails differently: `params.get("captions", "burn")` returns
+    None, so the export stops burning captions it was asked for;
+    `str(params.get("prompt", ""))` returns the string "None", so a keyframe
+    renders that word and `unready_nodes` reads the node as written;
+    `int(params.get("target_duration_s", 60))` raises. It also hashes
+    differently from the same node without the key, so the artifact already
+    rendered for that state can never be a cache hit again.
+
+    `set_params` states the rule in its own terms because a merge has to
+    REMOVE the key a null clears rather than filter it. Every route that
+    replaces a node's params wholesale comes through here — the `add_node`
+    and `select_take` ops, and template import and export, which is the
+    same list as RESERVED_PARAMS above and for the same reason: params
+    arriving from outside are covered on every path at once, or on one.
+    """
+    return {
+        key: value
+        for key, value in params.items()
+        if key not in RESERVED_PARAMS and key not in drop and value is not None
+    }
+
+
 class PatchOp(BaseModel):
     op: Literal[
         "set_params",
@@ -152,12 +178,10 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
             case "add_node":
                 if op.node is None:
                     raise ValueError("add_node requires a node")
-                # Same reserved-param discipline as set_params: a client must
-                # not be able to smuggle a server-owned flag (e.g.
-                # voice_consent) in on a freshly added node either.
-                op.node.params = {
-                    k: v for k, v in op.node.params.items() if k not in RESERVED_PARAMS
-                }
+                # Same discipline as set_params: a client must not be able to
+                # smuggle a server-owned flag (e.g. voice_consent) in on a
+                # freshly added node, nor a null that no later edit can clear.
+                op.node.params = stored_params(op.node.params)
                 graph.add_node(op.node)
             case "remove_node":
                 # The script node is the one removal with no way back, and it
@@ -221,7 +245,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # take is landing on EXACTLY the recorded identity, so its
                 # output hash resolves to the artifact already on disk. A
                 # merge would keep params added since and miss the cache.
-                node.params = {k: v for k, v in op.params.items() if k not in RESERVED_PARAMS}
+                node.params = stored_params(op.params)
                 node.seed = op.seed if op.seed is not None else 0
                 node.model = op.model
             case "add_scene":
