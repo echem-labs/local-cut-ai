@@ -240,3 +240,64 @@ def test_export_encode_choices_match_the_engine():
 
     assert _list("EXPORT_FPS_CHOICES") == EXPORT_FPS_CHOICES
     assert _list("EXPORT_SHORT_SIDE_CHOICES") == EXPORT_SHORT_SIDE_CHOICES
+
+
+def test_every_spelling_of_the_cli_name_agrees():
+    """The one command wears the same name in six files, and a mismatch is
+    silent until it is expensive.
+
+    `[project.scripts]` names what `uv run` and a PATH install answer to.
+    The PyInstaller spec names the frozen binary AND the directory it lands
+    in, which electron-builder copies by path, which the shell then spawns by
+    name, which the package guard checks before shipping, which CI smoke-tests
+    after freezing. Rename one and the desktop looks for a file nobody
+    produces -- and the app opens permanently disconnected, which reads as a
+    broken app rather than a broken build (see check-engine.mjs, which exists
+    because that shipped once).
+
+    Nothing else covers this: the console script is never exercised by the
+    suite (the CLI tests call `cli.main` directly), and the packaging
+    workflow is dispatch-triggered, so neither CI job would notice.
+    """
+    import tomllib
+
+    root = _FORMATS.resolve().parents[4]
+    pyproject = tomllib.loads((root / "engine" / "pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+    assert len(scripts) == 1, f"expected one console script, found {sorted(scripts)}"
+    name = next(iter(scripts))
+
+    # What argparse calls itself in --help. Hardcoded rather than taken from
+    # argv[0] on purpose: the frozen binary must introduce itself the same way
+    # the dev-mode script does, whatever the file on disk is called.
+    cli_src = (root / "engine" / "src" / "localcut_engine" / "cli.py").read_text(encoding="utf-8")
+    assert f'prog="{name}"' in cli_src, f"cli.py's argparse prog is not {name!r}"
+
+    # file -> the spellings that file must contain
+    mirrors = {
+        root / "engine" / f"{name}.spec": [f'name="{name}"'],
+        root / "apps" / "desktop" / "electron" / "engine.ts": [
+            f'"{name}.exe"',  # packaged, Windows
+            f'"run", "{name}"',  # dev checkout, via uv
+        ],
+        root / "apps" / "desktop" / "scripts" / "check-engine.mjs": [
+            f'exe: "{name}.exe"',
+            f'exe: "{name}"',
+            f'"dist", "{name}"',
+        ],
+        root / "apps" / "desktop" / "electron-builder.yml": [f"engine/dist/{name}\n"],
+        root / ".github" / "workflows" / "package.yml": [f"dist/{name}/{name}"],
+    }
+    for path, needles in mirrors.items():
+        assert path.exists(), f"{path.name} is gone -- update this test with it"
+        text = path.read_text(encoding="utf-8")
+        for needle in needles:
+            assert needle in text, (
+                f"{path.name} does not spell the CLI name as {name!r}: {needle!r}"
+            )
+
+    # The spec names the binary twice (EXE and COLLECT) and PyInstaller writes
+    # dist/<COLLECT name>/<EXE name> -- one of the two renamed alone is the
+    # mismatch every path above is derived from.
+    spec = (root / "engine" / f"{name}.spec").read_text(encoding="utf-8")
+    assert spec.count(f'name="{name}"') == 2, "the spec's EXE and COLLECT names have diverged"
