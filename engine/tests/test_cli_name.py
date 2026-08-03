@@ -43,6 +43,11 @@ check-engine.mjs, electron-builder.yml, Settings.tsx and package.yml — and a
 filter that omits one lets the drift this guards against merge without
 running. Both filters list all five; keep the count here honest with them,
 since this paragraph is what anyone adding a sixth file reads first.
+
+`test_ui_contract.py` reads desktop files for the same reason and is gated
+the same way (`lib/tools.ts` and friends, its own `ui-contract` hook), so
+ci-engine.yml's filter is the union of the two lists rather than just these
+five -- an entry there that is not named above belongs to that test.
 """
 
 from __future__ import annotations

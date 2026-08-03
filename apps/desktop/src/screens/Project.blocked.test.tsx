@@ -128,6 +128,33 @@ describe("a project with a scene nobody has written", () => {
     expect(storyboard?.className).toContain("work");
   });
 
+  it("does not pulse a stage whose node failed for good", () => {
+    // The `work` arm is the fallback, so it also swallowed the two statuses
+    // that are neither settled nor running: a failed keyframe and a
+    // cancelled one both read as "in progress", with `.pipeline .st.work i`
+    // animating forever and the `!` glyph the stage defines unreachable.
+    // Same lie as the green tick, and the same lie the `off` arm removed for
+    // `blocked` -- `stageOf` has said `fail`/`off` for these all along.
+    mount({
+      ...boardWithABlankScene,
+      scenes: [
+        boardWithABlankScene.scenes[0],
+        { ...boardWithABlankScene.scenes[1], keyframe: node("s2.keyframe", "failed") },
+      ],
+      aux: { ...boardWithABlankScene.aux, voiceover: node("voiceover", "cancelled") },
+    });
+
+    const pipeline = screen.getByRole("status", { name: /progress/i });
+    const stage = (label: RegExp) =>
+      Array.from(pipeline.children).find((el) => label.test(el.textContent ?? ""));
+
+    expect(stage(/storyboard/i)?.className).toContain("fail");
+    expect(stage(/storyboard/i)?.className).not.toContain("work");
+    // Nothing is coming from a cancelled job either, and nothing was made.
+    expect(stage(/audio/i)?.className).toContain("off");
+    expect(stage(/audio/i)?.className).not.toContain("work");
+  });
+
   it("does not offer to create the final video", () => {
     mount(boardWithABlankScene);
     expect(screen.queryByRole("button", { name: /create final video/i })).toBeNull();

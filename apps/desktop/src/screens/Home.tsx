@@ -1,15 +1,11 @@
 import {
-  Aperture,
   ArrowDownToLine,
   Clapperboard,
   FileText,
   Film,
-  Image as ImageIcon,
   Info,
   Loader2,
-  Mic,
   MoreHorizontal,
-  Music,
   Search,
   Sparkles,
   X,
@@ -27,7 +23,7 @@ import { ASPECTS } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { shortcutLabel } from "../lib/platform";
 import { relativeTime, shortDuration } from "../lib/time";
-import { TOOL_KINDS, isToolSession, toolKindOf } from "../lib/tools";
+import { TOOL_ICONS, TOOL_KINDS, isToolSession, toolKindOf } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { useApp } from "../store";
 
@@ -36,18 +32,10 @@ const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
 const ICON_FEATURE = { size: 17, strokeWidth: 1.8 } as const;
 const ICON_ILLUSTRATIVE = { size: 22, strokeWidth: 1.5 } as const;
 
-/* stable ids + icons only — display copy resolves from the catalog. The
-   kinds come from lib/tools so the palette and this screen cannot disagree
-   about which ones this build knows; a kind added there without an icon
-   here is a compile error. */
-const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
-  script: FileText,
-  thumbnail: ImageIcon,
-  voiceover: Mic,
-  image: Aperture,
-  music: Music,
-  clip: Film,
-};
+/* stable ids + icons only — display copy resolves from the catalog. Both
+   come from lib/tools so this screen and the palette cannot disagree about
+   which tools this build has; a kind added to the wire type without an icon
+   is a compile error there. */
 const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = TOOL_KINDS.map((kind) => ({
   kind,
   icon: TOOL_ICONS[kind],

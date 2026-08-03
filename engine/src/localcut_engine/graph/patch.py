@@ -41,6 +41,19 @@ TRANSIENT_PARAMS = frozenset({"feedback", "base_screenplay"})
 SCRIPT_NODE_ID = "script"
 
 
+def without_nulls(params: dict[str, Any]) -> dict[str, Any]:
+    """Params with every stored null dropped — see `stored_params` for why.
+
+    Separate from `stored_params` for the one route that must apply the null
+    rule WITHOUT the reserved-param strip: `_restorable_graph` re-validates a
+    whole snapshot, and `check_restorable` then reads `voice_consent` off the
+    asset node feeding a voice_ref port. Stripping it there would fail every
+    legitimate restore of a voice-cloned project. One definition of the null
+    rule either way, so the two cannot drift.
+    """
+    return {key: value for key, value in params.items() if value is not None}
+
+
 def stored_params(params: dict[str, Any], *, drop: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Params as a node may hold them: no server-owned keys, and no nulls.
 
@@ -62,15 +75,18 @@ def stored_params(params: dict[str, Any], *, drop: frozenset[str] = frozenset())
     above is shared: params arriving from outside are covered on every path
     at once, or on one.
 
-    The one deliberate exception is `regenerate`'s own filter, which runs
-    on any node the route names, assets included: those hold the reserved
-    params the consent gate checks, and this would strip them.
+    Two routes apply half the rule, both deliberately: `regenerate`'s own
+    filter runs on any node the route names, assets included, and those hold
+    the reserved params the consent gate checks; and `_restorable_graph`
+    takes `without_nulls` above for the same reason.
     """
-    return {
-        key: value
-        for key, value in params.items()
-        if key not in RESERVED_PARAMS and key not in drop and value is not None
-    }
+    return without_nulls(
+        {
+            key: value
+            for key, value in params.items()
+            if key not in RESERVED_PARAMS and key not in drop
+        }
+    )
 
 
 class PatchOp(BaseModel):

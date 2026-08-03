@@ -29,6 +29,9 @@ const enginePort = (): string => process.env.LOCALCUT_ENGINE_PORT ?? DEFAULT_ENG
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
 
+/** How much unterminated output is buffered before it is logged anyway. */
+const MAX_PENDING_LINE = 8192;
+
 /**
  * Mirror a child stream into the app log, a line at a time, with the engine's
  * bearer token taken out of it.
@@ -73,6 +76,18 @@ const mirrorEngineOutput = (
     const lines = (pending + decoder.write(chunk)).split("\n");
     pending = lines.pop() ?? "";
     for (const line of lines) emit(line);
+    // A writer that never sends a newline must not be able to withhold the
+    // log for the process's whole lifetime, nor grow this buffer without
+    // limit in the main process. Progress bars are the ordinary case: tqdm
+    // and friends separate updates with \r, so waiting for \n means the one
+    // thing someone opens the log to watch is the one thing it never shows.
+    // Flushing at a bound keeps the redaction intact — the token is 32
+    // characters and this is measured in kilobytes, so it can never straddle
+    // a forced flush.
+    if (pending.length > MAX_PENDING_LINE) {
+      emit(pending);
+      pending = "";
+    }
   });
   // A last line with no trailing newline would otherwise sit in the buffer
   // and be lost — including the exit-time message that says why. On `close`
@@ -85,10 +100,12 @@ const mirrorEngineOutput = (
   });
   // An 'error' on a stream with no listener is re-thrown, which here would
   // take down the main process over a broken pipe from an engine that is
-  // already going away.
-  stream.on("error", () => {
-    pending = "";
-  });
+  // already going away. It must not touch `pending`: Node destroys the
+  // stream on error, so 'close' fires immediately afterwards and is where
+  // the last unterminated line is flushed — clearing the buffer here threw
+  // away exactly the message the comment above says is most worth having,
+  // in exactly the destroyed-pipe case it was written for.
+  stream.on("error", () => {});
 };
 
 export class EngineManager {
