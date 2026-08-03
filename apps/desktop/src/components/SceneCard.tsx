@@ -127,6 +127,15 @@ export function SceneCard({
       tabIndex={0}
       aria-label={t("scene.cardAria", { n: sceneNo, status: t(`status.${clip.status}`) })}
       onKeyDown={(event) => {
+        // The card's OWN keys, not its children's. React events bubble, so
+        // without this every focusable control inside the card carries the
+        // board's destructive shortcuts: `r` on the focused scene-name button
+        // spends a render and discards the current take, `p` pins, and Enter
+        // fires that button's onClick AND this branch, selecting twice for one
+        // keystroke. The narration textarea already stops propagation for the
+        // same reason; a guard here covers the next control too, rather than
+        // making every one of them remember.
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter") select(primary.node_id);
         if (event.key.toLowerCase() === "r" && !clip.pinned) void regenerate(clip.node_id);
         if (event.key.toLowerCase() === "p") void togglePin(clip.node_id, !clip.pinned);
