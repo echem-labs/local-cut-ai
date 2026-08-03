@@ -111,6 +111,112 @@ const refSize = (name) => {
   return { width: png.width, height: png.height };
 };
 
+const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
+const MASK_PAD = 6; // render-mock.cjs grew every mask by this much
+
+/**
+ * What each masked region of the reference is, in the app. A mask covers
+ * pixels no truthful app state can reproduce — but a covered region is an
+ * ungated one, and the fit filter shipped stretched across the whole card
+ * inside exactly such a hole. So the BOXES are compared where the pixels
+ * cannot be — how strictly depends on how much of the box the design owns
+ * rather than the content, which the tiers below spell out.
+ */
+const MASKED_AS = {
+  "wiz-1": [".wiz-body > svg"],
+  "wiz-2": [],
+  "wiz-3": [
+    ".pipe-row .meta",
+    ".pipe-row input[type=checkbox]",
+    ".setup-actions .btn-primary",
+    ".hintline",
+  ],
+  "wiz-3lib": [
+    ".model-row .meta",
+    ".model-row input[type=checkbox]",
+    ".model-row .badge",
+    ".filter-tabs",
+    ".setup-actions .btn-primary",
+    ".hintline",
+  ],
+  "wiz-4": [".srow .st", ".overall", ".wiz-body > .sub"],
+};
+/* How closely each kind of masked box has to sit on its reference:
+   - rigid: the element's size is the design's, not the content's - hold it
+     to the box exactly (this is what the stretched fit filter tripped on);
+   - loose: a badge cluster is right-aligned and its labels are data, so
+     only the row rhythm (top, height) is the design's, and the app may
+     carry badges the mock's fixture never posed;
+   - everything else: text that starts (or ends) where the design says and
+     is as long as its content needs. */
+const RIGID = /svg|checkbox|filter-tabs/;
+const LOOSE = /badge/;
+const TOL = 2;
+
+/* The two masks with nothing under them by design: the mock poses ltx and
+   ace as installed AND still downloading, and the fixture had to pick one
+   (recorded deviation), so the "installed" badge it draws on those rows
+   has no counterpart. Listed by position, so a THIRD hole still fails. */
+const UNPOSED = {
+  "wiz-3lib": [
+    { x: 734, y: 609 },
+    { x: 734, y: 941 },
+  ],
+};
+
+const checkMaskGeometry = (name, boxes) => {
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
+    x: mask.x + MASK_PAD,
+    y: mask.y + MASK_PAD,
+    width: mask.width - MASK_PAD * 2,
+    height: mask.height - MASK_PAD * 2,
+    taken: false,
+  }));
+  const problems = [];
+  if (process.env.RIG_DUMP_MASKS) {
+    console.log(`--- ${name} app:`, JSON.stringify(boxes));
+    console.log(`--- ${name} ref:`, JSON.stringify(want.map(({ taken, ...r }) => r)));
+  }
+  // Strict boxes claim their reference first; a loose one must not take a
+  // box that a positioned element needs.
+  for (const box of [...boxes].sort((a, b) => Number(LOOSE.test(a.sel)) - Number(LOOSE.test(b.sel)))) {
+    const loose = LOOSE.test(box.sel);
+    const hit = want.find(
+      (ref) =>
+        !ref.taken &&
+        Math.abs(ref.y - box.y) <= TOL &&
+        Math.abs(ref.height - box.height) <= TOL &&
+        (loose ||
+          Math.abs(ref.x - box.x) <= TOL ||
+          Math.abs(ref.x + ref.width - box.x - box.width) <= TOL),
+    );
+    if (!hit) {
+      if (!loose) {
+        problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
+      }
+      continue;
+    }
+    hit.taken = true;
+    if (RIGID.test(box.sel) && Math.abs(hit.width - box.width) > TOL) {
+      problems.push(`${box.sel} is ${box.width}px wide, reference ${hit.width}px`);
+    }
+  }
+  const unposed = UNPOSED[name] ?? [];
+  const orphans = want.filter(
+    (ref) =>
+      !ref.taken &&
+      !unposed.some((hole) => Math.abs(hole.x - ref.x) <= TOL && Math.abs(hole.y - ref.y) <= TOL),
+  );
+  if (orphans.length > 0) {
+    problems.push(`${orphans.length} masked region(s) with nothing under them: ${JSON.stringify(orphans.slice(0, 2))}`);
+  }
+  check(
+    `${name}: masked regions keep the reference geometry`,
+    problems.length === 0,
+    problems.slice(0, 4).join(" | "),
+  );
+};
+
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-engine-"));
 const rig = await startRig({
@@ -204,6 +310,25 @@ try {
     PNG.bitblt(page_, out, clip.x, clip.y, Math.min(width, page_.width - clip.x), Math.min(height, page_.height - clip.y), 0, 0);
     writeFileSync(path.join(dir, `${name}.png`), PNG.sync.write(out));
     rmSync(full);
+
+    // Measured in the captured state, in the reference's own coordinates.
+    const boxes = await evalInApp(`
+      return page.evaluate(([selectors, ox, oy]) =>
+        selectors.flatMap((sel) =>
+          [...document.querySelectorAll(sel)].map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              sel,
+              x: Math.round(r.left + window.scrollX) - ox,
+              y: Math.round(r.top + window.scrollY) - oy,
+              width: Math.round(r.width),
+              height: Math.round(r.height),
+            };
+          }),
+        ),
+      [${JSON.stringify(MASKED_AS[name] ?? [])}, ${clip.x}, ${clip.y}]);
+    `);
+    checkMaskGeometry(name, boxes);
   };
 
   const click = (label) =>
