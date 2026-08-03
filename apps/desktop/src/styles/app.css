@@ -2965,6 +2965,15 @@ button.link:hover {
   flex-shrink: 0;
 }
 
+/* Every other seg-toggle sits in a flex row, where an item hugs its content
+   for free. FilterTabs is the first one laid out as a block child (the
+   wizard's library, the Library screen in U2) and a block-level flex box
+   fills its parent — which drew this control's border clear across the card
+   with the two labels stranded at the left. */
+.filter-tabs {
+  width: fit-content;
+}
+
 /* ---- status ring ---- */
 .status-ring {
   width: 14px;

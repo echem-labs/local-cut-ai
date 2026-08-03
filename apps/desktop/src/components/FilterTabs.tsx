@@ -20,7 +20,7 @@ export function FilterTabs<V extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="seg-toggle" role="group" aria-label={ariaLabel}>
+    <div className="seg-toggle filter-tabs" role="group" aria-label={ariaLabel}>
       {options.map((option) => (
         <button
           key={option.value}
