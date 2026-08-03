@@ -34,6 +34,24 @@ export function displayModelName(family: string, version = ""): string {
   return `${pretty}${version ? ` ${version}` : ""}`;
 }
 
+/** External text.llm picks run in Ollama; other externals (TTS, captions)
+ * are companion processes beside the engine. Same wire fact (files: []),
+ * different words — the engine doesn't say which runtime, so the task id
+ * decides, and the wizard's rail reads the same fact the same way. */
+export const OLLAMA_TASK = "text.llm";
+const COMPANION_TASKS = new Set(["speech.tts", "transcribe"]);
+
+/** What an external row says instead of a download size. The badge beside
+ * it already says "external"; this says what that MEANS — but only for
+ * the tasks this build actually ships a runtime for. Anything else
+ * external is a model the app cannot name a runtime for, and the bare
+ * word is the honest answer (the wizard mock's flux row says exactly
+ * that). */
+export function externalNote(task: string): string {
+  if (task === OLLAMA_TASK) return t("models.ollamaMeta");
+  return COMPANION_TASKS.has(task) ? t("models.externalMeta") : t("models.external");
+}
+
 const VERDICTS: Record<
   ModelLicense["verdict"],
   { glyph: string; labelKey: "commercial" | "conditions" | "personalOnly"; cls: string }
@@ -312,10 +330,12 @@ export function ModelLibrary({
                   </div>
                   <div className="meta">
                     <span className="mono-id">{row.id}</span>
+                    {/* the badge beside this row already says "external" —
+                        the meta says what that MEANS, as the rail does */}
                     {" · " +
                       [
                         row.quant,
-                        external ? t("models.external") : formatSize(row.size_bytes),
+                        external ? externalNote(row.task) : formatSize(row.size_bytes),
                         t("models.needsVram", { vram: row.requirements.vram_gb }),
                       ]
                         .filter(Boolean)
