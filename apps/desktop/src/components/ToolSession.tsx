@@ -4,7 +4,7 @@ import { m, t } from "../i18n";
 import { useApp } from "../store";
 import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
-import { isSettled } from "../lib/status";
+import { isDone, isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
 import { toolLabel } from "../lib/tools";
 import { StatusRing } from "./StatusRing";
@@ -125,7 +125,12 @@ export function ToolSession() {
   // all — so the display falls through to the tool node rather than pinning
   // itself to a stage that will never progress.
   const progressNode = upstream && !isSettled(upstream.status) ? upstream : node;
-  const done = node ? isSettled(node.status) : false;
+  // `isDone`, not `isSettled`: this is a completion report, not a gate — it
+  // suppresses the "generating" line AND gates the output panel, so a
+  // `blocked` node (settled, but nothing was made and `artifact_hash` is
+  // null) renders neither, leaving the session blank with no explanation.
+  // See lib/status.ts for which question each helper answers.
+  const done = node ? isDone(node.status) : false;
   const artifactUrl =
     node?.artifact_hash && client && currentProject
       ? client.artifactUrl(currentProject.id, node.artifact_hash)

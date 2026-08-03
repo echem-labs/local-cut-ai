@@ -34,11 +34,37 @@ import { useApp } from "../store";
  * the same muted dash `cancelled` gets, and for the same reason. Nothing is
  * happening here and there is no result. Ticking it green claimed a project
  * was exported while an unwritten scene held the whole assembly back. */
-function stageOf(node: NodeState | null | undefined): "done" | "work" | "fail" | "off" {
+type Stage = "done" | "work" | "fail" | "off";
+
+function stageOf(node: NodeState | null | undefined): Stage {
   if (!node) return "off";
   if (isDone(node.status)) return "done";
   if (node.status === "rendering" || node.status === "queued") return "work";
   if (node.status === "failed") return "fail";
+  return "off";
+}
+
+/** The same ladder, for a stage backed by several nodes: a failure anywhere
+ * is the honest headline, then all-done, then anything genuinely in flight.
+ * Everything else is "off" — nothing is happening and there is no result.
+ *
+ * Folding `stageOf` rather than restating it, because the storyboard and
+ * audio stages restated it and got a different answer: both asked
+ * `!isSettled(status)` for "in flight", which is also true of `failed` and
+ * `cancelled`, so a keyframe that had failed for good pulsed the `work` dot
+ * (`.pipeline .st.work i` animates infinitely) and the `fail` glyph the
+ * stage defines was unreachable. That is the same lie about the same node
+ * the `off` arm was added to remove, animated.
+ *
+ * Takes states rather than nodes because the two stages mean different
+ * things by a missing one: an absent aux node means the project has no audio
+ * stage at all (contributes nothing), while a scene whose keyframe was
+ * removed is not an unfinished storyboard (contributes "done"). */
+function aggregateStage(states: readonly Stage[]): Stage {
+  if (states.length === 0) return "off";
+  if (states.includes("fail")) return "fail";
+  if (states.every((state) => state === "done")) return "done";
+  if (states.includes("work")) return "work";
   return "off";
 }
 
@@ -455,13 +481,13 @@ export function Project() {
   const clipsRendering = scenes.some(
     (scene) => scene.clip.status === "rendering" || scene.clip.status === "queued",
   );
-  const keyframesAllDone =
-    scenes.length > 0 && scenes.every((scene) => !scene.keyframe || isDone(scene.keyframe.status));
   // Nothing is coming and nothing was made: the stage is `off`, not `work`.
   // Falling through to `work` gave a blocked keyframe a pulsing accent dot
-  // that never stops, which is the same lie as the green tick, animated.
-  const keyframesAnyRunning = scenes.some(
-    (scene) => scene.keyframe && !isSettled(scene.keyframe.status),
+  // that never stops, which is the same lie as the green tick, animated —
+  // and `aggregateStage` is what keeps that answer the same one `stageOf`
+  // gives for `failed` and `cancelled` too.
+  const storyboardStage = aggregateStage(
+    scenes.map((scene) => (scene.keyframe ? stageOf(scene.keyframe) : "done")),
   );
   // The beginner checkpoint is a gate, not a report: it asks isSettled so it
   // opens on a keyframe that is never coming (see lib/status.ts). Splitting
@@ -470,24 +496,11 @@ export function Project() {
   const keyframesAllSettled =
     scenes.length > 0 &&
     scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
-  const audioNodes = [board.aux.voiceover, board.aux.music].filter(
-    (node): node is NodeState => Boolean(node),
+  const audioStage = aggregateStage(
+    [board.aux.voiceover, board.aux.music]
+      .filter((node): node is NodeState => Boolean(node))
+      .map(stageOf),
   );
-  // `work` is the fallback, so anything that is neither done nor failed has
-  // to be genuinely in flight to land there — otherwise a node that is
-  // settled-but-empty pulses "in progress" forever. `stageOf` states the
-  // rule for a single node; these two stages aggregate and so must apply it
-  // themselves.
-  const audioStage =
-    audioNodes.length === 0
-      ? ("off" as const)
-      : audioNodes.every((node) => isDone(node.status))
-        ? ("done" as const)
-        : audioNodes.some((node) => node.status === "failed")
-          ? ("fail" as const)
-          : audioNodes.some((node) => !isSettled(node.status))
-            ? ("work" as const)
-            : ("off" as const);
   const exportNode = board.aux.export;
   const stages: {
     // Stable id: matched on for logic AND resolves the displayed label via
@@ -500,17 +513,7 @@ export function Project() {
     hint?: string;
   }[] = [
     { id: "script", state: stageOf(script) },
-    {
-      id: "storyboard",
-      state:
-        scenes.length === 0
-          ? "off"
-          : keyframesAllDone
-            ? "done"
-            : keyframesAnyRunning
-              ? "work"
-              : "off",
-    },
+    { id: "storyboard", state: storyboardStage },
     {
       id: "videos",
       state:

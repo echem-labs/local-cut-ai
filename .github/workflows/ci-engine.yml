@@ -28,6 +28,7 @@ on:
       - "apps/desktop/electron-builder.yml"
       - "apps/desktop/electron/engine.ts"
       - "apps/desktop/scripts/check-engine.mjs"
+      - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
   pull_request:
     paths:
@@ -37,6 +38,7 @@ on:
       - "apps/desktop/electron-builder.yml"
       - "apps/desktop/electron/engine.ts"
       - "apps/desktop/scripts/check-engine.mjs"
+      - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.

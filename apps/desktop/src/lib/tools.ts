@@ -8,13 +8,15 @@
  * is a free string the engine chose; everything below exists to keep an
  * unrecognised one from reaching a catalog lookup.
  */
+import { Aperture, FileText, Film, Image as ImageIcon, Mic, Music } from "lucide-react";
+
 import type { Project, ToolKind } from "../api/types";
 import { m } from "../i18n";
 
 /** The kinds this build has copy and an icon for, in the order Home offers
- * them. Typed as ToolKind, so dropping one the catalog still defines is a
- * compile error at the icon map rather than a session that lists as
- * unknown. */
+ * them. `satisfies` only proves each entry IS a ToolKind — never that all of
+ * them are here — so the assertion below is what makes dropping one a
+ * compile error instead of a shipped tool that silently lists as unknown. */
 export const TOOL_KINDS = [
   "script",
   "thumbnail",
@@ -23,6 +25,25 @@ export const TOOL_KINDS = [
   "music",
   "clip",
 ] as const satisfies readonly ToolKind[];
+
+/** Fails to compile the moment a ToolKind exists that TOOL_KINDS omits. */
+const _everyKindIsListed: ToolKind extends (typeof TOOL_KINDS)[number] ? true : never = true;
+void _everyKindIsListed;
+
+/** Icons only — display copy resolves from the catalog. Here rather than on
+ * Home because the palette needs the same six: it kept its own copy and
+ * derived its "create a tool" list from that copy's keys, so the two screens
+ * could offer different tools while the contract test (which reads
+ * TOOL_KINDS) stayed green. Typed as a full Record, so a kind added to the
+ * wire type must get an icon. */
+export const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
+  script: FileText,
+  thumbnail: ImageIcon,
+  voiceover: Mic,
+  image: Aperture,
+  music: Music,
+  clip: Film,
+};
 
 const KNOWN_TOOLS = new Set<string>(TOOL_KINDS);
 
