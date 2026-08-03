@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelRow } from "../api/types";
 import { BrandMark } from "../components/BrandMark";
 import { FilterTabs } from "../components/FilterTabs";
-import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
+import {
+  displayModelName,
+  formatSize,
+  ModelLibrary,
+  OLLAMA_TASK,
+} from "../components/ModelLibrary";
 import { PipelineRail } from "../components/PipelineRail";
 import { SpecChips } from "../components/SpecChips";
 import { StageSummaryRow, type StageStatus } from "../components/StageSummaryRow";
@@ -24,11 +29,6 @@ import { useApp } from "../store";
  * promise is a once-only moment.
  */
 type Step = 1 | 2 | 3 | 4;
-
-/** External text.llm picks run in Ollama; other externals (TTS, whisper)
- * are companion processes. Same wire fact (files: []), different words —
- * the engine doesn't say which runtime, so the task id decides. */
-const OLLAMA_TASK = "text.llm";
 
 export function FirstRun() {
   const {
