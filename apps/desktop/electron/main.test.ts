@@ -162,6 +162,10 @@ async function loadMain(
 
   if (options.devUrl === undefined) delete process.env.VITE_DEV_SERVER_URL;
   else process.env.VITE_DEV_SERVER_URL = options.devUrl;
+  // A developer who exported this for `npm run rig:e2e` and then ran the
+  // tests in the same shell would otherwise send every store below at that
+  // profile instead of this test's tmp dir. The override has its own tests.
+  delete process.env.LOCALCUT_USERDATA;
   if (options.pairing) fs.writeFileSync(pairingFile, JSON.stringify(options.pairing));
   if (options.keys) {
     // Written as `encrypted: false` so the blobs are plain base64 and this
@@ -899,5 +903,57 @@ describe("the window", () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
     expect(electron.BrowserWindow.instances).toHaveLength(1);
     expect(electron.BrowserWindow.instances[0]!.loaded).toEqual([DEV_ORIGIN]);
+  });
+});
+
+/**
+ * The rig's fresh-profile override. It runs at MODULE scope — before the
+ * stores below it are constructed — so it cannot be exercised through
+ * loadMain, which sets the packaging state after the import.
+ *
+ * The reason it is a shipped guard rather than a test-only trick: a packaged
+ * build that relocated its profile on an environment variable would let
+ * anything that can set the environment point a user's app at a profile it
+ * controls.
+ */
+describe("the dev-only userData override", () => {
+  async function loadWith(packaged: boolean, override: string | undefined) {
+    vi.resetModules();
+    const electron = await import("./test/electron-stub");
+    electron.resetElectron();
+    electron.state.userData = dir;
+    electron.state.isPackaged = packaged;
+    // No single-instance lock: the whenReady body quits early, so importing
+    // main.ts here opens no window and starts no engine.
+    electron.state.singleInstanceLock = false;
+    if (override === undefined) delete process.env.LOCALCUT_USERDATA;
+    else process.env.LOCALCUT_USERDATA = override;
+    await import("./main");
+    return electron;
+  }
+
+  const fresh = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "localcut-override-"));
+
+  afterEach(() => {
+    delete process.env.LOCALCUT_USERDATA;
+  });
+
+  it("points userData at LOCALCUT_USERDATA in a dev run", async () => {
+    const profile = fresh();
+    const electron = await loadWith(false, profile);
+    expect(electron.app.getPath("userData")).toBe(profile);
+    fs.rmSync(profile, { recursive: true, force: true });
+  });
+
+  it("ignores it in a packaged build", async () => {
+    const profile = fresh();
+    const electron = await loadWith(true, profile);
+    expect(electron.app.getPath("userData")).toBe(dir);
+    fs.rmSync(profile, { recursive: true, force: true });
+  });
+
+  it("leaves the profile alone when the variable is unset", async () => {
+    const electron = await loadWith(false, undefined);
+    expect(electron.app.getPath("userData")).toBe(dir);
   });
 });

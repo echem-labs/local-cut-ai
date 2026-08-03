@@ -11,6 +11,7 @@
   "collapse": "Collapse",
   "expandSidebar": "Expand the sidebar",
   "collapseSidebar": "Collapse the sidebar",
+  "sidebarNarrow": "The sidebar stays compact until the window is wider",
   "lightMode": "Light mode",
   "darkMode": "Dark mode",
   "switchToLight": "Switch to light mode",
