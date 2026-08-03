@@ -34,11 +34,19 @@ describe("the exposed surface", () => {
       "getSystemTextScale",
       "inspectPairing",
       "pairEngine",
+      "seedHookEnabled",
       "setProviderKeys",
       "setTitleBarTheme",
       "setUiZoom",
       "unpairEngine",
     ]);
+  });
+
+  // seedHookEnabled gates window.__localcutSeed — arbitrary state
+  // injection. It must be data (no IPC, nothing callable) and false unless
+  // the rig's environment variable was present at preload time.
+  it("exposes seedHookEnabled as plain data, false without the env flag", () => {
+    expect(bridge.seedHookEnabled).toBe(false);
   });
 });
 

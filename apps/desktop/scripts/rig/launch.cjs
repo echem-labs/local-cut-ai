@@ -26,6 +26,7 @@
  *   RIG_TOKEN          required on every request (rig.mjs generates one)
  *   LOCALCUT_USERDATA  fresh-profile dir (dev-only override in main.ts)
  *   RIG_OZONE          value for --ozone-platform-hint (e.g. "x11")
+ *   RIG_SCALE          value for --force-device-scale-factor (parity: 1)
  *   LOCALCUT_*         passed through to the app/engine as usual
  */
 const fs = require("fs");
@@ -87,6 +88,10 @@ async function main() {
 
   const args = ["."];
   if (process.env.RIG_OZONE) args.push(`--ozone-platform-hint=${process.env.RIG_OZONE}`);
+  // Parity captures need screenshot pixels == CSS pixels: on a scaled
+  // display a Playwright shot comes back multiplied by the device scale,
+  // and the references are rendered at exactly 1x.
+  if (process.env.RIG_SCALE) args.push(`--force-device-scale-factor=${process.env.RIG_SCALE}`);
 
   const app = await _electron.launch({
     executablePath: path.join(DESKTOP, "node_modules", ".bin", "electron"),

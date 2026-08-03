@@ -36,15 +36,48 @@ try {
   const shoot = (name) =>
     evalInApp(`await page.screenshot({ path: ${JSON.stringify(path.join(dir, name))} }); return null;`);
 
-  // 1. Fresh profile boots into first-run.
+  // 1. Fresh profile boots into the wizard's welcome step (U1).
   const setup = await evalInApp(`
-    await page.waitForSelector('.setup', { timeout: 30000 });
-    return page.evaluate(() => !!document.querySelector(".setup"));
+    await page.waitForSelector('.setup.wizard', { timeout: 30000 });
+    return page.evaluate(() => ({
+      welcome: !!document.querySelector(".setup .wiz-body h1"),
+      stepper: document.querySelectorAll(".stepper .step-label").length,
+    }));
   `);
-  check("fresh profile shows first-run", setup === true);
+  check("fresh profile shows the wizard's welcome step", setup.welcome && setup.stepper === 4);
   await shoot("01-first-run.png");
 
-  // 2. Skip -> Home, prompt focused (review 4 FR1 bridge).
+  // 2. Walk forward and back: welcome -> machine -> models -> machine.
+  // Button lookup is by accessible order within .setup-actions; the
+  // PRIMARY is index 0 on every step, Skip is LAST (the wizard keeps the
+  // e2e's positional contract).
+  const walked = await evalInApp(`
+    const primary = async () => (await page.$$(".setup-actions button"))[0].click();
+    await primary(); // Get started -> machine
+    await page.waitForSelector(".setup-machine", { timeout: 5000 });
+    const machine = !!(await page.$(".spec-chips"));
+    await primary(); // Continue -> models (rail may need system+models)
+    const rail = await page
+      .waitForSelector(".pipe-rail", { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+    let back = false;
+    if (rail) {
+      const buttons = await page.$$(".setup-actions button");
+      await buttons[buttons.length - 1].click(); // Back -> machine
+      back = await page
+        .waitForSelector(".setup-machine", { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+    }
+    return { machine, rail, back };
+  `);
+  check("machine step shows the hardware chips", walked.machine);
+  check("models step shows the pipeline rail", walked.rail);
+  check("Back returns to the machine step", walked.back);
+  await shoot("02-wizard-machine.png");
+
+  // 3. Skip -> Home, prompt focused (review 4 FR1 bridge).
   const landed = await evalInApp(`
     const buttons = await page.$$(".setup-actions button");
     await buttons[buttons.length - 1].click();

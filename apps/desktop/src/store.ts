@@ -76,8 +76,23 @@ declare global {
       setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
       getSystemTextScale: () => Promise<number>;
       setUiZoom: (factor: number) => void;
+      /** Dev-only rig affordance; absent (undefined) in packaged builds. */
+      seedHookEnabled?: boolean;
     };
+    /** Installed by the store when the shell says the rig is driving —
+     * see installSeedHook below for what it may write and why. */
+    __localcutSeed?: (patch: SeedPatch) => void;
   }
+}
+
+/** What the rig may inject: a hardware fixture and a model-catalog
+ * fixture, plus `freeze` to stop live refreshes from overwriting them —
+ * that is what makes states like "downloading · 51%" hold still long
+ * enough to screenshot. */
+export interface SeedPatch {
+  system?: SystemInfo;
+  models?: ModelRow[];
+  freeze?: boolean;
 }
 
 /** A failed user action, tagged so the screen that started it can show
@@ -140,6 +155,10 @@ interface AppState {
   // model id → last download failure, cleared on retry/success.
   downloadErrors: Record<string, string>;
   firstRunDone: boolean;
+  // True when the wizard was reopened from Settings rather than being a
+  // genuine first launch — it then starts at the machine step: the welcome
+  // promise is a once-only moment, and this user has already seen the app.
+  firstRunReturning: boolean;
   settingsOpen: boolean;
   // Which Settings tab is showing — deep-linkable (engine chip → "engine",
   // the prompt bar's model button → "models").
@@ -378,6 +397,10 @@ const pendingPatches = new Map<string, PendingPatch>();
 // models whose download already ended so a stale row can't resurrect it.
 const wsProgress = new Map<string, { done: number; total: number }>();
 const terminalDownloads = new Set<string>();
+// True while the rig has injected fixture state (see installSeedHook):
+// live model refreshes and WS progress are dropped so the injected frame
+// holds still. Never true outside a rig-driven dev run.
+let seedFrozen = false;
 
 const messageOf = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);
@@ -391,6 +414,7 @@ const resetEngineScopedState = () => {
   pendingPatches.clear();
   wsProgress.clear();
   terminalDownloads.clear();
+  seedFrozen = false;
 };
 
 export const useApp = create<AppState>((set, get) => {
@@ -480,6 +504,7 @@ export const useApp = create<AppState>((set, get) => {
 
   // Download bars update in place from WS bytes — no HTTP refetch per tick.
   const applyDownloadProgress = (event: { model: string; done: number; total: number }) => {
+    if (seedFrozen) return;
     // A progress tick means the download is live (again).
     terminalDownloads.delete(event.model);
     wsProgress.set(event.model, { done: event.done, total: event.total });
@@ -892,6 +917,7 @@ export const useApp = create<AppState>((set, get) => {
     models: [],
     downloadErrors: {},
     firstRunDone: readFlag(FIRST_RUN_KEY),
+    firstRunReturning: false,
     settingsOpen: false,
     settingsTab: "general",
     editBusy: false,
@@ -1486,12 +1512,12 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshModels: async () => {
       const { client } = get();
-      if (!client) return;
+      if (!client || seedFrozen) return;
       const rows = await client.listModels();
       // Guard the write like refreshHome/refreshBoard do: a pair/unpair during
       // the round trip already blanked `models`, and landing the OLD engine's
       // catalog on the new one is exactly the bleed switchEngine prevents.
-      if (get().client !== client) return;
+      if (get().client !== client || seedFrozen) return;
       set({ models: reconcileModels(rows) });
     },
 
@@ -1566,12 +1592,13 @@ export const useApp = create<AppState>((set, get) => {
 
     finishFirstRun: () => {
       localStorage.setItem(FIRST_RUN_KEY, "1");
-      set({ firstRunDone: true });
+      set({ firstRunDone: true, firstRunReturning: false });
     },
 
     resetFirstRun: () => {
       localStorage.removeItem(FIRST_RUN_KEY);
-      set({ firstRunDone: false, settingsOpen: false });
+      // Returning, not first-running: the wizard opens on the machine step.
+      set({ firstRunDone: false, firstRunReturning: true, settingsOpen: false });
     },
 
     openSettings: (tab) =>
@@ -1761,3 +1788,24 @@ export const useApp = create<AppState>((set, get) => {
     },
   };
 });
+
+/**
+ * The rig's state-injection hook. Installed ONLY when the preload bridge
+ * says the shell was launched with LOCALCUT_SEED_HOOK (which main.ts
+ * strips in packaged builds) — so in production this function never
+ * exists, and there is no path to it from the UI.
+ *
+ * Why it exists: states like "downloading · 51%" cannot be posed through
+ * the real engine — bytes keep moving. The parity screenshots and the
+ * wizard's step-4 tests need exactly such frozen frames, so the rig
+ * writes a fixture and freezes refreshes (plan doc 11, rule 3).
+ */
+if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
+  window.__localcutSeed = (patch: SeedPatch) => {
+    if (patch.freeze !== undefined) seedFrozen = patch.freeze;
+    const next: Partial<AppState> = {};
+    if (patch.system !== undefined) next.system = patch.system;
+    if (patch.models !== undefined) next.models = patch.models;
+    if (Object.keys(next).length > 0) useApp.setState(next);
+  };
+}
