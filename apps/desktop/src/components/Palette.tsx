@@ -1,34 +1,20 @@
 import {
-  Aperture,
   Clapperboard,
   FileText,
-  Film,
-  Image as ImageIcon,
-  Mic,
-  Music,
   Settings as SettingsIcon,
   Sparkles,
   SunMoon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ToolKind } from "../api/types";
 import { m, t } from "../i18n";
 import { fuzzyScore } from "../lib/fuzzy";
 import { relativeTime } from "../lib/time";
+import { TOOL_ICONS, TOOL_KINDS, toolKindOf } from "../lib/tools";
 import { applyTheme, resolvedTheme } from "../theme";
 import { useApp } from "../store";
 
 /** Home's prompt box listens for this and takes focus. */
 export const FOCUS_PROMPT_EVENT = "localcut:focus-prompt";
-
-const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
-  script: FileText,
-  thumbnail: ImageIcon,
-  voiceover: Mic,
-  image: Aperture,
-  music: Music,
-  clip: Film,
-};
 
 const SETTINGS_TABS = [
   "general",
@@ -95,9 +81,15 @@ export function Palette() {
           job.project_id === project.id &&
           (job.status === "queued" || job.status === "rendering"),
       );
-      const toolKind = project.mode.startsWith("tool:")
-        ? (project.mode.slice(5) as ToolKind)
-        : null;
+      // `toolKindOf`, not a cast: `mode` is a free string from the engine, and
+      // `m().tools[kind].label` THROWS on a key the catalog does not have —
+      // which here takes the whole app down through the ErrorBoundary, from a
+      // palette that is open over every screen. A newer engine driving an
+      // older desktop is a documented topology, not a hypothetical, and a
+      // session it minted must still be findable and openable. From lib, not
+      // from the Home screen: a component importing a screen closed a
+      // Palette -> Home -> Palette module cycle.
+      const toolKind = toolKindOf(project);
       list.push({
         key: `p:${project.id}`,
         group: "projects",
@@ -122,7 +114,10 @@ export function Palette() {
         requestAnimationFrame(() => window.dispatchEvent(new CustomEvent(FOCUS_PROMPT_EVENT)));
       },
     });
-    for (const kind of Object.keys(TOOL_ICONS) as ToolKind[]) {
+    // TOOL_KINDS, not this file's own list: the palette used to iterate a
+    // private icon map, so it and Home could offer different tools while the
+    // Python/TS contract test — which reads TOOL_KINDS — stayed green.
+    for (const kind of TOOL_KINDS) {
       list.push({
         key: `tool:${kind}`,
         group: "create",

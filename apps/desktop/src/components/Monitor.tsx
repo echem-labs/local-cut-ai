@@ -158,7 +158,12 @@ export function Monitor({ variant = "inline" }: { variant?: "inline" | "panel" }
 
   return (
     <div className={`monitor${variant === "panel" ? " in-panel" : ""}`} aria-label={t("monitor.aria")}>
-      <div className="monitor-screen" onClick={toggle} role="button" tabIndex={-1}>
+      {/* Click-anywhere-to-play, with no role: the play button below is the
+          real control, and `role="button"` here made it a presentational
+          child of this div — hiding the only play/pause affordance from
+          assistive technology. `tabIndex={-1}` never made this reachable by
+          keyboard either, so nothing is lost by dropping both. */}
+      <div className="monitor-screen" onClick={toggle}>
         {clipUrl && !videoBroken ? (
           <video
             ref={videoRef}

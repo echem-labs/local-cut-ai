@@ -38,14 +38,23 @@ that engine-only layout -- the container is one, and it is the deployment
 whose entrypoint depends on the console script most directly.
 
 `ci-engine.yml` and `.pre-commit-config.yaml` name the files below in their
-path filters. They have to: four of them live outside `engine/`, and a filter
-that omits them lets the drift this guards against merge without running.
+path filters. They have to: five of them live outside `engine/` — engine.ts,
+check-engine.mjs, electron-builder.yml, Settings.tsx and package.yml — and a
+filter that omits one lets the drift this guards against merge without
+running. Both filters list all five; keep the count here honest with them,
+since this paragraph is what anyone adding a sixth file reads first.
+
+`test_ui_contract.py` reads desktop files for the same reason and is gated
+the same way (`lib/tools.ts` and friends, its own `ui-contract` hook), so
+ci-engine.yml's filter is the union of the two lists rather than just these
+five -- an entry there that is not named above belongs to that test.
 """
 
 from __future__ import annotations
 
 import re
 import tomllib
+from importlib import import_module
 from importlib.metadata import entry_points
 from pathlib import Path
 
@@ -158,6 +167,17 @@ def test_the_engine_spells_its_own_name_the_same_way_everywhere():
     )
     assert installed[name].load() is cli.main, (
         f"the {name!r} console script resolves to {installed[name].value}, not localcut_engine.cli:main"
+    )
+
+    # `python -m localcut_engine`, the same CLI without a console script on
+    # PATH. It is the shape the desktop's LOCALCUT_ENGINE_CMD override is
+    # documented in (engine.test.ts writes it verbatim), and the one thing
+    # left to try when a packaged launch fails -- which is exactly the moment
+    # a PATH is not to be relied on. Asserting the module resolves to the
+    # same `main` is what stops the two entry points drifting apart.
+    module_main = import_module("localcut_engine.__main__")
+    assert module_main.main is cli.main, (
+        "python -m localcut_engine does not run the same entry point as the console script"
     )
 
     # What argparse calls itself in --help. Hardcoded rather than taken from
