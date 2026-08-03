@@ -68,6 +68,13 @@ export const app = {
     if (!state.userData) throw new Error("stub app.getPath: set state.userData first");
     return state.userData;
   },
+  // main.ts calls this at module scope for the rig's fresh-profile override.
+  // Missing here, `LOCALCUT_USERDATA` merely being exported in the shell took
+  // out every test in this suite with "app.setPath is not a function".
+  setPath(name: string, value: string): void {
+    if (name !== "userData") throw new Error(`stub app.setPath: unhandled ${name}`);
+    state.userData = value;
+  },
   get isPackaged(): boolean {
     return state.isPackaged;
   },
