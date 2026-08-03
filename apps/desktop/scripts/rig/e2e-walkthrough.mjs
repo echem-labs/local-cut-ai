@@ -61,8 +61,30 @@ try {
       .waitForSelector(".pipe-rail", { timeout: 15000 })
       .then(() => true)
       .catch(() => false);
+    let filter = null;
     let back = false;
     if (rail) {
+      // Second action on the rail opens the full library. Its fit filter is
+      // the app's seg-toggle in its first BLOCK context, where a flex
+      // container fills its parent unless told otherwise - so measure that
+      // it wraps its two labels instead of ruling a line across the card.
+      const railActions = await page.$$(".setup-actions button");
+      await railActions[1].click();
+      await page.waitForSelector(".filter-tabs", { timeout: 5000 });
+      filter = await page.evaluate(() => {
+        const tabs = document.querySelector(".filter-tabs");
+        return {
+          own: tabs.getBoundingClientRect().width,
+          labels: [...tabs.querySelectorAll("button")].reduce(
+            (sum, button) => sum + button.getBoundingClientRect().width,
+            0,
+          ),
+          card: document.querySelector(".setup.wizard").getBoundingClientRect().width,
+        };
+      });
+      const libActions = await page.$$(".setup-actions button");
+      await libActions[1].click(); // back to the recommended rail
+      await page.waitForSelector(".pipe-rail", { timeout: 5000 });
       const buttons = await page.$$(".setup-actions button");
       await buttons[buttons.length - 1].click(); // Back -> machine
       back = await page
@@ -70,10 +92,18 @@ try {
         .then(() => true)
         .catch(() => false);
     }
-    return { machine, rail, back };
+    return { machine, rail, filter, back };
   `);
   check("machine step shows the hardware chips", walked.machine);
   check("models step shows the pipeline rail", walked.rail);
+  check(
+    "the library's fit filter hugs its labels, not the card",
+    // 2px of container border, and a card an order of magnitude wider.
+    walked.filter !== null &&
+      walked.filter.own <= walked.filter.labels + 3 &&
+      walked.filter.own < walked.filter.card - 40,
+    JSON.stringify(walked.filter),
+  );
   check("Back returns to the machine step", walked.back);
   await shoot("02-wizard-machine.png");
 
