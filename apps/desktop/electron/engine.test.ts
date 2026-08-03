@@ -106,6 +106,118 @@ describe("how the token reaches the engine", () => {
     expect(firstSpawn().options.env).toMatchObject({ LOCALCUT_TOKEN: connection.token });
   });
 
+  it("never reaches the app log, which outlives the engine that issued it", async () => {
+    // `localcut serve` announces its connection info — token included — on
+    // stdout for whoever launched it. Mirroring that verbatim undoes the
+    // care taken above: on a packaged macOS/Linux build the main process's
+    // console output goes to the system log, so the live bearer token for
+    // every project on the machine ends up in a file that outlasts it.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    const connection = await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+    const announce = `LOCALCUT_ENGINE {"host": "127.0.0.1", "port": 7830, "token": "${connection.token}"}`;
+
+    // What actually happens: one print(), one chunk, whole line.
+    stdout.emit("data", Buffer.from(`${announce}\nINFO: started\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+
+    // And what a stream is entitled to do instead: the same line delivered in
+    // two pieces that divide the token. Buffering to the newline is what
+    // keeps this from being a hole in the case above rather than a test of
+    // its own — matching per chunk would let exactly this through.
+    logged.length = 0;
+    const cut = announce.length - 8;
+    stdout.emit("data", Buffer.from(announce.slice(0, cut)));
+    stdout.emit("data", Buffer.from(`${announce.slice(cut)}\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+
+    // Still legible: everything but the secret survives.
+    expect(logged.join("\n")).toContain("LOCALCUT_ENGINE");
+  });
+
+  it("keeps a character that straddles two chunks in one piece", async () => {
+    // The token is base64url, so buffering to the newline is enough to
+    // redact it — but every OTHER byte sequence on the pipe still has to
+    // survive, and decoding each Buffer on its own turns a multi-byte
+    // character split across a boundary into replacement characters. What
+    // arrives here is a traceback carrying a project title, or the script
+    // model's own em-dashed shortfall warning: the text someone is reading
+    // precisely because a launch has gone wrong.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+
+    const line = Buffer.from("WARNING: rendering 'café' anyway — lower the target\n");
+    const cut = line.indexOf(Buffer.from("é")) + 1; // mid-character
+    stdout.emit("data", line.subarray(0, cut));
+    stdout.emit("data", line.subarray(cut));
+
+    expect(logged.join("\n")).toContain("café");
+    expect(logged.join("\n")).not.toContain("�");
+
+    // And the last line, which has no newline to end it: flushed on `close`
+    // rather than `end`, because a force-killed child's pipe is destroyed
+    // and never reaches EOF — and that exit is the one whose reason someone
+    // is looking for.
+    logged.length = 0;
+    stdout.emit("data", Buffer.from("FATAL: port 7830 is taken"));
+    expect(logged).toHaveLength(0);
+    stdout.emit("close");
+    expect(logged.join("\n")).toContain("FATAL: port 7830 is taken");
+  });
+
+  it("still reports the last line when the pipe is destroyed rather than closed", async () => {
+    // The force-kill case the buffering was written for: Node destroys the
+    // stream, which emits 'error' and THEN 'close'. An error handler that
+    // cleared the buffer therefore threw away exactly the message the flush
+    // on 'close' exists to deliver.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+
+    stdout.emit("data", Buffer.from("FATAL: port 7830 is taken"));
+    stdout.emit("error", new Error("read ECONNRESET"));
+    stdout.emit("close");
+
+    expect(logged.join("\n")).toContain("FATAL: port 7830 is taken");
+  });
+
+  it("logs a writer that never sends a newline instead of buffering it forever", async () => {
+    // tqdm and friends separate progress updates with \r, so waiting for a
+    // \n means the one thing someone opens the log to watch is the one thing
+    // it never shows -- and `pending` grows without bound in the main process
+    // meanwhile.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    const connection = await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+
+    for (let i = 0; i < 40; i += 1) {
+      stdout.emit("data", Buffer.from(`\rdownloading weights ${i}% ${"=".repeat(300)}`));
+    }
+
+    expect(logged.join("\n")).toContain("downloading weights");
+    // And the redaction still holds across a forced flush: the token is 32
+    // characters, the bound is measured in kilobytes.
+    stdout.emit("data", Buffer.from(`LOCALCUT_ENGINE {"token": "${connection.token}"}\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+  });
+
   it("is fresh every launch and long enough to be worth having", async () => {
     const first = await new EngineManager().start();
     const second = await new EngineManager().start();

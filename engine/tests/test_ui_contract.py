@@ -191,18 +191,18 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in engine {sorted(set(TOOL_KINDS) - set(catalog))}"
     )
 
-    # The fifth source, and the one TypeScript cannot check: Home's TOOLS
-    # array supplies both the picker and `KNOWN_TOOLS`, which is what decides
-    # whether a session resolves to a labelled kind. TS proves each entry IS
-    # a ToolKind but never that all of them are there, so dropping one would
-    # silently leave a shipped tool with no card, no label and no icon --
-    # every existing test still green.
-    home = (_FORMATS.parent.parent / "screens" / "Home.tsx").read_text(encoding="utf-8")
-    array = re.search(r"const TOOLS:[^=]*=\s*\[(.*?)\];", home, re.S)
-    assert array, "Home.tsx no longer declares the TOOLS array"
-    listed = set(re.findall(r'kind:\s*"([^"]+)"', array.group(1)))
+    # The fifth source, and the one TypeScript cannot check: lib/tools.ts's
+    # TOOL_KINDS decides whether a session resolves to a labelled kind (Home's
+    # picker and its icon map derive from it, and the palette asks the same
+    # helper). TS proves each entry IS a ToolKind but never that all of them
+    # are there, so dropping one would silently leave a shipped tool with no
+    # card, no label and no icon -- every existing test still green.
+    lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
+    array = re.search(r"const TOOL_KINDS\s*=\s*\[(.*?)\]", lib, re.S)
+    assert array, "lib/tools.ts no longer declares the TOOL_KINDS array"
+    listed = set(re.findall(r'"([^"]+)"', array.group(1)))
     assert listed == set(TOOL_KINDS), (
-        f"Home.tsx TOOLS and TOOL_KINDS disagree: "
+        f"lib/tools.ts TOOL_KINDS and the engine disagree: "
         f"only in the UI {sorted(listed - set(TOOL_KINDS))}, "
         f"only in engine {sorted(set(TOOL_KINDS) - listed)}"
     )

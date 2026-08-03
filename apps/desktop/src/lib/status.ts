@@ -29,3 +29,22 @@ export const SETTLED: readonly NodeStatus[] = [
 ];
 
 export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(status);
+
+/**
+ * Statuses that mean "this node produced what it was going to produce".
+ *
+ * SETTLED answers a different question — *is anything still coming from the
+ * queue* — and `blocked` is the one status where the two answers differ.
+ * `skipped` is settled AND done: the scene is conditioned on an uploaded
+ * image, so the storyboard really is finished. `blocked` is settled and NOT
+ * done: nothing is coming, but nothing was made either, because the node is
+ * waiting on a person.
+ *
+ * Ask isSettled when a gate must not hang on work that will never arrive.
+ * Ask this when the answer is REPORTED as completion — a ✓, a done count, a
+ * "Create final video" button. Adding `blocked` to SETTLED alone made the
+ * project header tick the Export stage green for a project whose export
+ * cannot be assembled, and offer a primary action that enqueues nothing and
+ * so appears to do nothing at all.
+ */
+export const isDone = (status: NodeStatus): boolean => isSettled(status) && status !== "blocked";

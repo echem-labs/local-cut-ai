@@ -8,6 +8,7 @@ import { app } from "electron";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { EngineConnection } from "../src/api/types";
 
 const HEALTH_TIMEOUT_MS = 30_000;
@@ -27,6 +28,85 @@ const enginePort = (): string => process.env.LOCALCUT_ENGINE_PORT ?? DEFAULT_ENG
 
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
+
+/** How much unterminated output is buffered before it is logged anyway. */
+const MAX_PENDING_LINE = 8192;
+
+/**
+ * Mirror a child stream into the app log, a line at a time, with the engine's
+ * bearer token taken out of it.
+ *
+ * `localcut serve` announces `LOCALCUT_ENGINE {"host":…,"token":"…"}` on
+ * stdout for whoever launched it — which here is us, and we generated that
+ * token ourselves. Delivering it through the environment rather than argv
+ * already keeps it out of `ps` and /proc/<pid>/cmdline (see command()); the
+ * app log is the same class of sink and needs the same answer, because a
+ * packaged macOS/Linux build's console output lands in the system log, where
+ * it outlives the engine that issued it. The engine redacts tokens from its
+ * OWN logs for this reason (install_log_redaction); this is the other half.
+ *
+ * Splitting on the literal token cannot miss it the way a pattern could, and
+ * buffering to line boundaries means a token divided across two chunks is
+ * whole again before it is matched.
+ */
+const mirrorEngineOutput = (
+  stream: NodeJS.ReadableStream | null | undefined,
+  token: string,
+  write: (line: string) => void,
+): void => {
+  if (!stream) return;
+  // Decoding each Buffer on its own splits any multi-byte character that
+  // straddles a chunk boundary into two replacement characters — and the
+  // engine's stderr is where a traceback carrying a project title or a
+  // model's own em-dashed warning lands, i.e. exactly the text someone is
+  // reading when a launch has gone wrong. StringDecoder holds the partial
+  // sequence back until the continuation bytes arrive.
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  const emit = (line: string): void => {
+    if (!line.trim()) return;
+    // `split("")` on an empty needle splits into characters, which would
+    // replace every gap in the line. Unreachable today — the token is 24
+    // random bytes — but the failure is a log rendered unreadable, so it is
+    // not worth leaving to the caller.
+    const safe = token ? line.trimEnd().split(token).join("<token redacted>") : line.trimEnd();
+    write(`[engine] ${safe}`);
+  };
+  stream.on("data", (chunk: Buffer) => {
+    const lines = (pending + decoder.write(chunk)).split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) emit(line);
+    // A writer that never sends a newline must not be able to withhold the
+    // log for the process's whole lifetime, nor grow this buffer without
+    // limit in the main process. Progress bars are the ordinary case: tqdm
+    // and friends separate updates with \r, so waiting for \n means the one
+    // thing someone opens the log to watch is the one thing it never shows.
+    // Flushing at a bound keeps the redaction intact — the token is 32
+    // characters and this is measured in kilobytes, so it can never straddle
+    // a forced flush.
+    if (pending.length > MAX_PENDING_LINE) {
+      emit(pending);
+      pending = "";
+    }
+  });
+  // A last line with no trailing newline would otherwise sit in the buffer
+  // and be lost — including the exit-time message that says why. On `close`
+  // rather than `end`: a stream that is destroyed instead of reaching EOF
+  // (the pipe of a force-killed child) emits only `close`, and that is the
+  // exit whose reason is most worth having.
+  stream.on("close", () => {
+    emit(pending + decoder.end());
+    pending = "";
+  });
+  // An 'error' on a stream with no listener is re-thrown, which here would
+  // take down the main process over a broken pipe from an engine that is
+  // already going away. It must not touch `pending`: Node destroys the
+  // stream on error, so 'close' fires immediately afterwards and is where
+  // the last unterminated line is flushed — clearing the buffer here threw
+  // away exactly the message the comment above says is most worth having,
+  // in exactly the destroyed-pipe case it was written for.
+  stream.on("error", () => {});
+};
 
 export class EngineManager {
   private child: ChildProcess | null = null;
@@ -133,12 +213,8 @@ export class EngineManager {
       detached: process.platform !== "win32",
     });
     this.child = child;
-    child.stdout?.on("data", (chunk: Buffer) =>
-      console.log(`[engine] ${chunk.toString().trimEnd()}`),
-    );
-    child.stderr?.on("data", (chunk: Buffer) =>
-      console.error(`[engine] ${chunk.toString().trimEnd()}`),
-    );
+    mirrorEngineOutput(child.stdout, connection.token, (line) => console.log(line));
+    mirrorEngineOutput(child.stderr, connection.token, (line) => console.error(line));
     // Only clear this.child if THIS child is still the current one: a
     // previously-killed child's late 'error'/'exit' must not detach a newer
     // child that has since replaced it (which would orphan the healthy engine

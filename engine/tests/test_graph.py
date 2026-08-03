@@ -500,3 +500,109 @@ def test_clearing_one_param_leaves_the_others_alone():
     apply_patch(graph, [PatchOp(op="set_params", node_id="clip", params={"fps": None})])
     assert graph.nodes["clip"].params["resolution"] == 720
     assert "fps" not in graph.nodes["clip"].params
+
+
+def test_no_op_can_store_a_null_on_a_node():
+    """The rule above is about the params a node MAY HOLD, not about one op.
+
+    `set_params` was the only route that enforced it, and it is not the only
+    route params arrive on. A null that lands by any other door is a value
+    every reader then acts on: `params.get("captions", "burn")` returns None,
+    so an export silently stops burning the captions it was asked for, and
+    nothing can clear the key again — `set_params` drops only what THIS op
+    cleared, by design.
+    """
+    reference = StoryGraph()
+    reference.add_node(Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}))
+    apply_patch(reference, [PatchOp(op="set_params", node_id="export", params={"captions": None})])
+    unset = reference.output_hash("export")
+
+    added = StoryGraph()
+    apply_patch(
+        added,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="export",
+                node=Node(id="export", kind=NodeKind.EXPORT, params={"captions": None}),
+            )
+        ],
+    )
+    assert added.nodes["export"].params == {}
+    assert added.output_hash("export") == unset
+    # The read that misfires, spelled out: this is ffmpeg.py's own expression.
+    assert added.nodes["export"].params.get("captions", "burn") == "burn"
+
+    # select_take restores a recorded identity wholesale, so a take recorded
+    # from a graph that predates this rule must not put the null back.
+    selected = StoryGraph()
+    selected.add_node(Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}))
+    apply_patch(
+        selected,
+        [PatchOp(op="select_take", node_id="export", params={"captions": None}, seed=0)],
+    )
+    assert selected.nodes["export"].params == {}
+    assert selected.output_hash("export") == unset
+
+
+def test_add_node_cannot_arrive_pre_pinned_to_an_artifact_the_client_chose():
+    """`pinned`/`frozen_hash` are server state on the same node params are.
+
+    The `pin` op computes the hash itself from the live graph and template
+    import zeroes both, because a pin is a claim about an artifact that
+    exists. A client-supplied pair is that claim forged: `_frozen_pins`
+    honours any frozen_hash the project has cached, and every downstream
+    node then hashes -- and resolves its input artifact -- against the file
+    the caller named rather than against what this graph would produce.
+    """
+    graph = StoryGraph()
+    apply_patch(
+        graph,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="s1.clip",
+                node=Node(
+                    id="s1.clip",
+                    kind=NodeKind.CLIP,
+                    params={"prompt": "a shore"},
+                    pinned=True,
+                    frozen_hash="deadbeefdeadbeef",
+                ),
+            )
+        ],
+    )
+
+    assert graph.nodes["s1.clip"].pinned is False
+    assert graph.nodes["s1.clip"].frozen_hash is None
+
+
+def test_expansion_does_not_replant_a_null_the_user_can_never_clear():
+    """The carry-forwards in `expand_screenplay` test for the KEY, not for a
+    value, because a legitimately-set param must survive a re-expansion that
+    replaces the node's params wholesale.
+
+    A null therefore rode along too -- copied back over the correct default
+    on every script render, so `{"captions": None}` planted once turned off
+    burned captions permanently. Nothing could clear it: `set_params` drops
+    only what THAT op cleared, and the app never sends `captions: null`. The
+    export menu went on showing the setting the user asked for while ffmpeg
+    read `params.get("captions", "burn")` as None.
+    """
+    graph = expand_screenplay(prompt_template_graph("p"), mock_screenplay("p", 24, "9:16", seed=0))
+    graph.nodes["export"].params["captions"] = None
+    graph.nodes["export"].params["fps"] = None
+    graph.nodes["timeline"].params["ducking"] = None
+
+    expand_screenplay(graph, mock_screenplay("p", 24, "9:16", seed=0))
+
+    export = graph.nodes["export"].params
+    assert export["captions"] == "burn"  # ffmpeg.py's own default, restored
+    assert "fps" not in export
+    assert "ducking" not in graph.nodes["timeline"].params
+
+    # A real user choice still survives the same re-expansion -- the point of
+    # the carry-forward is not lost in fixing it.
+    graph.nodes["export"].params["fps"] = 30
+    expand_screenplay(graph, mock_screenplay("p", 24, "9:16", seed=0))
+    assert graph.nodes["export"].params["fps"] == 30
