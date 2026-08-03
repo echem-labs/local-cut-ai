@@ -115,10 +115,27 @@ export function SceneCard({
         .filter(Boolean)
         .join(" ")}
       onClick={() => select(primary.node_id)}
-      role="button"
+      // A GROUP, not a button, even though the whole card is clickable: play,
+      // regenerate, pin, edit, the two failure choices and the narration
+      // textarea are all real controls inside it, and ARIA specifies the
+      // children of a `button` as presentational — nesting them inside one
+      // hides every action on the card from assistive technology, however
+      // reachable they stay by Tab. NodeCanvas resolves the same shape the
+      // same way. The card keeps its focus and its shortcut keys; its select
+      // affordance is the scene name below, which is a real button.
+      role="group"
       tabIndex={0}
       aria-label={t("scene.cardAria", { n: sceneNo, status: t(`status.${clip.status}`) })}
       onKeyDown={(event) => {
+        // The card's OWN keys, not its children's. React events bubble, so
+        // without this every focusable control inside the card carries the
+        // board's destructive shortcuts: `r` on the focused scene-name button
+        // spends a render and discards the current take, `p` pins, and Enter
+        // fires that button's onClick AND this branch, selecting twice for one
+        // keystroke. The narration textarea already stops propagation for the
+        // same reason; a guard here covers the next control too, rather than
+        // making every one of them remember.
+        if (event.target !== event.currentTarget) return;
         if (event.key === "Enter") select(primary.node_id);
         if (event.key.toLowerCase() === "r" && !clip.pinned) void regenerate(clip.node_id);
         if (event.key.toLowerCase() === "p") void togglePin(clip.node_id, !clip.pinned);
@@ -306,7 +323,27 @@ export function SceneCard({
       </div>
       <div className="body">
         <div className="scene-line">
-          <span className="scene-name">{t("scene.sceneName", { n: sceneNo })}</span>
+          {/* The card's own "select this scene" action, as a real control:
+              the root is a group now, so without this the only way to open a
+              scene in the Inspector would be a click on non-interactive
+              chrome — which is not an action assistive tech can find. */}
+          <button
+            className="scene-name"
+            aria-pressed={selected}
+            onClick={(event) => {
+              event.stopPropagation();
+              select(primary.node_id);
+              // Hand focus to the card, which is what a selected scene means
+              // here: the board's Space and arrow keys are window listeners
+              // that bail on `target.tagName === "BUTTON"` so a focused
+              // control keeps its own keyboard, and leaving focus on this
+              // one killed play-preview and scene-to-scene navigation right
+              // after the gesture that advertises itself as "select".
+              event.currentTarget.closest<HTMLElement>(".scene-card")?.focus();
+            }}
+          >
+            {t("scene.sceneName", { n: sceneNo })}
+          </button>
           {/* design mock: — while rendering/failed, ~4s while queued */}
           <span className="scene-dur">
             {rendering || failed

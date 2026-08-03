@@ -132,3 +132,71 @@ describe("ToolSession provenance", () => {
     expect(screen.queryByText("some-stale-model")).toBeNull();
   });
 });
+
+/**
+ * A session whose kind this build has no copy for.
+ *
+ * The palette resolves an unknown `tool:` mode to null so it can list and
+ * OPEN the session rather than crash — which lands the user here, on the
+ * screen that indexed the same catalog with the same raw wire value and
+ * threw. `m()` hands out the catalog unguarded, so the miss surfaces as
+ * `undefined.label` at render, from a component with no error handling of
+ * its own: the ErrorBoundary takes the whole app, which is exactly the
+ * outcome the palette fix set out to prevent.
+ *
+ * A newer engine driving an older desktop is a documented topology (laptop
+ * and GPU box on separate update schedules).
+ */
+describe("a tool session whose kind this build does not know", () => {
+  it("renders instead of taking the app to the ErrorBoundary", () => {
+    useApp.setState({
+      currentProject: { id: "p1", title: "an interview", mode: "tool:podcast" } as Project,
+      board: {
+        scenes: [],
+        aux: { podcast: { ...toolNode(), node_id: "podcast", status: "rendering" } },
+      } as Board,
+      client: null,
+      jobs: [],
+      allJobs: [],
+      actionError: null,
+    } as never);
+
+    expect(() => render(<ToolSession />)).not.toThrow();
+    // The engine's own word for the kind stands in for copy this build does
+    // not have — a name, not a blank and not a crash.
+    expect(screen.getByText(/podcast/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * `blocked` is settled but not done, and this screen is a completion report.
+ *
+ * `done` suppresses the "generating" line AND gates the output panel, so a
+ * node that is settled with nothing behind it (no artifact_hash, because
+ * nothing was made) rendered neither: an empty session with no explanation.
+ * lib/status.ts states the rule -- ask isSettled for a gate that must not
+ * hang, isDone for anything reported as completion.
+ */
+describe("a tool session waiting on a person", () => {
+  it("still says it is not finished", () => {
+    useApp.setState({
+      currentProject: { id: "p1", title: "a clip", mode: "tool:clip" } as Project,
+      board: {
+        scenes: [],
+        aux: {
+          clip: { ...toolNode(), node_id: "clip", status: "blocked", artifact_hash: null },
+        },
+      } as Board,
+      client: null,
+      jobs: [],
+      allJobs: [],
+      actionError: null,
+    } as never);
+
+    render(<ToolSession />);
+
+    // The progress line is what tells the user anything at all is happening
+    // to their session; blocked is not a finished render.
+    expect(screen.getByText(/generating|working|rendering/i)).toBeInTheDocument();
+  });
+});

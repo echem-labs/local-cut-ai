@@ -41,6 +41,54 @@ TRANSIENT_PARAMS = frozenset({"feedback", "base_screenplay"})
 SCRIPT_NODE_ID = "script"
 
 
+def without_nulls(params: dict[str, Any]) -> dict[str, Any]:
+    """Params with every stored null dropped — see `stored_params` for why.
+
+    Separate from `stored_params` for the one route that must apply the null
+    rule WITHOUT the reserved-param strip: `_restorable_graph` re-validates a
+    whole snapshot, and `check_restorable` then reads `voice_consent` off the
+    asset node feeding a voice_ref port. Stripping it there would fail every
+    legitimate restore of a voice-cloned project. One definition of the null
+    rule either way, so the two cannot drift.
+    """
+    return {key: value for key, value in params.items() if value is not None}
+
+
+def stored_params(params: dict[str, Any], *, drop: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Params as a node may hold them: no server-owned keys, and no nulls.
+
+    A stored null is not an absent key. Every reader treats it as a value,
+    and each one fails differently: `params.get("captions", "burn")` returns
+    None, so the export stops burning captions it was asked for;
+    `str(params.get("prompt", ""))` returns the string "None", so a keyframe
+    renders that word and `unready_nodes` reads the node as written;
+    `int(params.get("target_duration_s", 60))` raises. It also hashes
+    differently from the same node without the key, so the artifact already
+    rendered for that state can never be a cache hit again.
+
+    `set_params` states the rule in its own terms because a merge has to
+    REMOVE the key a null clears rather than filter it. Every other route
+    that replaces a node's params wholesale comes through here — the
+    `add_node` and `select_take` ops, `add_scene`'s compilation, template
+    import and export, `_ensure_node` (screenplay expansion) and the take
+    records `select_take` reads back — for the same reason RESERVED_PARAMS
+    above is shared: params arriving from outside are covered on every path
+    at once, or on one.
+
+    Two routes apply half the rule, both deliberately: `regenerate`'s own
+    filter runs on any node the route names, assets included, and those hold
+    the reserved params the consent gate checks; and `_restorable_graph`
+    takes `without_nulls` above for the same reason.
+    """
+    return without_nulls(
+        {
+            key: value
+            for key, value in params.items()
+            if key not in RESERVED_PARAMS and key not in drop
+        }
+    )
+
+
 class PatchOp(BaseModel):
     op: Literal[
         "set_params",
@@ -152,12 +200,20 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
             case "add_node":
                 if op.node is None:
                     raise ValueError("add_node requires a node")
-                # Same reserved-param discipline as set_params: a client must
-                # not be able to smuggle a server-owned flag (e.g.
-                # voice_consent) in on a freshly added node either.
-                op.node.params = {
-                    k: v for k, v in op.node.params.items() if k not in RESERVED_PARAMS
-                }
+                # Same discipline as set_params: a client must not be able to
+                # smuggle a server-owned flag (e.g. voice_consent) in on a
+                # freshly added node, nor a null that no later edit can clear.
+                op.node.params = stored_params(op.node.params)
+                # `pinned`/`frozen_hash` are server-owned for the same reason
+                # and on the same node: the `pin` op computes the hash itself
+                # from the live graph, and `from_template` zeroes both. A
+                # client-supplied pair freezes the new node onto an artifact
+                # the CALLER chose -- `_frozen_pins` honours any frozen_hash
+                # that is in the project's cache, so every downstream node
+                # then hashes and resolves its input against that artifact
+                # rather than against what the graph would produce.
+                op.node.pinned = False
+                op.node.frozen_hash = None
                 graph.add_node(op.node)
             case "remove_node":
                 # The script node is the one removal with no way back, and it
@@ -221,7 +277,15 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # take is landing on EXACTLY the recorded identity, so its
                 # output hash resolves to the artifact already on disk. A
                 # merge would keep params added since and miss the cache.
-                node.params = {k: v for k, v in op.params.items() if k not in RESERVED_PARAMS}
+                #
+                # `stored_params` is the one thing that may differ from the
+                # record, and only for a take written before that rule
+                # existed: a null in it is dropped, so the node lands one hash
+                # away from the recorded artifact and re-renders once. That is
+                # the right way round — restoring the null would put back a
+                # value that silently turns captions off and that no later
+                # edit can clear.
+                node.params = stored_params(op.params)
                 node.seed = op.seed if op.seed is not None else 0
                 node.model = op.model
             case "add_scene":

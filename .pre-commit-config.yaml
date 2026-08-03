@@ -82,6 +82,25 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # Same reasoning, different test: test_ui_contract.py is the only thing
+      # that compares the desktop's constants with the engine's, and the
+      # desktop suite cannot do it (it runs against TypeScript alone). The
+      # kind list moved from screens/Home.tsx into lib/tools.ts, so a PR that
+      # drops a shipped tool now touches apps/desktop/** only — which runs
+      # vitest and tsc, neither of which knows what the engine ships.
+      - id: ui-contract
+        name: Python/TS constant contract (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q tests/test_ui_contract.py'
+        language: system
+        files: |
+          (?x)^apps/desktop/src/(
+            lib/(formats|tools)\.ts
+            |api/(client|types)\.ts
+            |i18n/en/(status|notices|tools|project)\.json
+          )$
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: desktop-typecheck
         name: desktop typecheck (tsc)
         entry: bash -c 'cd apps/desktop && npm run typecheck'

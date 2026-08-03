@@ -70,7 +70,13 @@ from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
-from ..service import CLOUD_SPEND_ALLOWED, CloudSpendRefused, ConflictError, ProjectService
+from ..service import (
+    CLOUD_SPEND_ALLOWED,
+    CloudSpendRefused,
+    ConflictError,
+    ProjectService,
+    cloud_text_refusal,
+)
 from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
@@ -1276,6 +1282,14 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         await _get_project(project_id)
         if body.model is not None and not body.model.startswith("cloud:"):
             raise HTTPException(status_code=422, detail="edit model must be a cloud:* text model")
+        if body.model and not CLOUD_SPEND_ALLOWED.get():
+            # The same rule the queue enforces for renders, applied to the one
+            # spend that never reaches the queue: this route calls the BYOK
+            # text provider inline, on the request path. The MCP tool refuses
+            # a cloud model of its own accord, but that is a client-side gate
+            # over a route, which is precisely the shape that leaked three
+            # times before the rule was moved to the outcome.
+            raise cloud_text_refusal(body.model)
         try:
             view = await asyncio.to_thread(service.edit_view, project_id, body.scope)
         except KeyError:

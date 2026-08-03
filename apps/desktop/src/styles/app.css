@@ -1638,9 +1638,15 @@ button.link:hover {
   gap: var(--space-2);
 }
 
+/* A real button (the card root is a group — see SceneCard), styled as the
+   line of text it has always been. */
 .scene-card .scene-name {
   font-size: var(--text-xs);
   font-weight: 500;
+  /* The global `button` reset already gives it font, color, background,
+     border and cursor; only the UA's own padding and centring are left. */
+  padding: 0;
+  text-align: left;
 }
 
 .scene-card .scene-dur {
