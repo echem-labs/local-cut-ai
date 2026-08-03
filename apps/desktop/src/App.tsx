@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { plural, t } from "./i18n";
+import { useMediaQuery } from "./lib/useMediaQuery";
 import { BrandMark } from "./components/BrandMark";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { HelpMenu } from "./components/Help";
@@ -103,7 +104,11 @@ export default function App() {
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_KEY) === "1",
   );
-  const compact = !railExpanded;
+  // Below 1000px the labeled rail would crowd the content, so it compacts
+  // regardless of the stored preference — which survives untouched and
+  // takes effect again when the window widens.
+  const narrow = useMediaQuery("(max-width: 1000px)");
+  const compact = !railExpanded || narrow;
   const toggleRail = () => {
     const next = !railExpanded;
     localStorage.setItem(RAIL_KEY, next ? "1" : "0");

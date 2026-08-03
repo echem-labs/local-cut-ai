@@ -686,10 +686,28 @@ textarea {
 }
 
 /* ---- home ---- */
+/* Breakout column: everything reads at the one page column, but the
+   browsing shelves (the project/tool grids) may use up to --content-wide
+   on a large window — a maximized window gets more tiles per row instead
+   of wider gutters. The three-track grid is the standard breakout: the
+   middle track is the reading column, .recent alone spans all three. */
 .home {
-  max-width: var(--content-col);
+  display: grid;
+  grid-template-columns: 1fr min(var(--content-col), 100%) 1fr;
   margin: 0 auto;
+  max-width: var(--content-wide);
   padding-top: var(--space-8);
+}
+
+.home > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.home > .recent {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
 }
 
 /* the hero speaks in the screen-title register (review 4 §H7): the

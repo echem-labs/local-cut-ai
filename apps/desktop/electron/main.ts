@@ -20,6 +20,13 @@ import {
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
 import { capturePinnedCert, engineRequest } from "./request";
 
+// Dev-only: the test rig points userData at a temp dir so a run starts from
+// a fresh profile (first-run state, empty layout store) without touching the
+// real one. Never honored in packaged builds.
+if (!app.isPackaged && process.env.LOCALCUT_USERDATA) {
+  app.setPath("userData", process.env.LOCALCUT_USERDATA);
+}
+
 const engine = new EngineManager();
 const keyStore = new ProviderKeyStore();
 const remoteStore = new RemoteEngineStore();

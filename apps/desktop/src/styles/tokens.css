@@ -118,6 +118,10 @@
      200px recent tiles at 12px gaps. */
   --content-col: 840px;
 
+  /* browsing surfaces (tile grids) may widen to this on large windows —
+     reading surfaces never do. Six 200px tiles at 12px gaps, plus room. */
+  --content-wide: 1260px;
+
   /* type: 5-step scale + one display size.
      Weight roles: 400 body · 500 item/tile labels · 600 headings, buttons,
      eyebrows · 650 display + screen titles only. */
