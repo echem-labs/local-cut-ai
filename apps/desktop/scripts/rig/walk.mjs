@@ -31,6 +31,32 @@ try {
   // Let the renderer connect and paint Home.
   await evalInApp("await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;");
 
+  // The shelf arrives with the engine's project list, which lands well
+  // after Home paints: a cold `uv run localcut serve` against a real data
+  // dir has taken over 20s here. Measuring before it arrives would skip
+  // every grid assertion below and still print a green run - so wait
+  // generously, and say so if it never comes.
+  const shelfReady = await evalInApp(`
+    return page
+      .waitForSelector(".recent .grid", { timeout: 60000 })
+      .then(() => true)
+      .catch(() => false);
+  `);
+  check(
+    "home has a project shelf to measure",
+    shelfReady,
+    "the walk needs a profile with at least one project",
+  );
+  if (!shelfReady) {
+    // Nearly always the engine, not the profile: it prints why it gave up
+    // to the main process, which /health now carries. Printing it here
+    // turns "no shelf" into the actual reason without a second run.
+    const log = (await health()).mainLog ?? [];
+    for (const line of log.filter((entry) => entry.includes("[engine]")).slice(-4)) {
+      console.error(`       ${line}`);
+    }
+  }
+
   const measure = async () => {
     return evalInApp(`
       const win = await app.evaluate(({ BrowserWindow }) => {
@@ -46,6 +72,21 @@ try {
           return getComputedStyle(grid).gridTemplateColumns.split(" ").length;
         })(),
         railCompact: !!document.querySelector(".rail.compact"),
+        railToggleDisabled: (() => {
+          const nav = document.querySelector("nav.rail");
+          const buttons = nav ? [...nav.querySelectorAll("button")] : [];
+          return buttons.length ? buttons[buttons.length - 1].disabled : null;
+        })(),
+        // The shelf may hang past the reading column only when the extra
+        // width buys a tile column (app.css, @container 1048px).
+        shelf: (() => {
+          const shelf = document.querySelector(".recent");
+          const column = document.querySelector(".prompt-box, .empty-state");
+          if (!shelf || !column) return null;
+          const a = shelf.getBoundingClientRect();
+          const b = column.getBoundingClientRect();
+          return { width: Math.round(a.width), brokenOut: Math.round(a.left) < Math.round(b.left) };
+        })(),
         dpr: window.devicePixelRatio,
       }));
       return { win, dom };
@@ -98,6 +139,27 @@ try {
       );
       previousCols = dom.gridCols;
     }
+    // Independent of gridCols: a profile with no projects has a shelf-less
+    // Home, and reading .shelf under the gridCols branch would have thrown
+    // rather than skipped.
+    if (dom.shelf) {
+      if (dom.gridCols !== null) {
+        // Monotonicity alone would also pass a grid frozen at one count, so
+        // pin the count the shelf's own width implies: auto-fill of
+        // minmax(200px, 1fr) at a 12px gap.
+        const implied = Math.floor((dom.shelf.width + 12) / 212);
+        check(
+          `${label}: ${dom.gridCols} columns is what ${dom.shelf.width}px fits`,
+          dom.gridCols === implied,
+          `expected ${implied}`,
+        );
+      }
+      check(
+        `${label}: shelf breaks out of the reading column only when that buys a column`,
+        dom.shelf.brokenOut === (dom.shelf.width >= 1048),
+        `brokenOut ${dom.shelf.brokenOut} at ${dom.shelf.width}px`,
+      );
+    }
     await shoot(`${label}.png`);
   }
 
@@ -131,17 +193,28 @@ try {
     boundsAgree(restored.dom.inner.width, restored.win.bounds.width, restored.dom.dpr),
   );
 
-  // Rail auto-compact under 1000px, and back.
+  // Rail auto-compact under 1000px, and back. The "and back" half is the
+  // point: the preference has to survive the narrow spell, so it is read
+  // before narrowing and compared after widening.
+  await setSize(1440, 900);
+  const preference = (await measure()).dom.railCompact;
   await setSize(980, 800);
   const narrow = await measure();
   check("980px: rail auto-compacts", narrow.dom.railCompact);
+  check(
+    "980px: the rail toggle is disabled rather than dead",
+    narrow.dom.railToggleDisabled === true,
+    `disabled=${narrow.dom.railToggleDisabled}`,
+  );
   await shoot("980x800.png");
   await setSize(1440, 900);
   const wide = await measure();
   check(
-    "1440px: rail honors the stored preference again",
-    typeof wide.dom.railCompact === "boolean",
+    "1440px: rail returns to the stored preference",
+    wide.dom.railCompact === preference,
+    `was ${preference}, now ${wide.dom.railCompact}`,
   );
+  check("1440px: the rail toggle works again", wide.dom.railToggleDisabled === false);
 
   const report = await health();
   check(

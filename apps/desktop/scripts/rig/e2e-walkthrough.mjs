@@ -4,10 +4,18 @@
  * the prompt focused (the FR1 bridge), Settings opens and closes, and
  * the session produces no console errors.
  *
- * A fresh profile comes from LOCALCUT_USERDATA (dev-only override in
- * electron/main.ts) — the real profile is never touched. The engine the
- * app spawns still uses the shared engine data dir; this walk is
- * read-only toward it.
+ * Isolation is the whole point of this file's setup, and it takes three
+ * variables, not one:
+ *   LOCALCUT_USERDATA    a fresh Electron profile (dev-only override in
+ *                        electron/main.ts) - first-run state, empty layout
+ *   LOCALCUT_DATA_DIR    a fresh engine data dir (EngineConfig maps every
+ *                        field to LOCALCUT_<FIELD>) - its own queue.db, so
+ *                        two engines never write one database
+ *   LOCALCUT_ENGINE_PORT off 7830 - the app RECLAIMS a busy engine port by
+ *                        killing whatever holds it, which on the default
+ *                        port is the engine the developer is using
+ * Without the last two, "the real profile is never touched" was true of the
+ * profile and false of everything the engine owns.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,15 +25,23 @@ import { evalInApp, health, makeCheck, shotsDir, startRig, stopRig } from "./rig
 const dir = shotsDir("e2e");
 const check = makeCheck();
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-e2e-"));
+const engineData = mkdtempSync(path.join(tmpdir(), "localcut-e2e-engine-"));
 
-const rig = await startRig({ LOCALCUT_USERDATA: profile });
+const rig = await startRig({
+  LOCALCUT_USERDATA: profile,
+  LOCALCUT_DATA_DIR: engineData,
+  LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7930",
+});
 try {
   const shoot = (name) =>
     evalInApp(`await page.screenshot({ path: ${JSON.stringify(path.join(dir, name))} }); return null;`);
 
   // 1. Fresh profile boots into first-run.
-  await evalInApp("await page.waitForSelector('.setup', { timeout: 30000 }); return null;");
-  check("fresh profile shows first-run", true);
+  const setup = await evalInApp(`
+    await page.waitForSelector('.setup', { timeout: 30000 });
+    return page.evaluate(() => !!document.querySelector(".setup"));
+  `);
+  check("fresh profile shows first-run", setup === true);
   await shoot("01-first-run.png");
 
   // 2. Skip -> Home, prompt focused (review 4 FR1 bridge).
@@ -67,7 +83,11 @@ try {
   );
 } finally {
   await stopRig(rig);
-  rmSync(profile, { recursive: true, force: true });
+  // Retries: on Windows the profile's LevelDB handles outlive the process
+  // by a beat, and an EPERM thrown here would mask the real failure.
+  const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
+  rmSync(profile, scrub);
+  rmSync(engineData, scrub);
 }
 
 console.log(`shots: ${dir}`);
