@@ -167,3 +167,36 @@ describe("a tool session whose kind this build does not know", () => {
     expect(screen.getByText(/podcast/i)).toBeInTheDocument();
   });
 });
+
+/**
+ * `blocked` is settled but not done, and this screen is a completion report.
+ *
+ * `done` suppresses the "generating" line AND gates the output panel, so a
+ * node that is settled with nothing behind it (no artifact_hash, because
+ * nothing was made) rendered neither: an empty session with no explanation.
+ * lib/status.ts states the rule -- ask isSettled for a gate that must not
+ * hang, isDone for anything reported as completion.
+ */
+describe("a tool session waiting on a person", () => {
+  it("still says it is not finished", () => {
+    useApp.setState({
+      currentProject: { id: "p1", title: "a clip", mode: "tool:clip" } as Project,
+      board: {
+        scenes: [],
+        aux: {
+          clip: { ...toolNode(), node_id: "clip", status: "blocked", artifact_hash: null },
+        },
+      } as Board,
+      client: null,
+      jobs: [],
+      allJobs: [],
+      actionError: null,
+    } as never);
+
+    render(<ToolSession />);
+
+    // The progress line is what tells the user anything at all is happening
+    // to their session; blocked is not a finished render.
+    expect(screen.getByText(/generating|working|rendering/i)).toBeInTheDocument();
+  });
+});

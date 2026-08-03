@@ -174,6 +174,50 @@ describe("how the token reaches the engine", () => {
     expect(logged.join("\n")).toContain("FATAL: port 7830 is taken");
   });
 
+  it("still reports the last line when the pipe is destroyed rather than closed", async () => {
+    // The force-kill case the buffering was written for: Node destroys the
+    // stream, which emits 'error' and THEN 'close'. An error handler that
+    // cleared the buffer therefore threw away exactly the message the flush
+    // on 'close' exists to deliver.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+
+    stdout.emit("data", Buffer.from("FATAL: port 7830 is taken"));
+    stdout.emit("error", new Error("read ECONNRESET"));
+    stdout.emit("close");
+
+    expect(logged.join("\n")).toContain("FATAL: port 7830 is taken");
+  });
+
+  it("logs a writer that never sends a newline instead of buffering it forever", async () => {
+    // tqdm and friends separate progress updates with \r, so waiting for a
+    // \n means the one thing someone opens the log to watch is the one thing
+    // it never shows -- and `pending` grows without bound in the main process
+    // meanwhile.
+    const logged: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line: string) => void logged.push(line));
+    vi.spyOn(console, "error").mockImplementation((line: string) => void logged.push(line));
+
+    const connection = await new EngineManager().start();
+    const { child } = firstSpawn();
+    const stdout = (child as unknown as { stdout: import("node:events").EventEmitter }).stdout;
+
+    for (let i = 0; i < 40; i += 1) {
+      stdout.emit("data", Buffer.from(`\rdownloading weights ${i}% ${"=".repeat(300)}`));
+    }
+
+    expect(logged.join("\n")).toContain("downloading weights");
+    // And the redaction still holds across a forced flush: the token is 32
+    // characters, the bound is measured in kilobytes.
+    stdout.emit("data", Buffer.from(`LOCALCUT_ENGINE {"token": "${connection.token}"}\n`));
+    expect(logged.join("\n")).not.toContain(connection.token);
+  });
+
   it("is fresh every launch and long enough to be worth having", async () => {
     const first = await new EngineManager().start();
     const second = await new EngineManager().start();

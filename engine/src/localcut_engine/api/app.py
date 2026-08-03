@@ -70,7 +70,13 @@ from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
 from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
-from ..service import CLOUD_SPEND_ALLOWED, CloudSpendRefused, ConflictError, ProjectService
+from ..service import (
+    CLOUD_SPEND_ALLOWED,
+    CloudSpendRefused,
+    ConflictError,
+    ProjectService,
+    cloud_text_refusal,
+)
 from ..storage import clear_caches, compute_storage
 
 logger = logging.getLogger(__name__)
@@ -1283,10 +1289,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # a cloud model of its own accord, but that is a client-side gate
             # over a route, which is precisely the shape that leaked three
             # times before the rule was moved to the outcome.
-            raise CloudSpendRefused(
-                f"{body.model} would bill the user's provider key for this edit, and this "
-                "caller may not spend it. Choosing cloud models is a decision made in the app."
-            )
+            raise cloud_text_refusal(body.model)
         try:
             view = await asyncio.to_thread(service.edit_view, project_id, body.scope)
         except KeyError:

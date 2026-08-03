@@ -395,3 +395,129 @@ def test_a_refused_import_does_not_leave_the_project_behind(tmp_path):
         CLOUD_SPEND_ALLOWED.reset(token)
 
     assert {p.id for p in service.store.list()} - before == {local.id}
+
+
+def test_a_cloud_model_the_plan_cannot_see_is_still_a_choice(tmp_path):
+    """The gate asks the PLANNER what would bill, and the planner answers a
+    narrower question than the rule does.
+
+    `compile_graph` emits no job for a node inside a blocked scene's cone
+    (`unready_nodes`) and none for a node already satisfied from cache, so
+    `plan.jobs` is empty and the write went through. Both land a `cloud:*`
+    model on the graph, which is the thing the rule forbids: the guarantee
+    is "an agent cannot CHOOSE cloud", and the user pays the moment they
+    write the scene or edit anything upstream.
+
+    `select_take` is the sharper of the two -- takes exist precisely so that
+    switching back is a cache hit, so the restored identity is never in the
+    plan by construction.
+    """
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED, CloudSpendRefused
+
+    service, project_id = _service(tmp_path)
+
+    # 1. A node whose scene nobody has written: blocked, so never planned.
+    service.patch(project_id, [PatchOp(op="add_scene", params={})])
+    assert service.scene_board(project_id)["scenes"][-1]["clip"]["status"] == "blocked"
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        with pytest.raises(CloudSpendRefused):
+            service.patch(
+                project_id,
+                [PatchOp(op="set_model", node_id="s2.clip", model="cloud:kling-2.5")],
+            )
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+    assert service.store.load_graph(project_id).nodes["s2.clip"].model is None
+
+    # 2. A take recorded on a cloud model, whose artifact is on disk: the
+    #    restore is a cache hit, so it plans nothing at all.
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+    graph = service.store.load_graph(project_id)
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{graph.output_hash('s1.clip')}.mp4").write_bytes(b"x")
+    service.regenerate(project_id, "s1.clip")
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="local:ltx-video")])
+    take = next(
+        t
+        for t in service.store.load_takes(project_id).takes["s1.clip"]
+        if t.model.startswith("cloud:")
+    )
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        with pytest.raises(CloudSpendRefused):
+            service.patch(
+                project_id,
+                [PatchOp(op="select_take", node_id="s1.clip", take=take.output_hash)],
+            )
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+    assert service.store.load_graph(project_id).nodes["s1.clip"].model == "local:ltx-video"
+
+
+def test_duplicating_a_pinned_cloud_project_is_not_a_spend(tmp_path):
+    """Refusing earlier must not refuse more -- `duplicate` included.
+
+    A pin freezes a node's output identity, and the frozen artifact travels
+    with the copy, so `_enqueue_dirty` marks the node cached and enqueues
+    nothing. The pre-write gate compiled the same graph WITHOUT the frozen
+    memo, so the pinned node re-hashed live, missed the copied cache, and was
+    planned as a billable job -- along with every node downstream of it,
+    whose hashes all move once the pin stops resolving. A copy that bills
+    nobody was refused 403.
+    """
+    from localcut_engine.service import CLOUD_SPEND_ALLOWED
+
+    service, project_id = _service(tmp_path)
+    # The user, in the app, renders a cloud clip and pins it.
+    service.patch(project_id, [PatchOp(op="set_model", node_id="s1.clip", model="cloud:kling-2.5")])
+    service.patch(project_id, [PatchOp(op="pin", node_id="s1.clip")])
+    frozen_hash = service.store.load_graph(project_id).nodes["s1.clip"].frozen_hash
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{frozen_hash}.mp4").write_bytes(b"x")
+    # ...then edits upstream, which is the whole reason to pin.
+    _set_prompt(service, project_id, "a colder shore")
+
+    token = CLOUD_SPEND_ALLOWED.set(False)
+    try:
+        copy = service.duplicate(project_id)
+    finally:
+        CLOUD_SPEND_ALLOWED.reset(token)
+
+    # And the copy really does enqueue nothing for the pinned node -- the
+    # claim the gate has to agree with.
+    assert copy.id != project_id
+    assert "s1.clip" not in {job.spec.node_id for job in service.queue.list(copy.id, 1000)}
+
+
+def test_undo_does_not_replant_a_null_the_migration_removed(tmp_path):
+    """`_ensure_node` makes expansion the migration for a graph written
+    before the no-nulls rule -- but history.json is the one place the
+    migration cannot reach, and a restore replaces every node's params
+    wholesale from it.
+
+    One Ctrl+Z therefore put `{"captions": None}` back on the export, which
+    stops ffmpeg burning the captions it was asked for (`params.get(
+    "captions", "burn")` returns None) and lands the node on a hash no
+    cached export can match.
+    """
+    service, project_id = _service(tmp_path)
+    _set_prompt(service, project_id, "a lighthouse")
+
+    # A snapshot from before the rule existed: reach into the recorded
+    # history the way an older build would have written it.
+    history = service.store.load_history(project_id)
+    history.undo[-1].graph["nodes"]["export"]["params"]["captions"] = None
+    history.undo[-1].graph["nodes"]["export"]["params"]["fps"] = None
+    service.store.save_history(project_id, history)
+
+    service.undo(project_id)
+
+    export = service.store.load_graph(project_id).nodes["export"].params
+    assert "captions" not in export
+    assert "fps" not in export
+    assert export.get("captions", "burn") == "burn"  # ffmpeg.py's own expression
