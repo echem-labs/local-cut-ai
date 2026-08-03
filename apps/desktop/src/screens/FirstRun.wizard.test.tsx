@@ -240,6 +240,15 @@ describe("the full library", () => {
     ).toBeDisabled();
   });
 
+  it("keeps the class the fit filter's width rule hangs on", () => {
+    seedStore(CATALOG());
+    render(<FirstRun />);
+    openLibrary();
+    // jsdom has no layout: the rig measures that the control wraps its
+    // labels (e2e-walkthrough). This only keeps the hook alive for it.
+    expect(document.querySelector(".seg-toggle.filter-tabs")).not.toBeNull();
+  });
+
   it("marks a tight fit without disabling it, and outlines the recommended pick", () => {
     seedStore(CATALOG());
     render(<FirstRun />);
