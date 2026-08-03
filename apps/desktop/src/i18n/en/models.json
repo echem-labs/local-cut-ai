@@ -15,6 +15,8 @@
   },
   "empty": "No models in the manifest yet.",
   "external": "external",
+  "externalMeta": "runs outside the engine",
+  "ollamaMeta": "runs in Ollama",
   "externalTitle": "Served outside the engine (e.g. Ollama) — nothing to download",
   "installed": "installed",
   "needsVram": "needs {vram} GB VRAM",

@@ -240,6 +240,26 @@ describe("the full library", () => {
     ).toBeDisabled();
   });
 
+  it("names the runtime an external row uses, in the rail's words", () => {
+    seedStore(CATALOG());
+    render(<FirstRun />);
+    openLibrary();
+    // The rail one click away already names the runtime; the library said
+    // "external" — the same word as the badge beside it, which is the one
+    // thing the meta does not need to repeat.
+    expect(
+      screen.getByText((_, node) => node?.textContent === "qwen3-8b-q4 · runs in Ollama · needs 6 GB VRAM", {
+        selector: ".model-row .meta",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_, node) => node?.textContent === "chatterbox-tts · runs outside the engine · needs 6 GB VRAM",
+        { selector: ".model-row .meta" },
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the class the fit filter's width rule hangs on", () => {
     seedStore(CATALOG());
     render(<FirstRun />);
