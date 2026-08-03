@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { plural, t } from "./i18n";
+import { useMediaQuery } from "./lib/useMediaQuery";
 import { BrandMark } from "./components/BrandMark";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { HelpMenu } from "./components/Help";
@@ -26,6 +27,10 @@ import { useApp } from "./store";
 
 const ICON = { size: 15, strokeWidth: 1.8 } as const;
 const RAIL_KEY = "localcut.rail.expanded";
+/** Below this the labeled 200px rail leaves too little for the 840px
+ * reading column beside it, so the rail compacts whatever the preference
+ * says. Read by the rail only — nothing in CSS keys off this width. */
+const RAIL_NARROW = "(max-width: 1000px)";
 /** The rail lists this many past tool sessions; the rest are one click away
  * on Home. A rail that grows without bound pushes the bottom cluster into a
  * scroll for someone who simply used the tools a lot. */
@@ -103,7 +108,16 @@ export default function App() {
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_KEY) === "1",
   );
-  const compact = !railExpanded;
+  // Below 1000px the labeled rail would crowd the content, so it compacts
+  // regardless of the stored preference — which survives untouched and
+  // takes effect again when the window widens.
+  const narrow = useMediaQuery(RAIL_NARROW);
+  const compact = !railExpanded || narrow;
+  const railToggleLabel = narrow
+    ? t("nav.sidebarNarrow")
+    : compact
+      ? t("nav.expandSidebar")
+      : t("nav.collapseSidebar");
   const toggleRail = () => {
     const next = !railExpanded;
     localStorage.setItem(RAIL_KEY, next ? "1" : "0");
@@ -313,10 +327,14 @@ export default function App() {
             <SettingsIcon {...ICON} />
             <span className="rail-label">{t("nav.settings")}</span>
           </button>
+          {/* Disabled while the window forces compact: the click would
+              write a preference with no visible effect, so the control
+              would look broken AND quietly discard the stored choice. */}
           <button
             onClick={toggleRail}
-            title={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
-            aria-label={compact ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
+            disabled={narrow}
+            title={railToggleLabel}
+            aria-label={railToggleLabel}
           >
             {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
             <span className="rail-label">{t("nav.collapse")}</span>

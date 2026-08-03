@@ -686,10 +686,40 @@ textarea {
 }
 
 /* ---- home ---- */
+/* Breakout column: everything reads at the one page column, but the
+   browsing shelves (the project/tool grids) may use up to --content-wide
+   on a large window — a maximized window gets more tiles per row instead
+   of wider gutters. The three-track grid is the standard breakout: the
+   middle track is the reading column, .recent alone spans all three.
+
+   .home is a GRID, so adjacent children's vertical margins add instead of
+   collapsing. Every gap below must therefore be stated by one side only —
+   see .tools-head. */
 .home {
-  max-width: var(--content-col);
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 1fr min(var(--content-col), 100%) 1fr;
   margin: 0 auto;
+  max-width: var(--content-wide);
   padding-top: var(--space-8);
+}
+
+.home > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+/* The shelf breaks out only once the extra width buys a tile column.
+   .recent .grid is auto-fill minmax(200px, 1fr) at a 12px gap, so the
+   reading column (840) already fits four; the fifth needs 5*200 + 4*12 =
+   1048. Below that, breaking out would only make the tiles fatter while
+   hanging the shelf's edges past every other block on the page. The
+   container query measures .home itself, so the answer stays right
+   whichever width the rail is. */
+@container (min-width: 1048px) {
+  .home > .recent {
+    grid-column: 1 / -1;
+  }
 }
 
 /* the hero speaks in the screen-title register (review 4 §H7): the
@@ -1052,12 +1082,13 @@ button.link:hover {
 }
 
 /* quick-tools section header: the row explains itself without hovering */
+/* No margin-bottom: .home is a grid, where this would ADD to .quick-tools'
+   margin-top rather than collapse into it. The 16px belongs to the grid. */
 .tools-head {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
   margin-top: var(--space-6);
-  margin-bottom: var(--space-2);
 }
 
 /* .tools-head h3 inherits the shared eyebrow style above */

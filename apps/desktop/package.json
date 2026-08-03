@@ -22,6 +22,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "rig:launch": "node scripts/rig/launch.cjs",
+    "rig:walk": "node scripts/rig/walk.mjs",
+    "rig:compare": "node scripts/rig/compare.mjs",
+    "rig:e2e": "node scripts/rig/e2e-walkthrough.mjs",
+    "rig:gate": "npm run build && npm run rig:walk && npm run rig:e2e",
     "package:mac:x64": "npm run check:engine -- mac-x64 && npm run build && electron-builder --mac --x64"
   },
   "dependencies": {
@@ -46,6 +51,9 @@
     "electron": "^43.1.1",
     "electron-builder": "^26.15.3",
     "jsdom": "^29.1.1",
+    "pixelmatch": "^7.2.0",
+    "playwright-core": "^1.62.1",
+    "pngjs": "^7.0.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.5",
     "vitest": "^4.1.10",
