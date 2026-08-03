@@ -3589,6 +3589,342 @@ button.link:hover {
   margin-top: var(--space-6);
 }
 
+.setup-actions .spacer {
+  flex: 1;
+}
+
+/* ---- first-run wizard (U1, reference/v3/wiz-1..4) ----
+   Geometry follows the mock; typography and control heights snap to the
+   app tokens — the reference-refresh script applies the SAME snap to the
+   mock before rendering, so the pixel gate compares like with like. The
+   column is deliberately narrower than --content-col: a four-question
+   flow reads as a card, not a page. */
+.setup.wizard {
+  max-width: 660px;
+  padding-bottom: 48px;
+}
+
+/* 32px .setup padding + 12 = the mock's 44px to the stepper baseline. */
+.stepper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 12px;
+}
+
+.step-slot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.step-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+
+/* the current step lifts one text tier — the accent stays on the done
+   connectors and the primary button */
+.step-label.cur {
+  color: var(--text-secondary);
+}
+
+.stepper i {
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--surface-3);
+}
+
+.stepper i.done {
+  background: var(--accent);
+}
+
+.wiz-body {
+  margin-top: 28px;
+}
+
+.wiz-body > svg {
+  display: block;
+  margin-bottom: 20px;
+}
+
+.setup.wizard h2 {
+  font-size: var(--text-l);
+  font-weight: 650;
+}
+
+.setup.wizard .sub {
+  margin-bottom: 0;
+  max-width: 56ch;
+}
+
+.hintline {
+  margin-top: var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* Hardware card: eyebrow + tier badge, spec chips, verdict sentence. */
+.setup.wizard .setup-machine {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.machine-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.setup-machine .spec-chips {
+  margin-top: var(--space-3);
+}
+
+.spec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.spec-chip {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.verdict {
+  margin-top: var(--space-3);
+  font-size: var(--text-s);
+  color: var(--text-secondary);
+}
+
+/* the one green sentence: a verdict, not a status — the status colors
+   stay reserved for real statuses elsewhere */
+.verdict b {
+  color: var(--status-final);
+  font-weight: 600;
+}
+
+/* The recommended slate as a wired rail: a spine joins one dot per stage —
+   the canvas's port-and-wire language, met before the canvas is. Dots stay
+   neutral on purpose: the rail is structure, and the badges already carry
+   any status a row has. */
+.pipe-rail {
+  position: relative;
+  padding-left: 26px;
+  margin-top: 20px;
+}
+
+/* Spine segments are drawn per row, dot to dot, so they hold for any row
+   height instead of hand-tuned offsets on the rail. */
+.pipe-row:not(:last-of-type)::after {
+  content: "";
+  position: absolute;
+  left: -22px;
+  top: 50%;
+  height: calc(100% + var(--space-2));
+  border-left: 2px solid var(--border-hi);
+}
+
+.pipe-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-2) var(--space-3);
+}
+
+.pipe-row + .pipe-row {
+  margin-top: var(--space-2);
+}
+
+.pipe-row .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.pipe-row .name {
+  font-weight: 500;
+  font-size: var(--text-s);
+}
+
+.pipe-row .meta {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: 1px;
+}
+
+.pipe-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.pipe-dot {
+  position: absolute;
+  left: -26px;
+  top: calc(50% - 5px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  border: 2px solid var(--border-hi);
+}
+
+/* the stub from the spine to the row, same weight as the spine */
+.pipe-row::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  width: 15px;
+  border-top: 2px solid var(--border-hi);
+}
+
+/* Wizard library: the engine's pick per stage outlined in accent, rows
+   that cannot load greyed with the reason on a badge. */
+.setup.wizard .seg-toggle {
+  margin-top: var(--space-4);
+}
+
+.setup.wizard .model-groups {
+  margin-top: var(--space-4);
+}
+
+.model-row.rec-row {
+  border-color: var(--accent);
+}
+
+.model-row.dis {
+  opacity: 0.55;
+}
+
+.badge.rec {
+  color: var(--accent);
+  background: var(--accent-muted);
+  font-weight: 600;
+}
+
+.model-row .name .badge.rec {
+  margin-left: var(--space-2);
+}
+
+/* Step 4: the pipeline as settled summary lines — STAGE · model · status,
+   status right-aligned so six rows read as a table. */
+.sumrail {
+  margin-top: 20px;
+}
+
+.srow {
+  display: grid;
+  grid-template-columns: 110px 1fr 175px;
+  gap: var(--space-3);
+  align-items: center;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 10px 14px;
+}
+
+.srow + .srow {
+  margin-top: var(--space-2);
+}
+
+.srow .stage {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-tertiary);
+}
+
+.srow .model {
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+.srow .model small {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-tertiary);
+  margin-top: 1px;
+}
+
+.srow .st {
+  justify-self: end;
+  text-align: right;
+  font-size: var(--text-xs);
+}
+
+.srow .st.ok {
+  color: var(--status-final);
+}
+
+.srow .st.ext {
+  color: var(--text-tertiary);
+}
+
+.srow .st.dl {
+  color: var(--text-secondary);
+}
+
+.st .bar {
+  display: block;
+  width: 120px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  margin: 4px 0 0 auto;
+  overflow: hidden;
+}
+
+.st .bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.overall {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.overall .bar {
+  display: block;
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.overall .bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
 /* ---- model library ---- */
 .model-groups {
   display: flex;

@@ -27,4 +27,8 @@ contextBridge.exposeInMainWorld("localcut", {
     const value = Number(factor);
     webFrame.setZoomFactor(Number.isFinite(value) ? Math.min(3, Math.max(0.5, value)) : 1);
   },
+  // True only when the rig exported LOCALCUT_SEED_HOOK for a dev run —
+  // main.ts strips the variable in packaged builds, so a shipped app can
+  // never expose the state-injection hook however its environment is set.
+  seedHookEnabled: process.env.LOCALCUT_SEED_HOOK === "1",
 });
