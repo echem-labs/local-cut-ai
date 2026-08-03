@@ -58,5 +58,9 @@
     "licenseAck": "I've checked this model's license and accept responsibility for how outputs are used",
     "add": "Add model",
     "adding": "Adding…"
-  }
+  },
+  "recommended": "Recommended",
+  "tightFit": "tight fit",
+  "tightFitTitle": "Needs more VRAM than this GPU has, but should load with offloading at reduced speed",
+  "wontFit": "won't fit — {vram} GB VRAM"
 }
