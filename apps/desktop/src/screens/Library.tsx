@@ -18,6 +18,14 @@ const SORT_LABEL: Record<SortKey, "sortRecent" | "sortCreated" | "sortName" | "s
   name: "sortName",
   duration: "sortDuration",
 };
+/** Which way each field starts. A date or a length reads newest/longest
+ * first; a title reads A first. Picking the field again flips it. */
+const SORT_STARTS_DESCENDING: Record<SortKey, boolean> = {
+  recent: true,
+  created: true,
+  name: false,
+  duration: true,
+};
 
 /** One page of tiles. The grid is fluid (auto-fill), so this is deliberately
  * a multiple of every column count it can land on — 24 fills 4, 6 or 8
@@ -37,6 +45,7 @@ export function Library() {
     useApp();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
+  const [desc, setDesc] = useState(SORT_STARTS_DESCENDING.recent);
   const [sortOpen, setSortOpen] = useState(false);
   const [shown, setShown] = useState(PAGE);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -53,22 +62,24 @@ export function Library() {
     const matched = q
       ? pool.filter((project) => project.title.toLowerCase().includes(q))
       : pool;
-    return [...matched].sort((a, b) =>
+    // Compared one way and reversed at the end, so a flipped direction can
+    // never disagree with the un-flipped one about ties.
+    const ascending = (a: Project, b: Project) =>
       sort === "name"
         ? // Code-unit order, not localeCompare: two machines must agree on
           // what this list looks like (plan doc 11, cross-cutting).
           (a.title < b.title ? -1 : a.title > b.title ? 1 : 0)
         : sort === "created"
-          ? b.created_at - a.created_at
+          ? a.created_at - b.created_at
           : sort === "duration"
-            ? (b.duration_s ?? 0) - (a.duration_s ?? 0)
-            : stamp(b) - stamp(a),
-    );
-  }, [projects, videos, tools, libraryFilter, search, sort]);
+            ? (a.duration_s ?? 0) - (b.duration_s ?? 0)
+            : stamp(a) - stamp(b);
+    return [...matched].sort((a, b) => (desc ? -ascending(a, b) : ascending(a, b)));
+  }, [projects, videos, tools, libraryFilter, search, sort, desc]);
 
   // A new query, filter or sort starts at the first page again — paging into
   // a list you have just re-ordered shows the tail of the old one.
-  useEffect(() => setShown(PAGE), [libraryFilter, search, sort]);
+  useEffect(() => setShown(PAGE), [libraryFilter, search, sort, desc]);
 
   // Home's "/" and the palette route here rather than growing a second
   // search box; both bump the counter this watches.
@@ -158,11 +169,17 @@ export function Library() {
         <div className="sort-menu-wrap">
           <button
             className="chip-btn"
-            aria-label={t("library.sortAria")}
+            aria-label={t("library.sortAriaState", {
+              sort: t(`library.${SORT_LABEL[sort]}`),
+              dir: t(`library.sortDir.${sort}.${desc ? "desc" : "asc"}`),
+            })}
             aria-expanded={sortOpen}
             onClick={() => setSortOpen(!sortOpen)}
           >
-            {t("library.sortLabel", { sort: t(`library.${SORT_LABEL[sort]}`) })}
+            {t("library.sortLabel", {
+              arrow: t(desc ? "library.sortDescArrow" : "library.sortAscArrow"),
+              sort: t(`library.${SORT_LABEL[sort]}`),
+            })}
             <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           {sortOpen && (
@@ -172,12 +189,18 @@ export function Library() {
                   key={key}
                   role="menuitem"
                   className={key === sort ? "active" : ""}
+                  // Picking the sort already in force reverses it — the row
+                  // says so, so the second click is never a no-op.
                   onClick={() => {
+                    setDesc(key === sort ? !desc : SORT_STARTS_DESCENDING[key]);
                     setSort(key);
                     setSortOpen(false);
                   }}
                 >
                   {t(`library.${SORT_LABEL[key]}`)}
+                  {key === sort && (
+                    <small>{t(`library.sortDir.${key}.${desc ? "desc" : "asc"}`)}</small>
+                  )}
                 </button>
               ))}
             </div>
