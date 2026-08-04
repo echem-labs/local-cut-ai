@@ -3,6 +3,8 @@
   "home": "Home",
   "homeCloseHint": "back to your projects",
   "closeProjectAria": "Close {title}",
+  "closeProject": "Close",
+  "closeProjectHint": "it stays in your library",
   "settings": "Settings",
   "collapse": "Collapse",
   "expandSidebar": "Expand the sidebar",
