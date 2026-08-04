@@ -2,6 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModelLicense, ModelRow } from "../api/types";
 import { m, t } from "../i18n";
+import type { Fit } from "../lib/fit";
 import { isWindows } from "../lib/platform";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -33,6 +34,24 @@ export function displayModelName(family: string, version = ""): string {
   return `${pretty}${version ? ` ${version}` : ""}`;
 }
 
+/** External text.llm picks run in Ollama; other externals (TTS, captions)
+ * are companion processes beside the engine. Same wire fact (files: []),
+ * different words — the engine doesn't say which runtime, so the task id
+ * decides, and the wizard's rail reads the same fact the same way. */
+export const OLLAMA_TASK = "text.llm";
+const COMPANION_TASKS = new Set(["speech.tts", "transcribe"]);
+
+/** What an external row says instead of a download size. The badge beside
+ * it already says "external"; this says what that MEANS — but only for
+ * the tasks this build actually ships a runtime for. Anything else
+ * external is a model the app cannot name a runtime for, and the bare
+ * word is the honest answer (the wizard mock's flux row says exactly
+ * that). */
+export function externalNote(task: string): string {
+  if (task === OLLAMA_TASK) return t("models.ollamaMeta");
+  return COMPANION_TASKS.has(task) ? t("models.externalMeta") : t("models.external");
+}
+
 const VERDICTS: Record<
   ModelLicense["verdict"],
   { glyph: string; labelKey: "commercial" | "conditions" | "personalOnly"; cls: string }
@@ -61,6 +80,13 @@ interface ModelLibraryProps {
   filterIds?: Set<string>;
   /** Offer the "+ Add custom model" flow (Settings only, review 4). */
   showAddCustom?: boolean;
+  /** Wizard library mode: accent-outline the engine's pick per stage. */
+  recommendedIds?: Set<string>;
+  /** Wizard library mode: grey rows that cannot load on this machine
+   * (checkbox disabled, reason badge) — lib/fit.ts decides. */
+  fitOf?: (row: ModelRow) => Fit;
+  /** With fitOf: drop won't-fit rows entirely ("Fits this machine"). */
+  hideUnfit?: boolean;
 }
 
 const CUSTOM_TASKS = [
@@ -228,6 +254,9 @@ export function ModelLibrary({
   showActions,
   filterIds,
   showAddCustom,
+  recommendedIds,
+  fitOf,
+  hideUnfit,
 }: ModelLibraryProps) {
   const {
     models,
@@ -250,7 +279,8 @@ export function ModelLibrary({
     return () => clearInterval(timer);
   }, [anyDownloading, refreshModels]);
 
-  const rows = filterIds ? models.filter((row) => filterIds.has(row.id)) : models;
+  let rows = filterIds ? models.filter((row) => filterIds.has(row.id)) : models;
+  if (fitOf && hideUnfit) rows = rows.filter((row) => fitOf(row) !== "wont");
   if (rows.length === 0 && !showAddCustom) return <p className="hint">{t("models.empty")}</p>;
 
   // Group by task, preserving manifest order.
@@ -273,13 +303,18 @@ export function ModelLibrary({
                 ? Math.min(1, row.progress.done / row.progress.total)
                 : 0;
             const error = downloadErrors[row.id];
+            const fit: Fit = fitOf ? fitOf(row) : "fits";
+            const recommended = recommendedIds?.has(row.id) ?? false;
             return (
-              <div className="model-row" key={row.id}>
+              <div
+                className={`model-row${recommended ? " rec-row" : ""}${fit === "wont" ? " dis" : ""}`}
+                key={row.id}
+              >
                 {onToggle && (
                   <input
                     type="checkbox"
                     checked={row.downloaded || (selected?.has(row.id) ?? false)}
-                    disabled={row.downloaded || row.downloading}
+                    disabled={row.downloaded || row.downloading || fit === "wont"}
                     onChange={() => onToggle(row.id)}
                     aria-label={t("models.selectAria", { id: row.id })}
                   />
@@ -289,13 +324,18 @@ export function ModelLibrary({
                       meta (review 4 §S8) */}
                   <div className="name">
                     {row.family ? displayModelName(row.family, row.version) : row.id}
+                    {recommended && (
+                      <span className="badge rec">{t("models.recommended")}</span>
+                    )}
                   </div>
                   <div className="meta">
                     <span className="mono-id">{row.id}</span>
+                    {/* the badge beside this row already says "external" —
+                        the meta says what that MEANS, as the rail does */}
                     {" · " +
                       [
                         row.quant,
-                        external ? t("models.external") : formatSize(row.size_bytes),
+                        external ? externalNote(row.task) : formatSize(row.size_bytes),
                         t("models.needsVram", { vram: row.requirements.vram_gb }),
                       ]
                         .filter(Boolean)
@@ -314,6 +354,16 @@ export function ModelLibrary({
                   )}
                   {error && <div className="meta error-text">{error}</div>}
                 </div>
+                {fit === "tight" && (
+                  <span className="badge warn" title={t("models.tightFitTitle")}>
+                    {t("models.tightFit")}
+                  </span>
+                )}
+                {fit === "wont" && (
+                  <span className="badge warn">
+                    {t("models.wontFit", { vram: row.requirements.vram_gb })}
+                  </span>
+                )}
                 {row.custom ? (
                   <>
                     <span className="badge">{t("models.custom.tag")}</span>
