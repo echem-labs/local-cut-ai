@@ -223,6 +223,68 @@ try {
   );
   check("1440px: the rail toggle works again", wide.dom.railToggleDisabled === false);
 
+  // U3: the clip panel carries the widest controls row Home has (motion
+  // field, seconds, start frame, aspect, generate) plus a preset chip row.
+  // Opened as a stop of its own because a flex row that wraps politely at
+  // 1440 can still push a horizontal scrollbar at 1200 — and the chips sit
+  // between the textarea and that row, where nothing else would notice
+  // them escaping the panel.
+  const panelStop = await evalInApp(`
+    const opened = await page.evaluate(() => {
+      const clip = [...document.querySelectorAll(".quick-tools button")].find((button) =>
+        (button.getAttribute("aria-label") || "").startsWith("Clip"),
+      );
+      if (!clip) return false;
+      clip.click();
+      return true;
+    });
+    if (!opened) return null;
+    await page.waitForSelector(".tool-panel .chip-row", { timeout: 5000 });
+    return true;
+  `);
+  check("the clip panel opens with its preset chips", panelStop === true);
+  if (panelStop) {
+    for (const [width, height] of [
+      [1200, 800],
+      [1440, 900],
+    ]) {
+      await setSize(width, height);
+      const panel = await evalInApp(`
+        return page.evaluate(() => {
+          const box = document.querySelector(".tool-panel").getBoundingClientRect();
+          const chips = document.querySelector(".tool-panel .chip-row").getBoundingClientRect();
+          const controls = [...document.querySelectorAll(".tool-panel .row > *")];
+          const escaped = controls.filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1);
+          }).length;
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+            chipsInside: chips.left >= box.left && chips.right <= box.right,
+            escaped,
+          };
+        });
+      `);
+      check(
+        `${width}px: the clip panel keeps every control inside itself`,
+        panel.chipsInside && panel.escaped === 0,
+        JSON.stringify(panel),
+      );
+      check(
+        `${width}px: the open panel adds no horizontal scroll`,
+        panel.scrollWidth <= panel.innerWidth + 1,
+        `scrollWidth ${panel.scrollWidth}`,
+      );
+    }
+    await shoot("clip-panel-1440.png");
+    // Close it so the walk's last screenshots show the Home it started on.
+    await evalInApp(`
+      await page.click(".tool-head .icon-btn");
+      return null;
+    `);
+  }
+
   const report = await health();
   check(
     "no console errors during the walk",

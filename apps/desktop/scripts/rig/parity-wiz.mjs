@@ -16,7 +16,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
-import { evalInApp, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import {
+  RETRYABLE_EXIT,
+  evalInApp,
+  layoutTrue,
+  makeCheck,
+  shotsDir,
+  startRigTrueToScale,
+  stopRig,
+} from "./rig.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -219,14 +227,14 @@ const checkMaskGeometry = (name, boxes) => {
 
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-engine-"));
-const rig = await startRig({
+const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7931",
   LOCALCUT_SEED_HOOK: "1",
-  RIG_SCALE: "1",
 });
 
+let scaleHeld = true;
 try {
   await evalInApp("await page.waitForSelector('.setup', { timeout: 30000 }); return null;");
 
@@ -242,7 +250,7 @@ try {
   await evalInApp(`
     await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows()[0];
-      w.setContentBounds({ x: 0, y: 0, width: 1450, height: 800 });
+      w.setContentBounds({ x: 40, y: 40, width: 1450, height: 800 });
     });
     await page.waitForTimeout(500);
     return null;
@@ -302,7 +310,7 @@ try {
     `);
     const full = path.join(dir, `${name}.full.png`);
     await evalInApp(`
-      await page.screenshot({ path: ${JSON.stringify(full)}, fullPage: true });
+      await page.screenshot({ path: ${JSON.stringify(full)}, fullPage: true, scale: "css" });
       return null;
     `);
     const page_ = PNG.sync.read(readFileSync(full));
@@ -328,7 +336,25 @@ try {
         ),
       [${JSON.stringify(MASKED_AS[name] ?? [])}, ${clip.x}, ${clip.y}]);
     `);
+    if (process.env.RIG_DUMP_MASKS) {
+      const dims = await evalInApp(`
+        const bounds = await app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].getContentBounds(),
+        );
+        return page.evaluate((b) => ({
+          bounds: b,
+          inner: [window.innerWidth, window.innerHeight],
+          layout: [document.documentElement.clientWidth, document.documentElement.clientHeight],
+          card: Math.round(document.querySelector(".setup.wizard").getBoundingClientRect().width),
+          zoom: null,
+        }), [bounds.width, bounds.height]);
+      `);
+      console.log(`--- ${name} dims:`, JSON.stringify(dims));
+    }
     checkMaskGeometry(name, boxes);
+    // Frame-level, not just run-level: the off-scale flip strikes on a
+    // shrinking resize and every frame after it measures 1.25x wide.
+    scaleHeld &&= await layoutTrue();
   };
 
   const click = (label) =>
@@ -358,11 +384,19 @@ try {
   `);
   await evalInApp("await page.waitForTimeout(250); return null;");
   await shoot("wiz-4");
+  // The off-scale state can strike mid-run; a run it touched is
+  // invalid, not red — the retry runner reruns it.
+  scaleHeld = await layoutTrue();
 } finally {
   await stopRig(rig);
   const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
   rmSync(profile, scrub);
   rmSync(engineData, scrub);
+}
+
+if (!scaleHeld) {
+  console.error("run went off-scale - invalid, not failed; rerunning");
+  process.exit(RETRYABLE_EXIT);
 }
 
 if (check.failures() > 0) {

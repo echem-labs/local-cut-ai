@@ -3358,8 +3358,16 @@ button.link:hover {
 }
 
 /* ---- tool session ---- */
+/* The session page reads in the page column Home uses (v3 review): an
+   artifact page, not a workspace. The session stretches to the column —
+   the recipe card, the waveform and the table all share its edges. */
+.tool-shell {
+  width: 100%;
+  max-width: var(--content-col);
+  margin: 0 auto;
+}
+
 .tool-session {
-  max-width: 720px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;

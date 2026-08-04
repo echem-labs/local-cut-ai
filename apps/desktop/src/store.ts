@@ -112,6 +112,12 @@ export interface SeedPatch {
    * engine answered with first, so a frame that seeds `projects` has to
    * pose this too or the group is simply missing. */
   openProjects?: string[];
+  /** The open session's board and job slice (U3): "rendering · 42%" is a
+   * frame bytes never hold still for, exactly like the download bars. The
+   * session is opened for real first; this poses the node states inside
+   * it, and `freeze` keeps refreshBoard from writing the truth back. */
+  board?: Board;
+  jobs?: Job[];
   freeze?: boolean;
 }
 
@@ -1337,7 +1343,7 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshBoard: async () => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      if (!client || !currentProject || seedFrozen) return;
       const projectId = currentProject.id;
       // Sequence number, not just a project-id check. Two refreshes for the
       // SAME project can be in flight at once (scheduleRefresh fires on the
@@ -2052,6 +2058,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.projects !== undefined) next.projects = patch.projects;
     if (patch.allJobs !== undefined) next.allJobs = patch.allJobs;
     if (patch.openProjects !== undefined) next.openProjects = patch.openProjects;
+    if (patch.board !== undefined) next.board = patch.board;
+    if (patch.jobs !== undefined) next.jobs = patch.jobs;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }
