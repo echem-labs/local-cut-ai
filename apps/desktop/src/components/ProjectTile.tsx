@@ -247,5 +247,5 @@ export function useTileLifecycle(options: { onSaveTemplate?: (project: Project) 
     />
   ) : null;
 
-  return { bind, dialog, error, clearError: () => setError(null) };
+  return { bind, dialog, error };
 }
