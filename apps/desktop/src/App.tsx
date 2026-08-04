@@ -16,7 +16,7 @@ import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
-import { TemplateNotice } from "./components/TemplateDialogs";
+import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
 import { Home } from "./screens/Home";
@@ -79,17 +79,17 @@ export default function App() {
     closeProject,
     closeSettings,
     openSettings,
-    deleteProject,
     engineError,
     firstRunDone,
     libraryOpen,
     openLibrary,
     closeLibrary,
+    saveTemplateFor,
+    closeSaveTemplate,
     settingsOpen,
     system,
     remoteEngine,
   } = useApp();
-  const [railError, setRailError] = useState<string | null>(null);
 
   useEffect(() => {
     void connect();
@@ -318,24 +318,6 @@ export default function App() {
           </button>
         </div>
       </nav>
-      {/* A rejected delete has no room to report itself in the rail, and
-          dropping the message would make a failed delete look like a
-          successful one — the row simply reappears. Deliberately OUTSIDE
-          <main>: the rail stays usable while the Settings overlay is up, and
-          that layer is opaque, so a banner inside the content area would
-          paint behind the very screen the user is looking at. */}
-      {railError && (
-        <div className="banner error rail-toast" role="alert">
-          <span className="grow">{railError}</span>
-          <button
-            className="icon-btn-sm"
-            aria-label={t("common.dismiss")}
-            onClick={() => setRailError(null)}
-          >
-            <X size={13} strokeWidth={2} />
-          </button>
-        </div>
-      )}
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
         <TemplateNotice />
@@ -346,6 +328,12 @@ export default function App() {
           </div>
         )}
       </main>
+      {/* One host for the naming dialog: the Library's tile menu and the
+          palette's in-project command both ask for the same question, and
+          two hosts is two dialogs that drift. */}
+      {saveTemplateFor && (
+        <SaveTemplateDialog project={saveTemplateFor} onClose={closeSaveTemplate} />
+      )}
       <QueueTray />
       <Palette />
     </div>

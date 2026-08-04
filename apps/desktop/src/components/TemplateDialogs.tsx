@@ -90,7 +90,7 @@ export function StartFromTemplateDialog({ onClose }: { onClose: () => void }) {
       {templates.length === 0 ? (
         <p className="sub">{t("library.startTemplateEmpty")}</p>
       ) : (
-        <div className="template-list" role="radiogroup" aria-label={t("library.startTemplateTitle")}>
+        <div className="template-list" role="group" aria-label={t("library.startTemplateTitle")}>
           {templates.map((entry) => (
             <div className={`template-row${picked === entry.id ? " on" : ""}`} key={entry.id}>
               <label>

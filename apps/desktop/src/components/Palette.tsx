@@ -1,6 +1,7 @@
 import {
   Clapperboard,
   FileText,
+  LayoutTemplate,
   Library as LibraryIcon,
   Settings as SettingsIcon,
   Sparkles,
@@ -10,7 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { fuzzyScore } from "../lib/fuzzy";
 import { relativeTime } from "../lib/time";
-import { TOOL_ICONS, TOOL_KINDS, toolKindOf } from "../lib/tools";
+import { isToolSession, TOOL_ICONS, TOOL_KINDS, toolKindOf } from "../lib/tools";
 import { applyTheme, resolvedTheme } from "../theme";
 import { useApp } from "../store";
 
@@ -49,7 +50,8 @@ export function Palette() {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const { projects, allJobs, openProject, openSettings, closeSettings, closeProject } = useApp();
+  const { projects, allJobs, currentProject, openProject, openSettings, closeSettings, closeProject } =
+    useApp();
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -71,11 +73,28 @@ export function Palette() {
 
   const items = useMemo<Item[]>(() => {
     if (!open) return [];
+    // Home is a screen among three now (U2), so "put me on Home" has to
+    // leave the Library too — every create command below routes through
+    // here and then talks to a Home that has to be mounted to hear it.
     const goHome = () => {
       closeProject();
       closeSettings();
+      useApp.getState().closeLibrary();
     };
     const list: Item[] = [];
+    // Contextual, and FIRST in its group: a template is a project's shape,
+    // and a one-off tool output has no shape to save (the tile menu draws the
+    // same line). Ahead of the project rows because the rest state shows only
+    // the first six of this group.
+    if (currentProject && !isToolSession(currentProject)) {
+      list.push({
+        key: "save-template",
+        group: "projects",
+        label: t("palette.saveTemplate"),
+        icon: LayoutTemplate,
+        run: () => useApp.getState().openSaveTemplate(currentProject),
+      });
+    }
     for (const project of projects) {
       const generating = allJobs.some(
         (job) =>
@@ -171,7 +190,7 @@ export function Palette() {
       run: () => applyTheme(resolvedTheme() === "dark" ? "light" : "dark"),
     });
     return list;
-  }, [open, projects, allJobs, openProject, openSettings, closeSettings, closeProject]);
+  }, [open, projects, allJobs, currentProject, openProject, openSettings, closeSettings, closeProject]);
 
   const visible = useMemo(() => {
     const q = query.trim();

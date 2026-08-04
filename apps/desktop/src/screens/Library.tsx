@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../api/types";
 import { FilterTabs } from "../components/FilterTabs";
 import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
-import { SaveTemplateDialog } from "../components/TemplateDialogs";
 import { plural, t } from "../i18n";
 import { tileStatus } from "../lib/tiles";
 import { isToolSession } from "../lib/tools";
@@ -34,14 +33,14 @@ const stamp = (project: Project) => project.updated_at ?? project.created_at;
  * the same tile with the same status oracle.
  */
 export function Library() {
-  const { projects, allJobs, libraryFilter, setLibraryFilter, librarySearchFocus } = useApp();
+  const { projects, allJobs, libraryFilter, setLibraryFilter, librarySearchFocus, openSaveTemplate } =
+    useApp();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const [sortOpen, setSortOpen] = useState(false);
   const [shown, setShown] = useState(PAGE);
-  const [saveFor, setSaveFor] = useState<Project | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const tiles = useTileLifecycle({ onSaveTemplate: setSaveFor });
+  const tiles = useTileLifecycle({ onSaveTemplate: openSaveTemplate });
 
   const videos = useMemo(() => projects.filter((project) => !isToolSession(project)), [projects]);
   const tools = useMemo(() => projects.filter(isToolSession), [projects]);
@@ -219,9 +218,6 @@ export function Library() {
       )}
 
       {tiles.dialog}
-      {saveFor && (
-        <SaveTemplateDialog project={saveFor} onClose={() => setSaveFor(null)} />
-      )}
     </div>
   );
 }
