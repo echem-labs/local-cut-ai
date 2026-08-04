@@ -19,7 +19,9 @@ export function Tip({
   label: string;
   hint?: string;
   shortcut?: string;
-  side?: "top" | "bottom";
+  /** "right" is the rail's side: a row at the top of a vertical strip has
+   * nothing above it, so a top bubble is drawn off the window. */
+  side?: "top" | "bottom" | "right";
   children: ReactNode;
 }) {
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -27,9 +29,12 @@ export function Tip({
 
   const show = () => {
     const rect = wrapRef.current?.getBoundingClientRect();
-    if (rect) {
-      setPos({ x: rect.left + rect.width / 2, y: side === "top" ? rect.top : rect.bottom });
+    if (!rect) return;
+    if (side === "right") {
+      setPos({ x: rect.right, y: rect.top + rect.height / 2 });
+      return;
     }
+    setPos({ x: rect.left + rect.width / 2, y: side === "top" ? rect.top : rect.bottom });
   };
   const hide = () => setPos(null);
 

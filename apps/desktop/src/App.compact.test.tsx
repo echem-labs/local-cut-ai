@@ -94,3 +94,47 @@ describe("rail compaction", () => {
     expect(rail().classList.contains("compact")).toBe(true);
   });
 });
+
+/**
+ * Compacted, the rail is a column of glyphs — so every row has to explain
+ * itself the same way. Two tooltip mechanisms in one 200px strip (a styled
+ * bubble on the destinations, the browser's native title on everything else)
+ * read as two kinds of control, and the app's own bubble is the one that can
+ * be placed: beside the row, where the first row still has somewhere to put
+ * it. The brand mark belongs to the title bar; the Home row takes the home
+ * icon, exactly as the Library row takes the library icon.
+ */
+describe("the compact rail explains itself one way", () => {
+  const railButtons = () =>
+    Array.from(rail().querySelectorAll("button")).filter(
+      // the tab's ✕ is a second control on one row, not a row of its own
+      (button) => !button.classList.contains("rail-tab-close"),
+    );
+
+  it("wraps every row in the app's own tooltip, and none in a native title", () => {
+    localStorage.setItem(RAIL_KEY, "0");
+    width(false);
+    useApp.setState({
+      projects: [
+        { id: "p1", title: "How Honeybees Make Honey", created_at: 0, updated_at: 0, mode: "prompt", approvals: [] },
+      ],
+      openProjects: ["p1"],
+    } as never);
+    render(<App />);
+    const buttons = railButtons();
+    expect(buttons.length).toBeGreaterThan(4);
+    for (const button of buttons) {
+      expect(button.closest(".tip-wrap")).not.toBeNull();
+      expect(button.getAttribute("title")).toBeNull();
+    }
+  });
+
+  it("gives Home the home icon, not the brand mark the title bar already carries", () => {
+    localStorage.setItem(RAIL_KEY, "0");
+    width(false);
+    render(<App />);
+    // The mark draws its own rounded-square plate; no rail row may.
+    expect(rail().querySelector('svg[viewBox="0 0 96 96"]')).toBeNull();
+    expect(document.querySelector('.titlebar svg[viewBox="0 0 96 96"]')).not.toBeNull();
+  });
+});

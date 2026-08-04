@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
 import { useOutsideClick } from "../lib/useOutsideClick";
+import { Tip } from "./Tooltip";
 
 type Panel = "shortcuts" | "glossary" | null;
 
@@ -187,18 +188,25 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
       entry.def.toLowerCase().includes(search.trim().toLowerCase()),
   );
 
+  const helpButton = (
+    <button aria-label={t("help.menu.help")} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <HelpCircle size={15} strokeWidth={1.8} />
+      {!compact && t("help.menu.help")}
+    </button>
+  );
+
   return (
     <>
       <div className="help-menu" ref={ref}>
-        <button
-          aria-label={t("help.menu.help")}
-          aria-expanded={open}
-          title={t("help.menu.title")}
-          onClick={() => setOpen(!open)}
-        >
-          <HelpCircle size={15} strokeWidth={1.8} />
-          {!compact && t("help.menu.help")}
-        </button>
+        {/* Compact leaves only the glyph, so it takes the rail's tooltip —
+            the same bubble on the same side as every other row. */}
+        {compact ? (
+          <Tip label={t("help.menu.help")} hint={t("help.menu.title")} side="right">
+            {helpButton}
+          </Tip>
+        ) : (
+          helpButton
+        )}
         {open && (
           <div className="menu-pop help-pop" role="menu">
             <button
