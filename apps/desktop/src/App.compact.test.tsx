@@ -105,13 +105,12 @@ describe("rail compaction", () => {
  * icon, exactly as the Library row takes the library icon.
  */
 describe("the compact rail explains itself one way", () => {
-  const railButtons = () =>
-    Array.from(rail().querySelectorAll("button")).filter(
-      // the tab's ✕ is a second control on one row, not a row of its own
-      (button) => !button.classList.contains("rail-tab-close"),
-    );
+  // Every button in the strip, the tab's ✕ included: it is the one control
+  // there that is not self-evident, so it is the last place a second tooltip
+  // mechanism may hide.
+  const railButtons = () => Array.from(rail().querySelectorAll("button"));
 
-  it("wraps every row in the app's own tooltip, and none in a native title", () => {
+  it("wraps every control in the app's own tooltip, and none in a native title", () => {
     localStorage.setItem(RAIL_KEY, "0");
     width(false);
     useApp.setState({
