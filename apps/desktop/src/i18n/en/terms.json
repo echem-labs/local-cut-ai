@@ -104,11 +104,11 @@
     },
     {
       "term": "Tier",
-      "def": "LocalCut's grade for this machine's hardware, S (best) to C, from GPU memory, RAM and disk. The tier decides which models are recommended — a lower tier gets lighter picks, not fewer features."
+      "def": "LocalCut AI's grade for this machine's hardware, S (best) to C, from GPU memory, RAM and disk. The tier decides which models are recommended — a lower tier gets lighter picks, not fewer features."
     },
     {
       "term": "External model",
-      "def": "A model served outside the engine — for example a script model running in Ollama, or narration and captions running as companion processes. Nothing to download in LocalCut; the stage still runs fully on this machine."
+      "def": "A model served outside the engine — for example a script model running in Ollama, or narration and captions running as companion processes. Nothing to download in LocalCut AI; the stage still runs fully on this machine."
     },
     {
       "term": "Template",

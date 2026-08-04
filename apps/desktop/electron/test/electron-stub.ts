@@ -280,8 +280,14 @@ export const ipcRenderer = {
 
 export const zoomFactors: number[] = [];
 export const webFrame = {
+  /** The stub's live zoom — read by the redundant-set guard. */
+  currentZoom: 1,
   setZoomFactor(factor: number): void {
     zoomFactors.push(factor);
+    webFrame.currentZoom = factor;
+  },
+  getZoomFactor(): number {
+    return webFrame.currentZoom;
   },
 };
 

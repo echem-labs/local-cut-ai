@@ -55,7 +55,13 @@ try {
     const primary = async () => (await page.$$(".setup-actions button"))[0].click();
     await primary(); // Get started -> machine
     await page.waitForSelector(".setup-machine", { timeout: 5000 });
-    const machine = !!(await page.$(".spec-chips"));
+    // Waited like the rail below, for the same reason: the chips render
+    // from /system, and a cold engine can still be booting when the click
+    // lands — the instant $() read absence where there was only lag.
+    const machine = await page
+      .waitForSelector(".spec-chips", { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
     await primary(); // Continue -> models (rail may need system+models)
     const rail = await page
       .waitForSelector(".pipe-rail", { timeout: 15000 })
@@ -167,6 +173,69 @@ try {
   );
   check("Home is one click back", library.home === true);
   await shoot("02b-library.png");
+
+  // 3c. Run the Script tool for real (U3): panel opens with its preset
+  // chips, a chip writes into the visible prompt, Generate lands on the
+  // session page, and the session page carries the recipe card, the table
+  // and the promote action. The engine behind this run is the rig's own,
+  // so the render is the mock backend's and settles in seconds.
+  const session = await evalInApp(`
+    await page.evaluate(() => {
+      const scriptTool = [...document.querySelectorAll(".quick-tools button")].find((button) =>
+        (button.getAttribute("aria-label") || "").startsWith("Script"),
+      );
+      scriptTool?.click();
+    });
+    await page.waitForSelector(".tool-panel .chip-row", { timeout: 5000 });
+    await page.type(".tool-panel textarea", "How Istanbul was captured");
+    const chips = await page.$$(".tool-panel .chip-row .chip");
+    await chips[1].click(); // Shorts — scaffolds the prompt, visibly
+    const scaffolded = await page.evaluate(
+      () => document.querySelector(".tool-panel textarea").value,
+    );
+    const buttons = await page.$$(".tool-panel .row button");
+    await buttons[buttons.length - 1].click(); // Generate script
+    await page.waitForSelector(".tool-shell", { timeout: 30000 });
+    const table = await page
+      .waitForSelector(".script-table", { timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+    const shape = await page.evaluate(() => ({
+      recipe: !!document.querySelector(".session-recipe"),
+      recipeChips: document.querySelectorAll(".session-recipe .badge").length,
+      promote: [...document.querySelectorAll(".tool-actions button")].some((button) =>
+        button.textContent.includes("Turn into a video"),
+      ),
+    }));
+    return { scaffolded, table, ...shape };
+  `);
+  check(
+    "a script preset writes into the visible prompt",
+    session.scaffolded.startsWith("How Istanbul was captured") &&
+      session.scaffolded.length > "How Istanbul was captured".length,
+    JSON.stringify(session.scaffolded),
+  );
+  check("the script session renders its table", session.table === true);
+  check(
+    "the session page carries the recipe card and the promote action",
+    session.recipe && session.recipeChips >= 2 && session.promote,
+    JSON.stringify(session),
+  );
+  await shoot("02c-script-session.png");
+
+  // Back to Home for the stops that follow.
+  await evalInApp(`
+    await page.evaluate(() => {
+      const label = (button) =>
+        (button.textContent || "") + " " + (button.getAttribute("aria-label") || "");
+      const row = [...document.querySelectorAll(".rail button")].find((button) =>
+        label(button).includes("Home"),
+      );
+      row?.click();
+    });
+    await page.waitForSelector(".home", { timeout: 5000 });
+    return null;
+  `);
 
   // 3. Settings overlay opens and closes without unmounting Home.
   const settings = await evalInApp(`
