@@ -16,6 +16,7 @@ import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
+import { TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
 import { Home } from "./screens/Home";
@@ -334,6 +335,7 @@ export default function App() {
       )}
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
+        <TemplateNotice />
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">

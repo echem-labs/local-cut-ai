@@ -10,11 +10,11 @@
     },
     {
       "keys": "/",
-      "what": "Search projects (Home)"
+      "what": "Search the library (from anywhere)"
     },
     {
       "keys": "F2",
-      "what": "Rename the focused project tile (Home)"
+      "what": "Rename the focused tile (Home or Library)"
     },
     {
       "keys": "Enter",

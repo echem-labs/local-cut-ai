@@ -5261,3 +5261,336 @@ button.link:hover {
 .take-row .chip.billed {
   border-style: dashed;
 }
+
+/* ==========================================================================
+   U2 — the Library as a destination, and what Home kept
+   ========================================================================== */
+
+/* The rail's count: the size of the library, without opening it. Tabular
+   figures so 9 → 10 doesn't shift the row. */
+.rail-count {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail button.active .rail-count {
+  color: var(--text-secondary);
+}
+
+.rail.compact .rail-count {
+  display: none;
+}
+
+/* Home's create surface: the template entry sits under the hero as a quiet
+   line, not a second primary (design review v5, Q2). */
+.home .from-template {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+/* The download bridge: one line, the wizard's rows behind it (v5, Q1). */
+.dl-summary {
+  margin-top: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+}
+
+.dl-summary-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 10px var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.dl-summary-head .caret {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--motion-fast);
+}
+
+.dl-summary-head .caret.open {
+  transform: rotate(90deg);
+}
+
+.dl-summary-head .dl-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.dl-summary-head .dl-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.dl-summary-head .bytes {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Expanded, the rows are the wizard's — so the card is one surface, not a
+   card inside a card. */
+.dl-summary.open {
+  padding-bottom: var(--space-3);
+}
+
+.dl-summary .sumrail {
+  margin: 0 var(--space-3);
+}
+
+/* ---- the Library screen ---- */
+
+/* Same grid as Home so the two screens share a spine, but the browsing
+   content uses the full width: a library is scanned, not read (v5, Q3). */
+.library {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 1fr min(var(--content-wide), 100%) 1fr;
+  margin: 0 auto;
+  max-width: var(--content-wide);
+  padding-top: var(--space-8);
+}
+
+.library > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.library h1 {
+  font-size: var(--text-l);
+  font-weight: 650;
+  margin-bottom: var(--space-1);
+}
+
+.library .sub {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-4);
+}
+
+.library-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.library-search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  min-height: 30px;
+  width: 260px;
+  max-width: 100%;
+}
+
+.library-search svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.library-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.library-search:focus-within {
+  border-color: var(--accent);
+}
+
+/* The "/" hint reads as a key, and steps aside for the clear button once
+   there is something to clear. */
+.library-search kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+}
+
+.library-bar .spacer {
+  flex: 1;
+}
+
+/* A chip that opens a menu — the sort control (v5, Q6). */
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.chip-btn:hover {
+  border-color: var(--border-hi);
+}
+
+.sort-menu-wrap {
+  position: relative;
+}
+
+.sort-menu {
+  position: absolute;
+  right: 0;
+  top: calc(30px + var(--space-1));
+  min-width: 172px;
+}
+
+.sort-menu button.active {
+  background: var(--surface-3);
+}
+
+.library .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+/* Paging rather than an endless scroll: the count is knowable, and a button
+   is reachable by keyboard where an intersection observer is not (v5, Q6). */
+.library-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-4);
+}
+
+.library .no-match {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-6);
+  max-width: 60ch;
+}
+
+/* ---- template dialogs ---- */
+
+.modal .field {
+  display: block;
+  margin-top: var(--space-4);
+}
+
+.modal .field span {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.modal .field input {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+}
+
+.modal .field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.template-modal {
+  max-width: 460px;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+}
+
+.template-row.on {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.template-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.template-row input[type="radio"] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.template-row .grow {
+  min-width: 0;
+}
+
+.template-row .name {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.template-row .meta {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* Surfaced, never blocking: what the imported template will spend. */
+.template-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.template-notice .grow {
+  flex: 1;
+}
