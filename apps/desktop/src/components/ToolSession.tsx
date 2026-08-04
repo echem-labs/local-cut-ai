@@ -1,14 +1,64 @@
-import { useEffect, useState } from "react";
-import type { Screenplay } from "../api/types";
+import { useEffect, useRef, useState } from "react";
+import { Dices, FolderPlus, Mic, Repeat } from "lucide-react";
+import type { Screenplay, TakeInfo } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
 import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { isDone, isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
-import { toolLabel } from "../lib/tools";
+import { isToolSession, toolLabel } from "../lib/tools";
 import { StatusRing } from "./StatusRing";
 import { PromotedTo } from "./Provenance";
+import { Waveform } from "./Waveform";
+
+/** How much of each end the loop-seam preview plays. Beds loop in
+ * assembly, so end→start is the joint you would actually hear. */
+export const SEAM_SECONDS = 2;
+
+/** The seam preview's seek math, alone so a test can hold it still:
+ * from (duration − seam) to the end, then from 0 for one seam more.
+ * Tracks shorter than two seams have no distinct joint — play whole. */
+export function seamPlan(durationS: number): { start: number; tailS: number } | null {
+  if (!Number.isFinite(durationS) || durationS <= 2 * SEAM_SECONDS) return null;
+  return { start: durationS - SEAM_SECONDS, tailS: SEAM_SECONDS };
+}
+
+/** Drive an audio element through the seam: tail, then head, then stop.
+ * Returns a cancel function; `onDone` fires on either finish or cancel.
+ * Takes the element rather than making one so a test can hand in a stub. */
+export function playSeam(
+  audio: HTMLAudioElement,
+  durationS: number,
+  onDone: () => void,
+): () => void {
+  const plan = seamPlan(durationS);
+  let phase: "tail" | "head" = plan ? "tail" : "head";
+  const stop = () => {
+    audio.removeEventListener("ended", onEnded);
+    audio.removeEventListener("timeupdate", onTime);
+    audio.pause();
+    onDone();
+  };
+  const onEnded = () => {
+    if (phase === "tail") {
+      // The joint itself: the end has played out, restart at the top.
+      phase = "head";
+      audio.currentTime = 0;
+      void audio.play().catch(stop);
+    } else {
+      stop();
+    }
+  };
+  const onTime = () => {
+    if (phase === "head" && audio.currentTime >= SEAM_SECONDS) stop();
+  };
+  audio.addEventListener("ended", onEnded);
+  audio.addEventListener("timeupdate", onTime);
+  audio.currentTime = plan ? plan.start : 0;
+  void audio.play().catch(stop);
+  return stop;
+}
 
 export function useScreenplay(url: string | null): Screenplay | null {
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
@@ -99,12 +149,57 @@ export function ToolSession() {
   // calls refreshBoard). Reading it here left the model and duration below
   // pinned to whatever the last Home visit saw — so they never appeared at
   // all for a first render, and showed the previous take's after an enhance.
-  const { board, client, currentProject, promote, actionError, jobs, regenerate, enhance } =
-    useApp();
+  const {
+    board,
+    client,
+    currentProject,
+    promote,
+    actionError,
+    jobs,
+    projects,
+    regenerate,
+    enhance,
+    selectTake,
+    addToProject,
+    applySessionVoiceClone,
+  } = useApp();
   const [promoting, setPromoting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notes, setNotes] = useState("");
   const [enhancing, setEnhancing] = useState(false);
+  // Menus/dialogs local to this page. `null` string states double as
+  // "closed"; a message is the store convention for a refusal.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addResult, setAddResult] = useState<string | null>(null);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneConsent, setCloneConsent] = useState(false);
+  const [cloneResult, setCloneResult] = useState<string | null>(null);
+  const [takeError, setTakeError] = useState<string | null>(null);
+  const [seamPlaying, setSeamPlaying] = useState(false);
+  const seamStopRef = useRef<(() => void) | null>(null);
+  const seamAudioRef = useRef<HTMLAudioElement | null>(null);
+  const cloneFileRef = useRef<HTMLInputElement>(null);
+
+  // Whatever is playing stops with the page.
+  useEffect(
+    () => () => {
+      seamStopRef.current?.();
+    },
+    [],
+  );
+
+  // Escape closes whichever popover is up — window-level, per the repo
+  // rule: a div with no tabIndex never receives onKeyDown.
+  useEffect(() => {
+    if (!addOpen && !cloneOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAddOpen(false);
+      setCloneOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [addOpen, cloneOpen]);
 
   useEffect(() => {
     if (!copied) return;
@@ -190,6 +285,76 @@ export function ToolSession() {
   // the tool node. `?? node` narrows the type (node is non-null past the
   // guard) — progressNode itself is computed before it.
   const shown = progressNode ?? node;
+
+  // The artifact's recipe: what was asked for, straight off the tool node's
+  // own params — the one thing a person wonders about mid-render, and the
+  // title above truncates it. The trailing chips are the run's other inputs.
+  const params = node.params ?? {};
+  // prompt (visual tools) / text (voiceover) / brief (music) — one of the
+  // three is the thing that was asked for.
+  const recipe =
+    [params.prompt, params.text, params.brief].find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    ) ?? null;
+  const details: string[] = [];
+  if (typeof params.voice === "string" && params.voice) details.push(params.voice);
+  if (typeof params.motion === "string" && params.motion) details.push(params.motion);
+  if (typeof params.duration_s === "number")
+    details.push(t("toolSession.secondsChip", { s: params.duration_s }));
+  if (typeof params.target_duration_s === "number")
+    details.push(t("toolSession.secondsChip", { s: params.target_duration_s }));
+  if (typeof params.aspect === "string" && params.aspect) details.push(params.aspect);
+
+  // Recorded takes: only once a regenerate has displaced an identity —
+  // one row is just "the current render" and says nothing.
+  const takes = (node.takes ?? []).length > 1 ? (node.takes as TakeInfo[]) : [];
+
+  // "Add to project" targets: real projects only. A tool output inside
+  // another tool session helps nobody, and the newest-first order matches
+  // the Continue shelf's idea of relevance.
+  const targets = projects
+    .filter((project) => !isToolSession(project))
+    .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at));
+
+  const pickTake = async (take: TakeInfo) => {
+    if (take.current) return;
+    setTakeError(await selectTake(node.node_id, take.output_hash));
+  };
+
+  const addTo = async (targetId: string, title: string) => {
+    setAddOpen(false);
+    const error = await addToProject(targetId);
+    setAddResult(error ?? t("toolSession.addedToProject", { title }));
+  };
+
+  const cloneFrom = async (file: File) => {
+    setCloneOpen(false);
+    setCloneConsent(false);
+    const error = await applySessionVoiceClone(file);
+    setCloneResult(error ?? t("toolSession.cloneApplied", { name: file.name }));
+  };
+
+  const toggleSeam = () => {
+    if (seamPlaying) {
+      seamStopRef.current?.();
+      return;
+    }
+    if (!artifactUrl) return;
+    // A fresh element (not the Waveform's player): the seam is a scripted
+    // pass through two ranges, and stealing the visible player's position
+    // mid-listen would be rude.
+    const audio = seamAudioRef.current ?? new Audio(artifactUrl);
+    seamAudioRef.current = audio;
+    const begin = () => {
+      setSeamPlaying(true);
+      seamStopRef.current = playSeam(audio, audio.duration, () => {
+        setSeamPlaying(false);
+        seamStopRef.current = null;
+      });
+    };
+    if (Number.isFinite(audio.duration) && audio.duration > 0) begin();
+    else audio.addEventListener("loadedmetadata", begin, { once: true });
+  };
   // Route the stage through the catalog (the raw "keyframe"/tool id was
   // untranslatable and disagreed with QueueTray's nodeLabel).
   // `toolLabel`, not an unchecked cast: `tool` is the raw wire value out of
@@ -207,12 +372,35 @@ export function ToolSession() {
         {tookS != null && (
           <small className="hint">{t("toolSession.took", { t: shortDuration(tookS) })}</small>
         )}
+        {/* The image tool's seed, visible: a reroll pins a new one, and a
+            number you can read is a number you can reproduce. */}
+        {tool === "image" && done && (
+          <small className="hint">{t("toolSession.seedChip", { seed: node.seed })}</small>
+        )}
       </div>
 
       {/* Outside the `done` branch on purpose: a session that has been
           promoted stays promoted while it re-runs, and a re-run that fails
           does not unmake the videos it already produced. */}
       {currentProject && <PromotedTo project={currentProject} />}
+
+      {recipe && (
+        <div className="session-recipe">
+          <span className="eyebrow">
+            {t(tool === "voiceover" ? "toolSession.recipeText" : "toolSession.recipePrompt")}
+          </span>
+          <p>{recipe}</p>
+          {details.length > 0 && (
+            <div className="recipe-chips">
+              {details.map((detail) => (
+                <span key={detail} className="badge">
+                  {detail}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {shown.error && <div className="banner error">{shown.error}</div>}
       {!done && !shown.error && (
@@ -228,8 +416,13 @@ export function ToolSession() {
               alt={t("toolSession.generatedAlt", { tool })}
             />
           )}
-          {(tool === "voiceover" || tool === "music") && (
-            <audio controls src={artifactUrl} aria-label={t("toolSession.audioAria", { tool })} />
+          {(tool === "voiceover" || tool === "music") && currentProject && node.artifact_hash && (
+            <Waveform
+              projectId={currentProject.id}
+              hash={node.artifact_hash}
+              src={artifactUrl}
+              ariaLabel={t("toolSession.audioAria", { tool })}
+            />
           )}
           {tool === "clip" && (
             <video
@@ -245,6 +438,37 @@ export function ToolSession() {
             ) : (
               <div className="banner">{t("toolSession.loadingScript")}</div>
             ))}
+          {takes.length > 0 && (
+            <div className="takes-strip" role="group" aria-label={t("toolSession.takesAria")}>
+              <span className="eyebrow">{t("toolSession.takes")}</span>
+              {takes.map((take) => (
+                <button
+                  key={take.output_hash}
+                  className={`chip${take.current ? " active" : ""}`}
+                  disabled={take.current}
+                  onClick={() => void pickTake(take)}
+                  aria-label={t(
+                    take.current ? "toolSession.takeCurrentAria" : "toolSession.takeAria",
+                    { seed: take.seed },
+                  )}
+                >
+                  {t("toolSession.seedChip", { seed: take.seed })}
+                  {take.current && <small>{t("toolSession.takeCurrent")}</small>}
+                  {/* An unavailable take re-renders on click; one that fell
+                      off the recorded list is refused engine-side and the
+                      reason lands in takeError below. */}
+                  {!take.current && !take.available && (
+                    <small>{t("toolSession.takeRerenders")}</small>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+          {takeError && (
+            <p className="hint error-text" role="alert">
+              {takeError}
+            </p>
+          )}
           <div className="tool-actions">
             <a className="btn-ghost" href={artifactUrl} download>
               {t("common.download")}
@@ -257,6 +481,69 @@ export function ToolSession() {
             <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
               {t("toolSession.regenerate")}
             </button>
+            {tool === "image" && (
+              <button
+                className="btn-ghost"
+                onClick={() =>
+                  // A fresh seed, pinned in the same call — RegenerateBody.seed.
+                  void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
+                }
+              >
+                <Dices size={13} strokeWidth={1.8} aria-hidden="true" />
+                {t("toolSession.reroll")}
+              </button>
+            )}
+            {tool === "music" && (
+              <button
+                className="btn-ghost"
+                aria-label={t("toolSession.loopSeamAria")}
+                title={t("toolSession.loopSeamHint")}
+                onClick={toggleSeam}
+              >
+                <Repeat size={13} strokeWidth={1.8} aria-hidden="true" />
+                {seamPlaying ? t("toolSession.loopSeamPlaying") : t("toolSession.loopSeam")}
+              </button>
+            )}
+            {tool === "voiceover" && (
+              <button
+                className="btn-ghost"
+                onClick={() => setCloneOpen(!cloneOpen)}
+                aria-expanded={cloneOpen}
+              >
+                <Mic size={13} strokeWidth={1.8} aria-hidden="true" />
+                {t("toolSession.cloneVoice")}
+              </button>
+            )}
+            {tool !== "script" && (
+              <span className="add-anchor">
+                <button
+                  className="btn-ghost"
+                  onClick={() => setAddOpen(!addOpen)}
+                  aria-expanded={addOpen}
+                  aria-label={t("toolSession.addToProjectAria")}
+                >
+                  <FolderPlus size={13} strokeWidth={1.8} aria-hidden="true" />
+                  {t("toolSession.addToProject")}
+                </button>
+                {addOpen && (
+                  <div className="menu-pop" role="menu" aria-label={t("toolSession.addToProjectTitle")}>
+                    <span className="hint">{t("toolSession.addToProjectHint")}</span>
+                    {targets.length === 0 && (
+                      <span className="hint">{t("toolSession.addToProjectEmpty")}</span>
+                    )}
+                    {targets.map((project) => (
+                      <button
+                        key={project.id}
+                        role="menuitem"
+                        onClick={() => void addTo(project.id, project.title)}
+                      >
+                        {project.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </span>
+            )}
             {tool === "script" && (
               <button
                 className="btn-primary"
@@ -267,6 +554,48 @@ export function ToolSession() {
               </button>
             )}
           </div>
+          {addResult && (
+            <p className="hint" role="status">
+              {addResult}
+            </p>
+          )}
+          {cloneOpen && tool === "voiceover" && (
+            <div className="clone-panel">
+              <b>{t("toolSession.cloneVoiceTitle")}</b>
+              <span className="hint">{t("toolSession.cloneVoiceHint")}</span>
+              <label className="consent">
+                <input
+                  type="checkbox"
+                  checked={cloneConsent}
+                  onChange={(event) => setCloneConsent(event.target.checked)}
+                />
+                {t("toolSession.cloneConsent")}
+              </label>
+              <input
+                ref={cloneFileRef}
+                type="file"
+                accept="audio/wav,audio/mpeg,audio/flac,audio/mp4"
+                style={{ display: "none" }}
+                aria-label={t("toolSession.cloneUploadAria")}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void cloneFrom(file);
+                }}
+              />
+              <button
+                className="btn-ghost"
+                disabled={!cloneConsent}
+                onClick={() => cloneFileRef.current?.click()}
+              >
+                {t("toolSession.cloneUpload")}
+              </button>
+            </div>
+          )}
+          {cloneResult && (
+            <p className="hint" role="status">
+              {cloneResult}
+            </p>
+          )}
           {tool === "script" && (
             <div className="tool-enhance">
               <input

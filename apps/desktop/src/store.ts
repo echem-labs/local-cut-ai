@@ -146,6 +146,14 @@ export interface HomeDraft {
   motion: string;
   /** Script tool's model pick; "" = the engine's configured default. */
   scriptModel: string;
+  /** Per-tool aspect (script/thumbnail/image/clip panels). Separate from
+   * the video defaults on purpose: a 9:16 thumbnail experiment must not
+   * silently re-aim the next full video. */
+  toolAspect: string;
+  /** Script/music target length, seconds. */
+  toolDuration: number;
+  /** Clip take length; clamped to TOOL_CLIP_SECONDS before it travels. */
+  clipSeconds: number;
 }
 
 interface AppState {
@@ -237,8 +245,30 @@ interface AppState {
   ) => Promise<void>;
   createTool: (
     tool: ToolKind,
-    input: { prompt?: string; text?: string; voice?: string; motion?: string; model?: string },
+    input: {
+      prompt?: string;
+      text?: string;
+      voice?: string;
+      motion?: string;
+      model?: string;
+      aspect?: string;
+      duration_s?: number;
+      target_duration_s?: number;
+    },
+    /** Clip only: an image to condition the take with. Uploaded into the
+     * new session and wired into the clip's keyframe port; the generated
+     * keyframe node is removed in the same patch, so the session renders
+     * from the user's frame instead of racing it. */
+    startFrame?: File,
   ) => Promise<void>;
+  /** Copy the current session's finished artifact into another project as
+   * an asset node (fetch → upload — the HTTP boundary both ways). `null`
+   * means it landed; anything else is the reason it did not. */
+  addToProject: (targetId: string) => Promise<string | null>;
+  /** Wire a consented voice sample into the session's voiceover node —
+   * upload with the affirmation, then set the cloning model and connect
+   * voice_ref, exactly like the workspace's applyClonedVoice. */
+  applySessionVoiceClone: (file: File) => Promise<string | null>;
   promote: () => Promise<void>;
   /** Rewrite the current project's script from user feedback. */
   enhance: (notes: string) => Promise<void>;
@@ -254,7 +284,9 @@ interface AppState {
   /** Free an input port. The node stays; only the edge goes. */
   disconnectPort: (dst: string, port: string) => Promise<string | null>;
   removeNode: (nodeId: string) => Promise<string | null>;
-  regenerate: (nodeId: string) => Promise<void>;
+  /** Re-render a node. With `seed`, a reroll pinned to that seed (one
+   * atomic call — RegenerateBody.seed); without, the engine bumps it. */
+  regenerate: (nodeId: string, seed?: number) => Promise<void>;
   applyNode: (
     nodeId: string,
     changes: { params?: Record<string, unknown>; seed?: number; model?: string | null },
@@ -374,6 +406,11 @@ const EMPTY_DRAFT: HomeDraft = {
   voice: "",
   motion: "",
   scriptModel: "",
+  // The ToolRequest defaults — what the engine would apply anyway, made
+  // visible instead of implied.
+  toolAspect: "16:9",
+  toolDuration: 60,
+  clipSeconds: 5,
 };
 
 function loadPersisted<T extends object>(key: string, fallback: T): T {
@@ -1148,7 +1185,7 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    createTool: async (tool, input) => {
+    createTool: async (tool, input, startFrame) => {
       const { client } = get();
       if (!client) return;
       set({ actionError: null });
@@ -1157,11 +1194,68 @@ export const useApp = create<AppState>((set, get) => {
         // Tell any refreshHome already in flight that this id is new, not
         // deleted — its project list snapshot predates the create.
         announceNewProject(project.id);
+        if (startFrame && tool === "clip") {
+          // Condition BEFORE opening: connect displaces the generated
+          // keyframe as the clip's source, and removing that node in the
+          // same patch keeps the session from rendering a frame nothing
+          // consumes. Op order matters — connect first frees the keyframe
+          // of its consumer, so the removal is of an unwired node.
+          const asset = await client.uploadAsset(project.id, startFrame);
+          await client.patch(project.id, [
+            { op: "connect", node_id: "clip", src: asset.node_id, port: "keyframe" },
+            { op: "remove_node", node_id: "keyframe" },
+          ]);
+        }
         await get().openProject(project.id);
         await get().refreshHome();
       } catch (err) {
         console.warn(`tool ${tool} failed:`, err);
         set({ actionError: { scope: "tool", message: messageOf(err) } });
+      }
+    },
+
+    addToProject: async (targetId) => {
+      const { client, currentProject, board } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      const tool = currentProject.mode.startsWith("tool:")
+        ? currentProject.mode.slice("tool:".length)
+        : null;
+      const node = tool ? board?.aux[tool] : undefined;
+      if (!node?.artifact_hash) return t("errors.engineUnavailable");
+      try {
+        // Fetch → re-upload, never a path: the engine may be on another
+        // machine, and the artifact route is the only door to its bytes.
+        const response = await fetch(client.artifactUrl(currentProject.id, node.artifact_hash));
+        if (!response.ok) return t("errors.engineUnavailable");
+        const blob = await response.blob();
+        // The engine names the download (Content-Disposition) — reuse that
+        // name so the asset node says what it is; the hash prefix keeps two
+        // sessions' "voiceover" outputs from colliding.
+        const header = response.headers.get("content-disposition") ?? "";
+        const named = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(header)?.[1];
+        const name = named ?? `${tool}-${node.artifact_hash.slice(0, 8)}`;
+        await client.uploadAsset(targetId, new File([blob], name, { type: blob.type }));
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    applySessionVoiceClone: async (file) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // The consent affirmation was collected in the UI; the engine
+        // refuses to stamp the sample without it either way.
+        const asset = await client.uploadAsset(currentProject.id, file, { consent: true });
+        await client.patch(currentProject.id, [
+          { op: "set_model", node_id: "voiceover", model: "local:chatterbox" },
+          { op: "connect", node_id: "voiceover", src: asset.node_id, port: "voice_ref" },
+        ]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
       }
     },
 
@@ -1323,10 +1417,10 @@ export const useApp = create<AppState>((set, get) => {
       return error;
     },
 
-    regenerate: async (nodeId) => {
+    regenerate: async (nodeId, seed) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
-      await client.regenerate(currentProject.id, nodeId);
+      await client.regenerate(currentProject.id, nodeId, seed);
       await get().refreshBoard();
     },
 

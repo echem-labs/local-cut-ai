@@ -240,3 +240,52 @@ def test_export_encode_choices_match_the_engine():
 
     assert _list("EXPORT_FPS_CHOICES") == EXPORT_FPS_CHOICES
     assert _list("EXPORT_SHORT_SIDE_CHOICES") == EXPORT_SHORT_SIDE_CHOICES
+
+
+def test_tool_clip_seconds_match_the_tool_route():
+    """TOOL_CLIP_SECONDS mirrors ToolRequest.duration_s. The clip panel
+    clamps to these before sending; drift means either a 422 the user
+    cannot act on or a length the engine accepts that the UI refuses."""
+    import inspect
+
+    from localcut_engine.api import app as app_module
+
+    source = inspect.getsource(app_module)
+    api = re.search(
+        r"duration_s: float = Field\(default=[\d.]+, ge=([\d.]+), le=([\d.]+)\)", source
+    )
+    assert api, "the ToolRequest duration_s Field no longer matches — update this test with it"
+
+    bounds = re.search(r"TOOL_CLIP_SECONDS = \{ min: (\d+), max: (\d+) \}", _source())
+    assert bounds, "TOOL_CLIP_SECONDS no longer matches — update this test with it"
+    assert float(bounds.group(1)) == float(api.group(1)), "UI clip minimum drifted from the API"
+    assert float(bounds.group(2)) == float(api.group(2)), "UI clip maximum drifted from the API"
+
+
+def test_voice_swatches_match_the_kokoro_voice_map():
+    """The voiceover panel's swatches are briefs the engine's keyword map
+    resolves — lib/tools.ts VOICE_SWATCHES mirrors kokoro's _VOICE_MAP. A
+    swatch whose brief no longer picks its voice plays one speaker in the
+    preview and renders another; a voice the map gained stays unofferable
+    until the mirror moves with it."""
+    from localcut_engine.backends.kokoro import _DEFAULT_VOICE, _VOICE_MAP, pick_voice
+
+    lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
+    block = re.search(r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", lib, re.S)
+    assert block, "lib/tools.ts no longer declares VOICE_SWATCHES — update this test with it"
+    swatches = re.findall(r'\{\s*brief:\s*"([^"]+)",\s*voice:\s*"([^"]+)"', block.group(1))
+    assert swatches, "VOICE_SWATCHES entries no longer match — update this test with it"
+
+    for brief, voice in swatches:
+        assert pick_voice(brief) == voice, (
+            f"the brief {brief!r} resolves to {pick_voice(brief)!r} engine-side, "
+            f"but the swatch promises {voice!r}"
+        )
+    # Every distinct engine voice is offered: a voice only reachable by
+    # guessing the right keyword is not a picker.
+    offered = {voice for _, voice in swatches}
+    engine_voices = {voice for _, voice in _VOICE_MAP} | {_DEFAULT_VOICE}
+    assert offered == engine_voices, (
+        f"swatches and kokoro disagree: only in UI {sorted(offered - engine_voices)}, "
+        f"only in engine {sorted(engine_voices - offered)}"
+    )
