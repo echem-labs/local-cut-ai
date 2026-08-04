@@ -108,6 +108,10 @@ export interface SeedPatch {
    * list posed, not just the hardware behind it. */
   projects?: Project[];
   allJobs?: Job[];
+  /** The rail's Open group. Restored tabs are pruned against whatever the
+   * engine answered with first, so a frame that seeds `projects` has to
+   * pose this too or the group is simply missing. */
+  openProjects?: string[];
   freeze?: boolean;
 }
 
@@ -1941,6 +1945,7 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.models !== undefined) next.models = patch.models;
     if (patch.projects !== undefined) next.projects = patch.projects;
     if (patch.allJobs !== undefined) next.allJobs = patch.allJobs;
+    if (patch.openProjects !== undefined) next.openProjects = patch.openProjects;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

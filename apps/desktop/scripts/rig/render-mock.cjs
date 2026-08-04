@@ -71,7 +71,9 @@ const STATES = SET.states;
  * - install-state metas, byte totals and hint lines: the mock poses an
  *   inconsistent state (rows "already installed" AND "2 downloads") that
  *   no truthful app state can reproduce;
- * - the brand mark: the app draws it as an SVG, the mock as CSS;
+ * - the brand mark and the rail's icon column: the app draws these as
+ *   SVGs, the mock as a CSS box and unicode characters — the mask hides
+ *   the drawing, and the geometry check keeps the position;
  * - checks and badge clusters: native checkbox vs hand-drawn span, and
  *   the app's license badge carries a verdict glyph the mock omits;
  * - the library filter: the app hides won't-fit rows under "Fits this
@@ -85,13 +87,13 @@ const MASKABLE = {
      frame gates the LAYOUT of the shelf and the chrome around it; what a
      tile says is the seed's business, and the geometry of these regions is
      checked against the reference boxes (parity-home.mjs). */
-  home: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".tool .well", ".models"],
-  "home-downloads": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".dlsum", ".tool .well", ".models"],
-  "home-downloads-open": [".rail .item .count", ".dlsum", ".srow .st", ".srow .model", ".tool .well", ".models"],
-  "home-empty": [".rail .item .count", ".tool .well", ".models"],
-  library: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".libbar .seg", ".chip"],
-  "library-tools": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".libbar .seg", ".chip"],
-  "library-menu": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".libbar .seg", ".chip"],
+  home: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
+  "home-downloads": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".dlsum", ".tool .well", ".models"],
+  "home-downloads-open": [".rail .item .count", ".rail .item .glyph", ".dlsum", ".srow .st", ".srow .model", ".tool .well", ".models"],
+  "home-empty": [".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
+  library: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
+  "library-tools": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
+  "library-menu": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
   "wiz-1": [".mark"],
   "wiz-2": [],
   "wiz-3": [".row .meta", ".row .check", ".primary", ".hintline"],
@@ -106,8 +108,13 @@ const FONT = pathToFileURL(
 
 /* Every rule below either injects the app's real font or snaps one mock
    value to the app token that the implementation uses. Nothing else —
-   geometry, color, structure stay the mock's, or the gate gates nothing. */
-const SNAP = `
+   geometry, color, structure stay the mock's, or the gate gates nothing.
+
+   Split by set on purpose: the home mock and the wizard mock share class
+   names (.sub, .group, .row, .primary), so a home rule in the shared block
+   silently re-lays-out the wizard's card and invalidates references nobody
+   re-rendered. */
+const SNAP_COMMON = `
 /* format MUST be "woff2": Chromium rejects "woff2-variations" and the
    face silently never loads — fonts.ready still resolves. */
 @font-face {
@@ -118,6 +125,10 @@ const SNAP = `
   font-display: block;
 }
 * { animation: none !important; transition: none !important; }
+/* The app's captures hide the scrollbar; the mock must too. Otherwise a
+   frame whose content lands within a pixel of the window reserves 15px,
+   which re-flows an auto-fill grid into a whole extra column. */
+::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
 /* app body has no line-height override — UA normal, not the mock's 1.5.
    !important: the mock sets it via the font shorthand and insertCSS does
    not reliably out-cascade the document sheet. */
@@ -149,21 +160,27 @@ body, body * { line-height: normal !important; }
 .srow + .srow { margin-top: 8px !important; }
 .mrow .meta { margin-top: 2px !important; }
 .st .bar { margin-top: 4px !important; }
+`;
 
 /* ---- the home set's snaps (same rule: each one is a token the app owns) */
+const SNAP_HOME = `
 /* 12.5px is not on the scale: --text-xs everywhere it appears */
 .tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
 .rail .item, .sortmenu div, .menu div { font-size: 12px !important; }
 /* rail rows are --text-s, and the readiness button is an --control-h icon */
 .rail .item { font-size: 14px !important; }
+/* the rail's group label sits on the rail's own rhythm, not the wizard's */
+.rail .group { margin-top: 0 !important; }
+/* the shipped engine chip is 11/10 type on a 44px box, not the mock's 12/11 */
+.rail .engine { min-height: 44px !important; padding: 8px !important; border-radius: 6px !important; }
+.rail .engine b { font-size: 11px !important; }
+.rail .engine small { font-size: 10px !important; }
 .models { width: 32px !important; height: 32px !important; }
 /* the 4px grid where the mock sits off it */
 .fromtpl { margin-top: 12px !important; }
 .toolhead { margin: 24px 0 12px !important; }
 .shelfhead { margin: 32px 0 12px !important; }
-/* the hero's pickers are --control-h 32; a seg-toggle and a chip button are
-   the app's shorter 30px control */
-.hero .chip, .search { min-height: 32px !important; }
+/* a seg-toggle's cells sit inside its border, so 30 + 2 is the app's 32 */
 .seg span, .sortwrap .chip { min-height: 30px !important; align-items: center !important; }
 /* Generate carries the app's min-width so the row's right edge matches */
 .primary { min-width: 128px !important; justify-content: center !important; }
@@ -184,12 +201,15 @@ body { padding-top: 38px !important; }
 .tool { padding: 12px !important; min-height: 76px !important; }
 .tools { gap: 8px !important; }
 .seg span { padding: 4px 12px !important; display: inline-flex !important; align-items: center !important; }
-/* tiles: the app's tile body padding and 12px gaps */
+/* tiles: the app's tile body padding, meta gap and 12px grid gaps */
 .tbody { padding: 8px 10px !important; }
+.tbody .m { margin-top: 4px !important; }
 .grid { gap: 12px !important; }
 /* the shelf head is an eyebrow at the app's letter-spacing */
 .eyebrow { letter-spacing: .1em !important; }
 `;
+
+const SNAP = SNAP_COMMON + (setName === "home" ? SNAP_HOME : "");
 
 async function render(win, name, file) {
   const [base, query] = file.split("?");
