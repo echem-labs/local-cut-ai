@@ -149,7 +149,7 @@ export function TemplateNotice() {
   if (!templateNotice) return null;
   const { cloudModels, droppedAssets } = templateNotice;
   return (
-    <div className="banner warn template-notice" role="status">
+    <div className="banner warning template-notice" role="status">
       <span className="grow">
         {cloudModels.length > 0 &&
           plural("library.noticeCloud", cloudModels.length, { models: cloudModels.join(", ") })}
