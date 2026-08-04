@@ -66,6 +66,9 @@ const PROJECTS = [
   }),
 ];
 
+/** The rail's Open group, as the mock draws it. */
+const OPEN_TABS = ["p-bee", "p-cloud"];
+
 /** Statuses the mock poses: one final, one generating, the rest drafts. */
 const JOBS = [
   {
@@ -160,14 +163,27 @@ const refSize = (name) => {
 const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
 const MASK_PAD = 6;
 
+/** The rail's icon column: six lucide glyphs the mock writes as unicode
+ * characters. Not the open-project rows — those carry a status dot, which
+ * the mock draws the same way the app does. */
+const RAIL_ICONS = ".rail button:not(.rail-tab-close) > svg";
+
 /** What each masked region of the reference is, in the app — a mask hides
  * pixels, never geometry (plan doc 11, U1's lesson). */
 const MASKED_AS = {
-  home: [".project-tile .tile-thumb", ".project-tile .tile-body", ".rail-count", ".quick-tools .tool-well", ".models-pop-wrap"],
+  home: [
+    ".project-tile .tile-thumb",
+    ".project-tile .tile-body",
+    ".rail-count",
+    RAIL_ICONS,
+    ".quick-tools .tool-well",
+    ".models-pop-wrap",
+  ],
   "home-downloads": [
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
     ".rail-count",
+    RAIL_ICONS,
     // Collapsed, the mock's one-line strip IS the whole card.
     ".dl-summary",
     ".quick-tools .tool-well",
@@ -175,17 +191,19 @@ const MASKED_AS = {
   ],
   "home-downloads-open": [
     ".rail-count",
+    RAIL_ICONS,
     ".dl-summary-head",
     ".srow .st",
     ".srow .model",
     ".quick-tools .tool-well",
     ".models-pop-wrap",
   ],
-  "home-empty": [".rail-count", ".quick-tools .tool-well", ".models-pop-wrap"],
+  "home-empty": [".rail-count", RAIL_ICONS, ".quick-tools .tool-well", ".models-pop-wrap"],
   library: [
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
     ".rail-count",
+    RAIL_ICONS,
     ".library-bar .filter-tabs",
     ".chip-btn",
   ],
@@ -193,6 +211,7 @@ const MASKED_AS = {
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
     ".rail-count",
+    RAIL_ICONS,
     ".library-bar .filter-tabs",
     ".chip-btn",
   ],
@@ -200,6 +219,7 @@ const MASKED_AS = {
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
     ".rail-count",
+    RAIL_ICONS,
     ".library-bar .filter-tabs",
     ".chip-btn",
   ],
@@ -327,6 +347,8 @@ try {
     models: SETTLED,
     projects: PROJECTS,
     allJobs: JOBS,
+    // The restored tabs were pruned by the first (empty) engine answer.
+    openProjects: OPEN_TABS,
     freeze: true,
   });
   check("seed hook is installed and accepted the fixture", seeded === true);
@@ -337,6 +359,10 @@ try {
       await app.evaluate(({ BrowserWindow }, [w, h]) => {
         BrowserWindow.getAllWindows()[0].setContentBounds({ x: 0, y: 0, width: w, height: h });
       }, [${width}, ${height}]);
+      // A click parks the pointer where it landed, and the tile it lands on
+      // lifts 2px under :hover — a pose the mock does not draw, and one that
+      // moved the geometry of a masked region. Park it on the title bar.
+      await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
       await page.screenshot({ path: ${JSON.stringify(path.join(dir, `${name}.png`))} });
       return null;
@@ -377,10 +403,11 @@ try {
     await page.waitForTimeout(150);
     return null;
   `);
-  await seed({ models: SETTLED, projects: [] });
+  // A machine that has made nothing has nothing open either.
+  await seed({ models: SETTLED, projects: [], openProjects: [] });
   await shoot("home-empty");
 
-  await seed({ projects: PROJECTS });
+  await seed({ projects: PROJECTS, openProjects: OPEN_TABS });
   await evalInApp(`
     await page.evaluate(() => {
       const row = [...document.querySelectorAll(".rail button")].find((button) =>
