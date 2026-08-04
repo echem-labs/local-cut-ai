@@ -155,7 +155,7 @@ export function Home() {
     checkReadiness();
     setBusy(true);
     try {
-      await createFromPrompt(prompt.trim(), duration, aspect, mode);
+      await createFromPrompt(prompt.trim(), duration, aspect, mode, style);
       if (!useApp.getState().actionError) setHomeDraft({ prompt: "" });
     } finally {
       setBusy(false);
