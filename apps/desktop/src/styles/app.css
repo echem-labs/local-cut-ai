@@ -331,10 +331,6 @@ textarea {
   left: -7px;
 }
 
-.rail.compact .rail-mark {
-  padding: var(--space-1) 0 var(--space-3);
-}
-
 .rail.compact .engine-chip {
   min-height: 32px;
   justify-content: center;
@@ -343,11 +339,6 @@ textarea {
 }
 
 .rail.compact .tip-wrap {
-  display: flex;
-  justify-content: center;
-}
-
-.rail-mark {
   display: flex;
   justify-content: center;
 }
@@ -642,40 +633,31 @@ textarea {
 }
 
 /* ---- home ---- */
-/* Breakout column: everything reads at the one page column, but the
-   browsing shelves (the project/tool grids) may use up to --content-wide
-   on a large window — a maximized window gets more tiles per row instead
-   of wider gutters. The three-track grid is the standard breakout: the
-   middle track is the reading column, .recent alone spans all three.
+/* One reading column, centred, for every block on the page — the title,
+   the prompt, the tools and the Continue shelf all start and end on the
+   same two edges. Browsing width belongs to the Library.
 
    .home is a GRID, so adjacent children's vertical margins add instead of
    collapsing. Every gap below must therefore be stated by one side only —
    see .tools-head. */
 .home {
-  container-type: inline-size;
   display: grid;
-  grid-template-columns: 1fr min(var(--content-col), 100%) 1fr;
+  grid-template-columns: min(var(--content-col), 100%);
+  justify-content: center;
   margin: 0 auto;
   max-width: var(--content-wide);
 }
 
 .home > * {
-  grid-column: 2;
   min-width: 0;
 }
 
-/* The shelf breaks out only once the extra width buys a tile column.
-   .recent .grid is auto-fill minmax(200px, 1fr) at a 12px gap, so the
-   reading column (840) already fits four; the fifth needs 5*200 + 4*12 =
-   1048. Below that, breaking out would only make the tiles fatter while
-   hanging the shelf's edges past every other block on the page. The
-   container query measures .home itself, so the answer stays right
-   whichever width the rail is. */
-@container (min-width: 1048px) {
-  .home > .recent {
-    grid-column: 1 / -1;
-  }
-}
+/* The Continue shelf stays in the reading column. It breaks out on the
+   Library, where the list is unbounded and width buys tile columns — here it
+   is four tiles and never more (U2), so a fifth column can never fill, and
+   breaking out only hangs the shelf's head and its "Open the library" link
+   past every other block on the page. The reading column (840) fits exactly
+   four at auto-fill minmax(200px, 1fr) with a 12px gap. */
 
 /* the hero speaks in the screen-title register (review 4 §H7): the
  * product identity is the prompt, not a marketing headline */
@@ -3111,7 +3093,7 @@ button.link:hover {
  * groups can never clip or cover it. */
 .tip {
   position: fixed;
-  transform: translate(-50%, var(--tip-y));
+  transform: translate(var(--tip-x, -50%), var(--tip-y));
   background: var(--tooltip-bg);
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: #eceaf3;
@@ -3135,6 +3117,14 @@ button.link:hover {
 
 .tip.tip-bottom {
   --tip-y: 7px;
+}
+
+/* The rail's side. Its rows run from the top of the window down, so a
+   bubble above the first one is drawn off-screen; beside the row there is
+   always somewhere to put it. */
+.tip.tip-right {
+  --tip-x: 7px;
+  --tip-y: -50%;
 }
 
 /* `translate` composes with the centering transform above. */
