@@ -120,6 +120,54 @@ try {
   check("skip lands on Home with the prompt focused", landed.promptFocused);
   await shoot("02-home.png");
 
+  // 3b. The Library is a destination of its own (U2): the rail reaches it,
+  // its filters split what this machine has made, and Home is one click
+  // back. A screen the walk cannot reach is a screen nothing gates.
+  const library = await evalInApp(`
+    await page.evaluate(() => {
+      const label = (button) =>
+        (button.textContent || "") + " " + (button.getAttribute("aria-label") || "");
+      const row = [...document.querySelectorAll(".rail button")].find((button) =>
+        label(button).includes("Library"),
+      );
+      row?.click();
+    });
+    const shown = await page
+      .waitForSelector(".library", { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!shown) return { shown };
+    const tabs = await page.$$(".library-bar .filter-tabs button");
+    await tabs[2].click();
+    await page.waitForTimeout(200);
+    const filtered = await page.evaluate(() => ({
+      tabs: document.querySelectorAll(".library-bar .filter-tabs button").length,
+      searchable: !!document.querySelector(".library-search input"),
+      sortable: !!document.querySelector(".sort-menu-wrap button"),
+    }));
+    await page.evaluate(() => {
+      const label = (button) =>
+        (button.textContent || "") + " " + (button.getAttribute("aria-label") || "");
+      const row = [...document.querySelectorAll(".rail button")].find((button) =>
+        label(button).includes("Home"),
+      );
+      row?.click();
+    });
+    const home = await page
+      .waitForSelector(".home", { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    return { shown, ...filtered, home };
+  `);
+  check("the rail opens the Library", library.shown === true);
+  check(
+    "the Library filters, searches and sorts",
+    library.tabs === 3 && library.searchable && library.sortable,
+    JSON.stringify(library),
+  );
+  check("Home is one click back", library.home === true);
+  await shoot("02b-library.png");
+
   // 3. Settings overlay opens and closes without unmounting Home.
   const settings = await evalInApp(`
     const buttons = await page.$$("nav button");
