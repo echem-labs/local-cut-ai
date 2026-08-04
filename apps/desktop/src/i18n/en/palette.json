@@ -13,5 +13,8 @@
   "newTool": "New {tool}",
   "home": "Home",
   "settingsTab": "Settings · {tab}",
-  "toggleTheme": "Toggle theme"
+  "toggleTheme": "Toggle theme",
+  "openLibrary": "Open library",
+  "libraryTools": "Open library · tool outputs",
+  "saveTemplate": "Save this video as a template…"
 }

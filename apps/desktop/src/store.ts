@@ -3,6 +3,13 @@ import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
 import { usePlayback } from "./lib/playback";
+import {
+  loadTemplates,
+  refuseReason,
+  saveTemplates,
+  TEMPLATE_LIMIT,
+  type TemplateEntry,
+} from "./lib/templates";
 import type {
   Board,
   Checkpoint,
@@ -22,6 +29,11 @@ import type {
 
 /** Key ids as the shell stores them — note google's key is `gemini`. */
 export type ProviderKeyId = "anthropic" | "openai" | "gemini" | "fal";
+
+/** The Library's split: a video is a project, a tool output is one
+ * artifact. Same tiles, same status oracle — the filter is the only thing
+ * that separates them (plan doc 11, U2). */
+export type LibraryFilter = "all" | "videos" | "tools";
 
 /** What the shell tells the renderer about stored keys — presence only,
  * never the key material itself. */
@@ -92,6 +104,14 @@ declare global {
 export interface SeedPatch {
   system?: SystemInfo;
   models?: ModelRow[];
+  /** Home and the Library are lists — a reference frame of either needs the
+   * list posed, not just the hardware behind it. */
+  projects?: Project[];
+  allJobs?: Job[];
+  /** The rail's Open group. Restored tabs are pruned against whatever the
+   * engine answered with first, so a frame that seeds `projects` has to
+   * pose this too or the group is simply missing. */
+  openProjects?: string[];
   freeze?: boolean;
 }
 
@@ -107,6 +127,9 @@ export interface ActionError {
 export interface HomeDefaults {
   aspect: string;
   duration: number;
+  /** The look the engine writes the shot prompts for. The engine takes any
+   * string and defaults to "cinematic"; the UI offers a curated list. */
+  style: string;
   mode: "prompt" | "beginner";
   voice: string;
   /** Applied at Create-final-video time (finalize clip model). */
@@ -159,6 +182,26 @@ interface AppState {
   // genuine first launch — it then starts at the machine step: the welcome
   // promise is a once-only moment, and this user has already seen the app.
   firstRunReturning: boolean;
+  // The Library is a screen of its own under Home in the rail (U2), not a
+  // tab on Home: an open project still wins the viewport, so closing one
+  // returns to whichever of the two the user came from.
+  libraryOpen: boolean;
+  libraryFilter: LibraryFilter;
+  /** Templates saved from a project's shape, newest first (this profile,
+   * not the engine — see lib/templates.ts). */
+  templates: TemplateEntry[];
+  /** What the last template import will spend and what it left behind.
+   * Shown once, dismissible, never blocking. */
+  templateNotice: { title: string; cloudModels: string[]; droppedAssets: number } | null;
+  /** The project whose shape is being named as a template, or null. Held
+   * here rather than in the Library because the palette can ask for the same
+   * dialog from inside an open project, and one dialog with two hosts is two
+   * dialogs that drift. */
+  saveTemplateFor: Project | null;
+  // Bumped whenever something asks the Library for the keyboard — Home's
+  // "/" and the palette route here rather than growing a second search box
+  // over a shelf that only ever shows four tiles.
+  librarySearchFocus: number;
   settingsOpen: boolean;
   // Which Settings tab is showing — deep-linkable (engine chip → "engine",
   // the prompt bar's model button → "models").
@@ -190,6 +233,7 @@ interface AppState {
     duration: number,
     aspect: string,
     mode: "prompt" | "beginner",
+    style?: string,
   ) => Promise<void>;
   createTool: (
     tool: ToolKind,
@@ -253,6 +297,15 @@ interface AppState {
   unpairRemote: () => Promise<string | null>;
   finishFirstRun: () => void;
   resetFirstRun: () => void;
+  openLibrary: (options?: { filter?: LibraryFilter; focusSearch?: boolean }) => void;
+  openSaveTemplate: (project: Project) => void;
+  closeSaveTemplate: () => void;
+  saveTemplate: (projectId: string, name: string) => Promise<string | null>;
+  startFromTemplate: (id: string, title?: string) => Promise<string | null>;
+  deleteTemplate: (id: string) => void;
+  dismissTemplateNotice: () => void;
+  closeLibrary: () => void;
+  setLibraryFilter: (filter: LibraryFilter) => void;
   openSettings: (tab?: string) => void;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
@@ -308,6 +361,7 @@ const PATCH_DEBOUNCE_MS = 300;
 const FALLBACK_DEFAULTS: HomeDefaults = {
   aspect: "9:16",
   duration: 60,
+  style: "cinematic",
   mode: "prompt",
   voice: "",
   videoModel: null,
@@ -918,6 +972,12 @@ export const useApp = create<AppState>((set, get) => {
     downloadErrors: {},
     firstRunDone: readFlag(FIRST_RUN_KEY),
     firstRunReturning: false,
+    libraryOpen: false,
+    libraryFilter: "all",
+    librarySearchFocus: 0,
+    templates: loadTemplates(),
+    templateNotice: null,
+    saveTemplateFor: null,
     settingsOpen: false,
     settingsTab: "general",
     editBusy: false,
@@ -941,7 +1001,7 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshHome: async () => {
       const { client } = get();
-      if (!client) return;
+      if (!client || seedFrozen) return;
       // Ids that appear while this request is in flight — see the prune below.
       const createdSince = new Set<string>();
       const track = (id: string) => createdSince.add(id);
@@ -1063,7 +1123,7 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    createFromPrompt: async (prompt, duration, aspect, mode) => {
+    createFromPrompt: async (prompt, duration, aspect, mode, style) => {
       const { client } = get();
       if (!client) return;
       set({ actionError: null });
@@ -1073,6 +1133,9 @@ export const useApp = create<AppState>((set, get) => {
           target_duration_s: duration,
           aspect,
           mode,
+          // Absent rather than empty: the engine's own default applies when
+          // the UI has no opinion, and "" is not one of its presets.
+          ...(style ? { style_preset: style } : {}),
         });
         // Tell any refreshHome already in flight that this id is new, not
         // deleted — its project list snapshot predates the create.
@@ -1601,6 +1664,22 @@ export const useApp = create<AppState>((set, get) => {
       set({ firstRunDone: false, firstRunReturning: true, settingsOpen: false });
     },
 
+    // The Library takes the viewport the way Home does: the open project
+    // steps aside (its rail tab stays) and Settings closes over nothing.
+    openLibrary: (options = {}) => {
+      if (get().currentProject) get().closeProject();
+      set((state) => ({
+        libraryOpen: true,
+        settingsOpen: false,
+        ...(options.filter ? { libraryFilter: options.filter } : {}),
+        ...(options.focusSearch ? { librarySearchFocus: state.librarySearchFocus + 1 } : {}),
+      }));
+    },
+
+    closeLibrary: () => set({ libraryOpen: false }),
+
+    setLibraryFilter: (filter) => set({ libraryFilter: filter }),
+
     openSettings: (tab) =>
       set(tab ? { settingsOpen: true, settingsTab: tab } : { settingsOpen: true }),
 
@@ -1714,6 +1793,76 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
+    // -- templates: a project's shape, reusable (U2) ------------------------
+
+    openSaveTemplate: (project) => set({ saveTemplateFor: project }),
+
+    closeSaveTemplate: () => set({ saveTemplateFor: null }),
+
+    saveTemplate: async (projectId, name) => {
+      const { client, templates } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        const doc = await client.exportTemplate(projectId, name);
+        const reason = refuseReason(doc, templates);
+        if (reason === "limit") return t("errors.templateLimit", { limit: TEMPLATE_LIMIT });
+        if (reason === "size") return t("errors.templateSize");
+        const entry: TemplateEntry = {
+          // Date.now() is the save time and the id both — two saves inside a
+          // millisecond would collide, so the name disambiguates.
+          id: `${Date.now().toString(36)}-${name.slice(0, 12)}`,
+          name,
+          savedAt: Date.now(),
+          doc,
+        };
+        const next = [entry, ...templates];
+        saveTemplates(next);
+        set({ templates: next });
+        return null;
+      } catch (err) {
+        console.warn("save template failed:", err);
+        return messageOf(err);
+      }
+    },
+
+    startFromTemplate: async (id, title) => {
+      const { client, templates } = get();
+      if (!client) return t("errors.engineUnavailable");
+      const entry = templates.find((row) => row.id === id);
+      if (!entry) return t("errors.templateMissing");
+      try {
+        const result = await client.createFromTemplate(entry.doc, title ?? "");
+        announceNewProject(result.project.id);
+        // Surfaced, never blocking: what this template will spend on cloud
+        // renders, and what could not travel with the shape. Set BEFORE the
+        // project opens so the notice is already there when it does.
+        set({
+          templateNotice:
+            result.cloud_models.length > 0 || result.dropped_assets > 0
+              ? {
+                  title: result.project.title,
+                  cloudModels: result.cloud_models,
+                  droppedAssets: result.dropped_assets,
+                }
+              : null,
+        });
+        await get().openProject(result.project.id);
+        await get().refreshHome();
+        return null;
+      } catch (err) {
+        console.warn("create from template failed:", err);
+        return messageOf(err);
+      }
+    },
+
+    deleteTemplate: (id) => {
+      const next = get().templates.filter((entry) => entry.id !== id);
+      saveTemplates(next);
+      set({ templates: next });
+    },
+
+    dismissTemplateNotice: () => set({ templateNotice: null }),
+
     refreshStorage: async () => {
       const { client } = get();
       if (!client) return;
@@ -1806,6 +1955,9 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     const next: Partial<AppState> = {};
     if (patch.system !== undefined) next.system = patch.system;
     if (patch.models !== undefined) next.models = patch.models;
+    if (patch.projects !== undefined) next.projects = patch.projects;
+    if (patch.allJobs !== undefined) next.allJobs = patch.allJobs;
+    if (patch.openProjects !== undefined) next.openProjects = patch.openProjects;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

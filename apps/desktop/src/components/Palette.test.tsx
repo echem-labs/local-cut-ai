@@ -1,9 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Project } from "../api/types";
+import { t } from "../i18n";
 import { useApp } from "../store";
 import { Palette } from "./Palette";
 
@@ -29,7 +30,7 @@ const project = (id: string, mode: string, title: string): Project => ({
   approvals: [],
 });
 
-const openPalette = async () => {
+const openPalette = async (over: Record<string, unknown> = {}) => {
   useApp.setState({
     projects: [
       project("p1", "tool:image", "a lighthouse"),
@@ -39,14 +40,21 @@ const openPalette = async () => {
       project("p3", "prompt", "a documentary"),
     ],
     allJobs: [],
+    libraryOpen: false,
+    currentProject: null,
     openProject: vi.fn(),
     openSettings: vi.fn(),
     closeSettings: vi.fn(),
     closeProject: vi.fn(),
+    ...over,
   } as never);
   render(<Palette />);
   await userEvent.keyboard("{Control>}k{/Control}");
 };
+
+beforeEach(() => {
+  useApp.setState({ libraryOpen: false, currentProject: null } as never);
+});
 
 describe("the command palette", () => {
   it("lists a tool session whose kind this build does not know", async () => {
@@ -57,5 +65,48 @@ describe("the command palette", () => {
     // And the two it does know still read normally.
     expect(screen.getByText("a lighthouse")).toBeInTheDocument();
     expect(screen.getByText("a documentary")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The Library is a third screen the rail switches to (U2), and the palette
+ * reaches Home past whatever is showing. Every command that means "put me on
+ * Home" has to leave the Library as well as a project — otherwise the command
+ * runs, the store changes, and the screen does not move.
+ */
+describe("going Home from the Library", () => {
+  it("leaves the Library when the Home command runs", async () => {
+    await openPalette({ libraryOpen: true });
+    await userEvent.click(screen.getByText(t("palette.home")));
+    expect(useApp.getState().libraryOpen).toBe(false);
+  });
+
+  it("leaves the Library when a create command runs, so Home is there to receive it", async () => {
+    await openPalette({ libraryOpen: true });
+    await userEvent.click(screen.getByText(t("palette.newVideo")));
+    expect(useApp.getState().libraryOpen).toBe(false);
+  });
+});
+
+/**
+ * "Save as template…" is the one command that only exists in a context: a
+ * template is a project's shape, and a one-off tool output has no shape to
+ * save (plan doc 11, U2).
+ */
+describe("saving the open video as a template", () => {
+  it("is offered while a video is open, and asks for a name", async () => {
+    await openPalette({ currentProject: project("p3", "prompt", "a documentary") });
+    await userEvent.click(screen.getByText(t("palette.saveTemplate")));
+    expect(useApp.getState().saveTemplateFor?.id).toBe("p3");
+  });
+
+  it("is not offered for a tool output, which has no shape", async () => {
+    await openPalette({ currentProject: project("p1", "tool:image", "a lighthouse") });
+    expect(screen.queryByText(t("palette.saveTemplate"))).toBeNull();
+  });
+
+  it("is not offered with nothing open", async () => {
+    await openPalette();
+    expect(screen.queryByText(t("palette.saveTemplate"))).toBeNull();
   });
 });
