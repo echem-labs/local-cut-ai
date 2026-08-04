@@ -29,8 +29,9 @@
     "rig:gate": "npm run build && npm run rig:walk && npm run rig:e2e",
     "package:mac:x64": "npm run check:engine -- mac-x64 && npm run build && electron-builder --mac --x64",
     "rig:refs": "electron scripts/rig/render-mock.cjs",
-    "rig:parity": "node scripts/rig/parity-wiz.mjs",
-    "rig:parity:home": "node scripts/rig/parity-home.mjs"
+    "rig:parity": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-wiz.mjs",
+    "rig:parity:home": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-home.mjs",
+    "rig:parity:session": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-session.mjs"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",

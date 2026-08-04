@@ -16,7 +16,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
-import { evalInApp, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import {
+  RETRYABLE_EXIT,
+  evalInApp,
+  layoutTrue,
+  makeCheck,
+  shotsDir,
+  startRigTrueToScale,
+  stopRig,
+} from "./rig.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -277,14 +285,14 @@ const checkMaskGeometry = (name, boxes) => {
 
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-engine-"));
-const rig = await startRig({
+const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7932",
   LOCALCUT_SEED_HOOK: "1",
-  RIG_SCALE: "1",
 });
 
+let scaleHeld = true;
 try {
   // Straight past first-run: this phase's subject is what comes after it.
   await evalInApp(`
@@ -364,7 +372,11 @@ try {
       // moved the geometry of a masked region. Park it on the title bar.
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
-      await page.screenshot({ path: ${JSON.stringify(path.join(dir, `${name}.png`))} });
+      await page.screenshot({
+        path: ${JSON.stringify(path.join(dir, `${name}.png`))},
+        scale: "css",
+        clip: { x: 0, y: 0, width: ${width}, height: ${height} },
+      });
       return null;
     `);
     const boxes = await evalInApp(`
@@ -384,6 +396,9 @@ try {
       ${JSON.stringify(MASKED_AS[name] ?? [])});
     `);
     checkMaskGeometry(name, boxes);
+    // Frame-level, not just run-level: the off-scale flip strikes on a
+    // shrinking resize and every frame after it measures 1.25x wide.
+    scaleHeld &&= await layoutTrue();
   };
 
   await shoot("home");
@@ -439,11 +454,19 @@ try {
     return null;
   `);
   await shoot("library-menu");
+  // The off-scale state can strike mid-run; a run it touched is
+  // invalid, not red — the retry runner reruns it.
+  scaleHeld = await layoutTrue();
 } finally {
   await stopRig(rig);
   const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
   rmSync(profile, scrub);
   rmSync(engineData, scrub);
+}
+
+if (!scaleHeld) {
+  console.error("run went off-scale - invalid, not failed; rerunning");
+  process.exit(RETRYABLE_EXIT);
 }
 
 if (check.failures() > 0) {
