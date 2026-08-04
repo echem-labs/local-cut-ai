@@ -2,27 +2,28 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Home as HomeIcon,
+  Library as LibraryIcon,
   Moon,
   Settings as SettingsIcon,
   Sun,
-  Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { plural, t } from "./i18n";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import { BrandMark } from "./components/BrandMark";
-import { ConfirmDialog } from "./components/ConfirmDialog";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
+import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
-import { Home, isToolSession, revealToolHistory, tileStatus } from "./screens/Home";
+import { Home } from "./screens/Home";
+import { Library } from "./screens/Library";
 import { Project } from "./screens/Project";
 import { Settings } from "./screens/Settings";
-import type { Project as ProjectMeta } from "./api/types";
+import { tileStatus } from "./lib/tiles";
 import { useApp } from "./store";
 
 const ICON = { size: 15, strokeWidth: 1.8 } as const;
@@ -31,10 +32,85 @@ const RAIL_KEY = "localcut.rail.expanded";
  * reading column beside it, so the rail compacts whatever the preference
  * says. Read by the rail only — nothing in CSS keys off this width. */
 const RAIL_NARROW = "(max-width: 1000px)";
-/** The rail lists this many past tool sessions; the rest are one click away
- * on Home. A rail that grows without bound pushes the bottom cluster into a
- * scroll for someone who simply used the tools a lot. */
-const RECENT_LIMIT = 8;
+
+/** A rail action — theme, Settings, collapse. Same row, same tooltip as the
+ * destinations above it: compact leaves only an icon, and one strip with two
+ * kinds of tooltip reads as two kinds of control. */
+function RailAction({
+  compact,
+  label,
+  aria,
+  active = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  compact: boolean;
+  label: string;
+  aria?: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const button = (
+    <button
+      className={active ? "active" : ""}
+      disabled={disabled}
+      aria-label={aria ?? label}
+      onClick={onClick}
+    >
+      {children}
+      <span className="rail-label">{label}</span>
+    </button>
+  );
+  return compact ? (
+    <Tip label={aria ?? label} side="right">
+      {button}
+    </Tip>
+  ) : (
+    button
+  );
+}
+
+/** A rail destination — Home and the Library are the same row with a
+ * different icon. Compact keeps the icon and drops the label and the count;
+ * the tooltip carries both, beside the row rather than above it (the first
+ * row has no "above"). */
+function RailEntry({
+  icon: Icon,
+  label,
+  hint,
+  compact,
+  disabled,
+  active,
+  count = 0,
+  onOpen,
+}: {
+  icon: typeof HomeIcon;
+  label: string;
+  hint: string;
+  compact: boolean;
+  disabled: boolean;
+  active: boolean;
+  count?: number;
+  onOpen: () => void;
+}) {
+  const button = (
+    <button className={active ? "active" : ""} disabled={disabled} onClick={onOpen}>
+      <Icon {...ICON} />
+      <span className="rail-label">{label}</span>
+      {count > 0 && <span className="rail-count">{count}</span>}
+    </button>
+  );
+  return compact ? (
+    <Tip label={label} hint={hint} side="right">
+      {button}
+    </Tip>
+  ) : (
+    button
+  );
+}
 
 /** One window, one persistent left rail. */
 export default function App() {
@@ -49,15 +125,17 @@ export default function App() {
     closeProject,
     closeSettings,
     openSettings,
-    deleteProject,
     engineError,
     firstRunDone,
+    libraryOpen,
+    openLibrary,
+    closeLibrary,
+    saveTemplateFor,
+    closeSaveTemplate,
     settingsOpen,
     system,
     remoteEngine,
   } = useApp();
-  const [confirmDelete, setConfirmDelete] = useState<ProjectMeta | null>(null);
-  const [railError, setRailError] = useState<string | null>(null);
 
   useEffect(() => {
     void connect();
@@ -67,6 +145,14 @@ export default function App() {
   // overflow cap used to guarantee this by swapping it into the window).
   // settingsOpen is a dependency: the overlay strips the active class off
   // every tab, and closing it restores the class without the id changing.
+  // "On Home" now means: no project, no Settings overlay AND not the
+  // Library — three screens share the rail's top two rows.
+  const onHome = !currentProject && !settingsOpen && !libraryOpen;
+  const goHome = () => {
+    closeProject();
+    closeSettings();
+    closeLibrary();
+  };
   const activeProjectId = currentProject?.id ?? null;
   useEffect(() => {
     if (!activeProjectId || settingsOpen) return;
@@ -86,7 +172,15 @@ export default function App() {
   // First run gates everything; after that the project or Home shows, and
   // Settings renders as an OVERLAY LAYER above either — opening it never
   // unmounts the project (review 4 §SH1).
-  const screen = !firstRunDone ? <FirstRun /> : currentProject ? <Project /> : <Home />;
+  const screen = !firstRunDone ? (
+    <FirstRun />
+  ) : currentProject ? (
+    <Project />
+  ) : libraryOpen ? (
+    <Library />
+  ) : (
+    <Home />
+  );
 
   // "NVIDIA GeForce RTX 3080" → "RTX 3080": the chip is narrow and the
   // vendor prefix says nothing the model number doesn't.
@@ -125,29 +219,6 @@ export default function App() {
   };
   const workspaceMode = currentProject ? !currentProject.mode.startsWith("tool:") : false;
 
-  // Quick-tool history. Every tool run is a real project the engine keeps
-  // forever, but the rail only ever showed one while its tab happened to be
-  // open — close the tab and the session was reachable only by scrolling to
-  // the bottom of Home. Derived from `projects`, never cached locally, so a
-  // delete from any surface (or another engine) takes it out of this list
-  // through the same refresh that updates Home.
-  //
-  // Open sessions are left out: the tab above already stands for them, and a
-  // row in both lists would make closing a tab look like it deleted one.
-  const recentTools = useMemo(() => {
-    const open = new Set(openProjects);
-    return projects
-      .filter((project) => isToolSession(project) && !open.has(project.id))
-      .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at));
-  }, [projects, openProjects]);
-  // Counts every session, open ones included: this row leads to Home's list,
-  // which shows them all, so a number that excluded the open ones would
-  // disagree with the heading it takes you to.
-  const toolSessionCount = useMemo(
-    () => projects.filter(isToolSession).length,
-    [projects],
-  );
-
   return (
     <div className="app">
       {/* Frameless window: this slim bar is the drag region; the native
@@ -158,34 +229,36 @@ export default function App() {
         {currentProject && <span className="tb-project">{currentProject.title}</span>}
       </header>
       <nav className={`rail${compact ? " compact" : ""}`} aria-label={t("nav.navigationAria")}>
-        {compact ? (
-          <Tip label={t("nav.home")} hint={t("nav.homeCloseHint")} side="top">
-            <button
-              className={`rail-mark${!currentProject && !settingsOpen ? " active" : ""}`}
-              onClick={() => {
-                closeProject();
-                closeSettings();
-              }}
-              aria-label={t("nav.home")}
-            >
-              <BrandMark size={20} />
-            </button>
-          </Tip>
-        ) : (
-          <button
-            className={firstRunDone && !currentProject && !settingsOpen ? "active" : ""}
-            disabled={!firstRunDone}
-            onClick={() => {
-              closeProject();
-              closeSettings();
-            }}
-          >
-            <HomeIcon {...ICON} />
-            <span className="rail-label">{t("nav.home")}</span>
-          </button>
-        )}
+        <RailEntry
+          icon={HomeIcon}
+          label={t("nav.home")}
+          hint={t("nav.homeCloseHint")}
+          compact={compact}
+          disabled={!firstRunDone}
+          active={firstRunDone && onHome}
+          onOpen={goHome}
+        />
+        {/* The Library is a destination, not a tab on Home (U2): the same
+            activation rules, one row below, carrying the count so the size of
+            what you have made is visible without opening it. */}
+        <RailEntry
+          icon={LibraryIcon}
+          label={t("nav.library")}
+          hint={plural("nav.libraryCount", projects.length)}
+          compact={compact}
+          disabled={!firstRunDone}
+          active={firstRunDone && libraryOpen && !currentProject && !settingsOpen}
+          count={projects.length}
+          onOpen={() => {
+            closeSettings();
+            openLibrary();
+          }}
+        />
         {firstRunDone && openProjects.length > 0 && (
           <div className="rail-tabs">
+            {/* Named, now that two destinations sit above it: without a label
+                the tabs read as more navigation rather than what is open. */}
+            <div className="group-label">{t("nav.open")}</div>
             {openProjects.map((id) => {
               const project =
                 projects.find((entry) => entry.id === id) ??
@@ -194,95 +267,56 @@ export default function App() {
               const active = currentProject?.id === id && !settingsOpen;
               return (
                 <div key={id} className="rail-tab">
-                  <button
-                    className={active ? "active" : ""}
-                    title={title}
-                    onClick={() => {
-                      closeSettings();
-                      if (currentProject?.id !== id) void openProject(id);
-                    }}
+                  {/* The same bubble the destinations above use, not the
+                      native title: two tooltip mechanisms in one 200px strip
+                      read as two different controls. It earns its place in
+                      both widths — compact has only an initial to go on, and
+                      expanded truncates the title. */}
+                  <Tip label={title} side="right">
+                    <button
+                      className={active ? "active" : ""}
+                      onClick={() => {
+                        closeSettings();
+                        if (currentProject?.id !== id) void openProject(id);
+                      }}
+                    >
+                      {compact && (
+                        <span className="rail-glyph" aria-hidden="true">
+                          {/* spread: [0] would split a surrogate pair (emoji titles) */}
+                          {([...title.trim()][0] ?? "?").toUpperCase()}
+                        </span>
+                      )}
+                      <i
+                        className={`dot ${project ? tileStatus(project, allJobs) : "draft"}`}
+                        aria-hidden="true"
+                      />
+                      <span className="rail-label">{title}</span>
+                    </button>
+                  </Tip>
+                  {/* The ✕ is the one control here that is not self-evident,
+                      so it says what it does rather than leaving the browser
+                      to. No confirmation: closing puts the project back in
+                      the Library it came from, and the hint says so — a
+                      dialog over an act that loses nothing is the one that
+                      teaches people to dismiss the dialog over one that
+                      does. */}
+                  <Tip
+                    label={t("nav.closeProject")}
+                    hint={t("nav.closeProjectHint")}
+                    side="right"
+                    className="tip-tab-close"
                   >
-                    {compact && (
-                      <span className="rail-glyph" aria-hidden="true">
-                        {/* spread: [0] would split a surrogate pair (emoji titles) */}
-                        {([...title.trim()][0] ?? "?").toUpperCase()}
-                      </span>
-                    )}
-                    <i
-                      className={`dot ${project ? tileStatus(project, allJobs) : "draft"}`}
-                      aria-hidden="true"
-                    />
-                    <span className="rail-label">{title}</span>
-                  </button>
-                  <button
-                    className="rail-tab-close"
-                    title={t("nav.closeProjectAria", { title })}
-                    aria-label={t("nav.closeProjectAria", { title })}
-                    onClick={() => closeOpenProject(id)}
-                  >
-                    <X size={12} strokeWidth={1.8} />
-                  </button>
+                    <button
+                      className="rail-tab-close"
+                      aria-label={t("nav.closeProjectAria", { title })}
+                      onClick={() => closeOpenProject(id)}
+                    >
+                      <X size={12} strokeWidth={1.8} />
+                    </button>
+                  </Tip>
                 </div>
               );
             })}
-          </div>
-        )}
-        {firstRunDone && recentTools.length > 0 && (
-          <div className="rail-recent">
-            <div className="group-label">{t("nav.recent")}</div>
-            {recentTools.slice(0, RECENT_LIMIT).map((project) => {
-              const title = project.title;
-              return (
-                // Two sibling buttons, never a button inside a button: ARIA
-                // makes a button's children presentational, so a nested
-                // delete would vanish from assistive tech (same reason the
-                // project tiles are shaped this way).
-                <div key={project.id} className="rail-tab">
-                  <button
-                    title={title}
-                    onClick={() => {
-                      closeSettings();
-                      void openProject(project.id);
-                    }}
-                  >
-                    {compact && (
-                      <span className="rail-glyph" aria-hidden="true">
-                        {/* spread: [0] would split a surrogate pair (emoji titles) */}
-                        {([...title.trim()][0] ?? "?").toUpperCase()}
-                      </span>
-                    )}
-                    <i className={`dot ${tileStatus(project, allJobs)}`} aria-hidden="true" />
-                    <span className="rail-label">{title}</span>
-                  </button>
-                  <button
-                    className="rail-tab-action"
-                    title={t("nav.deleteToolAria", { title })}
-                    aria-label={t("nav.deleteToolAria", { title })}
-                    onClick={() => setConfirmDelete(project)}
-                  >
-                    <Trash2 size={12} strokeWidth={1.8} />
-                  </button>
-                </div>
-              );
-            })}
-            {recentTools.length > RECENT_LIMIT && (
-              <button
-                className="rail-recent-all"
-                aria-label={plural("nav.recentAll", toolSessionCount)}
-                onClick={() => {
-                  closeProject();
-                  closeSettings();
-                  revealToolHistory();
-                }}
-              >
-                {compact && (
-                  <span className="rail-glyph" aria-hidden="true">
-                    +{recentTools.length - RECENT_LIMIT}
-                  </span>
-                )}
-                <span className="rail-label">{plural("nav.recentAll", toolSessionCount)}</span>
-              </button>
-            )}
           </div>
         )}
         <div className="rail-bottom">
@@ -293,7 +327,7 @@ export default function App() {
                 ? t("nav.engineSettingsHintCompact", { detail: engineDetail })
                 : t("nav.engineSettingsHint")
             }
-            side="top"
+            side="right"
           >
             <button
               className="engine-chip"
@@ -310,57 +344,40 @@ export default function App() {
             </button>
           </Tip>
           <HelpMenu compact={compact} />
-          <button
+          <RailAction
+            compact={compact}
+            label={theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}
+            aria={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
             onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
-            title={t("nav.toggleThemeTitle")}
-            aria-label={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
           >
             {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-            <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
-          </button>
-          <button
-            className={settingsOpen ? "active" : ""}
+          </RailAction>
+          <RailAction
+            compact={compact}
+            label={t("nav.settings")}
+            active={settingsOpen}
             disabled={!firstRunDone}
-            title={t("nav.settings")}
             onClick={() => openSettings("general")}
           >
             <SettingsIcon {...ICON} />
-            <span className="rail-label">{t("nav.settings")}</span>
-          </button>
+          </RailAction>
           {/* Disabled while the window forces compact: the click would
               write a preference with no visible effect, so the control
               would look broken AND quietly discard the stored choice. */}
-          <button
-            onClick={toggleRail}
+          <RailAction
+            compact={compact}
+            label={t("nav.collapse")}
+            aria={railToggleLabel}
             disabled={narrow}
-            title={railToggleLabel}
-            aria-label={railToggleLabel}
+            onClick={toggleRail}
           >
             {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
-            <span className="rail-label">{t("nav.collapse")}</span>
-          </button>
+          </RailAction>
         </div>
       </nav>
-      {/* A rejected delete has no room to report itself in the rail, and
-          dropping the message would make a failed delete look like a
-          successful one — the row simply reappears. Deliberately OUTSIDE
-          <main>: the rail stays usable while the Settings overlay is up, and
-          that layer is opaque, so a banner inside the content area would
-          paint behind the very screen the user is looking at. */}
-      {railError && (
-        <div className="banner error rail-toast" role="alert">
-          <span className="grow">{railError}</span>
-          <button
-            className="icon-btn-sm"
-            aria-label={t("common.dismiss")}
-            onClick={() => setRailError(null)}
-          >
-            <X size={13} strokeWidth={2} />
-          </button>
-        </div>
-      )}
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
         {engineError && <div className="banner error">{engineError}</div>}
+        <TemplateNotice />
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">
@@ -368,20 +385,11 @@ export default function App() {
           </div>
         )}
       </main>
-      {confirmDelete && (
-        <ConfirmDialog
-          title={t("home.deleteToolTitle", { title: confirmDelete.title })}
-          message={t("home.deleteToolMessage")}
-          confirmLabel={t("home.deleteToolConfirm")}
-          danger
-          onConfirm={() => {
-            const target = confirmDelete;
-            setConfirmDelete(null);
-            setRailError(null);
-            void deleteProject(target.id).then(setRailError);
-          }}
-          onCancel={() => setConfirmDelete(null)}
-        />
+      {/* One host for the naming dialog: the Library's tile menu and the
+          palette's in-project command both ask for the same question, and
+          two hosts is two dialogs that drift. */}
+      {saveTemplateFor && (
+        <SaveTemplateDialog project={saveTemplateFor} onClose={closeSaveTemplate} />
       )}
       <QueueTray />
       <Palette />

@@ -1,18 +1,18 @@
 import {
-  ArrowDownToLine,
+  ChevronRight,
   Clapperboard,
   FileText,
-  Film,
   Info,
+  LayoutTemplate,
   Loader2,
-  MoreHorizontal,
-  Search,
   Sparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
+import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
+import { StageSummaryRow } from "../components/StageSummaryRow";
+import { StartFromTemplateDialog } from "../components/TemplateDialogs";
 import { ModelsPopover } from "../components/ModelsPopover";
 import { Tip } from "../components/Tooltip";
 import type { Job, LlmModels, Project, ToolKind } from "../api/types";
@@ -20,10 +20,11 @@ import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
-import { newestJob } from "../lib/jobs";
 import { shortcutLabel } from "../lib/platform";
-import { relativeTime, shortDuration } from "../lib/time";
-import { TOOL_ICONS, TOOL_KINDS, isToolSession, toolKindOf } from "../lib/tools";
+import { readyStages, stageRows } from "../lib/stages";
+import { STYLE_PRESETS } from "../lib/styles";
+import { tileStatus } from "../lib/tiles";
+import { TOOL_ICONS, TOOL_KINDS, isToolSession } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { useApp } from "../store";
 
@@ -40,62 +41,6 @@ const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = TOOL_KINDS.map((kind)
   kind,
   icon: TOOL_ICONS[kind],
 }));
-
-type SortKey = "recent" | "created" | "name";
-
-type TileStatus = "generating" | "failed" | "ready" | "final" | "draft";
-
-// Re-exported: App and this screen's own tests have always reached for them
-// here, and the palette now takes them from lib/tools directly.
-export { isToolSession, toolKindOf };
-
-/** The rail lists only the most recent few sessions; its overflow row asks
- * Home to reveal the whole list. Home may not be mounted when the ask is
- * made (the row is reachable from inside a project), so the request is also
- * left as a flag for Home's next mount to pick up — otherwise the click
- * lands at the top of Home and the user is back to scrolling for it. */
-export const TOOL_HISTORY_EVENT = "localcut:reveal-tool-history";
-let revealPending = false;
-export function revealToolHistory() {
-  revealPending = true;
-  window.dispatchEvent(new Event(TOOL_HISTORY_EVENT));
-}
-
-/** Tile status from the global queue: active work wins, then a trailing
- * failure, then a finished output, else draft. Shared with the rail's
- * open-project tabs and history rows so every status dot agrees.
- *
- * A quick tool has no export stage — `tool_graph` names its terminal node
- * for the tool itself — so the export rule below never matched and every
- * finished one-off read "Draft" beside its own download link. Tool sessions
- * settle at "ready" rather than "final": "Final" is a claim about a cut, and
- * a voiceover is not a cut. */
-export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
-  const jobs = allJobs.filter((job) => job.project_id === project.id);
-  if (jobs.some((job) => job.status === "queued" || job.status === "rendering")) {
-    return "generating";
-  }
-  const newest = newestJob(jobs);
-  if (newest?.status === "failed") return "failed";
-  if (isToolSession(project)) {
-    // The engine's record, and ONLY that. Two reasons it beats the job list.
-    //
-    // Reach: `allJobs` is the newest 200 rows across ALL projects, so an old
-    // session's rows have aged out behind a couple of full renders — and
-    // history is made of exactly those old sessions.
-    //
-    // Meaning: a DONE row is not the same claim as "there is an artifact".
-    // The engine derives this field through the trusted artifact cache, so a
-    // placeholder rendered by a fallback tier and since distrusted has no
-    // hash here while its DONE row is still in the window. Reading the row
-    // would paint a green "Ready" tile that opens on a queued session with
-    // nothing to download — two sources disagreeing, which is the whole
-    // thing this field exists to stop.
-    return project.tool_artifact_hash ? "ready" : "draft";
-  }
-  if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
-  return "draft";
-}
 
 /** Home: one prompt surface — the video prompt, or the active quick tool's
  * panel in its place (never both) — plus the Quick Tools row and a real
@@ -117,23 +62,17 @@ export function Home() {
     renameProject,
     duplicateProject,
     openSettings,
+    openLibrary,
     actionError,
   } = useApp();
   const [busy, setBusy] = useState(false);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<SortKey>("recent");
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState<Project | null>(null);
-  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
+  const [startTemplate, setStartTemplate] = useState(false);
   const [missingModel, setMissingModel] = useState<{ task: string; size: number } | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const toolSectionRef = useRef<HTMLDivElement>(null);
+  const tiles = useTileLifecycle();
 
   const { prompt, tool, toolInput, voice, motion, scriptModel } = homeDraft;
-  const { aspect, duration, mode } = defaults;
+  const { aspect, duration, style, mode } = defaults;
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
   const toolCopy = activeTool ? m().tools[activeTool.kind] : null;
 
@@ -159,37 +98,6 @@ export function Home() {
     };
   }, [tool]);
 
-  // The context menu closes on any press outside its own tile.
-  useEffect(() => {
-    if (!menuFor) return;
-    const onDown = (event: MouseEvent) => {
-      if (!(event.target as HTMLElement).closest(`[data-project="${menuFor}"]`)) {
-        setMenuFor(null);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [menuFor]);
-
-
-  // The rail's "all outputs" row, whether Home was already mounted (event)
-  // or is mounting because of the click that asked (flag).
-  useEffect(() => {
-    const reveal = () => {
-      revealPending = false;
-      toolSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    };
-    window.addEventListener(TOOL_HISTORY_EVENT, reveal);
-    // Cancelled on unmount: left to run after Home has gone, it clears the
-    // flag against a null ref, consuming the request without scrolling so a
-    // later mount never honours it.
-    const frame = revealPending ? requestAnimationFrame(reveal) : 0;
-    return () => {
-      window.removeEventListener(TOOL_HISTORY_EVENT, reveal);
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, []);
-
   // Coming back to Home re-mounts it (App swaps it out while a project is
   // open), and the WS refreshes the home read model only on OFF-project
   // lifecycle edges — a render left running in the project just closed emits
@@ -203,19 +111,17 @@ export function Home() {
       .catch((err) => console.warn("home refresh failed:", err));
   }, []);
 
-  // "/" focuses search when no field owns the keyboard (review 4 §H4).
+  // "/" searches the library — Home has no box of its own to focus now, and
+  // a shelf of four tiles is not what anyone is searching (review v5, Q3).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "/") return;
-      // Home stays mounted under the Settings overlay; don't steal "/" (and
-      // focus a hidden search box behind it) while Settings is open, or when
-      // there's no search box to focus.
-      if (useApp.getState().settingsOpen || !searchRef.current) return;
+      if (useApp.getState().settingsOpen) return;
       const target = event.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable)
         return;
       event.preventDefault();
-      searchRef.current.focus();
+      useApp.getState().openLibrary({ focusSearch: true });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -249,7 +155,7 @@ export function Home() {
     checkReadiness();
     setBusy(true);
     try {
-      await createFromPrompt(prompt.trim(), duration, aspect, mode);
+      await createFromPrompt(prompt.trim(), duration, aspect, mode, style);
       if (!useApp.getState().actionError) setHomeDraft({ prompt: "" });
     } finally {
       setBusy(false);
@@ -278,196 +184,36 @@ export function Home() {
     }
   };
 
-  const startRename = (project: Project) => {
-    setMenuFor(null);
-    setRenaming(project.id);
-    setRenameDraft(project.title);
-  };
-
-  const commitRename = async (id: string) => {
-    const title = renameDraft.trim();
-    setRenaming(null);
-    if (!title) return;
-    const error = await renameProject(id, title);
-    setLifecycleError(error);
-  };
-
-  const real = projects.filter((project) => !project.mode.startsWith("tool:"));
-  // Sorted the same way the rail's history is (last activity first). The
-  // rail's overflow row scrolls the user straight to this list, and the two
-  // reading in different orders makes it look like a different list.
-  const toolSessions = useMemo(
+  const real = projects.filter((project) => !isToolSession(project));
+  // The Continue shelf: four, most recently touched first. Not a browser —
+  // that is the Library, one click away at the end of this row.
+  const recent = useMemo(
     () =>
-      [...projects.filter(isToolSession)].sort(
-        (a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at),
-      ),
-    [projects],
+      [...real]
+        .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at))
+        .slice(0, 4),
+    [real],
   );
-  // Gate on the grid this controls (real projects, not tool sessions), and keep
-  // the controls visible whenever a query is active — otherwise deleting down to
-  // ≤6 unmounts the search box while `search` still filters the grid, hiding
-  // projects with no visible way to clear the query.
-  const showLibraryControls = real.length > 6 || search.trim().length > 0;
-
-  const visibleReal = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const filtered = q
-      ? real.filter((project) => project.title.toLowerCase().includes(q))
-      : real;
-    const stamp = (p: Project) => p.updated_at ?? p.created_at;
-    return [...filtered].sort((a, b) =>
-      sort === "name"
-        ? a.title.localeCompare(b.title)
-        : sort === "created"
-          ? b.created_at - a.created_at
-          : stamp(b) - stamp(a),
-    );
-  }, [real, search, sort]);
-
-  const renderTile = (project: Project) => {
-    const toolKind = toolKindOf(project);
-    const status = tileStatus(project, allJobs);
-    const client = useApp.getState().client;
-    const thumbUrl =
-      project.thumb_hash && client ? client.artifactUrl(project.id, project.thumb_hash) : null;
-    const ToolIcon = toolKind
-      ? (TOOLS.find((entry) => entry.kind === toolKind)?.icon ?? Film)
-      : null;
-    const meta = `${t(`home.status.${status}`)} · ${relativeTime(
-      project.updated_at ?? project.created_at,
-    )}`;
-    const body = (
-      <div className="tile-body">
-        <div className="title">{project.title}</div>
-        <div className="meta">
-          <i className={`dot ${status}`} aria-hidden="true" />
-          {meta}
-        </div>
-      </div>
-    );
-    return (
-      <div
-        key={project.id}
-        className="project-tile"
-        data-project={project.id}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          setMenuFor(menuFor === project.id ? null : project.id);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "F2" && renaming !== project.id) {
-            event.preventDefault();
-            startRename(project);
-          }
-        }}
-      >
-        <button
-          className="tile-open"
-          onClick={() => void openProject(project.id)}
-          aria-label={t("home.openProjectAria", { title: project.title })}
-        >
-          <div className="tile-thumb">
-            {thumbUrl ? (
-              <img
-                src={thumbUrl}
-                alt=""
-                loading="lazy"
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-            ) : ToolIcon ? (
-              <ToolIcon {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-            ) : (
-              <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-            )}
-            {toolKind && <span className="tile-tool">{m().tools[toolKind].label}</span>}
-            {!isToolSession(project) && project.duration_s != null && project.duration_s > 0 && (
-              <span className="tile-dur">{shortDuration(project.duration_s)}</span>
-            )}
-          </div>
-          {renaming !== project.id && body}
-        </button>
-        {renaming === project.id && (
-          <div className="tile-body">
-            <input
-              className="tile-rename"
-              value={renameDraft}
-              autoFocus
-              aria-label={t("home.renameAria", { title: project.title })}
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => setRenameDraft(event.target.value)}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-                if (event.key === "Enter") void commitRename(project.id);
-                if (event.key === "Escape") setRenaming(null);
-              }}
-              onBlur={() => void commitRename(project.id)}
-            />
-          </div>
-        )}
-        <button
-          className="tile-kebab"
-          aria-label={t("home.tileMenuAria", { title: project.title })}
-          aria-expanded={menuFor === project.id}
-          onClick={(event) => {
-            event.stopPropagation();
-            setMenuFor(menuFor === project.id ? null : project.id);
-          }}
-        >
-          <MoreHorizontal {...ICON_CONTROL} />
-        </button>
-        {menuFor === project.id && (
-          <div className="menu-pop" role="menu">
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuFor(null);
-                void openProject(project.id);
-              }}
-            >
-              {t("common.open")}
-            </button>
-            <button role="menuitem" onClick={() => startRename(project)}>
-              {t("common.rename")}
-              <small>{shortcutLabel(t("common.keys.rename"))}</small>
-            </button>
-            <button
-              role="menuitem"
-              onClick={async () => {
-                setMenuFor(null);
-                setLifecycleError(await duplicateProject(project.id));
-              }}
-            >
-              {t("common.duplicate")}
-            </button>
-            <div className="rule" aria-hidden="true" />
-            <button
-              role="menuitem"
-              className="danger"
-              onClick={() => {
-                setMenuFor(null);
-                setConfirmDelete(project);
-              }}
-            >
-              {t("common.delete")}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // Model downloads still running after first-run → the bridge strip (FR1).
-  const downloading = models.filter((row) => row.downloading);
+  // Setup hands over mid-download (FR1). The rows are the wizard's own; the
+  // bytes are what the engine is still moving for THIS pipeline, so a model
+  // downloaded from Settings for some other reason doesn't inflate them.
+  const downloadStages = useMemo(() => stageRows(system, models), [system, models]);
+  const dlReady = readyStages(downloadStages);
+  // Only while bytes are actually moving: a stage nobody picked reads
+  // "queued" forever, and gating on that would pin this strip to Home for
+  // the life of the install.
+  const downloading = models.some((row) => row.downloading);
+  const [dlOpen, setDlOpen] = useState(false);
   const [stripDismissed, setStripDismissed] = useState(
     () => localStorage.getItem("localcut.home.dlStripDismissed") === "1",
   );
   let dlDone = 0;
   let dlTotal = 0;
-  for (const row of downloading) {
-    dlDone += row.progress?.done ?? 0;
-    dlTotal += row.progress && row.progress.total > 0 ? row.progress.total : row.size_bytes;
+  for (const stage of downloadStages) {
+    const row = models.find((entry) => entry.id === stage.id);
+    if (!row || row.files.length === 0) continue;
+    dlTotal += row.size_bytes;
+    dlDone += row.downloaded ? row.size_bytes : (row.progress?.done ?? 0);
   }
 
   return (
@@ -504,6 +250,18 @@ export function Home() {
               value={duration}
               onChange={(value) => setDefaults({ duration: value })}
               ariaLabel={t("home.durationAria")}
+            />
+            {/* The engine has taken style_preset since Phase 1 and defaulted
+                it silently; this is the first surface that lets anyone say
+                which look they wanted. */}
+            <Dropdown
+              value={style}
+              onChange={(value) => setDefaults({ style: value })}
+              ariaLabel={t("home.styleAria")}
+              options={STYLE_PRESETS.map((preset) => ({
+                value: preset,
+                label: (m().home.styles as Record<string, string>)[preset] ?? preset,
+              }))}
             />
             <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
               <button
@@ -557,6 +315,13 @@ export function Home() {
             </p>
           )}
         </div>
+      )}
+
+      {!activeTool && (
+        <button className="link from-template" onClick={() => setStartTemplate(true)}>
+          <LayoutTemplate size={13} strokeWidth={1.8} aria-hidden="true" />
+          {t("home.startTemplate")}
+        </button>
       )}
 
       {activeTool && toolCopy && (
@@ -664,39 +429,76 @@ export function Home() {
         </div>
       )}
 
-      {downloading.length > 0 && !stripDismissed && (
-        <div className="dl-strip" role="status">
-          <ArrowDownToLine {...ICON_CONTROL} aria-hidden="true" />
-          <div className="grow">
-            {plural("home.dlStrip", downloading.length, {
-              size: formatSize(Math.max(0, dlTotal - dlDone)),
-            })}
-            <div
+      {/* Setup hands over mid-download: the same per-stage rows the wizard's
+          last step shows, behind one line so they never push the tools down
+          the page while bytes move (design review v5, Q1). */}
+      {downloading && !stripDismissed && (
+        <div className={`dl-summary${dlOpen ? " open" : ""}`}>
+          <button
+            className="dl-summary-head"
+            aria-expanded={dlOpen}
+            aria-label={dlOpen ? t("home.dlCollapseAria") : t("home.dlExpandAria")}
+            onClick={() => setDlOpen(!dlOpen)}
+          >
+            <ChevronRight {...ICON_CONTROL} className={dlOpen ? "caret open" : "caret"} />
+            <span>
+              {t("home.dlSummary", { ready: dlReady, total: downloadStages.length })}
+            </span>
+            <span
               className="dl-bar"
               role="progressbar"
               aria-valuenow={dlTotal > 0 ? Math.round((dlDone / dlTotal) * 100) : 0}
               aria-valuemin={0}
               aria-valuemax={100}
             >
-              <div
-                className="dl-bar-fill"
-                style={{ width: `${dlTotal > 0 ? (dlDone / dlTotal) * 100 : 0}%` }}
-              />
+              <i style={{ width: `${dlTotal > 0 ? (dlDone / dlTotal) * 100 : 0}%` }} />
+            </span>
+            <span className="bytes">
+              {t("home.dlSummaryBytes", {
+                done: formatSize(dlDone),
+                total: formatSize(dlTotal),
+              })}
+            </span>
+          </button>
+          {dlOpen && (
+            <div className="sumrail">
+              {downloadStages.map((stage) => (
+                <StageSummaryRow
+                  key={stage.id}
+                  stage={stage.stage}
+                  name={stage.name}
+                  id={stage.id}
+                  status={stage.status}
+                />
+              ))}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Gate on real projects, not the whole list: someone who has only
+          used the quick tools has made no video yet, and counting their
+          tool outputs here took away the templates that get them started. */}
+      {real.length === 0 && (
+        <div className="empty-state">
+          <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
+          <b>{t("home.emptyTitle")}</b>
+          <p>{t("home.emptyBody")}</p>
+          <div className="templates">
+            {m().home.templates.map((template) => (
+              <button
+                key={template.label}
+                className="btn-ghost"
+                onClick={() => {
+                  setHomeDraft({ tool: null, prompt: template.scaffold });
+                  setDefaults({ aspect: template.aspect, duration: template.duration });
+                  requestAnimationFrame(() => promptRef.current?.focus());
+                }}
+              >
+                {template.label}
+              </button>
+            ))}
           </div>
-          <button className="btn-ghost" onClick={() => openSettings("models")}>
-            {t("home.viewModels")}
-          </button>
-          <button
-            className="icon-btn-sm"
-            aria-label={t("common.dismiss")}
-            onClick={() => {
-              localStorage.setItem("localcut.home.dlStripDismissed", "1");
-              setStripDismissed(true);
-            }}
-          >
-            <X size={13} strokeWidth={2} />
-          </button>
         </div>
       )}
 
@@ -736,117 +538,39 @@ export function Home() {
         })}
       </div>
 
-      {/* Gate on real projects, not the whole list: someone who has only
-          used the quick tools has made no video yet, and counting their
-          tool outputs here took away the templates that get them started. */}
-      {real.length === 0 && (
-        <div className="empty-state">
-          <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-          <b>{t("home.emptyTitle")}</b>
-          <p>{t("home.emptyBody")}</p>
-          <div className="templates">
-            {m().home.templates.map((template) => (
-              <button
-                key={template.label}
-                className="btn-ghost"
-                onClick={() => {
-                  setHomeDraft({ tool: null, prompt: template.scaffold });
-                  setDefaults({ aspect: template.aspect, duration: template.duration });
-                  requestAnimationFrame(() => promptRef.current?.focus());
-                }}
-              >
-                <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />
-                {template.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {real.length > 0 && (
+      {/* One shelf, four tiles: what you were last working on. Everything
+          else — including every tool output — is one click away in the
+          Library, which is where a browsing surface belongs (v5). */}
+      {recent.length > 0 && (
         <div className="recent">
           <div className="recent-head">
-            <h2>{t("home.projectsEyebrow")}</h2>
-            <span className="count">· {real.length}</span>
+            <h2>{t("home.continueEyebrow")}</h2>
+            <span className="count">{t("home.continueCount", { count: recent.length })}</span>
             <span className="spacer" />
-            {showLibraryControls && (
-              <>
-                <span className="recent-search">
-                  <Search size={13} strokeWidth={1.8} aria-hidden="true" />
-                  <input
-                    ref={searchRef}
-                    value={search}
-                    placeholder={t("home.searchPlaceholder")}
-                    aria-label={t("home.searchAria")}
-                    onChange={(event) => setSearch(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        setSearch("");
-                        event.currentTarget.blur();
-                      }
-                    }}
-                  />
-                </span>
-                <Dropdown
-                  value={sort}
-                  onChange={setSort}
-                  ariaLabel={t("home.sortAria")}
-                  options={[
-                    { value: "recent", label: t("home.sortRecent") },
-                    { value: "created", label: t("home.sortCreated") },
-                    { value: "name", label: t("home.sortName") },
-                  ]}
-                />
-              </>
-            )}
+            <button className="link" onClick={() => openLibrary()}>
+              {t("home.openLibrary")}
+            </button>
           </div>
-          {visibleReal.length > 0 ? (
-            <div className="grid">{visibleReal.map(renderTile)}</div>
-          ) : (
-            <p className="no-match">{t("home.noMatch", { q: search.trim() })}</p>
-          )}
-          {lifecycleError && (
+          <div className="grid">
+            {recent.map((project) => (
+              <ProjectTile
+                key={project.id}
+                project={project}
+                status={tileStatus(project, allJobs)}
+                actions={tiles.bind(project)}
+              />
+            ))}
+          </div>
+          {tiles.error && (
             <p className="hint error-text" role="alert">
-              {lifecycleError}
+              {tiles.error}
             </p>
           )}
         </div>
       )}
 
-      {toolSessions.length > 0 && (
-        <div className="recent" ref={toolSectionRef}>
-          <div className="recent-head">
-            <h2>{t("home.toolOutputs")}</h2>
-            <span className="count">· {toolSessions.length}</span>
-          </div>
-          <div className="grid">{toolSessions.map(renderTile)}</div>
-        </div>
-      )}
-
-      {confirmDelete && (
-        <ConfirmDialog
-          // A one-off output is not a project: promising to cancel running
-          // jobs and remove "all generated media" overstates what is at
-          // stake and makes deleting a stray thumbnail feel unsafe.
-          title={t(
-            toolKindOf(confirmDelete) ? "home.deleteToolTitle" : "home.deleteTitle",
-            { title: confirmDelete.title },
-          )}
-          message={t(
-            toolKindOf(confirmDelete) ? "home.deleteToolMessage" : "home.deleteMessage",
-          )}
-          confirmLabel={t(
-            toolKindOf(confirmDelete) ? "home.deleteToolConfirm" : "home.deleteConfirm",
-          )}
-          danger
-          onConfirm={() => {
-            const target = confirmDelete;
-            setConfirmDelete(null);
-            void deleteProject(target.id).then(setLifecycleError);
-          }}
-          onCancel={() => setConfirmDelete(null)}
-        />
-      )}
+      {tiles.dialog}
+      {startTemplate && <StartFromTemplateDialog onClose={() => setStartTemplate(false)} />}
     </div>
   );
 }
