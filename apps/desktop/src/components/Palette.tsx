@@ -1,6 +1,7 @@
 import {
   Clapperboard,
   FileText,
+  Library as LibraryIcon,
   Settings as SettingsIcon,
   Sparkles,
   SunMoon,
@@ -136,6 +137,22 @@ export function Palette() {
       label: t("palette.home"),
       icon: Clapperboard,
       run: goHome,
+    });
+    // The rail's tool-session list became a Library filter (U2); these two
+    // are what still reaches it by keyboard.
+    list.push({
+      key: "goto-library",
+      group: "goto",
+      label: t("palette.openLibrary"),
+      icon: LibraryIcon,
+      run: () => useApp.getState().openLibrary(),
+    });
+    list.push({
+      key: "goto-library-tools",
+      group: "goto",
+      label: t("palette.libraryTools"),
+      icon: LibraryIcon,
+      run: () => useApp.getState().openLibrary({ filter: "tools" }),
     });
     for (const tab of SETTINGS_TABS) {
       list.push({
