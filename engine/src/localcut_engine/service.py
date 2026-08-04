@@ -712,8 +712,9 @@ class ProjectService:
         under the node's output hash, so the node is born cached: assets are
         never executed, only consumed (an image wired into a clip's keyframe
         port as the I2V source; a consented voice sample into a narration
-        node's voice_ref port for cloning — the API layer has already
-        enforced the consent affirmation for audio)."""
+        node's voice_ref port for cloning). `voice` is True only when the
+        API layer collected the consent affirmation — audio without it is a
+        plain asset, unstamped, which the voice_ref chokepoint refuses."""
         import hashlib
 
         suffix = Path(filename).suffix.lower()
