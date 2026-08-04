@@ -293,14 +293,27 @@ export default function App() {
                       <span className="rail-label">{title}</span>
                     </button>
                   </Tip>
-                  <button
-                    className="rail-tab-close"
-                    title={t("nav.closeProjectAria", { title })}
-                    aria-label={t("nav.closeProjectAria", { title })}
-                    onClick={() => closeOpenProject(id)}
+                  {/* The ✕ is the one control here that is not self-evident,
+                      so it says what it does rather than leaving the browser
+                      to. No confirmation: closing puts the project back in
+                      the Library it came from, and the hint says so — a
+                      dialog over an act that loses nothing is the one that
+                      teaches people to dismiss the dialog over one that
+                      does. */}
+                  <Tip
+                    label={t("nav.closeProject")}
+                    hint={t("nav.closeProjectHint")}
+                    side="right"
+                    className="tip-tab-close"
                   >
-                    <X size={12} strokeWidth={1.8} />
-                  </button>
+                    <button
+                      className="rail-tab-close"
+                      aria-label={t("nav.closeProjectAria", { title })}
+                      onClick={() => closeOpenProject(id)}
+                    >
+                      <X size={12} strokeWidth={1.8} />
+                    </button>
+                  </Tip>
                 </div>
               );
             })}
