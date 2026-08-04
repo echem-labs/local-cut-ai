@@ -7,5 +7,8 @@
   "homeRefreshFailed": "Could not load your videos. The engine answered but the list request failed — retrying.",
   "tryAgain": "Try again",
   "reloadApp": "Reload",
-  "copyDetails": "Copy details"
+  "copyDetails": "Copy details",
+  "templateLimit": "That's the {limit}-template limit. Delete one from \"Start from a template…\" first.",
+  "templateSize": "This project's shape is too large to keep as a template.",
+  "templateMissing": "That template is no longer saved on this machine."
 }

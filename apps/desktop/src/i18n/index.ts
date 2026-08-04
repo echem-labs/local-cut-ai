@@ -6,6 +6,7 @@ import errors from "./en/errors.json";
 import nav from "./en/nav.json";
 import titlebar from "./en/titlebar.json";
 import home from "./en/home.json";
+import library from "./en/library.json";
 import tools from "./en/tools.json";
 import aspects from "./en/aspects.json";
 import durations from "./en/durations.json";
@@ -52,6 +53,7 @@ const en = {
   nav,
   titlebar,
   home,
+  library,
   tools,
   aspects,
   durations,

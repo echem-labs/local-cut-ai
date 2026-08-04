@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { isToolSession, tileStatus, toolKindOf } from "./Home";
+import { tileStatus } from "../lib/tiles";
+import { isToolSession, toolKindOf } from "../lib/tools";
 import type { Job, Project } from "../api/types";
 
 /**

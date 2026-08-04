@@ -3,10 +3,6 @@
   "home": "Home",
   "homeCloseHint": "back to your projects",
   "closeProjectAria": "Close {title}",
-  "recent": "Recent",
-  "recentAll_one": "All {count} quick tool output",
-  "recentAll_other": "All {count} quick tool outputs",
-  "deleteToolAria": "Delete {title}",
   "settings": "Settings",
   "collapse": "Collapse",
   "expandSidebar": "Expand the sidebar",
@@ -25,5 +21,8 @@
   "engineConnecting": "connecting…",
   "engineNotConnected": "not connected",
   "engineDetail": "{gpu} · Tier {tier} · {backend}",
-  "noGpu": "No GPU"
+  "noGpu": "No GPU",
+  "library": "Library",
+  "libraryCount_one": "1 video, script, clip or voiceover",
+  "libraryCount_other": "{count} videos, scripts, clips and voiceovers"
 }
