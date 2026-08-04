@@ -24,5 +24,6 @@
   "noGpu": "No GPU",
   "library": "Library",
   "libraryCount_one": "1 video, script, clip or voiceover",
-  "libraryCount_other": "{count} videos, scripts, clips and voiceovers"
+  "libraryCount_other": "{count} videos, scripts, clips and voiceovers",
+  "open": "Open"
 }

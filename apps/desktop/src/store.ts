@@ -104,6 +104,10 @@ declare global {
 export interface SeedPatch {
   system?: SystemInfo;
   models?: ModelRow[];
+  /** Home and the Library are lists — a reference frame of either needs the
+   * list posed, not just the hardware behind it. */
+  projects?: Project[];
+  allJobs?: Job[];
   freeze?: boolean;
 }
 
@@ -985,7 +989,7 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshHome: async () => {
       const { client } = get();
-      if (!client) return;
+      if (!client || seedFrozen) return;
       // Ids that appear while this request is in flight — see the prune below.
       const createdSince = new Set<string>();
       const track = (id: string) => createdSince.add(id);
@@ -1935,6 +1939,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     const next: Partial<AppState> = {};
     if (patch.system !== undefined) next.system = patch.system;
     if (patch.models !== undefined) next.models = patch.models;
+    if (patch.projects !== undefined) next.projects = patch.projects;
+    if (patch.allJobs !== undefined) next.allJobs = patch.allJobs;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

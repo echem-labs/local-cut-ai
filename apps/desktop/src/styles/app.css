@@ -701,7 +701,6 @@ textarea {
   grid-template-columns: 1fr min(var(--content-col), 100%) 1fr;
   margin: 0 auto;
   max-width: var(--content-wide);
-  padding-top: var(--space-8);
 }
 
 .home > * {
@@ -733,7 +732,7 @@ textarea {
 .home .sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  margin: 0 0 var(--space-6);
+  margin: 0 0 var(--space-4);
 }
 
 /* no overflow:hidden — the dropdown menus must escape the box; the inner
@@ -762,7 +761,7 @@ textarea {
   color: var(--text-primary);
   font-size: var(--text-m);
   resize: none;
-  min-height: 72px;
+  min-height: 64px;
   max-height: 40vh;
   field-sizing: content; /* auto-grow with the prompt (Chromium ≥123) */
   overflow-y: auto;
@@ -1017,7 +1016,7 @@ button.link:hover {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: var(--space-2);
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .quick-tools .tip-wrap {
@@ -1164,43 +1163,51 @@ button.link:hover {
 
 /* first-session teaching: three starter templates that also demo the
  * format controls (review 4 §H12) — solid border, never dashed */
+/* The answer to the question the hero just asked, so it sits directly
+   under it — a dashed card, read left to right like everything else on the
+   page (design review v5). */
 .empty-state {
-  margin-top: var(--space-8);
-  border: 1px solid var(--border);
+  margin-top: var(--space-4);
+  border: 1px dashed var(--border-hi);
   background: var(--surface-1);
-  border-radius: var(--radius-m);
-  padding: var(--space-8) var(--space-6);
+  border-radius: var(--radius-l);
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: center;
+  gap: 0;
   color: var(--text-tertiary);
 }
 
+.empty-state > svg {
+  display: none;
+}
+
 .empty-state b {
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-m);
   font-weight: 600;
 }
 
 .empty-state p {
   font-size: var(--text-xs);
+  margin: var(--space-2) 0 var(--space-3);
 }
 
 .empty-state .templates {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-direction: column;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .empty-state .btn-ghost {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-2);
   color: var(--text-primary);
-  font-size: 13px;
+  background: var(--surface-0);
+  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-3);
 }
 
 /* ---- the project browser (review 4 §H1/H2/H4/H5) ---- */
@@ -1387,7 +1394,7 @@ button.link:hover {
 }
 
 .project-tile .tile-body {
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: var(--space-2) 10px;
 }
 
 .project-tile .title {
@@ -4063,7 +4070,7 @@ button.link:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-2);
 }
 
 .home-header h1 {
@@ -5363,7 +5370,6 @@ button.link:hover {
   grid-template-columns: 1fr min(var(--content-wide), 100%) 1fr;
   margin: 0 auto;
   max-width: var(--content-wide);
-  padding-top: var(--space-8);
 }
 
 .library > * {

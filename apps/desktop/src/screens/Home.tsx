@@ -476,6 +476,32 @@ export function Home() {
         </div>
       )}
 
+      {/* Gate on real projects, not the whole list: someone who has only
+          used the quick tools has made no video yet, and counting their
+          tool outputs here took away the templates that get them started. */}
+      {real.length === 0 && (
+        <div className="empty-state">
+          <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
+          <b>{t("home.emptyTitle")}</b>
+          <p>{t("home.emptyBody")}</p>
+          <div className="templates">
+            {m().home.templates.map((template) => (
+              <button
+                key={template.label}
+                className="btn-ghost"
+                onClick={() => {
+                  setHomeDraft({ tool: null, prompt: template.scaffold });
+                  setDefaults({ aspect: template.aspect, duration: template.duration });
+                  requestAnimationFrame(() => promptRef.current?.focus());
+                }}
+              >
+                {template.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="tools-head">
         <h3>{t("home.quickTools")}</h3>
         <span className="hint">{t("home.quickToolsHint")}</span>
@@ -511,33 +537,6 @@ export function Home() {
           );
         })}
       </div>
-
-      {/* Gate on real projects, not the whole list: someone who has only
-          used the quick tools has made no video yet, and counting their
-          tool outputs here took away the templates that get them started. */}
-      {real.length === 0 && (
-        <div className="empty-state">
-          <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-          <b>{t("home.emptyTitle")}</b>
-          <p>{t("home.emptyBody")}</p>
-          <div className="templates">
-            {m().home.templates.map((template) => (
-              <button
-                key={template.label}
-                className="btn-ghost"
-                onClick={() => {
-                  setHomeDraft({ tool: null, prompt: template.scaffold });
-                  setDefaults({ aspect: template.aspect, duration: template.duration });
-                  requestAnimationFrame(() => promptRef.current?.focus());
-                }}
-              >
-                <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />
-                {template.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* One shelf, four tiles: what you were last working on. Everything
           else — including every tool output — is one click away in the

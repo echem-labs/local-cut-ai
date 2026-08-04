@@ -218,6 +218,9 @@ export default function App() {
         />
         {firstRunDone && openProjects.length > 0 && (
           <div className="rail-tabs">
+            {/* Named, now that two destinations sit above it: without a label
+                the tabs read as more navigation rather than what is open. */}
+            <div className="group-label">{t("nav.open")}</div>
             {openProjects.map((id) => {
               const project =
                 projects.find((entry) => entry.id === id) ??
