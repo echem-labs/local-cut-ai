@@ -64,15 +64,6 @@
       "duration": 30
     }
   ],
-  "projectsEyebrow": "Projects",
-  "searchPlaceholder": "Search projects",
-  "searchAria": "Search projects",
-  "sortAria": "Sort projects",
-  "sortRecent": "Last modified",
-  "sortCreated": "Newest",
-  "sortName": "Name A–Z",
-  "noMatch": "No projects match \"{q}\"",
-  "toolOutputs": "Quick tool outputs",
   "openProjectAria": "Open {title}",
   "renameAria": "Rename {title}",
   "tileMenuAria": "Project actions for {title}",
@@ -89,7 +80,21 @@
   "deleteToolTitle": "Delete \"{title}\"?",
   "deleteToolMessage": "Removes this quick tool output and the file it generated. If it is still generating, that stops. This can't be undone.",
   "deleteToolConfirm": "Delete output",
-  "dlStrip_one": "Downloading {count} model — {size} left. Write your first prompt now; generation starts as soon as models are ready.",
-  "dlStrip_other": "Downloading {count} models — {size} left. Write your first prompt now; generation starts as soon as models are ready.",
-  "viewModels": "View models"
+  "styleAria": "Visual style",
+  "styles": {
+    "cinematic": "Cinematic",
+    "documentary": "Documentary",
+    "animated": "Animated",
+    "anime": "Anime",
+    "watercolor": "Watercolor",
+    "retro": "Retro film"
+  },
+  "startTemplate": "Start from a template…",
+  "continueEyebrow": "Continue",
+  "continueCount": "last {count}",
+  "openLibrary": "Open the library →",
+  "dlSummary": "{ready} of {total} stages ready",
+  "dlSummaryBytes": "{done} of {total}",
+  "dlExpandAria": "Show what is still downloading",
+  "dlCollapseAria": "Hide the download detail"
 }

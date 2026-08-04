@@ -1,13 +1,12 @@
 /**
- * The rail's quick-tool history.
+ * The rail's two destinations.
  *
- * A tool session is a real project the engine keeps, but before this list
- * existed the rail showed one only while its tab happened to be open, so
- * closing the tab was indistinguishable from throwing the output away. The
- * properties worth pinning are the ones that make the two lists mean
- * different things: history is derived from the engine's project list, an
- * open session belongs to the tabs and must not appear twice, and the
- * trailing control here DELETES where the tabs' control merely closes.
+ * Until U2 the rail also carried a list of past tool sessions — the library
+ * in the worst possible place for it, growing without bound and duplicating
+ * whatever the tabs already showed. That list is now the Library screen, so
+ * what is worth pinning here is what replaced it: one row under Home, the
+ * same activation rules, a count of everything, and no per-session rows at
+ * any length of history.
  */
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,7 +38,6 @@ const done = (project_id: string, node_id: string): Job => ({
   spec: { node_id, kind: node_id },
 });
 
-let deleteProject: ReturnType<typeof vi.fn>;
 let openProject: ReturnType<typeof vi.fn>;
 
 const PROJECTS = [
@@ -48,12 +46,14 @@ const PROJECTS = [
   project("t-new", "tool:image", "a lighthouse at dusk", 30),
 ];
 
-/** The rail's history group, so a query cannot stray into the tab list. */
-const historyGroup = () => screen.getByText(t("nav.recent")).parentElement as HTMLElement;
+const rail = () => screen.getByRole("navigation", { name: t("nav.navigationAria") });
+const homeRow = () => within(rail()).getByRole("button", { name: t("nav.home") });
+// By accessible name, not position: the rail renders compact under jsdom's
+// matchMedia, where Home is a brand mark with a label and no text.
+const libraryRow = () => within(rail()).getByRole("button", { name: /^Library/ });
 
 beforeEach(() => {
   localStorage.clear();
-  deleteProject = vi.fn(async () => null); // null = the engine agreed
   openProject = vi.fn(async () => {});
   useApp.setState({
     connect: vi.fn(async () => {}),
@@ -64,93 +64,54 @@ beforeEach(() => {
     projects: PROJECTS,
     allJobs: [done("t-new", "image"), done("t-old", "voiceover")],
     settingsOpen: false,
+    libraryOpen: false,
+    libraryFilter: "all",
     engineError: null,
     system: null,
-    deleteProject,
     openProject,
   } as never);
 });
 
-describe("rail quick-tool history", () => {
-  it("lists past tool sessions, newest first, and no real projects", () => {
+describe("the rail's Library row", () => {
+  it("sits under Home carrying the count of everything made", () => {
     render(<App />);
-    const rows = within(historyGroup())
-      .getAllByRole("button")
-      .map((node) => node.getAttribute("title"))
-      .filter((title): title is string => Boolean(title));
-    // Titles appear twice per row (open + delete); the order of first
-    // appearance is the render order.
-    const seen = [...new Set(rows)];
-    expect(seen[0]).toBe("a lighthouse at dusk"); // updated_at 30
-    expect(seen).not.toContain("A tour of the solar system");
-    expect(seen.some((title) => title.includes("one small step"))).toBe(true);
+    // DOCUMENT_POSITION_FOLLOWING: the Library row comes after Home's.
+    expect(homeRow().compareDocumentPosition(libraryRow()) & 4).toBeTruthy();
+    // The count is everything, videos and tool outputs alike.
+    expect(libraryRow().querySelector(".rail-count")?.textContent).toBe("3");
   });
 
-  it("leaves an open session to the tab list rather than showing it twice", () => {
-    useApp.setState({ openProjects: ["t-new"] } as never);
-    render(<App />);
-    const titles = within(historyGroup())
-      .getAllByRole("button")
-      .map((node) => node.getAttribute("title"));
-    expect(titles).not.toContain("a lighthouse at dusk");
-    // ...and it is still reachable, from the tabs above.
-    expect(screen.getAllByTitle("a lighthouse at dusk").length).toBeGreaterThan(0);
-  });
-
-  it("hides the group entirely when there is no history", () => {
-    useApp.setState({ projects: [PROJECTS[0]] } as never);
-    render(<App />);
-    expect(screen.queryByText(t("nav.recent"))).toBeNull();
-  });
-
-  it("opens a session on click", async () => {
+  it("opens the Library, and takes the active state off Home", async () => {
     render(<App />);
     await act(async () => {
-      fireEvent.click(within(historyGroup()).getByTitle("a lighthouse at dusk"));
+      fireEvent.click(libraryRow());
     });
-    expect(openProject).toHaveBeenCalledWith("t-new");
+    expect(useApp.getState().libraryOpen).toBe(true);
+    expect(screen.getByRole("heading", { name: t("library.title") })).toBeInTheDocument();
+    expect(libraryRow().className).toContain("active");
+    expect(homeRow().className).not.toContain("active");
   });
 
-  it("asks before deleting, and does nothing if the answer is no", async () => {
+  it("returns to Home, which is active again", async () => {
     render(<App />);
-    fireEvent.click(
-      within(historyGroup()).getByLabelText(
-        t("nav.deleteToolAria", { title: "a lighthouse at dusk" }),
+    await act(async () => {
+      fireEvent.click(libraryRow());
+    });
+    await act(async () => {
+      fireEvent.click(homeRow());
+    });
+    expect(useApp.getState().libraryOpen).toBe(false);
+    expect(homeRow().className).toContain("active");
+  });
+
+  it("never grows a row per tool session, however long the history", () => {
+    useApp.setState({
+      projects: Array.from({ length: 30 }, (_, i) =>
+        project(`t${i}`, "tool:image", `output ${i}`, i),
       ),
-    );
-    // The safe choice, not the destructive one, is what the dialog offers.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: t("common.keepIt") }));
-    });
-    expect(deleteProject).not.toHaveBeenCalled();
-  });
-
-  it("deletes on confirmation", async () => {
+    } as never);
     render(<App />);
-    fireEvent.click(
-      within(historyGroup()).getByLabelText(
-        t("nav.deleteToolAria", { title: "a lighthouse at dusk" }),
-      ),
-    );
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: t("home.deleteToolConfirm") }));
-    });
-    expect(deleteProject).toHaveBeenCalledWith("t-new");
-  });
-
-  // deleteProject RETURNS the failure message. Dropping it would leave a
-  // failed delete silent: the row simply reappears on the next refresh.
-  it("reports a rejected delete instead of swallowing it", async () => {
-    deleteProject.mockResolvedValue("Engine unavailable");
-    render(<App />);
-    fireEvent.click(
-      within(historyGroup()).getByLabelText(
-        t("nav.deleteToolAria", { title: "a lighthouse at dusk" }),
-      ),
-    );
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: t("home.deleteToolConfirm") }));
-    });
-    expect(screen.getByRole("alert").textContent).toContain("Engine unavailable");
+    expect(screen.queryByTitle("output 3")).toBeNull();
+    expect(libraryRow().querySelector(".rail-count")?.textContent).toBe("30");
   });
 });

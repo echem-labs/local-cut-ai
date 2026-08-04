@@ -346,3 +346,17 @@ export type EngineEvent =
   | { type: "model.download.done"; model: string }
   | { type: "model.download.failed"; model: string; error: string }
   | { type: "model.download.cancelled"; model: string };
+
+/** A project's shape, portable — the engine writes and validates it; the
+ * desktop only carries the document between the two routes and never reads
+ * inside it. Opaque on purpose: the schema is the engine's to change. */
+export type ProjectTemplate = Record<string, unknown>;
+
+/** What importing a template produced, plus the two things the importer has
+ * to see first: which cloud models it will spend money on, and how many
+ * conditioning assets could not travel with the shape. */
+export interface TemplateImport {
+  project: Project;
+  cloud_models: string[];
+  dropped_assets: number;
+}

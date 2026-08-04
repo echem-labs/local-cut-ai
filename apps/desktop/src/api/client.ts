@@ -15,10 +15,12 @@ import type {
   ModelDefaults,
   ModelRow,
   Project,
+  ProjectTemplate,
   Provider,
   StorageInfo,
   StoryGraph,
   SystemInfo,
+  TemplateImport,
   ToolKind,
 } from "./types";
 
@@ -134,6 +136,23 @@ export class EngineClient {
 
   duplicateProject(id: string): Promise<Project> {
     return this.request(`/projects/${id}/duplicate`, { method: "POST" });
+  }
+
+  /** A project's shape as a portable document: no assets, no generated
+   * media. The engine names it; the UI only chooses the title text. */
+  exportTemplate(id: string, name = "", description = ""): Promise<ProjectTemplate> {
+    const query = new URLSearchParams({ name, description }).toString();
+    return this.request(`/projects/${id}/template?${query}`);
+  }
+
+  /** The import side. `cloud_models` and `dropped_assets` come back so the
+   * caller can say what this template will spend and what it left behind
+   * BEFORE the first render — the engine surfaces, never blocks. */
+  createFromTemplate(template: ProjectTemplate, title = ""): Promise<TemplateImport> {
+    return this.request("/projects/from-template", {
+      method: "POST",
+      body: JSON.stringify({ template, title }),
+    });
   }
 
   regenerate(projectId: string, nodeId: string, seed?: number): Promise<void> {
