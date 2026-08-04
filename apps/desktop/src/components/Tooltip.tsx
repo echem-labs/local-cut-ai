@@ -14,12 +14,19 @@ export function Tip({
   hint,
   shortcut,
   side = "top",
+  className,
   children,
 }: {
   label: string;
   hint?: string;
   shortcut?: string;
-  side?: "top" | "bottom";
+  /** "right" is the rail's side: a row at the top of a vertical strip has
+   * nothing above it, so a top bubble is drawn off the window. */
+  side?: "top" | "bottom" | "right";
+  /** Added to the wrapper. The wrapper is a real box in the layout, so a
+   * control that was positioned by its parent needs to hand that placement
+   * to the wrapper rather than keep it and leave an empty box behind. */
+  className?: string;
   children: ReactNode;
 }) {
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -27,15 +34,18 @@ export function Tip({
 
   const show = () => {
     const rect = wrapRef.current?.getBoundingClientRect();
-    if (rect) {
-      setPos({ x: rect.left + rect.width / 2, y: side === "top" ? rect.top : rect.bottom });
+    if (!rect) return;
+    if (side === "right") {
+      setPos({ x: rect.right, y: rect.top + rect.height / 2 });
+      return;
     }
+    setPos({ x: rect.left + rect.width / 2, y: side === "top" ? rect.top : rect.bottom });
   };
   const hide = () => setPos(null);
 
   return (
     <span
-      className="tip-wrap"
+      className={className ? `tip-wrap ${className}` : "tip-wrap"}
       ref={wrapRef}
       onMouseEnter={show}
       onMouseLeave={hide}

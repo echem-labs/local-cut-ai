@@ -204,7 +204,7 @@ textarea {
   position: relative;
 }
 
-.rail-tab > button:first-child {
+.rail-tab button:not(.rail-tab-close) {
   width: 100%;
   padding-right: 26px; /* room for the ✕ so long titles never sit under it */
 }
@@ -240,77 +240,39 @@ textarea {
   background: var(--status-failed);
 }
 
-/* Quick-tool history. Shares .rail-tab's row shape so a session looks the
- * same whether it is open above or listed here; the trailing control is a
- * delete rather than a close, which is why it is a separate class — the two
- * must never be mistaken for each other. */
-.rail-recent {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.rail-recent-all {
-  width: 100%;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-
-/* Not inside a .rail-tab, so it does not inherit that row's truncation —
- * without this the label wraps to two lines while every row above ellipses. */
-.rail-recent-all .rail-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Compact rail: the group heading is hidden, so history and open tabs become
- * two runs of identical glyph rows whose only difference is a 12px trash can
- * where the tabs have a 12px close. A rule is the one cue left that the
- * control below means "delete", not "close". */
-.rail.compact .rail-recent {
-  border-top: 1px solid var(--border);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-}
-
-.rail-tab .rail-tab-close,
-.rail-tab .rail-tab-action {
+/* The ✕ hangs off the end of the row it closes, and it is wrapped in its own
+ * tooltip — so the wrapper is what the row places, not the button. Left on
+ * the button, the placement would leave the wrapper behind as a second
+ * in-flow child of a row that is exactly one button wide. */
+.rail-tab .tip-tab-close {
   position: absolute;
   right: 4px;
   top: 50%;
   transform: translateY(-50%);
   width: 18px;
   height: 18px;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.rail-tab:hover .tip-tab-close,
+.rail-tab:focus-within .tip-tab-close {
+  opacity: 1;
+}
+
+.rail-tab .rail-tab-close {
+  width: 100%;
+  height: 100%;
   min-height: 0;
   padding: 0;
   display: grid;
   place-items: center;
   border-radius: var(--radius-xs);
   color: var(--text-tertiary);
-  opacity: 0;
-  transition: opacity var(--motion-fast);
-}
-
-.rail-tab:hover .rail-tab-close,
-.rail-tab:focus-within .rail-tab-close,
-.rail-tab:hover .rail-tab-action,
-.rail-tab:focus-within .rail-tab-action {
-  opacity: 1;
 }
 
 .rail-tab .rail-tab-close:hover {
   color: var(--text-primary);
-  background: var(--surface-2);
-}
-
-/* The delete reads as destructive on hover; the close ✕ deliberately does
- * not, because closing a tab throws nothing away. */
-.rail-tab .rail-tab-action:hover {
-  color: var(--status-failed);
   background: var(--surface-2);
 }
 
@@ -332,17 +294,24 @@ textarea {
 }
 
 /* Compact rail: the ✕ overlays the glyph's corner on hover. */
-.rail.compact .rail-tab > button:first-child {
+.rail.compact .rail-tab button:not(.rail-tab-close) {
   padding-right: var(--space-2);
 }
 
-.rail.compact .rail-tab .rail-tab-close,
-.rail.compact .rail-tab .rail-tab-action {
+/* Placement on the wrapper, for the reason given where the expanded rail
+ * places it. The button keeps only what is painted — and re-flattens the
+ * compact rail's button padding, which would otherwise make a 14px chip
+ * 16px tall. */
+.rail.compact .rail-tab .tip-tab-close {
   right: 1px;
   top: 1px;
   transform: none;
   width: 14px;
   height: 14px;
+}
+
+.rail.compact .rail-tab .rail-tab-close {
+  padding: 0;
   background: var(--surface-1);
 }
 
@@ -375,12 +344,21 @@ textarea {
   gap: 0;
 }
 
-.rail.compact button.active::before {
-  left: -7px;
+/* Every rail row is wrapped in its tooltip, and .tip-wrap is inline-flex —
+   so without this the button shrinks to its icon and the active row's
+   highlight is a 15px-wide capsule instead of the row it marks. The tab's ✕
+   is the exception: it is not a row, it is placed on top of one. */
+.rail .tip-wrap:not(.tip-tab-close) {
+  display: flex;
+  width: 100%;
 }
 
-.rail.compact .rail-mark {
-  padding: var(--space-1) 0 var(--space-3);
+.rail .tip-wrap > button {
+  width: 100%;
+}
+
+.rail.compact button.active::before {
+  left: -7px;
 }
 
 .rail.compact .engine-chip {
@@ -391,11 +369,6 @@ textarea {
 }
 
 .rail.compact .tip-wrap {
-  display: flex;
-  justify-content: center;
-}
-
-.rail-mark {
   display: flex;
   justify-content: center;
 }
@@ -613,7 +586,11 @@ textarea {
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-s);
   font-weight: 600;
-  min-height: 32px;
+  min-height: var(--control-h);
+  /* Without this the 14px label's normal line box is 17px, so 8+17+8 makes
+     the CTA 33px — one taller than every control it sits beside in the
+     composer row. Tight leading lets --control-h decide the height. */
+  line-height: 1;
   box-shadow: var(--accent-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.18);
   transition:
     transform var(--motion-fast),
@@ -686,41 +663,31 @@ textarea {
 }
 
 /* ---- home ---- */
-/* Breakout column: everything reads at the one page column, but the
-   browsing shelves (the project/tool grids) may use up to --content-wide
-   on a large window — a maximized window gets more tiles per row instead
-   of wider gutters. The three-track grid is the standard breakout: the
-   middle track is the reading column, .recent alone spans all three.
+/* One reading column, centred, for every block on the page — the title,
+   the prompt, the tools and the Continue shelf all start and end on the
+   same two edges. Browsing width belongs to the Library.
 
    .home is a GRID, so adjacent children's vertical margins add instead of
    collapsing. Every gap below must therefore be stated by one side only —
    see .tools-head. */
 .home {
-  container-type: inline-size;
   display: grid;
-  grid-template-columns: 1fr min(var(--content-col), 100%) 1fr;
+  grid-template-columns: min(var(--content-col), 100%);
+  justify-content: center;
   margin: 0 auto;
   max-width: var(--content-wide);
-  padding-top: var(--space-8);
 }
 
 .home > * {
-  grid-column: 2;
   min-width: 0;
 }
 
-/* The shelf breaks out only once the extra width buys a tile column.
-   .recent .grid is auto-fill minmax(200px, 1fr) at a 12px gap, so the
-   reading column (840) already fits four; the fifth needs 5*200 + 4*12 =
-   1048. Below that, breaking out would only make the tiles fatter while
-   hanging the shelf's edges past every other block on the page. The
-   container query measures .home itself, so the answer stays right
-   whichever width the rail is. */
-@container (min-width: 1048px) {
-  .home > .recent {
-    grid-column: 1 / -1;
-  }
-}
+/* The Continue shelf stays in the reading column. It breaks out on the
+   Library, where the list is unbounded and width buys tile columns — here it
+   is four tiles and never more (U2), so a fifth column can never fill, and
+   breaking out only hangs the shelf's head and its "Open the library" link
+   past every other block on the page. The reading column (840) fits exactly
+   four at auto-fill minmax(200px, 1fr) with a 12px gap. */
 
 /* the hero speaks in the screen-title register (review 4 §H7): the
  * product identity is the prompt, not a marketing headline */
@@ -733,7 +700,7 @@ textarea {
 .home .sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  margin: 0 0 var(--space-6);
+  margin: 0 0 var(--space-4);
 }
 
 /* no overflow:hidden — the dropdown menus must escape the box; the inner
@@ -762,7 +729,7 @@ textarea {
   color: var(--text-primary);
   font-size: var(--text-m);
   resize: none;
-  min-height: 72px;
+  min-height: 64px;
   max-height: 40vh;
   field-sizing: content; /* auto-grow with the prompt (Chromium ≥123) */
   overflow-y: auto;
@@ -1017,7 +984,7 @@ button.link:hover {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: var(--space-2);
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .quick-tools .tip-wrap {
@@ -1056,7 +1023,7 @@ button.link:hover {
   font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-primary);
-  margin-top: 7px;
+  margin-top: var(--space-2);
 }
 
 .quick-tools .tool-output {
@@ -1164,43 +1131,51 @@ button.link:hover {
 
 /* first-session teaching: three starter templates that also demo the
  * format controls (review 4 §H12) — solid border, never dashed */
+/* The answer to the question the hero just asked, so it sits directly
+   under it — a dashed card, read left to right like everything else on the
+   page (design review v5). */
 .empty-state {
-  margin-top: var(--space-8);
-  border: 1px solid var(--border);
+  margin-top: var(--space-4);
+  border: 1px dashed var(--border-hi);
   background: var(--surface-1);
-  border-radius: var(--radius-m);
-  padding: var(--space-8) var(--space-6);
+  border-radius: var(--radius-l);
+  padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: center;
+  gap: 0;
   color: var(--text-tertiary);
 }
 
+.empty-state > svg {
+  display: none;
+}
+
 .empty-state b {
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-m);
   font-weight: 600;
 }
 
 .empty-state p {
   font-size: var(--text-xs);
+  margin: var(--space-2) 0 var(--space-3);
 }
 
 .empty-state .templates {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  flex-direction: column;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .empty-state .btn-ghost {
-  display: inline-flex;
+  display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: var(--space-2);
   color: var(--text-primary);
-  font-size: 13px;
+  background: var(--surface-0);
+  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-3);
 }
 
 /* ---- the project browser (review 4 §H1/H2/H4/H5) ---- */
@@ -1208,10 +1183,12 @@ button.link:hover {
   margin-top: var(--space-8);
 }
 
-/* library header: eyebrow + count, search, sort — ONE control group */
+/* The Continue shelf's head: eyebrow, count, and the way out to the
+   Library. Baselines line up rather than boxes, so the three type sizes
+   sit on one line instead of three centred boxes. */
 .recent-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
@@ -1221,59 +1198,25 @@ button.link:hover {
   margin: 0;
 }
 
+/* The count and the link are the head's own scale — inheriting the page's
+   14px would make this row taller than the eyebrow it labels. */
+.recent-head .count,
+.recent-head .link {
+  font-size: var(--text-xs);
+}
+
 .recent-head .count {
   color: var(--text-tertiary);
-  font-size: var(--text-2xs);
 }
 
 .recent-head .spacer {
   flex: 1;
 }
 
-.recent-search {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  padding: 0 var(--space-2);
-  min-height: 30px;
-  width: 200px;
-}
-
-.recent-search svg {
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.recent-search input {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--text-primary);
-  font-size: var(--text-xs);
-}
-
-.recent-search input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.recent-search:focus-within {
-  border-color: var(--accent);
-}
-
 .recent .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--space-3);
-}
-
-.recent .no-match {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
 }
 
 /* tile = a div wrapper (button-in-button is invalid) around the full-tile
@@ -1386,8 +1329,16 @@ button.link:hover {
   min-width: 180px;
 }
 
+/* The tile is transformed on hover and focus-within, and a transform makes
+   a stacking context — so the menu's z-index is resolved INSIDE the tile,
+   and the next row's tile paints straight over the half that overhangs.
+   Lift the whole tile while its menu is open. */
+.project-tile.menu-open {
+  z-index: var(--z-drawer);
+}
+
 .project-tile .tile-body {
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: var(--space-2) 10px;
 }
 
 .project-tile .title {
@@ -3180,7 +3131,7 @@ button.link:hover {
  * groups can never clip or cover it. */
 .tip {
   position: fixed;
-  transform: translate(-50%, var(--tip-y));
+  transform: translate(var(--tip-x, -50%), var(--tip-y));
   background: var(--tooltip-bg);
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: #eceaf3;
@@ -3204,6 +3155,14 @@ button.link:hover {
 
 .tip.tip-bottom {
   --tip-y: 7px;
+}
+
+/* The rail's side. Its rows run from the top of the window down, so a
+   bubble above the first one is drawn off-screen; beside the row there is
+   always somewhere to put it. */
+.tip.tip-right {
+  --tip-x: 7px;
+  --tip-y: -50%;
 }
 
 /* `translate` composes with the centering transform above. */
@@ -4063,7 +4022,7 @@ button.link:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-2);
 }
 
 .home-header h1 {
@@ -4494,29 +4453,6 @@ button.link:hover {
   padding: var(--space-4);
   font-size: var(--text-xs);
   color: var(--text-tertiary);
-}
-
-/* ---- first-run → first-prompt bridge (review 4 §FR1) ---- */
-.dl-strip {
-  margin-top: var(--space-3);
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-m);
-  padding: var(--space-3) var(--space-4);
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.dl-strip .grow {
-  flex: 1;
-  min-width: 0;
-}
-
-.dl-strip .dl-bar {
-  margin-top: var(--space-2);
 }
 
 /* ---- storage category (review 4 §S4) ---- */
@@ -5260,4 +5196,351 @@ button.link:hover {
    are reserved): the glyph and the tooltip carry the meaning. */
 .take-row .chip.billed {
   border-style: dashed;
+}
+
+/* ==========================================================================
+   U2 — the Library as a destination, and what Home kept
+   ========================================================================== */
+
+/* The rail's count: the size of the library, without opening it. Tabular
+   figures so 9 → 10 doesn't shift the row. */
+.rail-count {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail button.active .rail-count {
+  color: var(--text-secondary);
+}
+
+.rail.compact .rail-count {
+  display: none;
+}
+
+/* Home's create surface: the template entry sits under the hero as a quiet
+   line, not a second primary (design review v5, Q2). */
+.home .from-template {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+/* The download bridge: one line, the wizard's rows behind it (v5, Q1). */
+.dl-summary {
+  margin-top: var(--space-4);
+}
+
+/* The card is the head, not a wrapper — so the rows it expands into are the
+   wizard's rows at the wizard's width, not a card nested in a card. */
+.dl-summary-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 10px var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.dl-summary-head .caret {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--motion-fast);
+}
+
+.dl-summary-head .caret.open {
+  transform: rotate(90deg);
+}
+
+.dl-summary-head .dl-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.dl-summary-head .dl-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.dl-summary-head .bytes {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* Expanded, the head loses its bottom edge and the first row supplies it,
+   so head and rows read as one surface. */
+.dl-summary.open .dl-summary-head {
+  border-bottom: 0;
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+}
+
+.dl-summary .sumrail {
+  margin: 0;
+}
+
+.dl-summary .sumrail .srow:first-child {
+  border-radius: 0;
+}
+
+/* ---- the Library screen ---- */
+
+/* Same grid as Home so the two screens share a spine, but the browsing
+   content uses the full width: a library is scanned, not read (v5, Q3). */
+.library {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 1fr min(var(--content-wide), 100%) 1fr;
+  margin: 0 auto;
+  max-width: var(--content-wide);
+}
+
+.library > * {
+  grid-column: 2;
+  min-width: 0;
+}
+
+/* Same title rhythm as Home's — 8 under the title, 16 under the sub — so
+   the two screens' first control lands on the same line. */
+.library h1 {
+  font-size: var(--text-l);
+  font-weight: 650;
+  margin-bottom: var(--space-2);
+}
+
+.library .sub {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-4);
+}
+
+.library-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.library-search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  min-height: 30px;
+  width: 260px;
+  max-width: 100%;
+}
+
+.library-search svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.library-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.library-search:focus-within {
+  border-color: var(--accent);
+}
+
+/* The "/" hint reads as a key, and steps aside for the clear button once
+   there is something to clear. */
+.library-search kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+}
+
+.library-bar .spacer {
+  flex: 1;
+}
+
+/* A chip that opens a menu — the sort control (v5, Q6). */
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.chip-btn:hover {
+  border-color: var(--border-hi);
+}
+
+.sort-menu-wrap {
+  position: relative;
+}
+
+.sort-menu {
+  position: absolute;
+  right: 0;
+  top: calc(30px + var(--space-1));
+  min-width: 172px;
+}
+
+.sort-menu button.active {
+  background: var(--surface-3);
+}
+
+/* The direction the active field is in, said in that field's own words —
+   prose, not the shortcut chip the menu's other smalls are. */
+.sort-menu button small {
+  font-family: inherit;
+}
+
+.library .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+}
+
+/* Paging rather than an endless scroll: the count is knowable, and a button
+   is reachable by keyboard where an intersection observer is not (v5, Q6). */
+.library-more {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-4);
+}
+
+.library .no-match {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  margin-top: var(--space-6);
+  max-width: 60ch;
+}
+
+/* ---- template dialogs ---- */
+
+.modal .field {
+  display: block;
+  margin-top: var(--space-4);
+}
+
+.modal .field span {
+  display: block;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-2);
+}
+
+.modal .field input {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h);
+}
+
+.modal .field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.template-modal {
+  max-width: 460px;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+}
+
+.template-row.on {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.template-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.template-row input[type="radio"] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.template-row .grow {
+  min-width: 0;
+}
+
+.template-row .name {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.template-row .meta {
+  display: block;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* Surfaced, never blocking: what the imported template will spend. */
+.template-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.template-notice .grow {
+  flex: 1;
 }
