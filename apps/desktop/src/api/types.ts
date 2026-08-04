@@ -306,6 +306,14 @@ export interface LlmModels {
   models: string[];
 }
 
+/** GET /projects/{id}/artifacts/{hash}/peaks — the waveform shape of an
+ * audio artifact, computed and cached engine-side. Peaks are 0..1. */
+export interface AudioPeaks {
+  bins: number;
+  duration_s: number;
+  peaks: number[];
+}
+
 /** GET /storage — Settings → Storage. */
 export interface StorageInfo {
   projects: { id: string; title: string; bytes: number }[];

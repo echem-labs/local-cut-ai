@@ -3401,6 +3401,228 @@ button.link:hover {
   text-decoration: none;
 }
 
+/* recipe card: what was asked for, visible even mid-render */
+.session-recipe {
+  align-self: stretch;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4);
+}
+
+.session-recipe p {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-s);
+  line-height: 1.5;
+  user-select: text;
+}
+
+.session-recipe .recipe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* waveform: engine-computed bars over the player; played bars go accent —
+   the same progress color every other bar in the app uses */
+.waveform {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wave-plot {
+  display: block;
+  width: 100%;
+  height: 64px;
+  padding: 0;
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+}
+
+.wave-plot:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+.wave-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.wave-plot rect {
+  fill: var(--border-hi);
+}
+
+.wave-plot rect.played {
+  fill: var(--accent);
+}
+
+/* chip: the pill button the preset rows and the takes strip share.
+   Same geometry as .take-row .chip — one pill, wherever it appears. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--border-hi);
+  color: var(--text-primary);
+}
+
+.chip.active {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.chip:disabled {
+  cursor: default;
+}
+
+.chip small {
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* inside the prompt box the preset rows keep the textarea's text inset
+   (--space-4, not the row's --space-3): chips continue the text column */
+.prompt-box .chip-row,
+.prompt-box .voice-swatches {
+  padding: 0 var(--space-4);
+}
+
+/* voiceover panel: play-a-sample swatches instead of typing an id blind */
+.voice-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.voice-swatch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.voice-swatch.active {
+  border-color: var(--accent);
+}
+
+.voice-swatch button {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+}
+
+.voice-swatch button:hover {
+  color: var(--text-primary);
+}
+
+.voice-swatch .swatch-play {
+  padding-right: var(--space-1);
+  border-right: 1px solid var(--border);
+}
+
+.voice-swatch .swatch-name {
+  padding-left: var(--space-2);
+}
+
+/* clip seconds: a narrow number with its unit inside the control */
+.seconds-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.seconds-field input {
+  width: 52px;
+}
+
+/* takes strip: displaced identities, one chip per seed */
+.takes-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* the add-to-project menu hangs off its own button */
+.add-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.add-anchor .menu-pop {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+  right: auto;
+  left: 0;
+}
+
+.add-anchor .menu-pop .hint {
+  padding: var(--space-1) var(--space-2);
+}
+
+/* clone-a-voice: consent first, then the sample */
+.clone-panel {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-s);
+}
+
+.clone-panel .consent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.clone-panel .consent input {
+  width: auto;
+  min-height: 0;
+  margin-top: 2px;
+}
+
 /* feedback → rewrite row under the script actions */
 .tool-enhance {
   display: flex;
