@@ -1203,6 +1203,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".m4a"}
+    # .mp4 only — what the engine's own clip artifacts are, so a tool
+    # session's output can be added to another project through this door.
+    _VIDEO_EXTENSIONS = {".mp4"}
     _ASSET_MAX_BYTES = 50 << 20
 
     @app.post("/projects/{project_id}/assets", dependencies=[Authed])
@@ -1213,24 +1216,23 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         consent: bool = False,
     ) -> dict:
         """Import a user asset (raw bytes body) as a graph node — images
-        condition clips ('use my image as the shot source'); audio is a
-        voice sample for cloning and REQUIRES the consent affirmation.
-        Consent is enforced here, at the only door a sample can enter
-        through, so no unconsented voice can ever reach the TTS backend."""
+        condition clips ('use my image as the shot source'); video and
+        audio arrive as plain assets (a session output added to a project,
+        a music bed). Audio uploaded WITH the consent affirmation is a
+        voice sample for cloning: consent gates the `voice_consent` stamp
+        here, at the only place it can be minted, and the voice_ref
+        chokepoint (graph/patch.py) refuses any asset without it — so no
+        unconsented voice can ever reach the TTS backend, while an
+        unconsented music bed is not asked a question that isn't its."""
         await _get_project(project_id)
         name = PurePosixPath(filename.replace("\\", "/")).name  # basename only, no paths
         suffix = PurePosixPath(name).suffix.lower()
-        if suffix not in _IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS:
+        accepted = _IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS | _VIDEO_EXTENSIONS
+        if suffix not in accepted:
             raise HTTPException(
                 status_code=422,
                 detail=f"unsupported asset type {suffix!r} — one of: "
-                f"{', '.join(sorted(_IMAGE_EXTENSIONS | _AUDIO_EXTENSIONS))}",
-            )
-        if suffix in _AUDIO_EXTENSIONS and not consent:
-            raise HTTPException(
-                status_code=403,
-                detail="voice samples require consent=true — an affirmation that you "
-                "have this speaker's permission to clone their voice",
+                f"{', '.join(sorted(accepted))}",
             )
         # Stream with a hard cap rather than buffering the whole body first:
         # `await request.body()` reads the entire (possibly multi-GB) request
@@ -1243,8 +1245,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         data = bytes(buffer)
         if not data:
             raise HTTPException(status_code=422, detail="asset body is empty")
+        # voice=True only for audio WITH the affirmation — the one place
+        # `voice_consent` can be minted.
         return await asyncio.to_thread(
-            service.add_asset, project_id, name, data, suffix in _AUDIO_EXTENSIONS
+            service.add_asset, project_id, name, data, suffix in _AUDIO_EXTENSIONS and consent
         )
 
     class PatchBody(BaseModel):
