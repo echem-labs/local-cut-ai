@@ -54,7 +54,7 @@ export function ProjectTile({
   )}`;
   return (
     <div
-      className="project-tile"
+      className={`project-tile${actions.menuOpen ? " menu-open" : ""}`}
       data-project={project.id}
       onContextMenu={(event) => {
         event.preventDefault();
