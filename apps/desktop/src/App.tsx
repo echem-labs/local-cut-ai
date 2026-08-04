@@ -8,7 +8,7 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { applyTheme, resolvedTheme, THEME_EVENT } from "./theme";
 import { plural, t } from "./i18n";
 import { useMediaQuery } from "./lib/useMediaQuery";
@@ -33,32 +33,78 @@ const RAIL_KEY = "localcut.rail.expanded";
  * says. Read by the rail only — nothing in CSS keys off this width. */
 const RAIL_NARROW = "(max-width: 1000px)";
 
-/** The rail's Library row: the same shape as Home's, with the count of
- * everything this machine has made. Compact keeps the glyph and drops the
- * count — 48px has no room for a number, and the tooltip carries it. */
-function LibraryEntry({
+/** A rail action — theme, Settings, collapse. Same row, same tooltip as the
+ * destinations above it: compact leaves only an icon, and one strip with two
+ * kinds of tooltip reads as two kinds of control. */
+function RailAction({
+  compact,
+  label,
+  aria,
+  active = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  compact: boolean;
+  label: string;
+  aria?: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const button = (
+    <button
+      className={active ? "active" : ""}
+      disabled={disabled}
+      aria-label={aria ?? label}
+      onClick={onClick}
+    >
+      {children}
+      <span className="rail-label">{label}</span>
+    </button>
+  );
+  return compact ? (
+    <Tip label={aria ?? label} side="right">
+      {button}
+    </Tip>
+  ) : (
+    button
+  );
+}
+
+/** A rail destination — Home and the Library are the same row with a
+ * different icon. Compact keeps the icon and drops the label and the count;
+ * the tooltip carries both, beside the row rather than above it (the first
+ * row has no "above"). */
+function RailEntry({
+  icon: Icon,
+  label,
+  hint,
   compact,
   disabled,
   active,
-  count,
+  count = 0,
   onOpen,
 }: {
+  icon: typeof HomeIcon;
+  label: string;
+  hint: string;
   compact: boolean;
   disabled: boolean;
   active: boolean;
-  count: number;
+  count?: number;
   onOpen: () => void;
 }) {
-  const label = t("nav.library");
   const button = (
     <button className={active ? "active" : ""} disabled={disabled} onClick={onOpen}>
-      <LibraryIcon {...ICON} />
+      <Icon {...ICON} />
       <span className="rail-label">{label}</span>
       {count > 0 && <span className="rail-count">{count}</span>}
     </button>
   );
   return compact ? (
-    <Tip label={label} hint={plural("nav.libraryCount", count)} side="top">
+    <Tip label={label} hint={hint} side="right">
       {button}
     </Tip>
   ) : (
@@ -183,30 +229,22 @@ export default function App() {
         {currentProject && <span className="tb-project">{currentProject.title}</span>}
       </header>
       <nav className={`rail${compact ? " compact" : ""}`} aria-label={t("nav.navigationAria")}>
-        {compact ? (
-          <Tip label={t("nav.home")} hint={t("nav.homeCloseHint")} side="top">
-            <button
-              className={`rail-mark${onHome ? " active" : ""}`}
-              onClick={goHome}
-              aria-label={t("nav.home")}
-            >
-              <BrandMark size={20} />
-            </button>
-          </Tip>
-        ) : (
-          <button
-            className={firstRunDone && onHome ? "active" : ""}
-            disabled={!firstRunDone}
-            onClick={goHome}
-          >
-            <HomeIcon {...ICON} />
-            <span className="rail-label">{t("nav.home")}</span>
-          </button>
-        )}
+        <RailEntry
+          icon={HomeIcon}
+          label={t("nav.home")}
+          hint={t("nav.homeCloseHint")}
+          compact={compact}
+          disabled={!firstRunDone}
+          active={firstRunDone && onHome}
+          onOpen={goHome}
+        />
         {/* The Library is a destination, not a tab on Home (U2): the same
             activation rules, one row below, carrying the count so the size of
             what you have made is visible without opening it. */}
-        <LibraryEntry
+        <RailEntry
+          icon={LibraryIcon}
+          label={t("nav.library")}
+          hint={plural("nav.libraryCount", projects.length)}
           compact={compact}
           disabled={!firstRunDone}
           active={firstRunDone && libraryOpen && !currentProject && !settingsOpen}
@@ -229,26 +267,32 @@ export default function App() {
               const active = currentProject?.id === id && !settingsOpen;
               return (
                 <div key={id} className="rail-tab">
-                  <button
-                    className={active ? "active" : ""}
-                    title={title}
-                    onClick={() => {
-                      closeSettings();
-                      if (currentProject?.id !== id) void openProject(id);
-                    }}
-                  >
-                    {compact && (
-                      <span className="rail-glyph" aria-hidden="true">
-                        {/* spread: [0] would split a surrogate pair (emoji titles) */}
-                        {([...title.trim()][0] ?? "?").toUpperCase()}
-                      </span>
-                    )}
-                    <i
-                      className={`dot ${project ? tileStatus(project, allJobs) : "draft"}`}
-                      aria-hidden="true"
-                    />
-                    <span className="rail-label">{title}</span>
-                  </button>
+                  {/* The same bubble the destinations above use, not the
+                      native title: two tooltip mechanisms in one 200px strip
+                      read as two different controls. It earns its place in
+                      both widths — compact has only an initial to go on, and
+                      expanded truncates the title. */}
+                  <Tip label={title} side="right">
+                    <button
+                      className={active ? "active" : ""}
+                      onClick={() => {
+                        closeSettings();
+                        if (currentProject?.id !== id) void openProject(id);
+                      }}
+                    >
+                      {compact && (
+                        <span className="rail-glyph" aria-hidden="true">
+                          {/* spread: [0] would split a surrogate pair (emoji titles) */}
+                          {([...title.trim()][0] ?? "?").toUpperCase()}
+                        </span>
+                      )}
+                      <i
+                        className={`dot ${project ? tileStatus(project, allJobs) : "draft"}`}
+                        aria-hidden="true"
+                      />
+                      <span className="rail-label">{title}</span>
+                    </button>
+                  </Tip>
                   <button
                     className="rail-tab-close"
                     title={t("nav.closeProjectAria", { title })}
@@ -270,7 +314,7 @@ export default function App() {
                 ? t("nav.engineSettingsHintCompact", { detail: engineDetail })
                 : t("nav.engineSettingsHint")
             }
-            side="top"
+            side="right"
           >
             <button
               className="engine-chip"
@@ -287,35 +331,35 @@ export default function App() {
             </button>
           </Tip>
           <HelpMenu compact={compact} />
-          <button
+          <RailAction
+            compact={compact}
+            label={theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}
+            aria={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
             onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
-            title={t("nav.toggleThemeTitle")}
-            aria-label={theme === "dark" ? t("nav.switchToLight") : t("nav.switchToDark")}
           >
             {theme === "dark" ? <Sun {...ICON} /> : <Moon {...ICON} />}
-            <span className="rail-label">{theme === "dark" ? t("nav.lightMode") : t("nav.darkMode")}</span>
-          </button>
-          <button
-            className={settingsOpen ? "active" : ""}
+          </RailAction>
+          <RailAction
+            compact={compact}
+            label={t("nav.settings")}
+            active={settingsOpen}
             disabled={!firstRunDone}
-            title={t("nav.settings")}
             onClick={() => openSettings("general")}
           >
             <SettingsIcon {...ICON} />
-            <span className="rail-label">{t("nav.settings")}</span>
-          </button>
+          </RailAction>
           {/* Disabled while the window forces compact: the click would
               write a preference with no visible effect, so the control
               would look broken AND quietly discard the stored choice. */}
-          <button
-            onClick={toggleRail}
+          <RailAction
+            compact={compact}
+            label={t("nav.collapse")}
+            aria={railToggleLabel}
             disabled={narrow}
-            title={railToggleLabel}
-            aria-label={railToggleLabel}
+            onClick={toggleRail}
           >
             {compact ? <ChevronsRight {...ICON} /> : <ChevronsLeft {...ICON} />}
-            <span className="rail-label">{t("nav.collapse")}</span>
-          </button>
+          </RailAction>
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>

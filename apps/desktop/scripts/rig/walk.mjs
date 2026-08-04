@@ -77,15 +77,19 @@ try {
           const buttons = nav ? [...nav.querySelectorAll("button")] : [];
           return buttons.length ? buttons[buttons.length - 1].disabled : null;
         })(),
-        // The shelf may hang past the reading column only when the extra
-        // width buys a tile column (app.css, @container 1048px).
+        // Home is one column: the Continue shelf shares both edges with the
+        // prompt above it, at every width (app.css, .home).
         shelf: (() => {
           const shelf = document.querySelector(".recent");
           const column = document.querySelector(".prompt-box, .empty-state");
           if (!shelf || !column) return null;
           const a = shelf.getBoundingClientRect();
           const b = column.getBoundingClientRect();
-          return { width: Math.round(a.width), brokenOut: Math.round(a.left) < Math.round(b.left) };
+          return {
+            width: Math.round(a.width),
+            left: Math.round(a.left) - Math.round(b.left),
+            right: Math.round(a.right) - Math.round(b.right),
+          };
         })(),
         dpr: window.devicePixelRatio,
       }));
@@ -154,10 +158,13 @@ try {
           `expected ${implied}`,
         );
       }
+      // The shelf head carries "Open the library ->" on its right edge, so a
+      // shelf wider than the page column hangs that link past every other
+      // block — the reason the breakout came out (review v5, follow-up).
       check(
-        `${label}: shelf breaks out of the reading column only when that buys a column`,
-        dom.shelf.brokenOut === (dom.shelf.width >= 1048),
-        `brokenOut ${dom.shelf.brokenOut} at ${dom.shelf.width}px`,
+        `${label}: the Continue shelf shares both edges with the page column`,
+        dom.shelf.left === 0 && dom.shelf.right === 0,
+        `left ${dom.shelf.left}px, right ${dom.shelf.right}px off the column`,
       );
     }
     await shoot(`${label}.png`);
