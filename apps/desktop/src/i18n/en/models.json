@@ -15,6 +15,8 @@
   },
   "empty": "No models in the manifest yet.",
   "external": "external",
+  "externalMeta": "runs outside the engine",
+  "ollamaMeta": "runs in Ollama",
   "externalTitle": "Served outside the engine (e.g. Ollama) — nothing to download",
   "installed": "installed",
   "needsVram": "needs {vram} GB VRAM",
@@ -58,5 +60,9 @@
     "licenseAck": "I've checked this model's license and accept responsibility for how outputs are used",
     "add": "Add model",
     "adding": "Adding…"
-  }
+  },
+  "recommended": "Recommended",
+  "tightFit": "tight fit",
+  "tightFitTitle": "Needs more VRAM than this GPU has, but should load with offloading at reduced speed",
+  "wontFit": "won't fit — {vram} GB VRAM"
 }

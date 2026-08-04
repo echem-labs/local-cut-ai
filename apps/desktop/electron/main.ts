@@ -26,6 +26,13 @@ import { capturePinnedCert, engineRequest } from "./request";
 if (!app.isPackaged && process.env.LOCALCUT_USERDATA) {
   app.setPath("userData", process.env.LOCALCUT_USERDATA);
 }
+// Same rule for the rig's state-seeding hook: preload reads this variable
+// to decide whether to expose window.__localcutSeed, so a packaged build
+// must never see it — stripping it here covers preload too (same process
+// environment).
+if (app.isPackaged) {
+  delete process.env.LOCALCUT_SEED_HOOK;
+}
 
 const engine = new EngineManager();
 const keyStore = new ProviderKeyStore();
