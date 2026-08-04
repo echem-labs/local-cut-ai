@@ -8,12 +8,32 @@
   "searchPlaceholder": "Search the library",
   "searchAria": "Search the library",
   "searchKey": "/",
-  "sortAria": "Sort the library",
-  "sortLabel": "↓ {sort}",
+  "sortAriaState": "Sort the library — {sort}, {dir}",
+  "sortDir": {
+    "recent": {
+      "desc": "newest first",
+      "asc": "oldest first"
+    },
+    "created": {
+      "desc": "newest first",
+      "asc": "oldest first"
+    },
+    "name": {
+      "desc": "Z to A",
+      "asc": "A to Z"
+    },
+    "duration": {
+      "desc": "longest first",
+      "asc": "shortest first"
+    }
+  },
+  "sortAscArrow": "↑",
+  "sortDescArrow": "↓",
+  "sortLabel": "{arrow} {sort}",
   "sortRecent": "Last modified",
-  "sortCreated": "Newest first",
-  "sortName": "Title A–Z",
-  "sortDuration": "Longest first",
+  "sortCreated": "Date created",
+  "sortName": "Title",
+  "sortDuration": "Duration",
   "loadMore_one": "Load 1 more",
   "loadMore_other": "Load {count} more",
   "noMatch": "Nothing matches \"{q}\".",

@@ -204,7 +204,7 @@ textarea {
   position: relative;
 }
 
-.rail-tab > button:first-child {
+.rail-tab button:not(.rail-tab-close) {
   width: 100%;
   padding-right: 26px; /* room for the ✕ so long titles never sit under it */
 }
@@ -285,7 +285,7 @@ textarea {
 }
 
 /* Compact rail: the ✕ overlays the glyph's corner on hover. */
-.rail.compact .rail-tab > button:first-child {
+.rail.compact .rail-tab button:not(.rail-tab-close) {
   padding-right: var(--space-2);
 }
 
@@ -325,6 +325,18 @@ textarea {
   justify-content: center;
   padding: var(--space-2) 0;
   gap: 0;
+}
+
+/* Every rail row is wrapped in its tooltip, and .tip-wrap is inline-flex —
+   so without this the button shrinks to its icon and the active row's
+   highlight is a 15px-wide capsule instead of the row it marks. */
+.rail .tip-wrap {
+  display: flex;
+  width: 100%;
+}
+
+.rail .tip-wrap > button {
+  width: 100%;
 }
 
 .rail.compact button.active::before {
@@ -1297,6 +1309,14 @@ button.link:hover {
   top: 30px;
   right: 6px;
   min-width: 180px;
+}
+
+/* The tile is transformed on hover and focus-within, and a transform makes
+   a stacking context — so the menu's z-index is resolved INSIDE the tile,
+   and the next row's tile paints straight over the half that overhangs.
+   Lift the whole tile while its menu is open. */
+.project-tile.menu-open {
+  z-index: var(--z-drawer);
 }
 
 .project-tile .tile-body {
@@ -5379,6 +5399,12 @@ button.link:hover {
 
 .sort-menu button.active {
   background: var(--surface-3);
+}
+
+/* The direction the active field is in, said in that field's own words —
+   prose, not the shortcut chip the menu's other smalls are. */
+.sort-menu button small {
+  font-family: inherit;
 }
 
 .library .grid {

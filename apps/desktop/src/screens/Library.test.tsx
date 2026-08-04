@@ -92,11 +92,28 @@ describe("search and sort", () => {
       project("c", "prompt", "Apple", 30),
     ]);
     render(<Library />);
-    fireEvent.click(screen.getByRole("button", { name: t("library.sortAria") }));
+    fireEvent.click(screen.getByRole("button", { name: /Sort the library/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: t("library.sortName") }));
     // Uppercase sorts before lowercase — deterministic across machines,
     // which localeCompare is not.
     expect(titles()).toEqual(["Apple", "Zebra", "apple"]);
+  });
+
+  it("reverses the order when the sort already in force is picked again", () => {
+    seed([
+      project("a", "prompt", "Zebra", 10),
+      project("b", "prompt", "apple", 20),
+      project("c", "prompt", "Apple", 30),
+    ]);
+    render(<Library />);
+    const open = () => fireEvent.click(screen.getByRole("button", { name: /Sort the library/ }));
+    open();
+    fireEvent.click(screen.getByRole("menuitem", { name: t("library.sortName") }));
+    expect(titles()).toEqual(["Apple", "Zebra", "apple"]);
+    // Same field again: the other end first, and the chip says which way.
+    open();
+    fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(t("library.sortName")) }));
+    expect(titles()).toEqual(["apple", "Zebra", "Apple"]);
   });
 
   it("takes the keyboard when something asks it to", async () => {
