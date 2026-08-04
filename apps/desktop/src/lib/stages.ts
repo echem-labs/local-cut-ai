@@ -1,8 +1,7 @@
 import type { ModelRow, SystemInfo } from "../api/types";
 import type { StageStatus } from "../components/StageSummaryRow";
-import { displayModelName } from "../components/ModelLibrary";
 import { m, t } from "../i18n";
-import { OLLAMA_TASK } from "../components/ModelLibrary";
+import { displayModelName, OLLAMA_TASK } from "../components/ModelLibrary";
 
 export interface StageRow {
   task: string;

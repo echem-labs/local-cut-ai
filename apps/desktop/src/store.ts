@@ -193,6 +193,11 @@ interface AppState {
   /** What the last template import will spend and what it left behind.
    * Shown once, dismissible, never blocking. */
   templateNotice: { title: string; cloudModels: string[]; droppedAssets: number } | null;
+  /** The project whose shape is being named as a template, or null. Held
+   * here rather than in the Library because the palette can ask for the same
+   * dialog from inside an open project, and one dialog with two hosts is two
+   * dialogs that drift. */
+  saveTemplateFor: Project | null;
   // Bumped whenever something asks the Library for the keyboard — Home's
   // "/" and the palette route here rather than growing a second search box
   // over a shelf that only ever shows four tiles.
@@ -293,6 +298,8 @@ interface AppState {
   finishFirstRun: () => void;
   resetFirstRun: () => void;
   openLibrary: (options?: { filter?: LibraryFilter; focusSearch?: boolean }) => void;
+  openSaveTemplate: (project: Project) => void;
+  closeSaveTemplate: () => void;
   saveTemplate: (projectId: string, name: string) => Promise<string | null>;
   startFromTemplate: (id: string, title?: string) => Promise<string | null>;
   deleteTemplate: (id: string) => void;
@@ -970,6 +977,7 @@ export const useApp = create<AppState>((set, get) => {
     librarySearchFocus: 0,
     templates: loadTemplates(),
     templateNotice: null,
+    saveTemplateFor: null,
     settingsOpen: false,
     settingsTab: "general",
     editBusy: false,
@@ -1786,6 +1794,10 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     // -- templates: a project's shape, reusable (U2) ------------------------
+
+    openSaveTemplate: (project) => set({ saveTemplateFor: project }),
+
+    closeSaveTemplate: () => set({ saveTemplateFor: null }),
 
     saveTemplate: async (projectId, name) => {
       const { client, templates } = get();
