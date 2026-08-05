@@ -775,6 +775,13 @@ export function Home() {
       {/* One shelf, four tiles: what you were last working on. Everything
           else — including every tool output — is one click away in the
           Library, which is where a browsing surface belongs (v5). */}
+      {/* Same refusal, reported on the shelf that was clicked. */}
+      {actionError?.scope === "open" && (
+        <p className="hint error-text" role="alert">
+          {actionError.message}
+        </p>
+      )}
+
       {recent.length > 0 && (
         <div className="recent">
           <div className="recent-head">

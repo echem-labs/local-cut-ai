@@ -15,7 +15,7 @@ from localcut_engine.graph.model import GRAPH_VERSION, Node, NodeKind, StoryGrap
 from localcut_engine.jobs.models import Job, JobStatus
 from localcut_engine.jobs.queue import JobQueue
 from localcut_engine.jobs.scheduler import Scheduler, _relative_artifact
-from localcut_engine.project.store import ProjectStore, ProjectTooNew
+from localcut_engine.project.store import ProjectStore, ProjectTooNew, ProjectUnreadable
 from localcut_engine.service import ProjectService
 
 
@@ -233,6 +233,29 @@ def test_a_project_from_the_future_is_refused_not_silently_reduced(tmp_path):
         store.load_graph(project.id)
     # Refusing means refusing: the file is not rewritten on the way out.
     assert "someFutureField" in path.read_text(encoding="utf-8")
+
+
+def test_a_state_file_that_is_not_utf8_is_refused_with_a_reason(tmp_path):
+    """Builds before the store forced encoding="utf-8" wrote project.json in
+    the Windows ANSI code page, so any em dash in a prompt — which the app's
+    own generated titles are full of — landed as a lone 0x97. The file is
+    unreadable forever afterwards, and the read raised UnicodeDecodeError
+    out of a route whose contract is to refuse with a reason: the project
+    became a bare 500 with nothing on screen to say which one, or why."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph())
+    path = store.project_dir(project.id) / "project.json"
+
+    # Exactly what the old writer produced: valid cp1252, invalid UTF-8.
+    # An extra key keeps the document valid JSON, so the ONLY thing wrong
+    # with it is the encoding.
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved["note"] = "whats new in LA — it starts with a question"
+    path.write_bytes(json.dumps(saved, ensure_ascii=False).encode("cp1252"))
+    assert bytes([0x97]) in path.read_bytes()  # the cp1252 em dash
+
+    with pytest.raises(ProjectUnreadable, match="project.json"):
+        store.load_graph(project.id)
 
 
 def test_a_project_with_no_version_is_a_pre_versioning_project(tmp_path):
