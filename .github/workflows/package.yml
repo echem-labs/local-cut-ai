@@ -14,6 +14,17 @@ name: Package
 # Once the repo is public, minutes on standard runners are free and the
 # paths-based `pull_request` trigger above is worth restoring; it is kept
 # here, commented, so the path list does not have to be reconstructed.
+#
+# Minutes are not the only meter. A private repo also gets 0.5 GB of Actions
+# ARTIFACT storage, and one run of this workflow produces ~860 MB — the Linux
+# job alone is 485 MB, because the AppImage and the deb each embed their own
+# copy of the frozen engine. Four runs in July 2026 left 3.1 GB sitting at
+# the then-default 14-day retention and put the account at 90% of the storage
+# allowance five days into the next cycle, having run nothing that cycle at
+# all. Retention below is therefore counted in days, and a tag build copies
+# the installers onto the release, whose assets are not metered as Actions
+# storage. Do not raise `retention-days` to keep a build around — cut a tag,
+# or re-run this workflow.
 on:
   workflow_dispatch:
   push:
@@ -126,9 +137,57 @@ jobs:
         working-directory: apps/desktop
         run: ls -lh release/ | grep -vE "^total|builder-debug|\.blockmap$" || ls -lh release/
 
+      # Two days, not two weeks. See the storage note at the top of the file:
+      # this is the handoff to whoever dispatched the run, or to the release
+      # job below — not a place installers live. Download it the day you ask
+      # for it.
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.glob }}
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 2
+
+  release:
+    # Tag builds only, and only once every platform is green — a release
+    # missing one of its three installers is worse than a late one, which is
+    # why this needs the whole matrix despite `fail-fast: false` above.
+    #
+    # The installers land on the release rather than staying artifacts
+    # because release assets are not metered as Actions storage, and because
+    # a release is where someone looking for a download will actually go.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The one job here that writes anything back. Scoped to this job rather
+    # than the workflow so a dispatch build — which anyone with write access
+    # can start, on any ref — runs with a read-only token.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: installers
+          # Flatten the three per-platform artifacts into one directory; the
+          # names only ever have to be unique per artifact, and `gh release
+          # upload` takes files, not trees.
+          merge-multiple: true
+
+      - name: Attach the installers to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ls -lh installers/
+          # Draft, so cutting a tag never publishes a download on its own —
+          # these builds are unsigned until the signing work in specs 02
+          # lands, and that is a decision for a person, not for a push.
+          # Re-tagging an existing release tops up its assets instead of
+          # failing on the create.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" installers/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" installers/* \
+              --draft --title "$GITHUB_REF_NAME" --generate-notes
+          fi
