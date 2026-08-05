@@ -54,7 +54,9 @@ const project = (id, mode, title, days, extra = {}) => ({
   ...extra,
 });
 
-/** The mock's shelf: four videos, then five one-off outputs. */
+/** Four videos and five one-off outputs. Home's Continue shelf takes the
+ * four most recent of the whole list, so no two stamps here may tie: a tie
+ * would leave the shelf's order up to the sort's stability. */
 const PROJECTS = [
   project("p-bee", "prompt", "How Honeybees Make Honey", 0, { duration_s: 57 }),
   project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, { duration_s: 46 }),
@@ -68,7 +70,7 @@ const PROJECTS = [
   project("t-thumb", "tool:thumbnail", "Shocked scientist, glowing honeycomb", 4, {
     tool_artifact_hash: "h2",
   }),
-  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0),
+  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0.5),
   project("t-voice", "tool:voiceover", "Calm narrator, 40 seconds", 13, {
     tool_artifact_hash: "h3",
   }),
