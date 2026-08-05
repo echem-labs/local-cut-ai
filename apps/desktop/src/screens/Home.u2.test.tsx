@@ -90,10 +90,26 @@ beforeEach(() => {
 });
 
 describe("the Continue shelf", () => {
-  it("shows the four most recent videos and nothing made by a tool", () => {
+  it("shows the four most recent things made, tool outputs included", () => {
+    // A tool output is work you may want to get back to; leaving it out
+    // meant a session you closed vanished from Home entirely.
+    // Distinct stamps: the shelf's whole claim is the ORDER, so a tie would
+    // pin the sort's stability rather than its comparator.
+    seed({
+      projects: [
+        project("v0", "prompt", "Video 0", 100),
+        project("v1", "prompt", "Video 1", 90),
+        project("t9", "tool:music", "a warm loop", 95),
+        project("v2", "prompt", "Video 2", 80),
+      ],
+    });
+    render(<Home />);
+    expect(tileTitles()).toEqual(["Video 0", "a warm loop", "Video 1", "Video 2"]);
+  });
+
+  it("caps at four, most recently touched first", () => {
     render(<Home />);
     expect(tileTitles()).toEqual(["Video 0", "Video 1", "Video 2", "Video 3"]);
-    expect(screen.queryByText("a lighthouse at dusk")).toBeNull();
   });
 
   it("hands the rest to the Library", async () => {
@@ -104,11 +120,13 @@ describe("the Continue shelf", () => {
     expect(useApp.getState().libraryOpen).toBe(true);
   });
 
-  it("keeps the starter templates while no video exists", () => {
+  it("keeps the starter templates while no video exists — but shelves the tool output", () => {
+    // The empty state answers "where will my videos go", so it is gated on
+    // videos; the shelf answers "what did I just make", so it is not.
     seed({ projects: TOOLS });
     render(<Home />);
     expect(screen.getByText(t("home.emptyTitle"))).toBeInTheDocument();
-    expect(tileTitles()).toEqual([]);
+    expect(tileTitles()).toEqual(["a lighthouse at dusk"]);
   });
 });
 
