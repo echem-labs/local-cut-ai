@@ -627,6 +627,12 @@ textarea {
 }
 
 .btn-ghost {
+  /* Same box model as .btn-primary — an icon sits centered with a real
+     gap before its label instead of riding the text baseline. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   color: var(--text-secondary);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-s);
@@ -3442,11 +3448,10 @@ button.link:hover {
   user-select: text;
 }
 
-.session-recipe .recipe-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+/* The run's inputs read as provenance in the status row, next to the
+   model and wall time — see ToolSession's details list. */
+.tool-session .tool-status .badge {
+  flex-shrink: 0;
 }
 
 /* waveform: the wave IS the player — one toggle, the engine-computed bars
@@ -3498,6 +3503,8 @@ button.link:hover {
 
 .wave-plot {
   display: block;
+  /* Anchors the seek-time tip that follows the pointer. */
+  position: relative;
   flex: 1;
   width: 100%;
   height: 64px;
@@ -3506,6 +3513,23 @@ button.link:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
   cursor: pointer;
+}
+
+/* Where a click would land you — .tip's look, pinned above the pointer.
+   Hover-only, so it never appears in a parity capture. */
+.wave-seek-tip {
+  position: absolute;
+  bottom: calc(100% + var(--space-1));
+  transform: translateX(-50%);
+  background: var(--tooltip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #eceaf3;
+  font-size: 11.5px;
+  border-radius: 7px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
 }
 
 .wave-plot:focus-visible {
@@ -3694,57 +3718,16 @@ button.link:hover {
   margin-top: 2px;
 }
 
-/* the session composer: the one "change it" surface, stuck to the bottom
- * of the scroll the way an editor's input is. Sticky (not fixed) so it
- * never covers content that fits on screen. */
+/* The session composer: the one "change it" surface, stuck to the bottom
+   of the scroll the way an editor's input is (sticky, not fixed, so it
+   never covers content that fits on screen). It wears .prompt-box — same
+   textarea, same bottom row, same focus glow as Home's — so this block
+   adds only the docking. */
 .tool-composer {
   position: sticky;
   bottom: var(--space-3);
   align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
   margin-top: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-l);
-  box-shadow: var(--shadow-1);
-}
-
-.tool-composer .composer-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-}
-
-.tool-composer textarea {
-  flex: 1;
-  min-height: 40px;
-  /* Grows with its content (the voiceover working copy is a paragraph),
-     capped so a long script never swallows the page. Chromium-only app,
-     so field-sizing is safe. */
-  field-sizing: content;
-  max-height: 160px;
-  resize: vertical;
-  background: var(--surface-2);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  padding: var(--space-2);
-  font: inherit;
-  outline: none;
-}
-
-.tool-composer textarea:focus {
-  border-color: var(--accent);
-}
-
-.tool-composer .composer-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
 }
 
 /* ---- script view ---- */

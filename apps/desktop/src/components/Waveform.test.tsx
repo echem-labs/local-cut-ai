@@ -92,4 +92,21 @@ describe("Waveform", () => {
     // (jsdom has none, and a real element may not have metadata yet).
     expect(audio.currentTime).toBeCloseTo(10);
   });
+
+  it("previews the seek-to time under the pointer, and clears it on leave", async () => {
+    const { view } = mount();
+    await waitFor(() =>
+      expect(view.container.querySelectorAll(".wave-plot rect").length).toBeGreaterThan(0),
+    );
+    const plot = view.container.querySelector(".wave-plot") as HTMLButtonElement;
+    plot.getBoundingClientRect = () =>
+      ({ left: 0, width: 200, top: 0, height: 64, right: 200, bottom: 64 }) as DOMRect;
+
+    fireEvent.mouseMove(plot, { clientX: 100 });
+    // Halfway across a 40s track: the tip says where the click would land.
+    expect(view.container.querySelector(".wave-seek-tip")?.textContent).toBe("0:20");
+
+    fireEvent.mouseLeave(plot);
+    expect(view.container.querySelector(".wave-seek-tip")).toBeNull();
+  });
 });
