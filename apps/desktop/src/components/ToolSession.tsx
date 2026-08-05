@@ -97,9 +97,13 @@ export function screenplayMarkdown(screenplay: Screenplay): string {
 export function ScriptTable({
   screenplay,
   targetS,
+  hideTitle,
 }: {
   screenplay: Screenplay;
   targetS?: number;
+  /** True when the page's h1 already says exactly this — the same words
+   * twice at heading weight read as a rendering bug, not emphasis. */
+  hideTitle?: boolean;
 }) {
   // Spoken time, not the script model's per-scene duration_s claim — nothing
   // downstream reads that field, and the assembled video will not either
@@ -110,7 +114,7 @@ export function ScriptTable({
   );
   return (
     <div className="script-view">
-      <h2>{screenplay.title}</h2>
+      {!hideTitle && <h2>{screenplay.title}</h2>}
       {screenplay.hook && <p className="hook">{screenplay.hook}</p>}
       <table className="script-table">
         <thead>
@@ -159,14 +163,22 @@ export function ToolSession() {
     projects,
     regenerate,
     enhance,
+    refineTool,
     selectTake,
     addToProject,
     applySessionVoiceClone,
+    openSettings,
   } = useApp();
   const [promoting, setPromoting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notes, setNotes] = useState("");
   const [enhancing, setEnhancing] = useState(false);
+  // The composer's working copy of the tool's input — editable, sent back
+  // through /patch as "update & re-render". Reset whenever the node's own
+  // params move (a refine landing, a take swap).
+  const [refineDraft, setRefineDraft] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [refineError, setRefineError] = useState<string | null>(null);
   // Menus/dialogs local to this page. `null` string states double as
   // "closed"; a message is the store convention for a refusal.
   const [addOpen, setAddOpen] = useState(false);
@@ -232,6 +244,25 @@ export function ToolSession() {
       : null;
   const screenplay = useScreenplay(tool === "script" && done ? artifactUrl : null);
 
+  // The artifact's recipe: what was asked for, straight off the tool node's
+  // own params. prompt (visual tools) / text (voiceover) / brief (music) —
+  // one of the three is the thing that was asked for. The KEY travels too:
+  // it is what the composer's "update & re-render" writes back via /patch.
+  const params = node?.params ?? {};
+  const recipeKey =
+    (["prompt", "text", "brief"] as const).find(
+      (key) => typeof params[key] === "string" && (params[key] as string).length > 0,
+    ) ?? null;
+  const recipe = recipeKey ? (params[recipeKey] as string) : null;
+
+  // A refine landing (or a take swap) moves the node's params — the
+  // composer follows, discarding whatever half-edit it held: the engine's
+  // text is the truth the next edit starts from.
+  useEffect(() => {
+    setRefineDraft(recipe ?? "");
+    setRefineError(null);
+  }, [recipe]);
+
   if (!tool || !node) return <div className="banner">{t("toolSession.preparing")}</div>;
 
   // The job that produced what's on screen — its model and wall time are the
@@ -281,21 +312,32 @@ export function ToolSession() {
     }
   };
 
+  const sendRefine = async () => {
+    if (!recipeKey || refining) return;
+    const value = refineDraft.trim();
+    if (!value || value === recipe) return;
+    setRefining(true);
+    try {
+      setRefineError(await refineTool(node.node_id, recipeKey, value));
+    } finally {
+      setRefining(false);
+    }
+  };
+
   // Whichever node drives the display: the keyframe while it renders, else
   // the tool node. `?? node` narrows the type (node is non-null past the
   // guard) — progressNode itself is computed before it.
   const shown = progressNode ?? node;
 
-  // The artifact's recipe: what was asked for, straight off the tool node's
-  // own params — the one thing a person wonders about mid-render, and the
-  // title above truncates it. The trailing chips are the run's other inputs.
-  const params = node.params ?? {};
-  // prompt (visual tools) / text (voiceover) / brief (music) — one of the
-  // three is the thing that was asked for.
-  const recipe =
-    [params.prompt, params.text, params.brief].find(
-      (value): value is string => typeof value === "string" && value.length > 0,
-    ) ?? null;
+  // Tool projects are titled by their own ask, so the h1 above often IS the
+  // recipe verbatim — repeating it in the card reads as a rendering bug.
+  // And once a non-script session is done, the composer below holds the
+  // same words editable, so the card's paragraph is only ever mid-render
+  // provenance (script keeps it: its composer takes notes, not the prompt).
+  // The chips carry the run's other inputs either way.
+  const titleIsRecipe =
+    recipe != null && currentProject != null && recipe.trim() === currentProject.title.trim();
+  const showRecipeText = recipe != null && !titleIsRecipe && (tool === "script" || !done);
   const details: string[] = [];
   if (typeof params.voice === "string" && params.voice) details.push(params.voice);
   if (typeof params.motion === "string" && params.motion) details.push(params.motion);
@@ -384,12 +426,12 @@ export function ToolSession() {
           does not unmake the videos it already produced. */}
       {currentProject && <PromotedTo project={currentProject} />}
 
-      {recipe && (
+      {recipe && (showRecipeText || details.length > 0) && (
         <div className="session-recipe">
           <span className="eyebrow">
             {t(tool === "voiceover" ? "toolSession.recipeText" : "toolSession.recipePrompt")}
           </span>
-          <p>{recipe}</p>
+          {showRecipeText && <p>{recipe}</p>}
           {details.length > 0 && (
             <div className="recipe-chips">
               {details.map((detail) => (
@@ -434,7 +476,14 @@ export function ToolSession() {
           )}
           {tool === "script" &&
             (screenplay ? (
-              <ScriptTable screenplay={screenplay} targetS={targetS} />
+              <ScriptTable
+                screenplay={screenplay}
+                targetS={targetS}
+                hideTitle={
+                  currentProject != null &&
+                  screenplay.title.trim() === currentProject.title.trim()
+                }
+              />
             ) : (
               <div className="banner">{t("toolSession.loadingScript")}</div>
             ))}
@@ -596,26 +645,70 @@ export function ToolSession() {
               {cloneResult}
             </p>
           )}
-          {tool === "script" && (
-            <div className="tool-enhance">
-              <input
-                value={notes}
-                placeholder={t("toolSession.enhancePlaceholder")}
-                aria-label={t("toolSession.enhanceAria")}
-                onChange={(event) => setNotes(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void sendEnhance();
-                }}
-              />
-              <button
-                className="btn-ghost"
-                onClick={() => void sendEnhance()}
-                disabled={enhancing || !notes.trim()}
-              >
-                {enhancing ? t("toolSession.enhancing") : t("toolSession.enhance")}
+          {/* The composer: the session's one "change it" surface, stuck to
+              the bottom the way an editor's input is. Script sessions take
+              free-form notes (the LLM rewrite); every other tool holds an
+              editable working copy of its own prompt/text/brief, sent back
+              through /patch as update-and-re-render. */}
+          <div className="tool-composer">
+            <div className="composer-row">
+              {tool === "script" ? (
+                <textarea
+                  value={notes}
+                  rows={2}
+                  placeholder={t("toolSession.enhancePlaceholder")}
+                  aria-label={t("toolSession.enhanceAria")}
+                  onChange={(event) => setNotes(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                      void sendEnhance();
+                  }}
+                />
+              ) : (
+                <textarea
+                  value={refineDraft}
+                  rows={2}
+                  placeholder={t("toolSession.refinePlaceholder")}
+                  aria-label={t("toolSession.refineAria")}
+                  onChange={(event) => setRefineDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                      void sendRefine();
+                  }}
+                />
+              )}
+              {tool === "script" ? (
+                <button
+                  className="btn-ghost"
+                  onClick={() => void sendEnhance()}
+                  disabled={enhancing || !notes.trim()}
+                >
+                  {enhancing ? t("toolSession.enhancing") : t("toolSession.enhance")}
+                </button>
+              ) : (
+                <button
+                  className="btn-ghost"
+                  onClick={() => void sendRefine()}
+                  disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
+                >
+                  {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
+                </button>
+              )}
+            </div>
+            <div className="composer-meta">
+              {renderJob?.model && (
+                <span className="hint">{t("toolSession.modelLine", { model: renderJob.model })}</span>
+              )}
+              <button className="link" onClick={() => openSettings("models")}>
+                {t("toolSession.changeModel")}
               </button>
             </div>
-          )}
+            {refineError && (
+              <p className="hint error-text" role="alert">
+                {refineError}
+              </p>
+            )}
+          </div>
           {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
               {actionError.message}

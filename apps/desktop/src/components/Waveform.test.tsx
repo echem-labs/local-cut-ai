@@ -48,6 +48,34 @@ describe("Waveform", () => {
     expect(screen.getByLabelText("music preview")).toBeInTheDocument();
   });
 
+  it("is the player when peaks exist: one toggle, native controls hidden", async () => {
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue(undefined as never);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const { view } = mount();
+    await waitFor(() =>
+      expect(view.container.querySelectorAll(".wave-plot rect").length).toBeGreaterThan(0),
+    );
+    const audio = view.container.querySelector("audio") as HTMLAudioElement;
+    expect(audio.hidden).toBe(true);
+    expect(audio.hasAttribute("controls")).toBe(false);
+
+    fireEvent.click(screen.getByLabelText("Play"));
+    expect(play).toHaveBeenCalled();
+    fireEvent(audio, new Event("play"));
+    // The toggle now tells the truth mid-play…
+    expect(screen.getByLabelText("Pause")).toBeInTheDocument();
+
+    vi.spyOn(HTMLMediaElement.prototype, "paused", "get").mockReturnValue(false);
+    fireEvent.click(screen.getByLabelText("Pause"));
+    expect(pause).toHaveBeenCalled();
+    fireEvent(audio, new Event("pause"));
+    // …and again at rest.
+    expect(screen.getByLabelText("Play")).toBeInTheDocument();
+    vi.restoreAllMocks();
+  });
+
   it("seeks the player to the clicked fraction of the engine's duration", async () => {
     const { view } = mount();
     await waitFor(() =>

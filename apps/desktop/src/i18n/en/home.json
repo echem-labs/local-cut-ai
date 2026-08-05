@@ -31,6 +31,7 @@
   "voiceSwatchesAria": "Voice previews",
   "voiceSwatchAria": "Use the {name} voice",
   "voicePlayAria": "Play a sample of the {name} voice",
+  "voiceStopAria": "Stop the {name} sample",
   "voiceNames": {
     "af_sarah": "Sarah",
     "am_michael": "Michael",
