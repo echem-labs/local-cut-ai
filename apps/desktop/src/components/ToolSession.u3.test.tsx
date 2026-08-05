@@ -177,6 +177,38 @@ describe("the composer", () => {
   });
 });
 
+describe("the action row", () => {
+  // Every action here is destructive-ish or slow (a re-render, a copy into
+  // another project) — the verb alone doesn't say what it costs or keeps.
+  const hovering = (name: string) => {
+    const wrap = screen.getByText(name).closest(".tip-wrap") as HTMLElement;
+    fireEvent.mouseEnter(wrap);
+    const text = document.querySelector(".tip")?.textContent ?? "";
+    fireEvent.mouseLeave(wrap); // else the next hover reads this bubble
+    return text;
+  };
+
+  it("explains what each button will do, on hover", () => {
+    mountSession("image", node("image", { params: { prompt: "waves" } }), {
+      projects: [project("v1", "prompt", "Bee documentary")],
+    });
+    expect(hovering("Download")).toContain("saves");
+    expect(hovering("Regenerate")).toContain("take");
+    expect(hovering("Reroll")).toContain("seed");
+    expect(hovering("Add to project…")).toContain("asset");
+  });
+
+  it("explains the script session's own two actions", () => {
+    mountSession("script", node("script", { params: { prompt: "octopus hearts" } }));
+    expect(hovering("Turn into a video")).toContain("project");
+  });
+
+  it("explains the voiceover clone action", () => {
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }));
+    expect(hovering("Clone a voice…")).toContain("permission");
+  });
+});
+
 describe("the loop seam", () => {
   it("plays the last two seconds, then the first two, then stops", () => {
     const listeners: Record<string, () => void> = {};
@@ -242,6 +274,16 @@ describe("the takes strip", () => {
   it("does not render for a single recorded row", () => {
     mountSession("image", node("image", { params: { prompt: "waves" }, takes: [takes[1]] }));
     expect(screen.queryByText("Takes")).toBeNull();
+  });
+
+  it("says whether picking a take costs a render", () => {
+    const gone: TakeInfo[] = [{ ...takes[0], available: false }, takes[1]];
+    mountSession("image", node("image", { params: { prompt: "waves" }, takes: gone }));
+    // Scoped: the image status row carries a "seed 7" chip of its own.
+    const strip = screen.getByRole("group", { name: "Recorded takes" });
+    const chip = within(strip).getByText("seed 7").closest(".tip-wrap") as HTMLElement;
+    fireEvent.mouseEnter(chip);
+    expect(document.querySelector(".tip")?.textContent).toContain("renders the seed again");
   });
 
   it("surfaces the engine's refusal when a take is gone", async () => {

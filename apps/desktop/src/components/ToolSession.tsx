@@ -10,6 +10,7 @@ import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
 import { ModelsPopover } from "./ModelsPopover";
 import { StatusRing } from "./StatusRing";
+import { Tip } from "./Tooltip";
 import { PromotedTo } from "./Provenance";
 import { Waveform } from "./Waveform";
 
@@ -417,27 +418,40 @@ export function ToolSession() {
   const stageLabel = shown === upstream ? m().terms.kinds.keyframe : toolLabel(tool);
   return (
     <div className="tool-session">
+      {/* What was asked for, then what answered it: the run's inputs as
+          badges, then the render's provenance as muted meta. */}
       <div className="tool-status">
         <StatusRing status={shown.status} progress={shown.progress} />
         <span style={{ textTransform: "capitalize" }}>{m().status[shown.status]}</span>
         {shown.status === "rendering" && <span>{Math.round(shown.progress * 100)}%</span>}
-        {renderJob?.model && <small className="hint">{renderJob.model}</small>}
-        {tookS != null && (
-          <small className="hint">{t("toolSession.took", { t: shortDuration(tookS) })}</small>
-        )}
-        {/* The image tool's seed, visible: a reroll pins a new one, and a
-            number you can read is a number you can reproduce. */}
-        {tool === "image" && done && (
-          <small className="hint">{t("toolSession.seedChip", { seed: node.seed })}</small>
-        )}
-        {/* The run's other inputs (voice, motion, seconds, aspect) read as
-            provenance next to the model and wall time — not from a card
-            below whose only other content would be an eyebrow. */}
         {details.map((detail) => (
           <span key={detail} className="badge">
             {detail}
           </span>
         ))}
+        {(renderJob?.model || tookS != null || (tool === "image" && done)) && (
+          <span className="status-meta">
+            {renderJob?.model && (
+              <Tip label={t("toolSession.modelMeta")} hint={renderJob.model} side="top">
+                <small className="hint">{renderJob.model}</small>
+              </Tip>
+            )}
+            {/* Only when there is a duration to read: a render that rounds
+                to 0:00 reports nothing and reads as a broken clock. */}
+            {tookS != null && Math.round(tookS) > 0 && (
+              <Tip label={t("toolSession.tookMeta")} hint={t("toolSession.tookHint")} side="top">
+                <small className="hint">{t("toolSession.took", { t: shortDuration(tookS) })}</small>
+              </Tip>
+            )}
+            {/* The image tool's seed, visible: a reroll pins a new one, and a
+                number you can read is a number you can reproduce. */}
+            {tool === "image" && done && (
+              <Tip label={t("toolSession.seedMeta")} hint={t("toolSession.seedHint")} side="top">
+                <small className="hint">{t("toolSession.seedChip", { seed: node.seed })}</small>
+              </Tip>
+            )}
+          </span>
+        )}
       </div>
 
       {/* Outside the `done` branch on purpose: a session that has been
@@ -500,25 +514,39 @@ export function ToolSession() {
             <div className="takes-strip" role="group" aria-label={t("toolSession.takesAria")}>
               <span className="eyebrow">{t("toolSession.takes")}</span>
               {takes.map((take) => (
-                <button
+                <Tip
                   key={take.output_hash}
-                  className={`chip${take.current ? " active" : ""}`}
-                  disabled={take.current}
-                  onClick={() => void pickTake(take)}
-                  aria-label={t(
-                    take.current ? "toolSession.takeCurrentAria" : "toolSession.takeAria",
-                    { seed: take.seed },
+                  label={t("toolSession.seedChip", { seed: take.seed })}
+                  // Whether clicking costs a render is the thing worth
+                  // knowing, and it differs per take.
+                  hint={t(
+                    take.current
+                      ? "toolSession.takeCurrentHint"
+                      : take.available
+                        ? "toolSession.takeSwapHint"
+                        : "toolSession.takeRerenderHint",
                   )}
+                  side="top"
                 >
-                  {t("toolSession.seedChip", { seed: take.seed })}
-                  {take.current && <small>{t("toolSession.takeCurrent")}</small>}
-                  {/* An unavailable take re-renders on click; one that fell
-                      off the recorded list is refused engine-side and the
-                      reason lands in takeError below. */}
-                  {!take.current && !take.available && (
-                    <small>{t("toolSession.takeRerenders")}</small>
-                  )}
-                </button>
+                  <button
+                    className={`chip${take.current ? " active" : ""}`}
+                    disabled={take.current}
+                    onClick={() => void pickTake(take)}
+                    aria-label={t(
+                      take.current ? "toolSession.takeCurrentAria" : "toolSession.takeAria",
+                      { seed: take.seed },
+                    )}
+                  >
+                    {t("toolSession.seedChip", { seed: take.seed })}
+                    {take.current && <small>{t("toolSession.takeCurrent")}</small>}
+                    {/* An unavailable take re-renders on click; one that fell
+                        off the recorded list is refused engine-side and the
+                        reason lands in takeError below. */}
+                    {!take.current && !take.available && (
+                      <small>{t("toolSession.takeRerenders")}</small>
+                    )}
+                  </button>
+                </Tip>
               ))}
             </div>
           )}
@@ -527,62 +555,90 @@ export function ToolSession() {
               {takeError}
             </p>
           )}
+          {/* Every action here re-renders, records, or copies something
+              somewhere else — the verb alone doesn't say what it costs or
+              what it keeps, so each one carries its own explanation. */}
           <div className="tool-actions">
-            <a className="btn-ghost" href={artifactUrl} download>
-              {t("common.download")}
-            </a>
+            <Tip label={t("common.download")} hint={t("toolSession.downloadHint")} side="top">
+              <a className="btn-ghost" href={artifactUrl} download>
+                {t("common.download")}
+              </a>
+            </Tip>
             {tool === "script" && screenplay && (
-              <button className="btn-ghost" onClick={() => void copyScript()}>
-                {copied ? t("toolSession.copied") : t("common.copy")}
-              </button>
+              <Tip label={t("common.copy")} hint={t("toolSession.copyHint")} side="top">
+                <button className="btn-ghost" onClick={() => void copyScript()}>
+                  {copied ? t("toolSession.copied") : t("common.copy")}
+                </button>
+              </Tip>
             )}
-            <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
-              {t("toolSession.regenerate")}
-            </button>
-            {tool === "image" && (
-              <button
-                className="btn-ghost"
-                onClick={() =>
-                  // A fresh seed, pinned in the same call — RegenerateBody.seed.
-                  void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
-                }
-              >
-                <Dices size={13} strokeWidth={1.8} aria-hidden="true" />
-                {t("toolSession.reroll")}
+            <Tip
+              label={t("toolSession.regenerate")}
+              hint={t("toolSession.regenerateHint")}
+              side="top"
+            >
+              <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
+                {t("toolSession.regenerate")}
               </button>
+            </Tip>
+            {tool === "image" && (
+              <Tip label={t("toolSession.reroll")} hint={t("toolSession.rerollHint")} side="top">
+                <button
+                  className="btn-ghost"
+                  onClick={() =>
+                    // A fresh seed, pinned in the same call — RegenerateBody.seed.
+                    void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
+                  }
+                >
+                  <Dices size={13} strokeWidth={1.8} aria-hidden="true" />
+                  {t("toolSession.reroll")}
+                </button>
+              </Tip>
             )}
             {tool === "music" && (
-              <button
-                className="btn-ghost"
-                aria-label={t("toolSession.loopSeamAria")}
-                title={t("toolSession.loopSeamHint")}
-                onClick={toggleSeam}
-              >
-                <Repeat size={13} strokeWidth={1.8} aria-hidden="true" />
-                {seamPlaying ? t("toolSession.loopSeamPlaying") : t("toolSession.loopSeam")}
-              </button>
+              <Tip label={t("toolSession.loopSeam")} hint={t("toolSession.loopSeamHint")} side="top">
+                <button
+                  className="btn-ghost"
+                  aria-label={t("toolSession.loopSeamAria")}
+                  onClick={toggleSeam}
+                >
+                  <Repeat size={13} strokeWidth={1.8} aria-hidden="true" />
+                  {seamPlaying ? t("toolSession.loopSeamPlaying") : t("toolSession.loopSeam")}
+                </button>
+              </Tip>
             )}
             {tool === "voiceover" && (
-              <button
-                className="btn-ghost"
-                onClick={() => setCloneOpen(!cloneOpen)}
-                aria-expanded={cloneOpen}
+              <Tip
+                label={t("toolSession.cloneVoiceTitle")}
+                hint={t("toolSession.cloneVoiceTipHint")}
+                side="top"
               >
-                <Mic size={13} strokeWidth={1.8} aria-hidden="true" />
-                {t("toolSession.cloneVoice")}
-              </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => setCloneOpen(!cloneOpen)}
+                  aria-expanded={cloneOpen}
+                >
+                  <Mic size={13} strokeWidth={1.8} aria-hidden="true" />
+                  {t("toolSession.cloneVoice")}
+                </button>
+              </Tip>
             )}
             {tool !== "script" && (
               <span className="add-anchor">
-                <button
-                  className="btn-ghost"
-                  onClick={() => setAddOpen(!addOpen)}
-                  aria-expanded={addOpen}
-                  aria-label={t("toolSession.addToProjectAria")}
+                <Tip
+                  label={t("toolSession.addToProjectTitle")}
+                  hint={t("toolSession.addToProjectHint")}
+                  side="top"
                 >
-                  <FolderPlus size={13} strokeWidth={1.8} aria-hidden="true" />
-                  {t("toolSession.addToProject")}
-                </button>
+                  <button
+                    className="btn-ghost"
+                    onClick={() => setAddOpen(!addOpen)}
+                    aria-expanded={addOpen}
+                    aria-label={t("toolSession.addToProjectAria")}
+                  >
+                    <FolderPlus size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {t("toolSession.addToProject")}
+                  </button>
+                </Tip>
                 {addOpen && (
                   <div className="menu-pop" role="menu" aria-label={t("toolSession.addToProjectTitle")}>
                     <span className="hint">{t("toolSession.addToProjectHint")}</span>
@@ -603,13 +659,19 @@ export function ToolSession() {
               </span>
             )}
             {tool === "script" && (
-              <button
-                className="btn-primary"
-                onClick={() => void turnIntoVideo()}
-                disabled={promoting}
+              <Tip
+                label={t("toolSession.turnIntoVideo")}
+                hint={t("toolSession.turnIntoVideoHint")}
+                side="top"
               >
-                {promoting ? t("toolSession.creatingProject") : t("toolSession.turnIntoVideo")}
-              </button>
+                <button
+                  className="btn-primary"
+                  onClick={() => void turnIntoVideo()}
+                  disabled={promoting}
+                >
+                  {promoting ? t("toolSession.creatingProject") : t("toolSession.turnIntoVideo")}
+                </button>
+              </Tip>
             )}
           </div>
           {addResult && (
