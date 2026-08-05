@@ -59,6 +59,10 @@ button {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
+  /* Explicit, not 'normal': these 11px lines sit in vertical rhythm
+     chains the pixel gate measures, and 'normal' rounds differently
+     between the app and the design references. */
+  line-height: 16px;
   color: var(--text-tertiary);
 }
 
@@ -586,6 +590,7 @@ textarea {
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-s);
   font-weight: 600;
+  line-height: 18px; /* rhythm anchor: 34px buttons everywhere */
   min-height: var(--control-h);
   /* Without this the 14px label's normal line box is 17px, so 8+17+8 makes
      the CTA 33px — one taller than every control it sits beside in the
@@ -629,6 +634,7 @@ textarea {
   min-height: 32px;
   /* panel-level buttons sit a step under the body/CTA size (design mock) */
   font-size: 13px;
+  line-height: 18px; /* rhythm anchor: 34px buttons everywhere */
   transition: background var(--motion-fast);
 }
 
@@ -728,6 +734,7 @@ textarea {
   outline: none;
   color: var(--text-primary);
   font-size: var(--text-m);
+  line-height: 24px; /* explicit: this height anchors the panel's rhythm */
   resize: none;
   min-height: 64px;
   max-height: 40vh;
@@ -1058,6 +1065,10 @@ button.link:hover {
   margin-top: var(--space-6);
 }
 
+.tools-head .hint {
+  line-height: 16px; /* rhythm anchor — see the eyebrow rule above */
+}
+
 /* .tools-head h3 inherits the shared eyebrow style above */
 
 /* tool session panel: replaces the video prompt while open — one prompt
@@ -1099,7 +1110,12 @@ button.link:hover {
   border-radius: var(--radius-s);
   padding: var(--space-1) var(--space-2);
   min-height: 32px;
-  width: 280px;
+  /* Flexible, not fixed: the clip row also carries seconds, start frame
+     and aspect, and a 280px floor pushed Generate onto its own line at
+     ordinary widths. The field yields; the button row stays one row. */
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 280px;
   outline: none;
 }
 
@@ -3433,8 +3449,9 @@ button.link:hover {
   margin-top: var(--space-2);
 }
 
-/* waveform: engine-computed bars over the player; played bars go accent —
-   the same progress color every other bar in the app uses */
+/* waveform: the wave IS the player — one toggle, the engine-computed bars
+   as the seek surface, a time readout. Played bars go accent, the same
+   progress color every other bar in the app uses. */
 .waveform {
   align-self: stretch;
   display: flex;
@@ -3442,8 +3459,46 @@ button.link:hover {
   gap: var(--space-2);
 }
 
+.wave-player {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.wave-toggle {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.wave-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wave-toggle:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+.wave-time {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .wave-plot {
   display: block;
+  flex: 1;
   width: 100%;
   height: 64px;
   padding: 0;
@@ -3484,6 +3539,7 @@ button.link:hover {
   background: var(--surface-1);
   color: var(--text-secondary);
   font-size: var(--text-xs);
+  line-height: 18px; /* explicit: pill height anchors chip-row rhythm */
   padding: 2px 10px;
   cursor: pointer;
   white-space: nowrap;
@@ -3518,7 +3574,9 @@ button.link:hover {
    (--space-4, not the row's --space-3): chips continue the text column */
 .prompt-box .chip-row,
 .prompt-box .voice-swatches {
-  padding: 0 var(--space-4);
+  /* Bottom padding is the seam with the controls bar below — without it
+     the swatches sit on that bar's border. */
+  padding: 0 var(--space-4) var(--space-3);
 }
 
 /* voiceover panel: play-a-sample swatches instead of typing an id blind */
@@ -3575,7 +3633,10 @@ button.link:hover {
 }
 
 .seconds-field input {
+  /* Un-flex what .tool-panel input made flexible: two digits and a step. */
+  flex: 0 0 52px;
   width: 52px;
+  min-width: 52px;
 }
 
 /* takes strip: displaced identities, one chip per seed */
@@ -3615,6 +3676,7 @@ button.link:hover {
   border-radius: var(--radius-m);
   padding: var(--space-3) var(--space-4);
   font-size: var(--text-s);
+  line-height: 20px; /* rhythm anchor: the b title's line */
 }
 
 .clone-panel .consent {
@@ -3622,6 +3684,7 @@ button.link:hover {
   align-items: flex-start;
   gap: var(--space-2);
   font-size: var(--text-xs);
+  line-height: 16px; /* rhythm anchor */
   color: var(--text-secondary);
 }
 
@@ -3631,16 +3694,57 @@ button.link:hover {
   margin-top: 2px;
 }
 
-/* feedback → rewrite row under the script actions */
-.tool-enhance {
+/* the session composer: the one "change it" surface, stuck to the bottom
+ * of the scroll the way an editor's input is. Sticky (not fixed) so it
+ * never covers content that fits on screen. */
+.tool-composer {
+  position: sticky;
+  bottom: var(--space-3);
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1);
+}
+
+.tool-composer .composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.tool-composer textarea {
+  flex: 1;
+  min-height: 40px;
+  /* Grows with its content (the voiceover working copy is a paragraph),
+     capped so a long script never swallows the page. Chromium-only app,
+     so field-sizing is safe. */
+  field-sizing: content;
+  max-height: 160px;
+  resize: vertical;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  padding: var(--space-2);
+  font: inherit;
+  outline: none;
+}
+
+.tool-composer textarea:focus {
+  border-color: var(--accent);
+}
+
+.tool-composer .composer-meta {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  align-self: stretch;
-}
-
-.tool-enhance input {
-  flex: 1;
+  font-size: var(--text-xs);
 }
 
 /* ---- script view ---- */
@@ -3656,6 +3760,7 @@ button.link:hover {
 
 .script-view .hook {
   color: var(--text-secondary);
+  line-height: 21px; /* rhythm anchor */
   margin-bottom: var(--space-3);
 }
 
@@ -3670,6 +3775,7 @@ button.link:hover {
   text-align: left;
   vertical-align: top;
   padding: var(--space-2);
+  line-height: 18px; /* rhythm anchor — the pixel gate measures this table */
   border-bottom: 1px solid var(--border);
 }
 
@@ -3685,6 +3791,7 @@ button.link:hover {
 .hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+  line-height: 16px; /* rhythm anchor - hints sit in measured columns */
 }
 
 .error-text {

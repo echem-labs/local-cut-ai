@@ -8,6 +8,7 @@ import {
   Loader2,
   Play,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -82,6 +83,7 @@ export function Home() {
     openSettings,
     openLibrary,
     actionError,
+    dismissActionError,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
@@ -100,15 +102,28 @@ export function Home() {
   const [startFrame, setStartFrame] = useState<File | null>(null);
   const startFrameRef = useRef<HTMLInputElement>(null);
   // The one swatch audio element — starting a second sample stops the
-  // first, so two speakers never talk over each other.
+  // first, so two speakers never talk over each other. `swatchPlaying`
+  // mirrors it into render state so the active swatch shows a stop
+  // affordance instead of a play icon that no longer tells the truth.
   const swatchAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [swatchPlaying, setSwatchPlaying] = useState<string | null>(null);
   const playSwatch = (voiceId: string) => {
     swatchAudioRef.current?.pause();
+    if (swatchPlaying === voiceId) {
+      setSwatchPlaying(null);
+      return;
+    }
     const audio = new Audio(VOICE_SAMPLES[voiceId]);
     swatchAudioRef.current = audio;
-    void audio.play().catch(() => {
-      /* autoplay policy or a missing device — the swatch still selects */
-    });
+    audio.addEventListener("ended", () => setSwatchPlaying(null));
+    setSwatchPlaying(voiceId);
+    // play() returns undefined in environments without media (jsdom).
+    const request = audio.play();
+    if (request)
+      void request.catch(() => {
+        /* autoplay policy or a missing device — the swatch still selects */
+        setSwatchPlaying(null);
+      });
   };
   useEffect(() => () => swatchAudioRef.current?.pause(), []);
 
@@ -396,7 +411,12 @@ export function Home() {
             </small>
             <button
               className="icon-btn"
-              onClick={() => setHomeDraft({ tool: null })}
+              onClick={() => {
+                // The error belonged to this panel's attempt; a fresh
+                // surface starts clean.
+                if (actionError?.scope === "tool") dismissActionError();
+                setHomeDraft({ tool: null });
+              }}
               aria-label={t("home.closeToolAria")}
             >
               <X {...ICON_CONTROL} />
@@ -437,9 +457,18 @@ export function Home() {
                     <button
                       className="swatch-play"
                       onClick={() => playSwatch(swatch.voice)}
-                      aria-label={t("home.voicePlayAria", { name })}
+                      aria-label={t(
+                        swatchPlaying === swatch.voice
+                          ? "home.voiceStopAria"
+                          : "home.voicePlayAria",
+                        { name },
+                      )}
                     >
-                      <Play size={11} strokeWidth={2} aria-hidden="true" />
+                      {swatchPlaying === swatch.voice ? (
+                        <Square size={11} strokeWidth={2} aria-hidden="true" />
+                      ) : (
+                        <Play size={11} strokeWidth={2} aria-hidden="true" />
+                      )}
                     </button>
                     <button
                       className="swatch-name"
@@ -672,9 +701,51 @@ export function Home() {
         </div>
       )}
 
+      <div className="tools-head">
+        <h3>{t("home.quickTools")}</h3>
+        <span className="hint">{t("home.quickToolsHint")}</span>
+      </div>
+      <div className="quick-tools" role="group" aria-label={t("home.quickToolsAria")}>
+        {TOOLS.map((entry) => {
+          const Icon = entry.icon;
+          const copy = m().tools[entry.kind];
+          return (
+            <Tip
+              key={entry.kind}
+              label={copy.tip}
+              hint={t("home.noProjectHint")}
+              side="bottom"
+            >
+              <button
+                className={tool === entry.kind ? "active" : ""}
+                onClick={() => {
+                  // A stale panel error following the user from tool to
+                  // tool implicates runs that never happened.
+                  if (actionError?.scope === "tool") dismissActionError();
+                  setHomeDraft({
+                    tool: tool === entry.kind ? null : entry.kind,
+                    toolInput: "",
+                  });
+                }}
+                aria-label={t("home.toolButtonAria", { label: copy.label, tip: copy.tip })}
+              >
+                <span className="tool-well">
+                  <Icon {...ICON_FEATURE} aria-hidden="true" />
+                </span>
+                <span className="tool-label">{copy.label}</span>
+                <span className="tool-output">{copy.output}</span>
+              </button>
+            </Tip>
+          );
+        })}
+      </div>
+
       {/* Gate on real projects, not the whole list: someone who has only
           used the quick tools has made no video yet, and counting their
-          tool outputs here took away the templates that get them started. */}
+          tool outputs here took away the templates that get them started.
+          BELOW the quick tools: the empty state answers "where will my
+          videos go", and pushing the tools off-screen to say so priced
+          the app's second surface at its first-run moment. */}
       {real.length === 0 && (
         <div className="empty-state">
           <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
@@ -697,42 +768,6 @@ export function Home() {
           </div>
         </div>
       )}
-
-      <div className="tools-head">
-        <h3>{t("home.quickTools")}</h3>
-        <span className="hint">{t("home.quickToolsHint")}</span>
-      </div>
-      <div className="quick-tools" role="group" aria-label={t("home.quickToolsAria")}>
-        {TOOLS.map((entry) => {
-          const Icon = entry.icon;
-          const copy = m().tools[entry.kind];
-          return (
-            <Tip
-              key={entry.kind}
-              label={copy.tip}
-              hint={t("home.noProjectHint")}
-              side="bottom"
-            >
-              <button
-                className={tool === entry.kind ? "active" : ""}
-                onClick={() =>
-                  setHomeDraft({
-                    tool: tool === entry.kind ? null : entry.kind,
-                    toolInput: "",
-                  })
-                }
-                aria-label={t("home.toolButtonAria", { label: copy.label, tip: copy.tip })}
-              >
-                <span className="tool-well">
-                  <Icon {...ICON_FEATURE} aria-hidden="true" />
-                </span>
-                <span className="tool-label">{copy.label}</span>
-                <span className="tool-output">{copy.output}</span>
-              </button>
-            </Tip>
-          );
-        })}
-      </div>
 
       {/* One shelf, four tiles: what you were last working on. Everything
           else — including every tool output — is one click away in the
