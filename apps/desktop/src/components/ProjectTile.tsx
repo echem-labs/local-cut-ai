@@ -8,6 +8,7 @@ import { relativeTime, shortDuration } from "../lib/time";
 import { isToolSession, TOOL_ICONS, TOOL_MEDIUM, toolKindOf, toolLabel } from "../lib/tools";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { MediaThumb } from "./MediaThumb";
 
 /* one three-step icon scale (review 4 §S10) */
 const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
@@ -83,20 +84,16 @@ export function ProjectTile({
         aria-label={t("home.openProjectAria", { title: project.title })}
       >
         <div className="tile-thumb">
-          {thumbUrl ? (
-            <img
-              src={thumbUrl}
-              alt=""
-              loading="lazy"
-              onError={(event) => {
-                event.currentTarget.style.display = "none";
-              }}
-            />
-          ) : ToolIcon ? (
-            <ToolIcon {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-          ) : (
-            <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
-          )}
+          <MediaThumb
+            src={thumbUrl}
+            fallback={
+              ToolIcon ? (
+                <ToolIcon {...ICON_ILLUSTRATIVE} aria-hidden="true" />
+              ) : (
+                <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
+              )
+            }
+          />
           <span className="tile-tool" data-kind={kindTag.medium}>
             {kindTag.label}
           </span>

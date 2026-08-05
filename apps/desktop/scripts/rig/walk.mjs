@@ -290,6 +290,11 @@ try {
   // it scrolls in BOTH axes on purpose, which is exactly the shape that
   // hides a horizontal overflow of the page itself. A screen the walk
   // cannot reach is a screen nothing gates (plan rule 5).
+  //
+  // Where the designed 409s begin. Only the errors logged from here on are
+  // eligible for the filter below — a 409 anywhere earlier is a surprise,
+  // and a filter that spans the whole run would swallow it.
+  const beforeCanvas = (await health()).consoleErrors.length;
   const canvasStop = await evalInApp(`
     // Through the Library's Videos filter, not off Home's shelf: the shelf
     // is the four most RECENT of everything, and a run of quick tools
@@ -412,6 +417,38 @@ try {
       );
     }
     await shoot("flowchart-1920.png");
+
+    // The zoom gesture itself, with a TRUSTED wheel event — the only way to
+    // find out whether the app refuses the browser's own ctrl+wheel zoom.
+    // React registers `wheel` passively, so an onWheel preventDefault is
+    // ignored and Chromium logs the violation as a console error: the check
+    // below is the zoom landing, and the console gate at the end of the walk
+    // is the violation not being logged.
+    const { dpr: dprBefore, inner: innerBefore } = await evalInApp(`
+      return page.evaluate(() => ({ dpr: window.devicePixelRatio, inner: window.innerWidth }));
+    `);
+    const wheel = await evalInApp(`
+      const box = await page.evaluate(() => {
+        const r = document.querySelector(".canvas-surface").getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await page.mouse.move(box.x, box.y);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -200);
+      await page.waitForTimeout(400);
+      await page.keyboard.up("Control");
+      return page.evaluate(() => ({
+        zoom: document.querySelector(".canvas-zoom-value").textContent,
+        // The app's own interface zoom must NOT have moved with it.
+        dpr: window.devicePixelRatio,
+        inner: window.innerWidth,
+      }));
+    `);
+    check(
+      "ctrl+wheel zooms the flowchart and nothing else",
+      wheel.zoom !== "100%" && wheel.dpr === dprBefore && wheel.inner === innerBefore,
+      JSON.stringify({ ...wheel, dprBefore, innerBefore }),
+    );
   }
 
   const report = await health();
@@ -419,10 +456,13 @@ try {
   // canvas stop deliberately opens projects until one works, and a state
   // file written by a build older than the store's encoding fix answers 409
   // by design. Chromium logs every failed response as a console error, so
-  // that one status is filtered; 4xx of any other kind, every 5xx and every
-  // app-level error still fail the walk.
+  // that one status is filtered — but only among the errors the canvas stop
+  // itself produced. Everything before it, 4xx of any other kind, every 5xx
+  // and every app-level error still fail the walk.
   const noise = /Failed to load resource[^|]*409 \(Conflict\)|engine 409:/;
-  const consoleErrors = report.consoleErrors.filter((line) => !noise.test(line));
+  const consoleErrors = report.consoleErrors.filter(
+    (line, at) => !(at >= beforeCanvas && noise.test(line)),
+  );
   check(
     "no console errors during the walk",
     consoleErrors.length === 0 && report.pageErrors.length === 0,

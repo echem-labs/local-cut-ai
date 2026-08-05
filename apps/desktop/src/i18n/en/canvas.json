@@ -68,8 +68,5 @@
     "music": "a background bed",
     "thumbnail": "a cover image"
   },
-  "chainOf": "{id} selected · showing its upstream and downstream chain",
-  "panHint": "Ctrl+wheel zooms · drag empty space to pan",
-  "thumbAlt": "current render of {id}",
   "fit": "Fit"
 }

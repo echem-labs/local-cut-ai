@@ -155,6 +155,26 @@ describe("the view transform", () => {
     expect((document.querySelector(".canvas-zoom-value") as HTMLElement).textContent).toBe(zoomed);
   });
 
+  it("actually refuses the browser's own ctrl+wheel zoom", () => {
+    // React registers `wheel` on the root container as a PASSIVE listener,
+    // so preventDefault inside an onWheel handler is ignored: Chromium logs
+    // the violation as a console error and zooms the whole app underneath a
+    // canvas that is also zooming. Only the element's own listener,
+    // registered { passive: false }, can refuse it.
+    mount();
+    const surface = document.querySelector(".canvas-surface") as HTMLElement;
+    const event = new WheelEvent("wheel", {
+      deltaY: -240,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      surface.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("fits the graph to the panel", () => {
     mount();
     const surface = document.querySelector(".canvas-surface") as HTMLElement;
@@ -173,8 +193,31 @@ describe("the view transform", () => {
 describe("node content", () => {
   it("shows the artifact inside a keyframe node", () => {
     mount();
-    const thumb = within(box("s1.keyframe")).getByRole("img");
+    // Queried by class, not by role: the thumb is decorative — the node's
+    // own button already says which node this is, so naming the image would
+    // read the id twice.
+    const thumb = box("s1.keyframe").querySelector("img")!;
     expect(thumb).toHaveAttribute("src", `http://engine/p1/${"h".repeat(64)}`);
+    expect(thumb).toHaveAttribute("alt", "");
+  });
+
+  it("shows no image on a still-kind node that has not rendered yet", () => {
+    // s1.keyframe with its artifact taken away: the node is the same kind,
+    // so what decides is the artifact, not the kind.
+    mount({
+      board: {
+        ...BOARD,
+        scenes: [{ ...BOARD.scenes[0]!, keyframe: state({ node_id: "s1.keyframe" }) }],
+      },
+    });
+    expect(box("s1.keyframe").querySelector("img")).toBeNull();
+  });
+
+  it("never shows one on a kind whose artifact needs a player", () => {
+    // A clip's artifact is an mp4 and a narration's a wav — the Details
+    // panel and the storyboard are what those are for.
+    mount();
+    expect(box("s1.clip").querySelector("img")).toBeNull();
   });
 
   it("shows progress on a node that is rendering, and nothing on one that is not", () => {
@@ -205,6 +248,45 @@ describe("chain focus", () => {
     mount({ selectedNode: "s1.clip", select });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(select).toHaveBeenCalledWith(null);
+  });
+
+  it("clears it on a click on empty space, which is where Escape's hand is not", () => {
+    const select = vi.fn();
+    mount({ selectedNode: "s1.clip", select });
+    const surface = document.querySelector(".canvas-surface") as HTMLElement;
+
+    fireEvent.pointerDown(surface, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(surface, { button: 0, clientX: 10, clientY: 10 });
+
+    expect(select).toHaveBeenCalledWith(null);
+  });
+
+  it("keeps it through a pan, which starts with the same press", () => {
+    // Drag-to-pan and click-to-clear are one gesture until the pointer
+    // moves. Clearing at the end of a pan would make the canvas unusable
+    // with a mouse: every drag would drop the focus being read.
+    const select = vi.fn();
+    mount({ selectedNode: "s1.clip", select });
+    const surface = document.querySelector(".canvas-surface") as HTMLElement;
+
+    fireEvent.pointerDown(surface, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(surface, { clientX: 90, clientY: 40 });
+    fireEvent.pointerUp(surface, { button: 0, clientX: 90, clientY: 40 });
+
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("leaves the selection alone when a press lands on a node", () => {
+    // The node's own button owns that click; the surface must not clear the
+    // selection out from under it.
+    const select = vi.fn();
+    mount({ selectedNode: "s1.clip", select });
+    const surface = document.querySelector(".canvas-surface") as HTMLElement;
+
+    fireEvent.pointerDown(box("music"), { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(surface, { button: 0, clientX: 10, clientY: 10 });
+
+    expect(select).not.toHaveBeenCalledWith(null);
   });
 });
 
@@ -257,6 +339,29 @@ describe("add node", () => {
     fireEvent.click(screen.getByText(t("canvas.addNode")));
     fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(t("canvas.kinds.music")) }));
     expect(addNode).toHaveBeenCalledWith("music");
+  });
+
+  it("closes on a press outside it, like every other menu in the app", () => {
+    mount();
+    fireEvent.click(screen.getByText(t("canvas.addNode")));
+    expect(screen.getAllByRole("menuitem")).toHaveLength(5);
+
+    fireEvent.mouseDown(document.querySelector(".canvas-surface") as HTMLElement);
+
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  });
+
+  it("closes on Escape, and lets the selection alone while it does", () => {
+    // Two things answered one key: the menu stayed open and the selection —
+    // the thing Escape was NOT aimed at — was what went.
+    const select = vi.fn();
+    mount({ selectedNode: "s1.clip", select });
+    fireEvent.click(screen.getByText(t("canvas.addNode")));
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    expect(select).not.toHaveBeenCalled();
   });
 
   it("reports a refusal in the bar instead of silently doing nothing", async () => {
