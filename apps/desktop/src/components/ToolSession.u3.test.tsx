@@ -75,11 +75,61 @@ describe("the recipe card", () => {
     expect(screen.getByText("16:9")).toBeInTheDocument();
   });
 
-  it("labels voiceover input as text, not prompt", () => {
-    mountSession("voiceover", node("voiceover", { params: { text: "Hello there", voice: "deep" } }));
+  it("labels voiceover input as text, and hands the done text to the composer", () => {
+    const { container } = mountSession(
+      "voiceover",
+      node("voiceover", { params: { text: "Hello there", voice: "deep" } }),
+    );
     expect(screen.getByText("Text")).toBeInTheDocument();
-    expect(screen.getByText("Hello there")).toBeInTheDocument();
     expect(screen.getByText("deep")).toBeInTheDocument();
+    // Done session: the composer is the text's home — the card keeps the
+    // chips, not a second copy of the words.
+    expect(container.querySelector(".session-recipe p")).toBeNull();
+    expect(
+      (screen.getByLabelText("Edit this session's prompt") as HTMLTextAreaElement).value,
+    ).toBe("Hello there");
+  });
+
+  it("does not repeat the prompt the page title already is", () => {
+    // Tool projects are titled by their own ask — the card keeps the
+    // chips but not a second copy of the h1's text.
+    const { container } = mountSession(
+      "image",
+      node("image", { params: { prompt: "T", aspect: "16:9" } }),
+    );
+    expect(container.querySelector(".session-recipe p")).toBeNull();
+    expect(screen.getByText("16:9")).toBeInTheDocument();
+  });
+});
+
+describe("the composer", () => {
+  it("holds the recipe as an editable working copy and re-renders the edit", async () => {
+    const refineTool = vi.fn().mockResolvedValue(null);
+    mountSession(
+      "music",
+      node("music", { params: { brief: "lofi beat" } }),
+      { refineTool },
+    );
+    const box = screen.getByLabelText("Edit this session's prompt") as HTMLTextAreaElement;
+    expect(box.value).toBe("lofi beat");
+    // Unchanged text is not an update.
+    const button = screen.getByText("Update & re-render") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "lofi beat, warmer keys" } });
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    await vi.waitFor(() =>
+      expect(refineTool).toHaveBeenCalledWith("music", "brief", "lofi beat, warmer keys"),
+    );
+  });
+
+  it("keeps the LLM enhance flow for scripts", () => {
+    mountSession("script", node("script", { params: { prompt: "T" } }));
+    expect(
+      screen.getByLabelText("Feedback for the script rewrite"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Update & re-render")).toBeNull();
   });
 });
 

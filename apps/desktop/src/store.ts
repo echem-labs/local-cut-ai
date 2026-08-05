@@ -278,6 +278,13 @@ interface AppState {
   promote: () => Promise<void>;
   /** Rewrite the current project's script from user feedback. */
   enhance: (notes: string) => Promise<void>;
+  /** Drop a shown action error — e.g. when the surface that earned it
+   * (a tool panel) is being swapped for another. */
+  dismissActionError: () => void;
+  /** The session composer's "update & re-render": rewrite the tool node's
+   * input field (prompt / text / brief). The /patch re-plan marks the node
+   * dirty and queues the re-render — no second call. */
+  refineTool: (nodeId: string, key: string, value: string) => Promise<string | null>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** The Story Graph behind the board, for the flowchart view. Null until
@@ -499,8 +506,13 @@ const terminalDownloads = new Set<string>();
 // holds still. Never true outside a rig-driven dev run.
 let seedFrozen = false;
 
-const messageOf = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
+const messageOf = (err: unknown): string => {
+  // fetch's network-level failure is a TypeError whose message ("Failed to
+  // fetch") names neither the engine nor a next step — say what it means
+  // here, the one place every action's error passes through.
+  if (err instanceof TypeError) return t("errors.engineUnreachable", { detail: err.message });
+  return err instanceof Error ? err.message : String(err);
+};
 
 // Drop all per-engine module state — pending edits, download bookkeeping —
 // when the engine itself changes (pair/unpair). Otherwise the old engine's
@@ -1277,6 +1289,22 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         console.warn("enhance failed:", err);
         set({ actionError: { scope: "enhance", message: messageOf(err) } });
+      }
+    },
+
+    dismissActionError: () => set({ actionError: null }),
+
+    refineTool: async (nodeId, key, value) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.patch(currentProject.id, [
+          { op: "set_params", node_id: nodeId, params: { [key]: value } },
+        ]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
       }
     },
 
