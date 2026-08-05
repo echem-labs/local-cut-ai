@@ -262,14 +262,17 @@ export function Home() {
   };
 
   const real = projects.filter((project) => !isToolSession(project));
-  // The Continue shelf: four, most recently touched first. Not a browser —
-  // that is the Library, one click away at the end of this row.
+  // The Continue shelf: four, most recently touched first — videos AND tool
+  // outputs. A one-off output is still work you might want back, and a
+  // session whose tab you closed had no route home but the Library. Not a
+  // browser, though: that is the Library, one click away at the end of this
+  // row.
   const recent = useMemo(
     () =>
-      [...real]
+      [...projects]
         .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at))
         .slice(0, 4),
-    [real],
+    [projects],
   );
   // Setup hands over mid-download (FR1). The rows are the wizard's own; the
   // bytes are what the engine is still moving for THIS pipeline, so a model
