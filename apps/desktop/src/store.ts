@@ -119,6 +119,13 @@ export interface SeedPatch {
    * it, and `freeze` keeps refreshBoard from writing the truth back. */
   board?: Board;
   jobs?: Job[];
+  /** The flowchart's graph and its selection (U4). The canvas is the one
+   * surface whose entire geometry is a function of the document rather than
+   * of the window, so its reference frame needs the exact graph posed — a
+   * real project's graph is whatever the engine planned that day, and the
+   * mock cannot be drawn against "whatever". */
+  graph?: StoryGraph;
+  selectedNode?: string | null;
   freeze?: boolean;
 }
 
@@ -1437,7 +1444,10 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshGraph: async () => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      // Frozen like the board: the canvas mounts and asks for the graph, so
+      // without this the posed reference graph is replaced by the engine's
+      // own between the seed and the shutter.
+      if (!client || !currentProject || seedFrozen) return;
       const projectId = currentProject.id;
       const generation = ++graphGen;
       try {
@@ -2137,6 +2147,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.openProjects !== undefined) next.openProjects = patch.openProjects;
     if (patch.board !== undefined) next.board = patch.board;
     if (patch.jobs !== undefined) next.jobs = patch.jobs;
+    if (patch.graph !== undefined) next.graph = patch.graph;
+    if (patch.selectedNode !== undefined) next.selectedNode = patch.selectedNode;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }
