@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { nextNodeId } from "./lib/graphIds";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -297,6 +298,10 @@ interface AppState {
   /** Free an input port. The node stays; only the edge goes. */
   disconnectPort: (dst: string, port: string) => Promise<string | null>;
   removeNode: (nodeId: string) => Promise<string | null>;
+  /** Add an unwired node of `kind` and select it. The id is generated
+   * against the live graph; params, seed and model are left at their
+   * defaults for the inspector to fill in. */
+  addNode: (kind: string) => Promise<string | null>;
   /** Re-render a node. With `seed`, a reroll pinned to that seed (one
    * atomic call — RegenerateBody.seed); without, the engine bumps it. */
   regenerate: (nodeId: string, seed?: number) => Promise<void>;
@@ -1442,6 +1447,36 @@ export const useApp = create<AppState>((set, get) => {
     connectNodes: async (src, dst, port) => patchGraph([{ op: "connect", node_id: dst, src, port }]),
 
     disconnectPort: async (dst, port) => patchGraph([{ op: "disconnect", node_id: dst, port }]),
+
+    addNode: async (kind) => {
+      // The id is computed from the graph in hand rather than asked of the
+      // engine: `add_node` refuses a collision, and a refusal is a better
+      // failure than a second round trip on every add.
+      const id = nextNodeId(get().graph, kind);
+      const error = await patchGraph([
+        {
+          op: "add_node",
+          node_id: id,
+          // Every field the engine's Node model carries, at its default.
+          // `pinned`/`frozen_hash` are server-owned — patch.py zeroes them
+          // whatever a client sends — but sending the model's own shape is
+          // what keeps this call honest about what an added node IS.
+          node: {
+            id,
+            kind,
+            params: {},
+            seed: 0,
+            model: null,
+            pinned: false,
+            frozen_hash: null,
+          },
+        },
+      ]);
+      // Only on success: selecting a node the graph never received would
+      // open Details on nothing.
+      if (!error) set({ selectedNode: id });
+      return error;
+    },
 
     removeNode: async (nodeId) => {
       const error = await patchGraph([{ op: "remove_node", node_id: nodeId }]);

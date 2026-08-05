@@ -5209,14 +5209,111 @@ button.link:hover {
 
 .canvas-hint {
   color: var(--text-secondary);
+  /* Takes the slack between the search box and the right-hand controls, so
+   * the zoom cluster and Add node keep their place whether or not there is
+   * something to say. */
+  margin-left: auto;
+  text-align: right;
+}
+
+/* ---- the bar's controls: find, zoom, add ---- */
+.canvas-search {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  min-height: 24px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+}
+
+.canvas-search:focus-within {
+  border-color: var(--accent);
+}
+
+.canvas-search-input {
+  width: 96px;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.canvas-search-count {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.canvas-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   margin-left: auto;
 }
 
-.canvas-bar .panel-help {
-  margin-left: auto;
-}
-.canvas-hint ~ .panel-help {
+/* `margin-left: auto` on the hint already pushed the row; a second one here
+   would eat the gap between them. */
+.canvas-hint ~ .canvas-zoom {
   margin-left: var(--space-2);
+}
+
+.canvas-zoom button {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.canvas-zoom button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hi);
+}
+
+.canvas-zoom-value {
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.canvas-add {
+  position: relative;
+}
+
+.canvas-add .btn-ghost {
+  min-height: 24px;
+  padding: 0 var(--space-2);
+  font-size: 11px;
+}
+
+.canvas-add .menu-pop {
+  top: calc(100% + var(--space-1));
+  right: 0;
+  width: 200px;
+}
+
+.canvas-add .menu-pop button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.canvas-add .menu-pop small {
+  color: var(--text-tertiary);
+}
+
+.canvas-bar .panel-help {
+  margin-left: var(--space-1);
 }
 
 .canvas-surface {
@@ -5228,8 +5325,15 @@ button.link:hover {
   user-select: none;
 }
 
+.canvas-surface.panning {
+  cursor: grabbing;
+}
+
 .canvas-stage {
   position: relative;
+  /* Sized in graph units and scaled by the view transform; the scale is set
+     inline (it is state), the origin corner is not negotiable. */
+  transform-origin: 0 0;
 }
 
 .canvas-wires {
@@ -5261,17 +5365,36 @@ button.link:hover {
  * is hidden from assistive technology (see NodeCanvas). */
 .canvas-node {
   position: absolute;
-  border-radius: var(--radius-2, 8px);
+  /* --radius-2 never existed: the fallback was doing all the work, which is
+     why a node's corner never matched the cards beside it. */
+  border-radius: var(--radius-m);
+  transition:
+    opacity var(--motion-fast),
+    filter var(--motion-fast);
+}
+
+/* Chain focus: outside the selected node's cone. Dimmed, never hidden — the
+   graph's shape is the thing being explained, so the rest has to stay
+   readable enough to be the context it is providing. */
+.canvas-node.dimmed {
+  opacity: 0.32;
+}
+
+/* A search hit. Outline rather than fill: the node's status colour is
+   already carrying meaning on the same border. */
+.canvas-node.match .canvas-node-body {
+  box-shadow: 0 0 0 2px var(--accent-muted), 0 0 0 1px var(--accent) inset;
 }
 
 .canvas-node-body {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
+  align-items: center;
+  gap: var(--space-2);
   width: 100%;
   height: 100%;
   padding: 0 var(--space-3);
+  overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: inherit;
@@ -5292,6 +5415,45 @@ button.link:hover {
 .canvas-node.selected .canvas-node-body {
   border-color: var(--accent);
   box-shadow: var(--accent-shadow);
+}
+
+/* The node's own render, when it is a still: a strip down the leading edge
+   of the box, so the text keeps its position whether or not there is one. */
+.canvas-node-thumb {
+  flex-shrink: 0;
+  width: 56px;
+  height: calc(100% - 12px);
+  object-fit: cover;
+  border-radius: var(--radius-s);
+  background: var(--surface-3);
+}
+
+.canvas-node-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Live progress: the percentage in the corner, the bar along the bottom
+   edge — the same pair the scene card and the queue tray use. */
+.canvas-node-pct {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.canvas-node-bar {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  transition: width var(--motion-slow);
 }
 
 .canvas-node-kind {
