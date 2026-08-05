@@ -143,7 +143,19 @@ export class EngineManager {
     // left over from following the remote-engine docs would put this app's
     // PRIVATE engine on the LAN — while the shell, which only ever dials
     // 127.0.0.1, reports it as never becoming healthy.
-    const env = { ...process.env, LOCALCUT_TOKEN: token, LOCALCUT_HOST: "127.0.0.1" };
+    // Dev only: the renderer loads from vite's http origin, where Chromium
+    // preflights every token-carrying request — an engine with no CORS
+    // surface fails all of them while the preflight-exempt WebSocket
+    // connects, which reads as "engine up, every list broken". Name that
+    // one origin so the engine answers the preflight; packaged builds load
+    // from file:// and never set this.
+    const devUrl = process.env.VITE_DEV_SERVER_URL;
+    const env = {
+      ...process.env,
+      LOCALCUT_TOKEN: token,
+      LOCALCUT_HOST: "127.0.0.1",
+      ...(devUrl ? { LOCALCUT_ALLOW_ORIGIN: new URL(devUrl).origin } : {}),
+    };
     const args = ["serve", "--port", port, "--backend", backend];
     if (custom) {
       // Quote-aware: an interpreter or engine path with a space in it is the
