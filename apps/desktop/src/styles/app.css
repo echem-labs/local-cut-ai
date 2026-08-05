@@ -3448,10 +3448,26 @@ button.link:hover {
   user-select: text;
 }
 
-/* The run's inputs read as provenance in the status row, next to the
-   model and wall time — see ToolSession's details list. */
+/* The run's inputs read as badges in the status row — see ToolSession's
+   details list. */
 .tool-session .tool-status .badge {
   flex-shrink: 0;
+}
+
+/* The render's provenance (model, time, seed) trails the inputs as one
+   muted group, dot-separated so three short facts read as a sentence
+   rather than three loose words. */
+.tool-status .status-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-1);
+}
+
+.tool-status .status-meta .tip-wrap + .tip-wrap::before {
+  content: "·";
+  color: var(--text-tertiary);
+  margin-right: var(--space-2);
 }
 
 /* waveform: the wave IS the player — one toggle, the engine-computed bars
