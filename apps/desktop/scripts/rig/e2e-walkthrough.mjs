@@ -201,8 +201,10 @@ try {
       .then(() => true)
       .catch(() => false);
     const shape = await page.evaluate(() => ({
-      recipe: !!document.querySelector(".session-recipe"),
-      recipeChips: document.querySelectorAll(".session-recipe .badge").length,
+      // The run's inputs read from the status row (the chip-only recipe
+      // card retired in the 2026-08-05 feedback round).
+      statusChips: document.querySelectorAll(".tool-status .badge").length,
+      composer: !!document.querySelector(".tool-composer.prompt-box"),
       promote: [...document.querySelectorAll(".tool-actions button")].some((button) =>
         button.textContent.includes("Turn into a video"),
       ),
@@ -217,8 +219,8 @@ try {
   );
   check("the script session renders its table", session.table === true);
   check(
-    "the session page carries the recipe card and the promote action",
-    session.recipe && session.recipeChips >= 2 && session.promote,
+    "the session page carries the input chips, the composer and the promote action",
+    session.statusChips >= 2 && session.composer && session.promote,
     JSON.stringify(session),
   );
   await shoot("02c-script-session.png");

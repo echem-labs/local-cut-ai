@@ -33,8 +33,6 @@
   "refineAria": "Edit this session's prompt",
   "updateRerender": "Update & re-render",
   "updating": "Updating…",
-  "modelLine": "Model: {model}",
-  "changeModel": "Change model…",
   "wavePlayAria": "Play",
   "wavePauseAria": "Pause",
   "becameVideo_one": "Turned into a video:",
