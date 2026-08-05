@@ -1293,26 +1293,38 @@ button.link:hover {
   transform: scale(1.04);
 }
 
-/* thumb chips share the project screen's .dur-badge recipe */
+/* Thumb chips: glass over whatever is behind them — art on one tile, a
+   flat placeholder on the next — so they read as one family rather than
+   as black boxes pasted on a dark panel. Chromium-only app, so the blur
+   is safe. Pill radius, like every other label in the app. */
 .project-tile .tile-dur,
 .project-tile .tile-tool {
   position: absolute;
-  font-family: var(--font-mono);
   font-size: var(--text-2xs);
-  background: rgba(14, 15, 18, 0.75);
-  color: #c8ccd6;
-  padding: 1px var(--space-2);
-  border-radius: var(--radius-xs);
+  line-height: 16px; /* rhythm anchor: a 16px chip either way */
+  background: rgba(14, 15, 18, 0.62);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #d5d9e2;
+  padding: 0 var(--space-2);
+  border-radius: 999px;
 }
 
 .project-tile .tile-dur {
   right: var(--space-2);
   bottom: var(--space-2);
+  /* A timecode IS tabular data — the one place the mono face belongs. */
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
+/* The kind is a word, not a measurement: the UI face, with the tracking
+   the app's other small-caps labels carry. */
 .project-tile .tile-tool {
   left: var(--space-2);
   top: var(--space-2);
+  font-weight: 500;
+  letter-spacing: 0.04em;
   text-transform: capitalize;
 }
 
@@ -1622,16 +1634,21 @@ button.link:hover {
 }
 
 /* duration badge — every rendered thumb carries its length, mono */
+/* The scene card's timecode — same glass chip the tiles wear. */
 .dur-badge {
   position: absolute;
   right: var(--space-2);
   bottom: var(--space-2);
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--text-2xs);
-  background: rgba(14, 15, 18, 0.75);
-  border-radius: var(--radius-xs);
-  padding: 1px 6px;
-  color: #c8ccd6;
+  line-height: 16px;
+  background: rgba(14, 15, 18, 0.62);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  padding: 0 var(--space-2);
+  color: #d5d9e2;
 }
 
 /* card caption: "Scene 3 · 4.3s" above the narration snippet */
