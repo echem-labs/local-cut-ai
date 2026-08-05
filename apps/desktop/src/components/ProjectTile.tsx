@@ -5,7 +5,7 @@ import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
 import type { TileStatus } from "../lib/tiles";
 import { relativeTime, shortDuration } from "../lib/time";
-import { isToolSession, TOOL_ICONS, toolKindOf } from "../lib/tools";
+import { isToolSession, TOOL_ICONS, TOOL_MEDIUM, toolKindOf, toolLabel } from "../lib/tools";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 
@@ -49,6 +49,16 @@ export function ProjectTile({
   const thumbUrl =
     project.thumb_hash && client ? client.artifactUrl(project.id, project.thumb_hash) : null;
   const ToolIcon = toolKind ? (TOOL_ICONS[toolKind] ?? Film) : null;
+  // Every tile says what it is; a video used to be the one thing on the
+  // shelf identified by its thumbnail alone. `toolLabel` for the session
+  // case so a kind made by a newer engine still names itself, and its
+  // medium falls back to motion rather than throwing on the lookup.
+  const kindTag = isToolSession(project)
+    ? {
+        label: toolLabel(project.mode.slice("tool:".length)),
+        medium: toolKind ? TOOL_MEDIUM[toolKind] : "motion",
+      }
+    : { label: t("home.tileVideo"), medium: "motion" as const };
   const meta = `${t(`home.status.${status}`)} · ${relativeTime(
     project.updated_at ?? project.created_at,
   )}`;
@@ -87,7 +97,9 @@ export function ProjectTile({
           ) : (
             <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
           )}
-          {toolKind && <span className="tile-tool">{m().tools[toolKind].label}</span>}
+          <span className="tile-tool" data-kind={kindTag.medium}>
+            {kindTag.label}
+          </span>
           {!isToolSession(project) && project.duration_s != null && project.duration_s > 0 && (
             <span className="tile-dur">{shortDuration(project.duration_s)}</span>
           )}

@@ -104,6 +104,7 @@
   ],
   "openProjectAria": "Open {title}",
   "renameAria": "Rename {title}",
+  "tileVideo": "Video",
   "tileMenuAria": "Project actions for {title}",
   "status": {
     "generating": "Generating",

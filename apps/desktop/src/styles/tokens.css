@@ -54,6 +54,21 @@
   --inset-bg: rgba(255, 255, 255, 0.015);
 }
 
+/* Medium tints for the tile kind tag — FOUR families, not one hue per
+ * tool: what a thing is made of (moving picture / text / audio / still)
+ * is the distinction worth a color, and the tag carries the exact word
+ * anyway. Deliberately clear of the reserved status hues, which appear a
+ * few pixels below in the same tile.
+ *
+ * Not themed: the tag sits on a dark scrim over the thumbnail in both
+ * themes (like the tooltip), so one set tuned for dark ground serves. */
+:root {
+  --kind-motion: #a99bff;
+  --kind-text: #7db9f0;
+  --kind-audio: #56cbb4;
+  --kind-still: #e084c8;
+}
+
 :root[data-theme="light"] {
   color-scheme: light;
 
