@@ -567,6 +567,7 @@ export function NodeCanvas() {
             aria-label={t("canvas.addNodeAria")}
             onClick={() => setAddOpen(!addOpen)}
           >
+            <Plus size={12} strokeWidth={2} aria-hidden="true" />
             {t("canvas.addNode")}
           </button>
           {addOpen && (
@@ -758,6 +759,15 @@ export function NodeCanvas() {
           </div>
         </div>
       </div>
+      {/* The legend the v3 mock puts in the corner the graph flows away
+          from: what the selection is doing to the rest of the canvas, and
+          the two gestures that have no affordance to discover them by. */}
+      <div className="canvas-legend" role="note">
+        {selectedNode && graph.nodes[selectedNode] && (
+          <b>{t("canvas.chainOf", { id: selectedNode })} ·</b>
+        )}
+        <span>{t("canvas.panHint")}</span>
+      </div>
       {pendingDelete && (
         <ConfirmDialog
           title={t("canvas.confirmDelete.title", { id: pendingDelete })}
@@ -887,11 +897,12 @@ function NodeBox(props: NodeBoxProps) {
         {status === "rendering" && (
           <>
             <span className="canvas-node-pct">{Math.round((state?.progress ?? 0) * 100)}%</span>
-            <span
-              className="canvas-node-bar"
-              style={{ width: `${Math.round((state?.progress ?? 0) * 100)}%` }}
-              aria-hidden="true"
-            />
+            <span className="canvas-node-prog" aria-hidden="true">
+              <span
+                className="canvas-node-bar"
+                style={{ width: `${Math.round((state?.progress ?? 0) * 100)}%` }}
+              />
+            </span>
           </>
         )}
       </button>

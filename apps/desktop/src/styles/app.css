@@ -5181,6 +5181,34 @@ button.link:hover {
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* The legend below floats over the surface rather than scrolling with it. */
+  position: relative;
+}
+
+/* What the canvas is doing and how to move around it, in the corner the
+   graph flows away from. The gestures have no affordance of their own —
+   ctrl+wheel and drag-to-pan are invisible until tried — and Help is a
+   different question from "what am I looking at". */
+.canvas-legend {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  display: flex;
+  gap: var(--space-1);
+  max-width: calc(100% - var(--space-6));
+  font-size: 11px;
+  color: var(--text-tertiary);
+  /* Over the surface, never in the way of it: every pointer gesture below
+     belongs to the canvas. */
+  pointer-events: none;
+}
+
+.canvas-legend b {
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .canvas-empty {
@@ -5197,14 +5225,40 @@ button.link:hover {
   text-align: center;
 }
 
+/* One line, always. The flowchart is one GROUP of the workspace, not a
+   screen — in a 1440x900 window the panel is about 630px wide, and at that
+   width the row wrapped: the counts broke in two and "Add node" broke inside
+   its own button, which pushed the whole graph down by a line. What gives
+   instead is the search field and the counts, both of which can lose width
+   without losing their meaning. */
 .canvas-bar {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-2);
+  /* A fixed height, not one the text happens to measure: the stage below
+     starts where this ends, so a one-pixel difference in a line box moves
+     every node in the graph. */
+  height: 43px;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+/* Nothing in the bar breaks a word across lines; the controls that must keep
+   their size say so, and the two that may shrink are allowed to. */
+.canvas-bar > * {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.canvas-counts {
+  /* The counts do not give way: they are the shortest thing in the row and
+     the only one that says what the graph IS. The search field is what
+     shrinks, down to its own input. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .canvas-hint {
@@ -5217,15 +5271,19 @@ button.link:hover {
 }
 
 /* ---- the bar's controls: find, zoom, add ---- */
+/* A field, not a pill: it is the one control in this bar that takes typing,
+   and the mock gives it the same corner as the boxes beside it. */
 .canvas-search {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: 0 var(--space-2);
+  min-width: 0;
+  flex-shrink: 1;
   min-height: 24px;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-s);
   color: var(--text-tertiary);
 }
 
@@ -5234,7 +5292,12 @@ button.link:hover {
 }
 
 .canvas-search-input {
-  width: 96px;
+  /* Sized so the whole row fits the panel a 1440x900 window gives the
+     flowchart (about 630px) without anything having to shrink. Node ids are
+     short and the field scrolls; a wider one only pushed the counts into an
+     ellipsis. */
+  width: 60px;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
@@ -5247,11 +5310,16 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* One segmented control, not four buttons in a row: −, the reading, + and
+   Fit are one instrument, and the mock draws them sharing a border with
+   dividers between rather than each carrying its own outline. */
 .canvas-zoom {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
   margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  overflow: hidden;
 }
 
 /* `margin-left: auto` on the hint already pushed the row; a second one here
@@ -5265,22 +5333,34 @@ button.link:hover {
   place-items: center;
   min-width: 24px;
   height: 24px;
-  padding: 0 var(--space-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s);
+  /* Square for the two icon cells; only the labelled one (Fit) pads. */
+  padding: 0;
+  border: 0;
   background: var(--surface-2);
   color: var(--text-secondary);
   font-size: 11px;
 }
 
+.canvas-zoom button:last-child {
+  padding: 0 var(--space-2);
+}
+
 .canvas-zoom button:hover {
   color: var(--text-primary);
-  border-color: var(--border-hi);
+  background: var(--surface-3);
+}
+
+/* The dividers the single border leaves out. */
+.canvas-zoom > * + * {
+  border-left: 1px solid var(--border);
 }
 
 .canvas-zoom-value {
-  min-width: 38px;
-  text-align: center;
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  height: 24px;
+  background: var(--surface-2);
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
@@ -5290,6 +5370,9 @@ button.link:hover {
 }
 
 .canvas-add .btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-height: 24px;
   padding: 0 var(--space-2);
   font-size: 11px;
@@ -5377,13 +5460,15 @@ button.link:hover {
    graph's shape is the thing being explained, so the rest has to stay
    readable enough to be the context it is providing. */
 .canvas-node.dimmed {
-  opacity: 0.32;
+  opacity: 0.38;
 }
 
-/* A search hit. Outline rather than fill: the node's status colour is
-   already carrying meaning on the same border. */
+/* A search hit. An outline OUTSIDE the box rather than a fill or a border:
+   the node's status colour is already carrying meaning on its own border,
+   and a hit has to be legible on a node that is dimmed at the same time. */
 .canvas-node.match .canvas-node-body {
-  box-shadow: 0 0 0 2px var(--accent-muted), 0 0 0 1px var(--accent) inset;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .canvas-node-body {
@@ -5421,8 +5506,11 @@ button.link:hover {
    of the box, so the text keeps its position whether or not there is one. */
 .canvas-node-thumb {
   flex-shrink: 0;
-  width: 56px;
-  height: calc(100% - 12px);
+  /* The mock's 58x38 rather than the box's full height: a keyframe is 16:9
+     and a node is nearly square, so filling the height cropped the frame to
+     a centre strip that showed neither what was in it nor that it was one. */
+  width: 58px;
+  height: 38px;
   object-fit: cover;
   border-radius: var(--radius-s);
   background: var(--surface-3);
@@ -5446,13 +5534,24 @@ button.link:hover {
   color: var(--accent);
 }
 
-.canvas-node-bar {
+/* A track, not a lone bar. Without the unfilled remainder there is nothing
+   for the filled part to be a fraction OF: 8% of a node's width reads as a
+   stray accent mark rather than as early progress. */
+.canvas-node-prog {
   position: absolute;
   left: 0;
+  right: 0;
   bottom: 0;
-  height: 2px;
+  height: 3px;
+  background: var(--surface-3);
+  border-radius: 0 0 var(--radius-m) var(--radius-m);
+  overflow: hidden;
+}
+
+.canvas-node-bar {
+  display: block;
+  height: 100%;
   background: var(--accent);
-  border-radius: 0 2px 2px 0;
   transition: width var(--motion-slow);
 }
 
