@@ -30,6 +30,12 @@ export const DURATION_BOUNDS = { min: 5, max: 1200 } as const;
 export const CLIP_MIN_S = 1.0;
 export const CLIP_MAX_S = 15.0;
 
+/** The quick clip tool's length bounds — api/app.py `ToolRequest.duration_s`.
+ * Narrower than CLIP_MAX_S on purpose: a standalone clip is one continuous
+ * I2V take, and the local models top out at short takes. Mirrored, so
+ * asserted by test_ui_contract.py like the pairs above. */
+export const TOOL_CLIP_SECONDS = { min: 1, max: 8 } as const;
+
 /** Narration speed bounds — graph/editor.py `_SPEED_MIN`/`_SPEED_MAX`. */
 export const SPEED_MIN = 0.5;
 export const SPEED_MAX = 1.5;

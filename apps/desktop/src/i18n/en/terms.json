@@ -104,11 +104,11 @@
     },
     {
       "term": "Tier",
-      "def": "LocalCut's grade for this machine's hardware, S (best) to C, from GPU memory, RAM and disk. The tier decides which models are recommended — a lower tier gets lighter picks, not fewer features."
+      "def": "LocalCut AI's grade for this machine's hardware, S (best) to C, from GPU memory, RAM and disk. The tier decides which models are recommended — a lower tier gets lighter picks, not fewer features."
     },
     {
       "term": "External model",
-      "def": "A model served outside the engine — for example a script model running in Ollama, or narration and captions running as companion processes. Nothing to download in LocalCut; the stage still runs fully on this machine."
+      "def": "A model served outside the engine — for example a script model running in Ollama, or narration and captions running as companion processes. Nothing to download in LocalCut AI; the stage still runs fully on this machine."
     },
     {
       "term": "Template",
@@ -117,6 +117,22 @@
     {
       "term": "Library",
       "def": "Everything this machine has made: videos and one-off tool outputs, filtered and searched in one place."
+    },
+    {
+      "term": "Take",
+      "def": "A recorded identity a regenerate displaced — its seed, model and params. Selecting one back is a swap, not a re-render, while its file survives."
+    },
+    {
+      "term": "Loop seam",
+      "def": "Where a music bed's end meets its start when it loops in a video. The preview plays that joint back to back."
+    },
+    {
+      "term": "Start frame",
+      "def": "Your image as a clip's source: the video animates from it instead of a generated keyframe."
+    },
+    {
+      "term": "Voice sample",
+      "def": "Audio uploaded with the consent affirmation, for cloning a speaker. Without the affirmation, audio arrives as a plain asset that cloning refuses."
     }
   ]
 }

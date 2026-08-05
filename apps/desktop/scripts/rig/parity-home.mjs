@@ -16,7 +16,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PNG } from "pngjs";
-import { evalInApp, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import {
+  RETRYABLE_EXIT,
+  evalInApp,
+  layoutTrue,
+  makeCheck,
+  shotsDir,
+  startRigTrueToScale,
+  stopRig,
+} from "./rig.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -46,7 +54,9 @@ const project = (id, mode, title, days, extra = {}) => ({
   ...extra,
 });
 
-/** The mock's shelf: four videos, then five one-off outputs. */
+/** Four videos and five one-off outputs. Home's Continue shelf takes the
+ * four most recent of the whole list, so no two stamps here may tie: a tie
+ * would leave the shelf's order up to the sort's stability. */
 const PROJECTS = [
   project("p-bee", "prompt", "How Honeybees Make Honey", 0, { duration_s: 57 }),
   project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, { duration_s: 46 }),
@@ -60,7 +70,7 @@ const PROJECTS = [
   project("t-thumb", "tool:thumbnail", "Shocked scientist, glowing honeycomb", 4, {
     tool_artifact_hash: "h2",
   }),
-  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0),
+  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0.5),
   project("t-voice", "tool:voiceover", "Calm narrator, 40 seconds", 13, {
     tool_artifact_hash: "h3",
   }),
@@ -231,13 +241,13 @@ const LOOSE = /tile-body|rail-count/;
 const TOL = 2;
 
 const checkMaskGeometry = (name, boxes) => {
-  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
-    x: mask.x + MASK_PAD,
-    y: mask.y + MASK_PAD,
-    width: mask.width - MASK_PAD * 2,
-    height: mask.height - MASK_PAD * 2,
-    taken: false,
-  }));
+  // The reference masks as drawn - pad included. The pad IS the tolerance:
+  // the property gated here is that every mask still sits over exactly the
+  // control it was drawn for (and every such control is covered), not that
+  // the mock's text engine and the app's round line boxes identically.
+  // Anything that drifts beyond the pad leaks unmasked pixels, and the
+  // pixel diff still owns that.
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({ ...mask, taken: false }));
   const problems = [];
   if (process.env.RIG_DUMP_MASKS) {
     console.log(`--- ${name} app:`, JSON.stringify(boxes));
@@ -247,19 +257,29 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        Math.abs(ref.y - box.y) <= TOL &&
-        (LOOSE.test(box.sel) || Math.abs(ref.height - box.height) <= TOL) &&
+        box.y >= ref.y - TOL &&
+        // Content-sized boxes (a status row is a model name and a wall
+        // time; a right-aligned cell grows leftward) are matched on
+        // vertical position plus horizontal overlap; design-owned boxes
+        // must sit wholly inside the mask that was drawn for them.
+        box.x < ref.x + ref.width &&
+        box.x + box.width > ref.x &&
         (LOOSE.test(box.sel) ||
-          Math.abs(ref.x - box.x) <= TOL ||
-          Math.abs(ref.x + ref.width - box.x - box.width) <= TOL),
+          (box.y + box.height <= ref.y + ref.height + TOL &&
+            // Inside the mask, or pinned to the edge the control is
+            // anchored on (a right-aligned control grows leftward past
+            // the box the mask was drawn around).
+            (box.x >= ref.x - TOL ||
+              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
     );
     if (!hit) {
       problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
       continue;
     }
     hit.taken = true;
-    if (RIGID.test(box.sel) && Math.abs(hit.width - box.width) > TOL) {
-      problems.push(`${box.sel} is ${box.width}px wide, reference ${hit.width}px`);
+    const drawnWidth = hit.width - MASK_PAD * 2; // the control the mask was drawn around
+    if (RIGID.test(box.sel) && Math.abs(drawnWidth - box.width) > TOL) {
+      problems.push(`${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`);
     }
   }
   const orphans = want.filter((ref) => !ref.taken);
@@ -277,14 +297,14 @@ const checkMaskGeometry = (name, boxes) => {
 
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-engine-"));
-const rig = await startRig({
+const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7932",
   LOCALCUT_SEED_HOOK: "1",
-  RIG_SCALE: "1",
 });
 
+let scaleHeld = true;
 try {
   // Straight past first-run: this phase's subject is what comes after it.
   await evalInApp(`
@@ -364,7 +384,11 @@ try {
       // moved the geometry of a masked region. Park it on the title bar.
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
-      await page.screenshot({ path: ${JSON.stringify(path.join(dir, `${name}.png`))} });
+      await page.screenshot({
+        path: ${JSON.stringify(path.join(dir, `${name}.png`))},
+        scale: "css",
+        clip: { x: 0, y: 0, width: ${width}, height: ${height} },
+      });
       return null;
     `);
     const boxes = await evalInApp(`
@@ -384,6 +408,9 @@ try {
       ${JSON.stringify(MASKED_AS[name] ?? [])});
     `);
     checkMaskGeometry(name, boxes);
+    // Frame-level, not just run-level: the off-scale flip strikes on a
+    // shrinking resize and every frame after it measures 1.25x wide.
+    scaleHeld &&= await layoutTrue();
   };
 
   await shoot("home");
@@ -439,11 +466,19 @@ try {
     return null;
   `);
   await shoot("library-menu");
+  // The off-scale state can strike mid-run; a run it touched is
+  // invalid, not red — the retry runner reruns it.
+  scaleHeld = await layoutTrue();
 } finally {
   await stopRig(rig);
   const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
   rmSync(profile, scrub);
   rmSync(engineData, scrub);
+}
+
+if (!scaleHeld) {
+  console.error("run went off-scale - invalid, not failed; rerunning");
+  process.exit(RETRYABLE_EXIT);
 }
 
 if (check.failures() > 0) {
