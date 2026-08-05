@@ -30,6 +30,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi import Path as PathParam
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -556,6 +557,25 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             await self.app(scope, receive, send)
 
     app.add_middleware(CloudSpendMiddleware)
+
+    # -- dev-origin CORS (opt-in, one origin) ---------------------------------
+    #
+    # The packaged renderer loads from file:// and needs no CORS surface, so
+    # by default the engine has none. The desktop dev flow serves the same
+    # renderer from vite's http origin, where Chromium preflights every
+    # token-carrying request — and with no answer the preflight-exempt
+    # WebSocket connects while every fetch dies, which reads on screen as
+    # "engine up, all lists broken". The shell names the one origin when it
+    # spawns for dev; CORS is browser policy only, the token still gates
+    # every route. Added last so it wraps the other middleware and the
+    # preflight never reaches them.
+    if config.allow_origin:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[config.allow_origin],
+            allow_methods=["*"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
 
     @app.exception_handler(CloudSpendRefused)
     async def _cloud_spend_refused(request: Request, exc: CloudSpendRefused) -> JSONResponse:
