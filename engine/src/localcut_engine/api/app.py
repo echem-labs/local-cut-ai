@@ -1231,8 +1231,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if suffix not in accepted:
             raise HTTPException(
                 status_code=422,
-                detail=f"unsupported asset type {suffix!r} — one of: "
-                f"{', '.join(sorted(accepted))}",
+                detail=f"unsupported asset type {suffix!r} — one of: {', '.join(sorted(accepted))}",
             )
         # Stream with a hard cap rather than buffering the whole body first:
         # `await request.body()` reads the entire (possibly multi-GB) request
