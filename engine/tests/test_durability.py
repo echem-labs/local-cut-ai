@@ -258,6 +258,46 @@ def test_a_state_file_that_is_not_utf8_is_refused_with_a_reason(tmp_path):
         store.load_graph(project.id)
 
 
+def _make_ansi(path):
+    """Rewrite a JSON state file the way a pre-UTF-8 build would have."""
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved["note"] = "whats new in LA — it starts with a question"
+    path.write_bytes(json.dumps(saved, ensure_ascii=False).encode("cp1252"))
+    assert bytes([0x97]) in path.read_bytes()  # the cp1252 em dash
+
+
+def test_one_undecodable_project_does_not_take_the_listing_down_with_it(tmp_path):
+    """A title is the likeliest place an em dash landed, so meta.json is the
+    likeliest file to be undecodable — and the listing is what the whole
+    library is drawn from. Refusing it hides every healthy project behind
+    the one broken one, which is the opposite of what naming the refusal was
+    for."""
+    store = ProjectStore(tmp_path / "projects")
+    fine = store.create(title="fine", graph=_seed_graph())
+    broken = store.create(title="broken", graph=_seed_graph())
+    _make_ansi(store.project_dir(broken.id) / "meta.json")
+
+    listed = store.list()
+
+    assert [p.id for p in listed] == [fine.id]
+    # And the one that IS asked for by id still refuses with its reason.
+    with pytest.raises(ProjectUnreadable, match="meta.json"):
+        store.get(broken.id)
+
+
+def test_an_undecodable_sidecar_resets_instead_of_blocking_every_edit(tmp_path):
+    """history.json and takes.json are convenience records over state that
+    lives in the graph, which is why an unreadable one resets to empty. An
+    undecodable one has to reset for the same reason: refusing it would take
+    patching the project down with it, over a file nothing depends on."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph())
+    store.save_history(project.id, store.load_history(project.id))
+    _make_ansi(store.project_dir(project.id) / "history.json")
+
+    assert store.load_history(project.id).undo == []
+
+
 def test_a_project_with_no_version_is_a_pre_versioning_project(tmp_path):
     """Absent is version 1, not "from the future" — existing projects must
     keep opening."""

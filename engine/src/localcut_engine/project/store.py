@@ -290,8 +290,12 @@ class ProjectStore:
         for meta in self.root.glob("*.lcut/meta.json"):
             try:
                 projects.append(Project.model_validate_json(_read_text_retry(meta)))
-            except (ValidationError, OSError):
+            except (ValidationError, OSError, ProjectUnreadable):
                 # One damaged project must not take the listing down with it.
+                # ProjectUnreadable belongs here for exactly that reason: a
+                # title written in the old ANSI encoding is the likeliest
+                # meta.json to be undecodable, and refusing the whole listing
+                # over one of them hides every healthy project behind it.
                 logger.warning("skipping unreadable project meta: %s", meta)
         return sorted(projects, key=lambda p: p.created_at, reverse=True)
 
@@ -455,7 +459,11 @@ class ProjectStore:
             return model_cls()
         try:
             raw = json.loads(_read_text_retry(path))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, ProjectUnreadable):
+            # Undecodable counts as unreadable, and the sentence above is why
+            # it must: refusing history.json takes patching down with it, for
+            # a file whose whole content is a convenience record over state
+            # that lives in the graph.
             logger.warning("resetting unreadable %s: %s", what, path)
             return model_cls()
         version = raw.get("version", 1) if isinstance(raw, dict) else 1
