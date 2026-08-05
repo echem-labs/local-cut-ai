@@ -238,6 +238,23 @@ describe("chain focus", () => {
     expect(box("music").className).toMatch(/dimmed/);
   });
 
+  it("says what the selection is doing, and how to move around", () => {
+    // The two gestures have no affordance to discover them by — ctrl+wheel
+    // and drag-to-pan are invisible until tried — so the mock puts them in
+    // the corner the graph flows away from.
+    mount({ selectedNode: "s1.clip" });
+    const legend = document.querySelector(".canvas-legend")!;
+    expect(legend.textContent).toContain(t("canvas.chainOf", { id: "s1.clip" }));
+    expect(legend.textContent).toContain(t("canvas.panHint"));
+  });
+
+  it("drops the chain line when there is no selection to describe", () => {
+    mount();
+    const legend = document.querySelector(".canvas-legend")!;
+    expect(legend.querySelector("b")).toBeNull();
+    expect(legend.textContent).toContain(t("canvas.panHint"));
+  });
+
   it("dims nothing when nothing is selected", () => {
     mount();
     expect(document.querySelectorAll(".canvas-node.dimmed")).toHaveLength(0);
