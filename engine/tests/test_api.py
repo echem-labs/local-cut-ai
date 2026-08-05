@@ -843,16 +843,40 @@ async def test_asset_upload_and_i2v_conditioning(client):
     ).status_code == 422
 
 
-async def test_voice_samples_are_consent_gated(client):
-    """Audio assets exist only behind an explicit consent affirmation — the
-    upload route is the single door a sample can enter through."""
+async def test_voice_cloning_is_consent_gated_but_plain_audio_is_not(client):
+    """The consent affirmation gates the voice_consent STAMP, not the door:
+    audio uploaded without it lands as a plain audio asset (a music bed, a
+    session output added to another project) that the voice_ref chokepoint
+    then refuses to wire. Only a consented upload can ever reach cloning."""
     created = await client.post("/projects", json={"prompt": "voice test"})
     pid = created.json()["id"]
 
-    refused = await client.post(f"/projects/{pid}/assets?filename=me.wav", content=b"RIFFdata")
-    assert refused.status_code == 403
+    # Without the affirmation: accepted, but NOT a voice sample.
+    plain = await client.post(f"/projects/{pid}/assets?filename=bed.wav", content=b"RIFFbed")
+    assert plain.status_code == 200
+    plain_id = plain.json()["node_id"]
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert "voice_consent" not in graph["nodes"][plain_id]["params"]
+
+    # The chokepoint holds: the unstamped asset cannot feed voice_ref.
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+    refused = await client.post(
+        f"/projects/{pid}/patch",
+        json={
+            "ops": [
+                {"op": "connect", "node_id": "s1.narration", "src": plain_id, "port": "voice_ref"}
+            ]
+        },
+    )
+    assert refused.status_code == 422
     assert "consent" in refused.json()["detail"]
 
+    # With the affirmation: stamped, and the same wire is accepted.
     allowed = await client.post(
         f"/projects/{pid}/assets?filename=me.wav&consent=true", content=b"RIFFdata"
     )
@@ -860,10 +884,78 @@ async def test_voice_samples_are_consent_gated(client):
     node_id = allowed.json()["node_id"]
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert graph["nodes"][node_id]["params"]["voice_consent"] is True
+    wired = await client.post(
+        f"/projects/{pid}/patch",
+        json={
+            "ops": [
+                {"op": "connect", "node_id": "s1.narration", "src": node_id, "port": "voice_ref"}
+            ]
+        },
+    )
+    assert wired.status_code == 200
     # Images never carry the flag (and never need consent).
     image = await client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
     graph = (await client.get(f"/projects/{pid}/graph")).json()
     assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]
+
+
+async def test_video_assets_are_accepted(client):
+    """A clip artifact added to another project arrives as an .mp4 — the
+    assets door takes it like any image: a plain asset node, born cached,
+    no consent question to ask."""
+    created = await client.post("/projects", json={"prompt": "video asset test"})
+    pid = created.json()["id"]
+
+    uploaded = await client.post(
+        f"/projects/{pid}/assets?filename=take.mp4", content=b"\x00\x00\x00 ftypisom"
+    )
+    assert uploaded.status_code == 200
+    asset = uploaded.json()
+    board = (await client.get(f"/projects/{pid}")).json()["board"]
+    assert board["aux"][asset["node_id"]]["artifact_hash"] == asset["hash"]
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert "voice_consent" not in graph["nodes"][asset["node_id"]]["params"]
+
+
+async def test_dev_origin_preflight_is_answered_only_when_configured(tmp_path):
+    """The desktop dev flow serves the renderer from vite's http origin,
+    where Chromium preflights every token-carrying request — an engine
+    with no CORS surface fails ALL of them while the (preflight-exempt)
+    WebSocket connects fine, which reads as "engine up, every list dead".
+    `allow_origin` answers the preflight for exactly the one origin the
+    shell names; by default there is no CORS surface at all."""
+    preflight_headers = {
+        "Origin": "http://127.0.0.1:5173",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+    }
+
+    async def preflight(config):
+        app = create_app(config)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            transport,
+            httpx.AsyncClient(transport=transport, base_url="http://engine") as http,
+        ):
+            async with app.router.lifespan_context(app):
+                return await http.options("/projects", headers=preflight_headers)
+
+    allowed = await preflight(
+        EngineConfig(
+            data_dir=tmp_path / "dev",
+            token="test-token",
+            backend="mock",
+            allow_origin="http://127.0.0.1:5173",
+        )
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert "authorization" in allowed.headers["access-control-allow-headers"].lower()
+
+    default = await preflight(
+        EngineConfig(data_dir=tmp_path / "plain", token="test-token", backend="mock")
+    )
+    assert "access-control-allow-origin" not in default.headers
 
 
 async def test_edit_dry_run_previews_without_committing(client, monkeypatch):

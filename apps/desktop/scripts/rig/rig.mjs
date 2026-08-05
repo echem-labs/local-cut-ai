@@ -121,6 +121,77 @@ export async function stopRig(child) {
   await waitForPortFree(enginePort);
 }
 
+/** startRig for the pixel gates: verify the renderer's layout viewport
+ * agrees with the window bounds, and relaunch until it does.
+ *
+ * On some Windows display stacks a forced-scale-1 renderer boots with its
+ * layout viewport inflated by the OS display scale — a per-run coin toss,
+ * stable for the life of the process — and every box it lays out from then
+ * on is 1.25x off the reference while innerWidth still reads true. The
+ * walk tolerates it (boundsAgree is unit-aware, and behavior is its
+ * subject); a pixel gate cannot. Detected at boot, the cure is a fresh
+ * process. On a healthy display stack this costs one extra eval. */
+export async function startRigTrueToScale(extraEnv = {}) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const child = await startRig(extraEnv);
+    try {
+      await evalInApp(
+        "await page.waitForSelector('.setup, .home', { timeout: 30000 }); return null;",
+      );
+      // Shrink FIRST, inside the guarded boot: the off-scale flip triggers
+      // when a resize takes the window below its current size (observed:
+      // gates that only ever grow the window never flip; gates that shrink
+      // flip on the shrink and stay flipped). Starting from the app's
+      // engine-min floor means every frame resize a gate performs is a
+      // growth — the trigger never fires again for the process's life.
+      const state = await evalInApp(`
+        await app.evaluate(({ BrowserWindow }) => {
+          BrowserWindow.getAllWindows()[0].setContentBounds({
+            x: 40,
+            y: 40,
+            width: 960,
+            height: 640,
+          });
+        });
+        await page.waitForTimeout(900);
+        const bounds = await app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows()[0].getContentBounds(),
+        );
+        const layout = await page.evaluate(() => document.documentElement.clientWidth);
+        return { bounds: bounds.width, layout };
+      `);
+      if (Math.abs(state.bounds - state.layout) <= 2) return child;
+      console.log(
+        `  rig booted off-scale (bounds ${state.bounds}, layout ${state.layout}) - relaunching`,
+      );
+    } catch {
+      /* fall through to relaunch */
+    }
+    await stopRig(child);
+  }
+  throw new Error("rig kept booting with an off-scale layout viewport");
+}
+
+/** True when the renderer's layout viewport agrees with the window bounds.
+ * The same off-scale state startRigTrueToScale screens at boot can strike
+ * mid-run (the coin toss re-runs on window churn); a pixel gate that sizes
+ * windows must re-ask before trusting anything it measured. */
+export async function layoutTrue() {
+  const state = await evalInApp(`
+    const bounds = await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].getContentBounds(),
+    );
+    const layout = await page.evaluate(() => document.documentElement.clientWidth);
+    return { bounds: bounds.width, layout };
+  `);
+  return Math.abs(state.bounds - state.layout) <= 2;
+}
+
+/** Exit code contract for the retry runner (retry.mjs): a gate that finds
+ * itself off-scale exits with this instead of failing its checks — the
+ * run is invalid, not red. */
+export const RETRYABLE_EXIT = 3;
+
 /** Assertion helper that prints PASS/FAIL lines and tracks failures. */
 export function makeCheck() {
   let failures = 0;

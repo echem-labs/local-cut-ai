@@ -45,6 +45,22 @@ export const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
   clip: Film,
 };
 
+/** What a kind is MADE OF — the tile tag's tint groups by this rather than
+ * giving six tools six hues. The tag carries the exact word, so the color
+ * is there to group, not to identify. A video project is `motion` too: a
+ * clip and a finished video are the same medium. Typed as a full Record so
+ * a new kind must declare its medium. */
+export type KindMedium = "motion" | "text" | "audio" | "still";
+
+export const TOOL_MEDIUM: Record<ToolKind, KindMedium> = {
+  script: "text",
+  thumbnail: "still",
+  voiceover: "audio",
+  image: "still",
+  music: "audio",
+  clip: "motion",
+};
+
 const KNOWN_TOOLS = new Set<string>(TOOL_KINDS);
 
 /** Every `tool:` project, whether or not this build knows the kind. A session
@@ -67,3 +83,29 @@ export const toolKindOf = (project: Project): ToolKind | null => {
  * better answer than a crash and than blank. */
 export const toolLabel = (kind: string): string =>
   (m().tools as Record<string, { label: string } | undefined>)[kind]?.label ?? kind;
+
+/** The voiceover panel's preview swatches. `brief` is what travels as the
+ * `voice` param — the engine's kokoro backend resolves it by keyword — and
+ * `voice` is the speaker that brief provably picks, which is also the name
+ * of the bundled sample the swatch plays. Mirrored from kokoro.py's
+ * _VOICE_MAP, so asserted by test_ui_contract.py: a brief that stops
+ * resolving to its sample's speaker previews one voice and renders another. */
+export const VOICE_SWATCHES = [
+  { brief: "female", voice: "af_sarah" },
+  { brief: "male", voice: "am_michael" },
+  { brief: "british", voice: "bf_emma" },
+  { brief: "deep", voice: "am_onyx" },
+  { brief: "energetic", voice: "af_bella" },
+] as const;
+
+/** Motion preset chips for the clip panel — the v3 set. Keys only: the
+ * label and the phrase a chip writes into the motion field both live in
+ * i18n (home.motionPresets), because the phrase reaches the engine as
+ * prompt text and is as user-visible as any other string. */
+export const MOTION_PRESETS = ["pushIn", "orbit", "handheld", "static"] as const;
+
+/** Tone and platform chips for the script panel. Same shape as
+ * MOTION_PRESETS: keys here, copy in i18n (home.scriptPresets). A chip
+ * scaffolds the prompt — the text lands in the textarea, visible and
+ * editable, rather than as hidden request state. */
+export const SCRIPT_PRESETS = ["youtube", "shorts", "tiktok", "explainer", "casual"] as const;

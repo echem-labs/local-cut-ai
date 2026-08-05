@@ -1,5 +1,6 @@
 {
   "somethingWrong": "Something went wrong: {message}",
+  "engineUnreachable": "The engine could not be reached ({detail}) — it may still be starting, or it stopped. The status light in the sidebar shows its current state.",
   "engineLost": "connection to engine lost — reconnecting…",
   "engineUnavailable": "engine unavailable",
   "pairingFailed": "pairing failed",
