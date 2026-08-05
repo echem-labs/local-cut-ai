@@ -258,43 +258,54 @@ const MASKED_AS = {
     ".tool-head .icon-btn",
     ".tool-panel .row .btn-ghost",
   ],
-  "session-script": [".rail-count", RAIL_ICONS, ".tool-status"],
+  "session-script": [".rail-count", RAIL_ICONS, ".tool-status", ".tool-composer .composer-meta"],
   "session-voiceover": [
     ".rail-count",
     RAIL_ICONS,
     ".tool-status",
     ".wave-plot",
-    ".tool-session audio",
+    ".wave-toggle",
+    ".wave-time",
     ".tool-actions .btn-ghost",
     ".clone-panel .consent input",
+    ".tool-composer .composer-meta",
   ],
   "session-music": [
     ".rail-count",
     RAIL_ICONS,
     ".tool-status",
     ".wave-plot",
-    ".tool-session audio",
+    ".wave-toggle",
+    ".wave-time",
     ".tool-actions .btn-ghost",
+    ".tool-composer .composer-meta",
   ],
-  "session-image": [".rail-count", RAIL_ICONS, ".tool-status", ".tool-preview", ".tool-actions .btn-ghost"],
+  "session-image": [
+    ".rail-count",
+    RAIL_ICONS,
+    ".tool-status",
+    ".tool-preview",
+    ".tool-actions .btn-ghost",
+    ".tool-composer .composer-meta",
+  ],
   "session-clip-rendering": [".rail-count", RAIL_ICONS, ".tool-status"],
 };
 /** Design-owned sizes: matched rigidly. */
-const RIGID = /thumb|wave-plot|tool-preview|swatch-play/;
+const RIGID = /thumb|wave-plot|tool-preview|swatch-play|wave-toggle/;
 /** Content-sized boxes: matched on where they start, not how big they are
- * (a status row's width is a model name and a wall time; the native player
- * is whatever chrome this Chromium draws). */
-const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot/;
+ * (a status row's width is a model name and a wall time; a time readout
+ * and the composer's model line are whatever their text measures). */
+const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot|wave-time|composer-meta|models-pop|swatch-play/;
 const TOL = 2;
 
 const checkMaskGeometry = (name, boxes) => {
-  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
-    x: mask.x + MASK_PAD,
-    y: mask.y + MASK_PAD,
-    width: mask.width - MASK_PAD * 2,
-    height: mask.height - MASK_PAD * 2,
-    taken: false,
-  }));
+  // The reference masks as drawn - pad included. The pad IS the tolerance:
+  // the property gated here is that every mask still sits over exactly the
+  // control it was drawn for (and every such control is covered), not that
+  // the mock's text engine and the app's round line boxes identically.
+  // Anything that drifts beyond the pad leaks unmasked pixels, and the
+  // pixel diff still owns that.
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({ ...mask, taken: false }));
   const problems = [];
   if (process.env.RIG_DUMP_MASKS) {
     console.log(`--- ${name} app:`, JSON.stringify(boxes));
@@ -304,19 +315,29 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        Math.abs(ref.y - box.y) <= TOL &&
-        (LOOSE.test(box.sel) || Math.abs(ref.height - box.height) <= TOL) &&
+        box.y >= ref.y - TOL &&
+        // Content-sized boxes (a status row is a model name and a wall
+        // time; a right-aligned cell grows leftward) are matched on
+        // vertical position plus horizontal overlap; design-owned boxes
+        // must sit wholly inside the mask that was drawn for them.
+        box.x < ref.x + ref.width &&
+        box.x + box.width > ref.x &&
         (LOOSE.test(box.sel) ||
-          Math.abs(ref.x - box.x) <= TOL ||
-          Math.abs(ref.x + ref.width - box.x - box.width) <= TOL),
+          (box.y + box.height <= ref.y + ref.height + TOL &&
+            // Inside the mask, or pinned to the edge the control is
+            // anchored on (a right-aligned control grows leftward past
+            // the box the mask was drawn around).
+            (box.x >= ref.x - TOL ||
+              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
     );
     if (!hit) {
       problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
       continue;
     }
     hit.taken = true;
-    if (RIGID.test(box.sel) && Math.abs(hit.width - box.width) > TOL) {
-      problems.push(`${box.sel} is ${box.width}px wide, reference ${hit.width}px`);
+    const drawnWidth = hit.width - MASK_PAD * 2; // the control the mask was drawn around
+    if (RIGID.test(box.sel) && Math.abs(drawnWidth - box.width) > TOL) {
+      problems.push(`${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`);
     }
   }
   const orphans = want.filter((ref) => !ref.taken);

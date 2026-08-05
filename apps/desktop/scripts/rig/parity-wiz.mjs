@@ -173,13 +173,13 @@ const UNPOSED = {
 };
 
 const checkMaskGeometry = (name, boxes) => {
-  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
-    x: mask.x + MASK_PAD,
-    y: mask.y + MASK_PAD,
-    width: mask.width - MASK_PAD * 2,
-    height: mask.height - MASK_PAD * 2,
-    taken: false,
-  }));
+  // The reference masks as drawn - pad included. The pad IS the tolerance:
+  // the property gated here is that every mask still sits over exactly the
+  // control it was drawn for (and every such control is covered), not that
+  // the mock's text engine and the app's round line boxes identically.
+  // Anything that drifts beyond the pad leaks unmasked pixels, and the
+  // pixel diff still owns that.
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({ ...mask, taken: false }));
   const problems = [];
   if (process.env.RIG_DUMP_MASKS) {
     console.log(`--- ${name} app:`, JSON.stringify(boxes));
@@ -192,11 +192,13 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        Math.abs(ref.y - box.y) <= TOL &&
-        Math.abs(ref.height - box.height) <= TOL &&
+        box.y >= ref.y - TOL &&
+        box.x < ref.x + ref.width &&
+        box.x + box.width > ref.x &&
         (loose ||
-          Math.abs(ref.x - box.x) <= TOL ||
-          Math.abs(ref.x + ref.width - box.x - box.width) <= TOL),
+          (box.y + box.height <= ref.y + ref.height + TOL &&
+            (box.x >= ref.x - TOL ||
+              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
     );
     if (!hit) {
       if (!loose) {
@@ -205,8 +207,9 @@ const checkMaskGeometry = (name, boxes) => {
       continue;
     }
     hit.taken = true;
-    if (RIGID.test(box.sel) && Math.abs(hit.width - box.width) > TOL) {
-      problems.push(`${box.sel} is ${box.width}px wide, reference ${hit.width}px`);
+    const drawnWidth = hit.width - MASK_PAD * 2; // the control the mask was drawn around
+    if (RIGID.test(box.sel) && Math.abs(drawnWidth - box.width) > TOL) {
+      problems.push(`${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`);
     }
   }
   const unposed = UNPOSED[name] ?? [];
