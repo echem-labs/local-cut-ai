@@ -17,6 +17,13 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 
+// The offscreen frame inherits the PRIMARY display's scale at launch, and
+// capturePage returns physical pixels — on a 125% display the "960-wide"
+// references came out 1202 wide and poisoned every geometry downstream.
+// Offscreen rendering has no window manager to fight, so forcing 1 here is
+// deterministic on every box.
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
+
 const arg = (name, fallback = null) => {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : fallback;
@@ -52,6 +59,19 @@ const SETS = {
       ["library", "home-rail-mock.html?view=library"],
       ["library-tools", "home-rail-mock.html?view=library-tools"],
       ["library-menu", "home-rail-mock.html?view=library-menu"],
+    ],
+  },
+  session: {
+    width: 1450,
+    states: [
+      ["panel-script", "session-mock.html?view=panel-script"],
+      ["panel-voiceover", "session-mock.html?view=panel-voiceover"],
+      ["panel-clip", "session-mock.html?view=panel-clip"],
+      ["session-script", "session-mock.html?view=session-script"],
+      ["session-voiceover", "session-mock.html?view=session-voiceover"],
+      ["session-music", "session-mock.html?view=session-music"],
+      ["session-image", "session-mock.html?view=session-image"],
+      ["session-clip-rendering", "session-mock.html?view=session-clip-rendering"],
     ],
   },
 };
@@ -99,6 +119,21 @@ const MASKABLE = {
   "wiz-3": [".row .meta", ".row .check", ".primary", ".hintline"],
   "wiz-3lib": [".mrow .meta", ".mrow .check", ".mrow .badge", ".libfilter", ".primary", ".hintline"],
   "wiz-4": [".srow .st", ".overall", ".sub"],
+  /* session set (U3). Same doctrine: tiles, rail glyphs and counts as the
+     home set; plus — the status row (model name and wall time are live),
+     the wave plot and player (the bars are the artifact's real peaks and
+     the player is native browser chrome), the image preview (a generated
+     slate), and the small lucide-vs-unicode glyphs inside controls (the
+     tool-head icon and close button, the swatch play cells, the models
+     readiness dot). Geometry is checked for every one of them. */
+  "panel-script": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x"],
+  "panel-voiceover": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".swatch .play"],
+  "panel-clip": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".ghost.sf"],
+  "session-script": [".rail .item .count", ".rail .item .glyph", ".status", ".composer .models"],
+  "session-voiceover": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".clone .box", ".composer .models"],
+  "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .models"],
+  "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .models"],
+  "session-clip-rendering": [".rail .item .count", ".rail .item .glyph", ".status"],
 };
 const MASK_PAD = 6;
 
@@ -209,7 +244,19 @@ body { padding-top: 38px !important; }
 .eyebrow { letter-spacing: .1em !important; }
 `;
 
-const SNAP = SNAP_COMMON + (setName === "home" ? SNAP_HOME : "");
+/* ---- the session set's snaps: authored ON the token scale, so what it
+   needs is protection from SNAP_COMMON's wizard-shaped rules — the wizard's
+   .actions sit 24px under a form; the session's ride the column's 16px flex
+   gap. */
+const SNAP_SESSION = `
+.rail .group { margin-top: 0 !important; }
+.actions { margin-top: 0 !important; }
+`;
+
+const SNAP =
+  SNAP_COMMON +
+  (setName === "home" ? SNAP_HOME : "") +
+  (setName === "session" ? SNAP_SESSION : "");
 
 async function render(win, name, file) {
   const [base, query] = file.split("?");
@@ -227,7 +274,9 @@ async function render(win, name, file) {
   const height = await win.webContents.executeJavaScript(
     setName === "home"
       ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
-      : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
+      : setName === "session"
+        ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
+        : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
   );
   // Resize, then paint the frame fresh: an offscreen window that grows after
   // painting composites the old frame under the new one, which ghosts

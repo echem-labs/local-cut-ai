@@ -163,3 +163,28 @@ describe("the tile menu", () => {
     expect(within(tool).queryByRole("menuitem", { name: t("library.saveTemplate") })).toBeNull();
   });
 });
+
+describe("the kind tag", () => {
+  it("names every tile's kind — a video says so too", () => {
+    // The tag was tool-only, so a video tile was the one thing on the
+    // shelf identified by nothing but its thumbnail.
+    render(<Library />);
+    const tag = (id: string) =>
+      document.querySelector(`[data-project="${id}"] .tile-tool`) as HTMLElement | null;
+    expect(tag("v1")?.textContent).toBe(t("home.tileVideo"));
+    expect(tag("t1")?.textContent).toBe("Image");
+    expect(tag("t2")?.textContent).toBe("Voiceover");
+  });
+
+  it("groups the tint by medium, so the hue means something", () => {
+    // Four families, not seven arbitrary hues: moving picture, text,
+    // audio, still. A kind's WORD identifies it; the tint groups it.
+    render(<Library />);
+    const family = (id: string) =>
+      (document.querySelector(`[data-project="${id}"] .tile-tool`) as HTMLElement)?.dataset.kind;
+    expect(family("v1")).toBe("motion");
+    expect(family("t1")).toBe("still");
+    expect(family("t2")).toBe("audio");
+    expect(family("t3")).toBe("audio");
+  });
+});

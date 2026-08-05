@@ -461,7 +461,10 @@ export function Project() {
     return (
       <div className="tool-shell">
         <div className="board-header">
-          <h1>{currentProject.title}</h1>
+          {/* A tool project is titled by its own ask, so this line is
+              routinely longer than the column and ellipsizes. The native
+              tooltip (not our Tip bubble) is what can wrap a paragraph. */}
+          <h1 title={currentProject.title}>{currentProject.title}</h1>
         </div>
         {/* The script-shortfall notice lives on the tool node — without this
             the tool screen was the one place it never showed. */}
@@ -578,7 +581,7 @@ export function Project() {
             UNDER the title, so the two share a column rather than becoming
             a third item on the row. */}
         <div className="board-title">
-          <h1>{currentProject.title}</h1>
+          <h1 title={currentProject.title}>{currentProject.title}</h1>
           <PromotedFrom project={currentProject} />
         </div>
         <div className="pipeline" role="status" aria-label={t("project.progressAria")}>

@@ -2,10 +2,13 @@ import {
   ChevronRight,
   Clapperboard,
   FileText,
+  ImagePlus,
   Info,
   LayoutTemplate,
   Loader2,
+  Play,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,14 +22,30 @@ import type { Job, LlmModels, Project, ToolKind } from "../api/types";
 import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
-import { ASPECTS } from "../lib/formats";
+import { ASPECTS, TOOL_CLIP_SECONDS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
 import { readyStages, stageRows } from "../lib/stages";
 import { STYLE_PRESETS } from "../lib/styles";
 import { tileStatus } from "../lib/tiles";
-import { TOOL_ICONS, TOOL_KINDS, isToolSession } from "../lib/tools";
+import {
+  MOTION_PRESETS,
+  SCRIPT_PRESETS,
+  TOOL_ICONS,
+  TOOL_KINDS,
+  VOICE_SWATCHES,
+  isToolSession,
+} from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { useApp } from "../store";
+
+/** The bundled 2-second samples the voice swatches play. Resolved at build
+ * time by Vite; keyed by the kokoro speaker each swatch's brief picks. */
+const VOICE_SAMPLES: Record<string, string> = Object.fromEntries(
+  VOICE_SWATCHES.map((swatch) => [
+    swatch.voice,
+    new URL(`../assets/voices/${swatch.voice}.wav`, import.meta.url).href,
+  ]),
+);
 
 /* one three-step icon scale (review 4 §S10) */
 const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
@@ -64,6 +83,7 @@ export function Home() {
     openSettings,
     openLibrary,
     actionError,
+    dismissActionError,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
@@ -71,10 +91,41 @@ export function Home() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const tiles = useTileLifecycle();
 
-  const { prompt, tool, toolInput, voice, motion, scriptModel } = homeDraft;
+  const { prompt, tool, toolInput, voice, motion, scriptModel, toolAspect, toolDuration, clipSeconds } =
+    homeDraft;
   const { aspect, duration, style, mode } = defaults;
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
   const toolCopy = activeTool ? m().tools[activeTool.kind] : null;
+  // The clip's optional conditioning image. Component state, not the
+  // persisted draft: a File does not survive JSON, and a stale path
+  // silently uploading the wrong image is worse than re-picking it.
+  const [startFrame, setStartFrame] = useState<File | null>(null);
+  const startFrameRef = useRef<HTMLInputElement>(null);
+  // The one swatch audio element — starting a second sample stops the
+  // first, so two speakers never talk over each other. `swatchPlaying`
+  // mirrors it into render state so the active swatch shows a stop
+  // affordance instead of a play icon that no longer tells the truth.
+  const swatchAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [swatchPlaying, setSwatchPlaying] = useState<string | null>(null);
+  const playSwatch = (voiceId: string) => {
+    swatchAudioRef.current?.pause();
+    if (swatchPlaying === voiceId) {
+      setSwatchPlaying(null);
+      return;
+    }
+    const audio = new Audio(VOICE_SAMPLES[voiceId]);
+    swatchAudioRef.current = audio;
+    audio.addEventListener("ended", () => setSwatchPlaying(null));
+    setSwatchPlaying(voiceId);
+    // play() returns undefined in environments without media (jsdom).
+    const request = audio.play();
+    if (request)
+      void request.catch(() => {
+        /* autoplay policy or a missing device — the swatch still selects */
+        setSwatchPlaying(null);
+      });
+  };
+  useEffect(() => () => swatchAudioRef.current?.pause(), []);
 
   // The script tool's model pick — fetched when the panel opens, so the
   // list is what the LLM server has installed *now*. null = no picker
@@ -169,30 +220,59 @@ export function Home() {
     // into the prompt box after the tool closes.
     setBusy(true);
     const effectiveVoice = voice.trim() || defaults.voice.trim();
+    // A number input does not stop a typed value from leaving its bounds.
+    const seconds = Math.min(TOOL_CLIP_SECONDS.max, Math.max(TOOL_CLIP_SECONDS.min, clipSeconds));
     try {
-      await createTool(tool, {
-        ...(tool === "voiceover"
-          ? { text: toolInput.trim(), ...(effectiveVoice ? { voice: effectiveVoice } : {}) }
-          : { prompt: toolInput.trim() }),
-        ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
-        // Only an explicit pick travels — "" lets the engine default apply.
-        ...(tool === "script" && scriptModel ? { model: scriptModel } : {}),
-      });
-      if (!useApp.getState().actionError) setHomeDraft({ toolInput: "" });
+      await createTool(
+        tool,
+        {
+          ...(tool === "voiceover"
+            ? { text: toolInput.trim(), ...(effectiveVoice ? { voice: effectiveVoice } : {}) }
+            : { prompt: toolInput.trim() }),
+          ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
+          ...(tool === "clip" ? { duration_s: seconds, aspect: toolAspect } : {}),
+          ...(tool === "thumbnail" || tool === "image" ? { aspect: toolAspect } : {}),
+          ...(tool === "script"
+            ? { target_duration_s: toolDuration, aspect: toolAspect }
+            : {}),
+          ...(tool === "music" ? { target_duration_s: toolDuration } : {}),
+          // Only an explicit pick travels — "" lets the engine default apply.
+          ...(tool === "script" && scriptModel ? { model: scriptModel } : {}),
+        },
+        tool === "clip" ? (startFrame ?? undefined) : undefined,
+      );
+      if (!useApp.getState().actionError) {
+        setHomeDraft({ toolInput: "" });
+        setStartFrame(null);
+      }
     } finally {
       setBusy(false);
     }
   };
 
+  /** A preset chip writes into the visible field rather than hiding state
+   * in the request: motion replaces (chips are alternatives), script
+   * appends (platform + tone stack). */
+  const applyMotionPreset = (key: (typeof MOTION_PRESETS)[number]) =>
+    setHomeDraft({ motion: m().home.motionPresets[key].text });
+  const applyScriptPreset = (key: (typeof SCRIPT_PRESETS)[number]) => {
+    const text = m().home.scriptPresets[key].text;
+    if (toolInput.includes(text)) return;
+    setHomeDraft({ toolInput: toolInput.trim() ? `${toolInput.trimEnd()}\n${text}` : text });
+  };
+
   const real = projects.filter((project) => !isToolSession(project));
-  // The Continue shelf: four, most recently touched first. Not a browser —
-  // that is the Library, one click away at the end of this row.
+  // The Continue shelf: four, most recently touched first — videos AND tool
+  // outputs. A one-off output is still work you might want back, and a
+  // session whose tab you closed had no route home but the Library. Not a
+  // browser, though: that is the Library, one click away at the end of this
+  // row.
   const recent = useMemo(
     () =>
-      [...real]
+      [...projects]
         .sort((a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at))
         .slice(0, 4),
-    [real],
+    [projects],
   );
   // Setup hands over mid-download (FR1). The rows are the wizard's own; the
   // bytes are what the engine is still moving for THIS pipeline, so a model
@@ -334,7 +414,12 @@ export function Home() {
             </small>
             <button
               className="icon-btn"
-              onClick={() => setHomeDraft({ tool: null })}
+              onClick={() => {
+                // The error belonged to this panel's attempt; a fresh
+                // surface starts clean.
+                if (actionError?.scope === "tool") dismissActionError();
+                setHomeDraft({ tool: null });
+              }}
               aria-label={t("home.closeToolAria")}
             >
               <X {...ICON_CONTROL} />
@@ -354,6 +439,65 @@ export function Home() {
             }
             autoFocus
           />
+          {activeTool.kind === "script" && (
+            <div className="chip-row" role="group" aria-label={t("home.scriptPresetsAria")}>
+              {SCRIPT_PRESETS.map((key) => (
+                <button key={key} className="chip" onClick={() => applyScriptPreset(key)}>
+                  {m().home.scriptPresets[key].label}
+                </button>
+              ))}
+            </div>
+          )}
+          {activeTool.kind === "voiceover" && (
+            <div className="voice-swatches" role="group" aria-label={t("home.voiceSwatchesAria")}>
+              {VOICE_SWATCHES.map((swatch) => {
+                const name = m().home.voiceNames[swatch.voice];
+                return (
+                  <span
+                    key={swatch.voice}
+                    className={`voice-swatch${voice.trim() === swatch.brief ? " active" : ""}`}
+                  >
+                    <button
+                      className="swatch-play"
+                      onClick={() => playSwatch(swatch.voice)}
+                      aria-label={t(
+                        swatchPlaying === swatch.voice
+                          ? "home.voiceStopAria"
+                          : "home.voicePlayAria",
+                        { name },
+                      )}
+                    >
+                      {swatchPlaying === swatch.voice ? (
+                        <Square size={11} strokeWidth={2} aria-hidden="true" />
+                      ) : (
+                        <Play size={11} strokeWidth={2} aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      className="swatch-name"
+                      onClick={() => setHomeDraft({ voice: swatch.brief })}
+                      aria-label={t("home.voiceSwatchAria", { name })}
+                    >
+                      {name}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          {activeTool.kind === "clip" && (
+            <div className="chip-row" role="group" aria-label={t("home.motionPresetsAria")}>
+              {MOTION_PRESETS.map((key) => (
+                <button
+                  key={key}
+                  className={`chip${motion === m().home.motionPresets[key].text ? " active" : ""}`}
+                  onClick={() => applyMotionPreset(key)}
+                >
+                  {m().home.motionPresets[key].label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="row">
             {activeTool.kind === "voiceover" && (
               <>
@@ -384,6 +528,68 @@ export function Home() {
                     <Info size={13} strokeWidth={1.8} />
                   </span>
                 </Tip>
+                <Tip
+                  label={t("home.clipSecondsTipLabel")}
+                  hint={t("home.clipSecondsTipHint", TOOL_CLIP_SECONDS)}
+                  side="top"
+                >
+                  <span className="seconds-field">
+                    <input
+                      type="number"
+                      min={TOOL_CLIP_SECONDS.min}
+                      max={TOOL_CLIP_SECONDS.max}
+                      value={clipSeconds}
+                      aria-label={t("home.clipSecondsAria")}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isFinite(value)) setHomeDraft({ clipSeconds: value });
+                      }}
+                      onBlur={() =>
+                        setHomeDraft({
+                          clipSeconds: Math.min(
+                            TOOL_CLIP_SECONDS.max,
+                            Math.max(TOOL_CLIP_SECONDS.min, clipSeconds),
+                          ),
+                        })
+                      }
+                    />
+                    <span aria-hidden="true">{t("home.clipSecondsUnit")}</span>
+                  </span>
+                </Tip>
+                <input
+                  ref={startFrameRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  style={{ display: "none" }}
+                  aria-label={t("home.startFrameAria")}
+                  onChange={(event) => setStartFrame(event.target.files?.[0] ?? null)}
+                />
+                {startFrame ? (
+                  <span className="chip active start-frame">
+                    {t("home.startFrameSet", { name: startFrame.name })}
+                    <button
+                      className="icon-btn"
+                      onClick={() => {
+                        setStartFrame(null);
+                        if (startFrameRef.current) startFrameRef.current.value = "";
+                      }}
+                      aria-label={t("home.startFrameClearAria")}
+                    >
+                      <X size={11} strokeWidth={2} />
+                    </button>
+                  </span>
+                ) : (
+                  <Tip
+                    label={t("home.startFrameTipLabel")}
+                    hint={t("home.startFrameTipHint")}
+                    side="top"
+                  >
+                    <button className="btn-ghost" onClick={() => startFrameRef.current?.click()}>
+                      <ImagePlus size={13} strokeWidth={1.8} aria-hidden="true" />
+                      {t("home.startFrame")}
+                    </button>
+                  </Tip>
+                )}
               </>
             )}
             {activeTool.kind === "script" && scriptModels && (
@@ -400,6 +606,28 @@ export function Home() {
                       name === scriptModels.default ? t("home.defaultModel", { name }) : name,
                   }),
                 )}
+              />
+            )}
+            {(activeTool.kind === "script" || activeTool.kind === "music") && (
+              <DurationPicker
+                value={toolDuration}
+                onChange={(value) => setHomeDraft({ toolDuration: value })}
+                ariaLabel={t("home.toolDurationAria")}
+              />
+            )}
+            {(activeTool.kind === "script" ||
+              activeTool.kind === "thumbnail" ||
+              activeTool.kind === "image" ||
+              activeTool.kind === "clip") && (
+              <Dropdown
+                value={toolAspect}
+                onChange={(value) => setHomeDraft({ toolAspect: value })}
+                ariaLabel={t("home.toolAspectAria")}
+                options={ASPECTS.map((entry) => ({
+                  value: entry.value,
+                  label: `${entry.value} · ${m().aspects[entry.key]}`,
+                  icon: entry.icon,
+                }))}
               />
             )}
             <div className="spacer" />
@@ -476,9 +704,51 @@ export function Home() {
         </div>
       )}
 
+      <div className="tools-head">
+        <h3>{t("home.quickTools")}</h3>
+        <span className="hint">{t("home.quickToolsHint")}</span>
+      </div>
+      <div className="quick-tools" role="group" aria-label={t("home.quickToolsAria")}>
+        {TOOLS.map((entry) => {
+          const Icon = entry.icon;
+          const copy = m().tools[entry.kind];
+          return (
+            <Tip
+              key={entry.kind}
+              label={copy.tip}
+              hint={t("home.noProjectHint")}
+              side="bottom"
+            >
+              <button
+                className={tool === entry.kind ? "active" : ""}
+                onClick={() => {
+                  // A stale panel error following the user from tool to
+                  // tool implicates runs that never happened.
+                  if (actionError?.scope === "tool") dismissActionError();
+                  setHomeDraft({
+                    tool: tool === entry.kind ? null : entry.kind,
+                    toolInput: "",
+                  });
+                }}
+                aria-label={t("home.toolButtonAria", { label: copy.label, tip: copy.tip })}
+              >
+                <span className="tool-well">
+                  <Icon {...ICON_FEATURE} aria-hidden="true" />
+                </span>
+                <span className="tool-label">{copy.label}</span>
+                <span className="tool-output">{copy.output}</span>
+              </button>
+            </Tip>
+          );
+        })}
+      </div>
+
       {/* Gate on real projects, not the whole list: someone who has only
           used the quick tools has made no video yet, and counting their
-          tool outputs here took away the templates that get them started. */}
+          tool outputs here took away the templates that get them started.
+          BELOW the quick tools: the empty state answers "where will my
+          videos go", and pushing the tools off-screen to say so priced
+          the app's second surface at its first-run moment. */}
       {real.length === 0 && (
         <div className="empty-state">
           <Clapperboard {...ICON_ILLUSTRATIVE} aria-hidden="true" />
@@ -501,42 +771,6 @@ export function Home() {
           </div>
         </div>
       )}
-
-      <div className="tools-head">
-        <h3>{t("home.quickTools")}</h3>
-        <span className="hint">{t("home.quickToolsHint")}</span>
-      </div>
-      <div className="quick-tools" role="group" aria-label={t("home.quickToolsAria")}>
-        {TOOLS.map((entry) => {
-          const Icon = entry.icon;
-          const copy = m().tools[entry.kind];
-          return (
-            <Tip
-              key={entry.kind}
-              label={copy.tip}
-              hint={t("home.noProjectHint")}
-              side="bottom"
-            >
-              <button
-                className={tool === entry.kind ? "active" : ""}
-                onClick={() =>
-                  setHomeDraft({
-                    tool: tool === entry.kind ? null : entry.kind,
-                    toolInput: "",
-                  })
-                }
-                aria-label={t("home.toolButtonAria", { label: copy.label, tip: copy.tip })}
-              >
-                <span className="tool-well">
-                  <Icon {...ICON_FEATURE} aria-hidden="true" />
-                </span>
-                <span className="tool-label">{copy.label}</span>
-                <span className="tool-output">{copy.output}</span>
-              </button>
-            </Tip>
-          );
-        })}
-      </div>
 
       {/* One shelf, four tiles: what you were last working on. Everything
           else — including every tool output — is one click away in the

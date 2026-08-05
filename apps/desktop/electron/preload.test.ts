@@ -8,7 +8,7 @@
  * stops a bad persisted value from rendering the app unusable at 0.01×.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { exposedBridges, ipcInvocations, zoomFactors } from "./test/electron-stub";
+import { exposedBridges, ipcInvocations, webFrame, zoomFactors } from "./test/electron-stub";
 
 type Bridge = Record<string, (...args: never[]) => unknown>;
 let bridge: Bridge;
@@ -84,16 +84,30 @@ describe("setUiZoom", () => {
     ["passes a sane factor through", 1.25, 1.25],
     ["clamps below 0.5", 0.01, 0.5],
     ["clamps above 3", 12, 3],
+    // The fallbacks resolve to 1 — asserted from a non-1 zoom, because a
+    // resolve-to-current is deliberately not applied at all (below).
     ["falls back to 1 for a non-number", "large", 1],
     ["falls back to 1 for NaN", Number.NaN, 1],
     ["falls back to 1 for Infinity", Number.POSITIVE_INFINITY, 1],
   ])("%s", (_label, input, expected) => {
+    webFrame.currentZoom = 2; // never the target, so the set always fires
     zoomFactors.length = 0;
     (bridge.setUiZoom as (factor: unknown) => void)(input);
     expect(zoomFactors).toEqual([expected]);
   });
 
+  it("skips a set that changes nothing", () => {
+    // Not just thrift: on a scaled display under a forced device scale, a
+    // redundant setZoomFactor makes Chromium renegotiate page scale and
+    // the layout viewport comes back wrong (see preload.ts).
+    webFrame.currentZoom = 1.25;
+    zoomFactors.length = 0;
+    (bridge.setUiZoom as (factor: unknown) => void)(1.25);
+    expect(zoomFactors).toEqual([]);
+  });
+
   it("goes straight to webFrame, without an IPC round-trip", () => {
+    webFrame.currentZoom = 2;
     ipcInvocations.length = 0;
     (bridge.setUiZoom as (factor: unknown) => void)(1);
     expect(ipcInvocations).toEqual([]);

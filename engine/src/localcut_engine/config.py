@@ -39,6 +39,13 @@ class EngineConfig(BaseModel):
     # this must be generous — and tunable (LOCALCUT_LLM_TIMEOUT_S) for
     # machines where even the default is tight.
     llm_timeout_s: int = 600
+    # Exactly one browser origin allowed to make CORS requests, or "" for no
+    # CORS surface at all (the default — the packaged renderer needs none).
+    # The desktop's dev flow sets this (LOCALCUT_ALLOW_ORIGIN) to vite's
+    # http origin, where Chromium preflights every token-carrying request;
+    # without an answer the preflight-exempt WebSocket connects while every
+    # fetch dies, which reads as "engine up, all lists broken".
+    allow_origin: str = ""
     ffmpeg_bin: str = "ffmpeg"
     # "Finalize" swaps unpinned clips to this model (e.g.
     # "local:wan2.2-i2v-14b-fp8" on 16 GB+ tiers). None = same model,

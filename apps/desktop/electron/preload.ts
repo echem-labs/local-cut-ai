@@ -25,7 +25,14 @@ contextBridge.exposeInMainWorld("localcut", {
   getSystemTextScale: () => ipcRenderer.invoke("window:system-text-scale"),
   setUiZoom: (factor: number) => {
     const value = Number(factor);
-    webFrame.setZoomFactor(Number.isFinite(value) ? Math.min(3, Math.max(0.5, value)) : 1);
+    const clamped = Number.isFinite(value) ? Math.min(3, Math.max(0.5, value)) : 1;
+    // Skip a set that changes nothing. Not just an optimization: on a
+    // scaled Windows display under --force-device-scale-factor (the
+    // parity rig), a redundant setZoomFactor makes Chromium renegotiate
+    // page scale against the OS scale and the layout viewport comes back
+    // 1.25x the window — the app suddenly renders wider than itself.
+    if (Math.abs(webFrame.getZoomFactor() - clamped) < 0.001) return;
+    webFrame.setZoomFactor(clamped);
   },
   // True only when the rig exported LOCALCUT_SEED_HOOK for a dev run —
   // main.ts strips the variable in packaged builds, so a shipped app can

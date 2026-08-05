@@ -48,7 +48,13 @@ function collectLicenses() {
 export default defineConfig({
   plugins: [react()],
   base: "./",
-  server: { port: 5173, strictPort: true },
+  // Host pinned, not defaulted: the rest of the dev flow is written
+  // against 127.0.0.1 (dev:electron's `wait-on`, and the
+  // VITE_DEV_SERVER_URL Electron loads). Vite's default binding resolves
+  // to ::1 on an IPv6-preferring box, where `wait-on` then polls an IPv4
+  // socket nothing listens on — vite prints "ready", and Electron never
+  // launches at all.
+  server: { host: "127.0.0.1", port: 5173, strictPort: true },
   build: { outDir: "dist" },
   // Settings → About reads the app version straight from package.json —
   // injected at build, no IPC round-trip (review 4 §S6).
