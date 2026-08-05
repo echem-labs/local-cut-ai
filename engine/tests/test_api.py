@@ -917,6 +917,47 @@ async def test_video_assets_are_accepted(client):
     assert "voice_consent" not in graph["nodes"][asset["node_id"]]["params"]
 
 
+async def test_dev_origin_preflight_is_answered_only_when_configured(tmp_path):
+    """The desktop dev flow serves the renderer from vite's http origin,
+    where Chromium preflights every token-carrying request — an engine
+    with no CORS surface fails ALL of them while the (preflight-exempt)
+    WebSocket connects fine, which reads as "engine up, every list dead".
+    `allow_origin` answers the preflight for exactly the one origin the
+    shell names; by default there is no CORS surface at all."""
+    preflight_headers = {
+        "Origin": "http://127.0.0.1:5173",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "authorization",
+    }
+
+    async def preflight(config):
+        app = create_app(config)
+        transport = httpx.ASGITransport(app=app)
+        async with (
+            transport,
+            httpx.AsyncClient(transport=transport, base_url="http://engine") as http,
+        ):
+            async with app.router.lifespan_context(app):
+                return await http.options("/projects", headers=preflight_headers)
+
+    allowed = await preflight(
+        EngineConfig(
+            data_dir=tmp_path / "dev",
+            token="test-token",
+            backend="mock",
+            allow_origin="http://127.0.0.1:5173",
+        )
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert "authorization" in allowed.headers["access-control-allow-headers"].lower()
+
+    default = await preflight(
+        EngineConfig(data_dir=tmp_path / "plain", token="test-token", backend="mock")
+    )
+    assert "access-control-allow-origin" not in default.headers
+
+
 async def test_edit_dry_run_previews_without_committing(client, monkeypatch):
     """dry_run compiles the plan and reports the ops and the dirty cone,
     but the graph, the undo history and the queue are untouched; the plan
