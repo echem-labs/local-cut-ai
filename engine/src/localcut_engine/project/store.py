@@ -41,6 +41,22 @@ class HistoryTooNew(ProjectTooNew):
     the API's existing refuse-when-newer handler answers for it too."""
 
 
+class ProjectUnreadable(RuntimeError):
+    """A state file that cannot be decoded at all (maps to HTTP 409).
+
+    Builds before this module forced encoding="utf-8" wrote text in the
+    platform's locale encoding, so on Windows an em dash — which the app's
+    own generated prompts and titles are full of — was stored as the lone
+    cp1252 byte 0x97. UTF-8 cannot decode it, so the project is unreadable
+    from then on, however healthy the rest of the file is.
+
+    Nothing can repair that here: the original characters are gone. What
+    this class buys is a refusal with a reason, in place of a
+    UnicodeDecodeError escaping a route whose contract is to explain
+    itself — which reached the user as a bare 500 with no way to tell WHICH
+    project was broken, or that the rest of the library was fine."""
+
+
 _PROJECT_ID_LEN = 10
 
 # The API's path-param validation is built from this — the id generator and
@@ -100,6 +116,14 @@ def _read_text_retry(path: Path, attempts: int = 6) -> str:
             if attempt == attempts - 1:
                 raise
             time.sleep(0.01 * (attempt + 1))
+        except UnicodeDecodeError as exc:
+            # Not retried: a byte that is not UTF-8 will not become UTF-8 on
+            # the next read. Named so the answer says which file.
+            raise ProjectUnreadable(
+                f"{path.name} is not valid UTF-8 (byte {exc.object[exc.start]:#04x} at "
+                f"{exc.start}). It was written by a build that used this machine's "
+                f"ANSI code page; the text cannot be recovered."
+            ) from exc
     raise AssertionError("unreachable")
 
 

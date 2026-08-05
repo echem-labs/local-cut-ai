@@ -41,8 +41,15 @@ const stamp = (project: Project) => project.updated_at ?? project.created_at;
  * the same tile with the same status oracle.
  */
 export function Library() {
-  const { projects, allJobs, libraryFilter, setLibraryFilter, librarySearchFocus, openSaveTemplate } =
-    useApp();
+  const {
+    projects,
+    allJobs,
+    libraryFilter,
+    setLibraryFilter,
+    librarySearchFocus,
+    openSaveTemplate,
+    actionError,
+  } = useApp();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
   const [desc, setDesc] = useState(SORT_STARTS_DESCENDING.recent);
@@ -123,6 +130,15 @@ export function Library() {
         <h1>{t("library.title")}</h1>
         <p className="sub">{t("library.subtitle")}</p>
       </div>
+
+      {/* A project the engine refuses to open (an unreadable state file) is
+          reported where the click happened — the tile stays, so without this
+          the click reads as a dead control. */}
+      {actionError?.scope === "open" && (
+        <p className="hint error-text" role="alert">
+          {actionError.message}
+        </p>
+      )}
 
       <div className="library-bar">
         <FilterTabs<LibraryFilter>

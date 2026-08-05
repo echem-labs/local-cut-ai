@@ -225,6 +225,56 @@ try {
   );
   await shoot("02c-script-session.png");
 
+  // 2d. Promote the script into a real project, then the flowchart and the
+  // round trip Add node makes through /patch (U4). Promote is the bridge a
+  // tool session already offers, and it is what gives this walk a full
+  // pipeline graph without a second trip through Home.
+  const canvas = await evalInApp(`
+    await page.evaluate(() => {
+      const button = [...document.querySelectorAll(".tool-actions button")].find((b) =>
+        /turn into a video/i.test(b.textContent || ""));
+      button?.click();
+    });
+    // Promote creates the project AND opens it (store.promote), so the
+    // workspace is what to wait for.
+    await page.waitForSelector(".dockview-theme-localcut", { timeout: 60000 });
+    await page.evaluate(() => {
+      const tab = [...document.querySelectorAll("button")].find((b) =>
+        /flowchart/i.test((b.textContent || "") + " " + (b.getAttribute("title") || "")));
+      tab?.click();
+    });
+    await page.waitForSelector(".canvas-stage", { timeout: 20000 });
+    const before = await page.evaluate(() => document.querySelectorAll(".canvas-node").length);
+
+    await page.evaluate(() => {
+      document.querySelector('[aria-label="Add a node to the graph"]').click();
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate(() => {
+      const item = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
+        /music/i.test(b.textContent || ""));
+      item?.click();
+    });
+    // The graph is re-read from the engine after the patch; wait for the
+    // node to appear there rather than for a timeout to expire.
+    await page.waitForSelector('[data-node^="music-"]', { timeout: 20000 });
+
+    // \`before\` is a Node-side value; page.evaluate runs in the renderer,
+    // so it has to travel as an argument rather than a closure.
+    return page.evaluate((before) => ({
+      before,
+      after: document.querySelectorAll(".canvas-node").length,
+      selected: document.querySelector(".canvas-node.selected")?.dataset.node ?? null,
+      zoom: document.querySelector(".canvas-zoom-value")?.textContent ?? null,
+    }), before);
+  `);
+  check(
+    "Add node reaches the engine and comes back in the graph",
+    canvas.after === canvas.before + 1 && (canvas.selected || "").startsWith("music-"),
+    JSON.stringify(canvas),
+  );
+  await shoot("02d-canvas-add-node.png");
+
   // Back to Home for the stops that follow.
   await evalInApp(`
     await page.evaluate(() => {
