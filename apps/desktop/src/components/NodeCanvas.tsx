@@ -44,6 +44,7 @@ import {
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PanelHelp } from "./Help";
+import { MediaThumb } from "./MediaThumb";
 
 /** The one node the engine refuses to remove (see graph/patch.py): the rest
  * of the pipeline is rebuilt from it, so deleting it would make every other
@@ -65,6 +66,10 @@ const ADDABLE_KINDS = ["keyframe", "clip", "narration", "music", "thumbnail"] as
  * artifact is an mp4 and a narration's a wav: both need a player, which is
  * what the Details panel and the storyboard are for. */
 const IMAGE_KINDS = new Set(["keyframe", "thumbnail", "asset"]);
+
+/** How far a press may travel and still count as a click rather than a pan
+ * (CSS px). No hand holds a mouse perfectly still. */
+const PAN_SLOP = 3;
 
 /** Shared, so a node with no incoming edge does not allocate a fresh object
  * on every render (and can be compared by identity by a memoized child). */
@@ -154,6 +159,7 @@ export function NodeCanvas() {
   // Which match Enter goes to next; reset whenever the query changes.
   const [matchAt, setMatchAt] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
   // Drag-to-pan: the grab point and the scroll it started from. A ref, not
   // state — it is read on every pointermove and re-rendering per frame to
   // store a number nothing draws would be a wasted render each time.
@@ -162,6 +168,9 @@ export function NodeCanvas() {
     y: number;
     left: number;
     top: number;
+    /** Whether the press ever became a drag. A press that did not is a
+     * click on empty space, which clears the selection. */
+    moved: boolean;
   } | null>(null);
   const [panning, setPanning] = useState(false);
   // Deleting a node is the one edit here with no way back: `add_node` has no
@@ -352,13 +361,70 @@ export function NodeCanvas() {
       // A wire in flight owns Escape first — that handler cancels the wire
       // and leaves the selection alone.
       if (wire) return;
+      // So does an open menu: one key press dismisses the thing most
+      // recently opened, not two things at once.
+      if (addOpen) return;
       // Not while typing in the search box: Escape there clears the query.
       if (document.activeElement?.classList.contains("canvas-search-input")) return;
       select(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedNode, wire, select]);
+  }, [selectedNode, wire, addOpen, select]);
+
+  // The Add node menu dismisses like every other menu-pop in the app
+  // (ModelsPopover, the Library's sort menu, a tile's lifecycle menu): an
+  // outside press, or Escape. Without it this was the one popover that
+  // stayed open over the canvas it had just changed.
+  useEffect(() => {
+    if (!addOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAddOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [addOpen]);
+
+  // Whether the surface is on screen at all — the three states below return
+  // before it renders, and the wheel listener has to wait for it.
+  const hasSurface = graph !== null && layout.nodes.length > 0;
+
+  // Ctrl+wheel zoom, as a NATIVE listener rather than React's `onWheel`.
+  //
+  // React registers `wheel` on the root container with `passive: true`
+  // (react-dom's addTrappedEventListener, alongside touchstart/touchmove),
+  // so `preventDefault` inside an onWheel handler is ignored: Chromium logs
+  // "Unable to preventDefault inside passive event listener invocation" as a
+  // console ERROR and the browser's own ctrl+wheel zoom is left unsuppressed
+  // — the app scaling underneath a canvas that is also scaling. Only a
+  // listener registered `{ passive: false }` can refuse it, and only the
+  // element's own listener can be registered that way.
+  //
+  // The handler reads zoom through zoomRef and writes through setZoom, both
+  // stable for the life of the component, so it does not need rebinding on
+  // every zoom — which at wheel frequency is the point.
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!hasSurface || !surface) return;
+    const onWheel = (event: WheelEvent) => {
+      // A bare wheel is the surface's own scroll — the gesture a plain
+      // mouse has for moving around a graph taller than the panel — and
+      // taking it would leave no way to scroll at all.
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      zoomAt((from) => wheelZoom(from, event.deltaY), event);
+    };
+    surface.addEventListener("wheel", onWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasSurface]);
 
   // Keyed on whether a wire exists rather than on the wire itself: the live
   // end is rewritten on every pointermove, so depending on the object would
@@ -492,10 +558,11 @@ export function NodeCanvas() {
           </button>
         </div>
 
-        <div className="canvas-add">
+        <div className="canvas-add" ref={addRef}>
           <button
             type="button"
             className="btn-ghost"
+            aria-haspopup="menu"
             aria-expanded={addOpen}
             aria-label={t("canvas.addNodeAria")}
             onClick={() => setAddOpen(!addOpen)}
@@ -505,7 +572,7 @@ export function NodeCanvas() {
           {addOpen && (
             <div className="menu-pop" role="menu">
               {ADDABLE_KINDS.map((kind) => (
-                <button key={kind} role="menuitem" onClick={() => void add(kind)}>
+                <button key={kind} type="button" role="menuitem" onClick={() => void add(kind)}>
                   <span className="grow">{kindLabel(kind)}</span>
                   <small>{(m().canvas.kindHints as Record<string, string>)[kind]}</small>
                 </button>
@@ -520,14 +587,8 @@ export function NodeCanvas() {
         className={`canvas-surface${panning ? " panning" : ""}`}
         ref={surfaceRef}
         onKeyDown={onSurfaceKeyDown}
-        // Ctrl+wheel only. A bare wheel is the surface's own scroll — the
-        // gesture a plain mouse has for moving around a graph taller than
-        // the panel — and taking it would leave no way to scroll at all.
-        onWheel={(event) => {
-          if (!event.ctrlKey) return;
-          event.preventDefault();
-          zoomAt((from) => wheelZoom(from, event.deltaY), event);
-        }}
+        // The wheel is handled natively (see the effect above); React's own
+        // onWheel cannot preventDefault.
         onPointerDown={(event) => {
           // Empty space only: a press on a node, a port or the toolbar is
           // that control's own gesture.
@@ -540,6 +601,7 @@ export function NodeCanvas() {
             y: event.clientY,
             left: surface.scrollLeft,
             top: surface.scrollTop,
+            moved: false,
           };
           setPanning(true);
         }}
@@ -551,6 +613,12 @@ export function NodeCanvas() {
           const pan = panRef.current;
           const surface = surfaceRef.current;
           if (!pan || !surface) return;
+          // A few pixels of travel while pressing is a click, not a drag —
+          // no mouse is perfectly still. Past that it is a pan, and the
+          // release must not also clear the selection.
+          if (!pan.moved && Math.hypot(event.clientX - pan.x, event.clientY - pan.y) > PAN_SLOP) {
+            pan.moved = true;
+          }
           // Scroll the opposite way to the drag: the graph follows the hand.
           surface.scrollLeft = pan.left - (event.clientX - pan.x);
           surface.scrollTop = pan.top - (event.clientY - pan.y);
@@ -558,12 +626,18 @@ export function NodeCanvas() {
         // Releasing anywhere but on a port abandons the wire. Without this a
         // half-made connection follows the pointer forever.
         onPointerUp={() => {
+          const pan = panRef.current;
           panRef.current = null;
           setPanning(false);
           if (wire) {
             setWire(null);
             setHint(null);
+            return;
           }
+          // A press on empty space that never became a drag is a click on
+          // nothing: it clears the selection, and with it the chain focus.
+          // The same gesture Escape has, for the hand already on the mouse.
+          if (pan && !pan.moved) select(null);
         }}
         onPointerLeave={() => {
           panRef.current = null;
@@ -798,22 +872,11 @@ function NodeBox(props: NodeBoxProps) {
           }
         }}
       >
-        {/* The node's own render, when it is a still. Decorative: the
-            button's accessible name already says which node this is and
-            what state it is in, so an alt would repeat it. */}
-        {props.thumbUrl && (
-          <img
-            className="canvas-node-thumb"
-            src={props.thumbUrl}
-            alt=""
-            role="img"
-            aria-label={t("canvas.thumbAlt", { id: node.id })}
-            loading="lazy"
-            onError={(event) => {
-              event.currentTarget.style.display = "none";
-            }}
-          />
-        )}
+        {/* The node's own render, when it is a still. Decorative, and named
+            nowhere: the button's accessible name already says which node
+            this is and what state it is in, so a second name here would
+            read the id twice. */}
+        <MediaThumb className="canvas-node-thumb" src={props.thumbUrl} />
         <span className="canvas-node-text">
           <span className="canvas-node-kind">{kindLabel(node.kind)}</span>
           <span className="canvas-node-id">{node.id}</span>
