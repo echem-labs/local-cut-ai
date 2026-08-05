@@ -10,6 +10,7 @@ import type {
   EditResult,
   EngineConnection,
   EngineEvent,
+  GraphNode,
   HistoryInfo,
   Job,
   LlmModels,
@@ -189,6 +190,10 @@ export class EngineClient {
        * upstream node, `port` the input being rewired. */
       src?: string;
       port?: string;
+      /** add_node: the whole node. `pinned`/`frozen_hash` are server-owned —
+       * patch.py zeroes whatever arrives — but the field carries the
+       * engine's Node shape, not a subset of it. */
+      node?: GraphNode;
       /** select_take: the recorded take's output hash. */
       take?: string;
       /** add_scene: the scene id to insert after (absent appends). */

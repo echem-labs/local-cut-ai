@@ -133,6 +133,14 @@
     {
       "term": "Voice sample",
       "def": "Audio uploaded with the consent affirmation, for cloning a speaker. Without the affirmation, audio arrives as a plain asset that cloning refuses."
+    },
+    {
+      "term": "Node",
+      "def": "One step of the render in the flowchart — a still, a clip, the narration, the final cut. What feeds it are its inputs."
+    },
+    {
+      "term": "Chain",
+      "def": "Everything that feeds a node plus everything it feeds. Select a node in the flowchart and its chain lights up while the rest dims, so you can see what a change will touch."
     }
   ]
 }
