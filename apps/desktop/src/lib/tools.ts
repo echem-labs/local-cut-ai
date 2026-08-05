@@ -45,6 +45,22 @@ export const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
   clip: Film,
 };
 
+/** What a kind is MADE OF — the tile tag's tint groups by this rather than
+ * giving six tools six hues. The tag carries the exact word, so the color
+ * is there to group, not to identify. A video project is `motion` too: a
+ * clip and a finished video are the same medium. Typed as a full Record so
+ * a new kind must declare its medium. */
+export type KindMedium = "motion" | "text" | "audio" | "still";
+
+export const TOOL_MEDIUM: Record<ToolKind, KindMedium> = {
+  script: "text",
+  thumbnail: "still",
+  voiceover: "audio",
+  image: "still",
+  music: "audio",
+  clip: "motion",
+};
+
 const KNOWN_TOOLS = new Set<string>(TOOL_KINDS);
 
 /** Every `tool:` project, whether or not this build knows the kind. A session
