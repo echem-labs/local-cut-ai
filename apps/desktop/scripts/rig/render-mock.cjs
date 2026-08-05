@@ -129,10 +129,10 @@ const MASKABLE = {
   "panel-script": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x"],
   "panel-voiceover": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".swatch .play"],
   "panel-clip": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".ghost.sf"],
-  "session-script": [".rail .item .count", ".rail .item .glyph", ".status", ".composer .cmeta"],
-  "session-voiceover": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".clone .box", ".composer .cmeta"],
-  "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .cmeta"],
-  "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .cmeta"],
+  "session-script": [".rail .item .count", ".rail .item .glyph", ".status", ".composer .models"],
+  "session-voiceover": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".clone .box", ".composer .models"],
+  "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .models"],
+  "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .models"],
   "session-clip-rendering": [".rail .item .count", ".rail .item .glyph", ".status"],
 };
 const MASK_PAD = 6;
@@ -247,12 +247,10 @@ body { padding-top: 38px !important; }
 /* ---- the session set's snaps: authored ON the token scale, so what it
    needs is protection from SNAP_COMMON's wizard-shaped rules — the wizard's
    .actions sit 24px under a form; the session's ride the column's 16px flex
-   gap. Same for .chips: the recipe's chips are an 8px hang, not the
-   wizard's 12. */
+   gap. */
 const SNAP_SESSION = `
 .rail .group { margin-top: 0 !important; }
 .actions { margin-top: 0 !important; }
-.chips { margin-top: 8px !important; }
 `;
 
 const SNAP =

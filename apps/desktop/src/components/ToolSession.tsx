@@ -8,9 +8,21 @@ import { newestJob } from "../lib/jobs";
 import { isDone, isSettled } from "../lib/status";
 import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
+import { ModelsPopover } from "./ModelsPopover";
 import { StatusRing } from "./StatusRing";
 import { PromotedTo } from "./Provenance";
 import { Waveform } from "./Waveform";
+
+/** True when the page's h1 already says these words — exactly, or as the
+ * longer ask the engine truncated this title down from. Tool projects are
+ * titled by their own prompt, so a plain equality check misses the common
+ * case where one side kept a few words the other lost. */
+export function titleAlreadySays(pageTitle: string, title: string): boolean {
+  const page = pageTitle.trim();
+  const said = title.trim();
+  if (!page || !said) return false;
+  return page === said || page.startsWith(said) || said.startsWith(page);
+}
 
 /** How much of each end the loop-seam preview plays. Beds loop in
  * assembly, so end→start is the joint you would actually hear. */
@@ -167,7 +179,6 @@ export function ToolSession() {
     selectTake,
     addToProject,
     applySessionVoiceClone,
-    openSettings,
   } = useApp();
   const [promoting, setPromoting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -419,6 +430,14 @@ export function ToolSession() {
         {tool === "image" && done && (
           <small className="hint">{t("toolSession.seedChip", { seed: node.seed })}</small>
         )}
+        {/* The run's other inputs (voice, motion, seconds, aspect) read as
+            provenance next to the model and wall time — not from a card
+            below whose only other content would be an eyebrow. */}
+        {details.map((detail) => (
+          <span key={detail} className="badge">
+            {detail}
+          </span>
+        ))}
       </div>
 
       {/* Outside the `done` branch on purpose: a session that has been
@@ -426,21 +445,12 @@ export function ToolSession() {
           does not unmake the videos it already produced. */}
       {currentProject && <PromotedTo project={currentProject} />}
 
-      {recipe && (showRecipeText || details.length > 0) && (
+      {recipe && showRecipeText && (
         <div className="session-recipe">
           <span className="eyebrow">
             {t(tool === "voiceover" ? "toolSession.recipeText" : "toolSession.recipePrompt")}
           </span>
-          {showRecipeText && <p>{recipe}</p>}
-          {details.length > 0 && (
-            <div className="recipe-chips">
-              {details.map((detail) => (
-                <span key={detail} className="badge">
-                  {detail}
-                </span>
-              ))}
-            </div>
-          )}
+          <p>{recipe}</p>
         </div>
       )}
 
@@ -480,8 +490,7 @@ export function ToolSession() {
                 screenplay={screenplay}
                 targetS={targetS}
                 hideTitle={
-                  currentProject != null &&
-                  screenplay.title.trim() === currentProject.title.trim()
+                  currentProject != null && titleAlreadySays(currentProject.title, screenplay.title)
                 }
               />
             ) : (
@@ -646,40 +655,43 @@ export function ToolSession() {
             </p>
           )}
           {/* The composer: the session's one "change it" surface, stuck to
-              the bottom the way an editor's input is. Script sessions take
-              free-form notes (the LLM rewrite); every other tool holds an
-              editable working copy of its own prompt/text/brief, sent back
-              through /patch as update-and-re-render. */}
-          <div className="tool-composer">
-            <div className="composer-row">
-              {tool === "script" ? (
-                <textarea
-                  value={notes}
-                  rows={2}
-                  placeholder={t("toolSession.enhancePlaceholder")}
-                  aria-label={t("toolSession.enhanceAria")}
-                  onChange={(event) => setNotes(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
-                      void sendEnhance();
-                  }}
-                />
-              ) : (
-                <textarea
-                  value={refineDraft}
-                  rows={2}
-                  placeholder={t("toolSession.refinePlaceholder")}
-                  aria-label={t("toolSession.refineAria")}
-                  onChange={(event) => setRefineDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
-                      void sendRefine();
-                  }}
-                />
-              )}
+              the bottom the way an editor's input is, wearing the same
+              prompt-box dress as Home's. Script sessions take free-form
+              notes (the LLM rewrite); every other tool holds an editable
+              working copy of its own prompt/text/brief, sent back through
+              /patch as update-and-re-render. */}
+          <div className="prompt-box tool-composer">
+            {tool === "script" ? (
+              <textarea
+                value={notes}
+                placeholder={t("toolSession.enhancePlaceholder")}
+                aria-label={t("toolSession.enhanceAria")}
+                onChange={(event) => setNotes(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                    void sendEnhance();
+                }}
+              />
+            ) : (
+              <textarea
+                value={refineDraft}
+                placeholder={t("toolSession.refinePlaceholder")}
+                aria-label={t("toolSession.refineAria")}
+                onChange={(event) => setRefineDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                    void sendRefine();
+                }}
+              />
+            )}
+            <div className="row">
+              <div className="spacer" />
+              {/* The same readiness popover Home's box carries — opening
+                  up so the bottom-docked card never clips it. */}
+              <ModelsPopover opens="up" />
               {tool === "script" ? (
                 <button
-                  className="btn-ghost"
+                  className="btn-primary"
                   onClick={() => void sendEnhance()}
                   disabled={enhancing || !notes.trim()}
                 >
@@ -687,21 +699,13 @@ export function ToolSession() {
                 </button>
               ) : (
                 <button
-                  className="btn-ghost"
+                  className="btn-primary"
                   onClick={() => void sendRefine()}
                   disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
                 >
                   {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
                 </button>
               )}
-            </div>
-            <div className="composer-meta">
-              {renderJob?.model && (
-                <span className="hint">{t("toolSession.modelLine", { model: renderJob.model })}</span>
-              )}
-              <button className="link" onClick={() => openSettings("models")}>
-                {t("toolSession.changeModel")}
-              </button>
             </div>
             {refineError && (
               <p className="hint error-text" role="alert">

@@ -258,7 +258,7 @@ const MASKED_AS = {
     ".tool-head .icon-btn",
     ".tool-panel .row .btn-ghost",
   ],
-  "session-script": [".rail-count", RAIL_ICONS, ".tool-status", ".tool-composer .composer-meta"],
+  "session-script": [".rail-count", RAIL_ICONS, ".tool-status", ".tool-composer .models-pop-wrap"],
   "session-voiceover": [
     ".rail-count",
     RAIL_ICONS,
@@ -268,7 +268,7 @@ const MASKED_AS = {
     ".wave-time",
     ".tool-actions .btn-ghost",
     ".clone-panel .consent input",
-    ".tool-composer .composer-meta",
+    ".tool-composer .models-pop-wrap",
   ],
   "session-music": [
     ".rail-count",
@@ -278,7 +278,7 @@ const MASKED_AS = {
     ".wave-toggle",
     ".wave-time",
     ".tool-actions .btn-ghost",
-    ".tool-composer .composer-meta",
+    ".tool-composer .models-pop-wrap",
   ],
   "session-image": [
     ".rail-count",
@@ -286,7 +286,7 @@ const MASKED_AS = {
     ".tool-status",
     ".tool-preview",
     ".tool-actions .btn-ghost",
-    ".tool-composer .composer-meta",
+    ".tool-composer .models-pop-wrap",
   ],
   "session-clip-rendering": [".rail-count", RAIL_ICONS, ".tool-status"],
 };
@@ -295,7 +295,7 @@ const RIGID = /thumb|wave-plot|tool-preview|swatch-play|wave-toggle/;
 /** Content-sized boxes: matched on where they start, not how big they are
  * (a status row's width is a model name and a wall time; a time readout
  * and the composer's model line are whatever their text measures). */
-const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot|wave-time|composer-meta|models-pop|swatch-play/;
+const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot|wave-time|models-pop|swatch-play/;
 const TOL = 2;
 
 const checkMaskGeometry = (name, boxes) => {

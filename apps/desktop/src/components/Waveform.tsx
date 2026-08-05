@@ -33,7 +33,15 @@ export function Waveform({
   /** Fraction of the track played, 0..1 — paints the bars behind it. */
   const [played, setPlayed] = useState(0);
   const [playing, setPlaying] = useState(false);
+  /** Pointer position over the bars, 0..1 — drives the seek-time tip. */
+  const [hover, setHover] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  const fractionAt = (event: React.MouseEvent<HTMLButtonElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width <= 0) return 0;
+    return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+  };
 
   useEffect(() => {
     setPeaks(null);
@@ -56,8 +64,7 @@ export function Waveform({
   const seek = (event: React.MouseEvent<HTMLButtonElement>) => {
     const audio = audioRef.current;
     if (!audio || !peaks) return;
-    const box = event.currentTarget.getBoundingClientRect();
-    const fraction = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+    const fraction = fractionAt(event);
     audio.currentTime = fraction * peaks.duration_s;
     setPlayed(fraction);
   };
@@ -95,6 +102,8 @@ export function Waveform({
             className="wave-plot"
             aria-label={t("toolSession.waveSeekAria")}
             onClick={seek}
+            onMouseMove={(event) => setHover(fractionAt(event))}
+            onMouseLeave={() => setHover(null)}
           >
             <svg
               viewBox={`0 0 ${peaks.peaks.length} 64`}
@@ -115,6 +124,17 @@ export function Waveform({
                 );
               })}
             </svg>
+            {/* Presentational only (the button already carries the seek
+                aria); shows where a click would land you. */}
+            {hover != null && (
+              <span
+                className="wave-seek-tip"
+                style={{ left: `${hover * 100}%` }}
+                aria-hidden="true"
+              >
+                {shortDuration(hover * peaks.duration_s)}
+              </span>
+            )}
           </button>
           <span className="wave-time">
             {shortDuration(played * peaks.duration_s)} / {shortDuration(peaks.duration_s)}

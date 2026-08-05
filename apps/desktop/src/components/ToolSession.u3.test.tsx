@@ -36,9 +36,14 @@ const node = (id: string, over: Partial<NodeState> = {}): NodeState => ({
 const project = (id: string, mode: string, title: string): Project =>
   ({ id, title, created_at: 0, updated_at: 0, mode, approvals: [] }) as Project;
 
-function mountSession(tool: string, toolNode: NodeState, extra: Record<string, unknown> = {}) {
+function mountSession(
+  tool: string,
+  toolNode: NodeState,
+  extra: Record<string, unknown> = {},
+  title = "T",
+) {
   useApp.setState({
-    currentProject: project("p1", `tool:${tool}`, "T"),
+    currentProject: project("p1", `tool:${tool}`, title),
     board: { scenes: [], aux: { [tool]: toolNode } } as unknown as Board,
     client: {
       artifactUrl: () => "http://engine/a",
@@ -75,30 +80,60 @@ describe("the recipe card", () => {
     expect(screen.getByText("16:9")).toBeInTheDocument();
   });
 
-  it("labels voiceover input as text, and hands the done text to the composer", () => {
+  it("hands the done voiceover text to the composer, chips to the status row", () => {
     const { container } = mountSession(
       "voiceover",
       node("voiceover", { params: { text: "Hello there", voice: "deep" } }),
     );
-    expect(screen.getByText("Text")).toBeInTheDocument();
-    expect(screen.getByText("deep")).toBeInTheDocument();
-    // Done session: the composer is the text's home — the card keeps the
-    // chips, not a second copy of the words.
-    expect(container.querySelector(".session-recipe p")).toBeNull();
+    // Done session: the composer is the text's home, the status row is the
+    // chips' — no card is left holding only an eyebrow and two badges.
+    expect(container.querySelector(".session-recipe")).toBeNull();
+    const status = container.querySelector(".tool-status") as HTMLElement;
+    expect(within(status).getByText("deep")).toBeInTheDocument();
     expect(
       (screen.getByLabelText("Edit this session's prompt") as HTMLTextAreaElement).value,
     ).toBe("Hello there");
   });
 
   it("does not repeat the prompt the page title already is", () => {
-    // Tool projects are titled by their own ask — the card keeps the
-    // chips but not a second copy of the h1's text.
+    // Tool projects are titled by their own ask — the run's other inputs
+    // read from the status row, not from a card echoing the h1.
     const { container } = mountSession(
       "image",
       node("image", { params: { prompt: "T", aspect: "16:9" } }),
     );
-    expect(container.querySelector(".session-recipe p")).toBeNull();
-    expect(screen.getByText("16:9")).toBeInTheDocument();
+    expect(container.querySelector(".session-recipe")).toBeNull();
+    const status = container.querySelector(".tool-status") as HTMLElement;
+    expect(within(status).getByText("16:9")).toBeInTheDocument();
+  });
+
+  it("hides the script's own heading when the page title merely extends it", async () => {
+    // The engine titles the screenplay from a truncated prompt while the
+    // project keeps the full ask — "…the next video" under "…the next
+    // video. on snake" is still the same words twice at heading weight.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        json: () =>
+          Promise.resolve({
+            title: "A strong hook, clear sections",
+            hook: "It starts with a question.",
+            scenes: [{ id: "s1", narration: "One clue.", visual: "v", duration_s: 3 }],
+          }),
+      }),
+    );
+    try {
+      const { container } = mountSession(
+        "script",
+        node("script", { params: { prompt: "A strong hook, clear sections. on snake" } }),
+        {},
+        "A strong hook, clear sections. on snake",
+      );
+      await screen.findByText("It starts with a question.");
+      expect(container.querySelector(".script-view h2")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -122,6 +157,15 @@ describe("the composer", () => {
     await vi.waitFor(() =>
       expect(refineTool).toHaveBeenCalledWith("music", "brief", "lofi beat, warmer keys"),
     );
+  });
+
+  it("wears Home's prompt-box dress: a model popover, no settings link", () => {
+    const { container } = mountSession("music", node("music", { params: { brief: "lofi beat" } }));
+    // The composer is the same surface Home's prompt box is — the model
+    // question is answered by the same popover, not a settings deep-link.
+    expect(container.querySelector(".tool-composer.prompt-box")).not.toBeNull();
+    expect(screen.getByLabelText("Model readiness")).toBeInTheDocument();
+    expect(screen.queryByText("Change model…")).toBeNull();
   });
 
   it("keeps the LLM enhance flow for scripts", () => {
