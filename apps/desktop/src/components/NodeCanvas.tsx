@@ -25,11 +25,14 @@
  *    The canvas never has a private mutation path, so the cycle check, the
  *    voice-consent gate and the re-plan all apply here for free.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Minus, Plus, Search } from "lucide-react";
 
 import type { GraphNode, NodeState } from "../api/types";
 import { m, plural, t } from "../i18n";
+import { chainOf, searchMatches } from "../lib/canvasFocus";
+import { anchoredScroll, clampZoom, fitZoom, stepZoom, wheelZoom } from "../lib/canvasView";
 import {
   NODE_HEIGHT,
   NODE_WIDTH,
@@ -48,6 +51,20 @@ import { PanelHelp } from "./Help";
  * cycle check is — the engine's refusal is what makes it safe, this one is
  * what makes it explicable at the moment the key was pressed. */
 const SCRIPT_NODE_ID = "script";
+
+/** What "Add node" offers.
+ *
+ * Five of the engine's eleven kinds. The others are not additions a person
+ * makes: `script` is the one node the pipeline is rebuilt FROM, `scene`,
+ * `timeline`, `export` and `captions` are structure `expand_screenplay`
+ * maintains, and `asset` arrives by upload with its bytes — an empty one
+ * would be a node with nothing in it and no way to fill it. */
+const ADDABLE_KINDS = ["keyframe", "clip", "narration", "music", "thumbnail"] as const;
+
+/** Kinds whose artifact is a still image, so the node can show it. A clip's
+ * artifact is an mp4 and a narration's a wav: both need a player, which is
+ * what the Details panel and the storyboard are for. */
+const IMAGE_KINDS = new Set(["keyframe", "thumbnail", "asset"]);
 
 /** Shared, so a node with no incoming edge does not allocate a fresh object
  * on every render (and can be compared by identity by a memoized child). */
@@ -107,8 +124,46 @@ export function NodeCanvas() {
   const disconnectPort = useApp((state) => state.disconnectPort);
   const removeNode = useApp((state) => state.removeNode);
 
+  const addNode = useApp((state) => state.addNode);
+  const client = useApp((state) => state.client);
+
   const [wire, setWire] = useState<PendingWire | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  // View transform. Session state, never persisted: a saved zoom would be
+  // the first per-machine thing in a project directory whose whole point is
+  // that it opens identically elsewhere (see lib/canvasView).
+  const [zoom, setZoom] = useState(1);
+  // The live zoom, written before the state that renders it.
+  //
+  // Two presses of − in one task are ONE React batch, so a handler reading
+  // the rendered `zoom` computes both from the same number and the second
+  // press does nothing. A wheel spins several events per frame and loses
+  // most of them the same way. Handlers read and write this; `zoom` exists
+  // to re-render.
+  const zoomRef = useRef(1);
+  // Where a zoom should leave the scroll, computed from the event that
+  // caused it and applied after the DOM has the new scale — otherwise the
+  // scroll is set against the old stage size and the graph jumps.
+  const anchorRef = useRef<{
+    gx: number;
+    gy: number;
+    cx: number;
+    cy: number;
+  } | null>(null);
+  const [query, setQuery] = useState("");
+  // Which match Enter goes to next; reset whenever the query changes.
+  const [matchAt, setMatchAt] = useState(0);
+  const [addOpen, setAddOpen] = useState(false);
+  // Drag-to-pan: the grab point and the scroll it started from. A ref, not
+  // state — it is read on every pointermove and re-rendering per frame to
+  // store a number nothing draws would be a wasted render each time.
+  const panRef = useRef<{
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+  } | null>(null);
+  const [panning, setPanning] = useState(false);
   // Deleting a node is the one edit here with no way back: `add_node` has no
   // UI at all, so a structural node (export, timeline, script) removed by a
   // stray Delete leaves a project that can never finish a cut. ConfirmDialog
@@ -142,16 +197,78 @@ export function NodeCanvas() {
   // pointermove of a drag and every progress tick of a live render.
   const occupied = useMemo(() => occupiedPortIndex(graph), [graph]);
 
-  /** Pointer position in canvas coordinates, accounting for scroll. */
+  /** Pointer position in GRAPH coordinates — scroll and zoom removed.
+   *
+   * The wire's live end is drawn inside the stage, which is scaled, so it
+   * has to be positioned in the stage's own units. Dividing by the zoom is
+   * what keeps the curve under the pointer at any magnification. */
   const toCanvas = (event: { clientX: number; clientY: number }) => {
     const surface = surfaceRef.current;
     if (!surface) return { x: 0, y: 0 };
     const box = surface.getBoundingClientRect();
     return {
-      x: event.clientX - box.left + surface.scrollLeft,
-      y: event.clientY - box.top + surface.scrollTop,
+      x: (event.clientX - box.left + surface.scrollLeft) / zoom,
+      y: (event.clientY - box.top + surface.scrollTop) / zoom,
     };
   };
+
+  /** Zoom, keeping the graph point under the pointer where it is.
+   *
+   * `compute` takes the LIVE zoom rather than a finished number, so a second
+   * press in the same batch steps from where the first one left it. */
+  const zoomAt = (
+    compute: (from: number) => number,
+    event: { clientX: number; clientY: number },
+  ) => {
+    const from = zoomRef.current;
+    const next = compute(from);
+    if (next === from) return;
+    const surface = surfaceRef.current;
+    if (surface) {
+      const box = surface.getBoundingClientRect();
+      const cx = event.clientX - box.left;
+      const cy = event.clientY - box.top;
+      anchorRef.current = {
+        gx: (cx + surface.scrollLeft) / from,
+        gy: (cy + surface.scrollTop) / from,
+        cx,
+        cy,
+      };
+    }
+    zoomRef.current = next;
+    setZoom(next);
+  };
+
+  /** A −/+ press has no pointer, so it holds the middle of the view. */
+  const zoomFromCentre = (compute: (from: number) => number) => {
+    const surface = surfaceRef.current;
+    if (!surface) {
+      const next = compute(zoomRef.current);
+      zoomRef.current = next;
+      setZoom(next);
+      return;
+    }
+    const box = surface.getBoundingClientRect();
+    zoomAt(compute, {
+      clientX: box.left + surface.clientWidth / 2,
+      clientY: box.top + surface.clientHeight / 2,
+    });
+  };
+
+  // Applied after paint, against the stage that now carries the new scale.
+  useLayoutEffect(() => {
+    const surface = surfaceRef.current;
+    const anchor = anchorRef.current;
+    anchorRef.current = null;
+    if (!surface || !anchor) return;
+    const { left, top } = anchoredScroll(
+      { gx: anchor.gx, gy: anchor.gy },
+      { cx: anchor.cx, cy: anchor.cy },
+      zoom,
+    );
+    surface.scrollLeft = left;
+    surface.scrollTop = top;
+  }, [zoom]);
 
   const startWire = (src: string, event: React.PointerEvent) => {
     event.preventDefault();
@@ -187,6 +304,61 @@ export function NodeCanvas() {
       setHint(null);
     }
   };
+
+  // The selected node's transitive cone, and the search's hits. Both are set
+  // arithmetic over the graph (lib/canvasFocus) — memoized because they are
+  // read once per node inside the render loop.
+  const chain = useMemo(() => chainOf(graph, selectedNode), [graph, selectedNode]);
+  const matches = useMemo(() => searchMatches(graph, query), [graph, query]);
+  const matchSet = useMemo(() => new Set(matches), [matches]);
+
+  const jumpToMatch = () => {
+    if (matches.length === 0) return;
+    const at = matchAt % matches.length;
+    select(matches[at]!);
+    setMatchAt(at + 1);
+  };
+
+  const fitToPanel = () => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const next = fitZoom(
+      { width: layout.width, height: layout.height },
+      { width: surface.clientWidth, height: surface.clientHeight },
+    );
+    zoomRef.current = next;
+    setZoom(next);
+    // Fit shows the whole graph, so the only scroll that shows all of it is
+    // none — no anchor to preserve.
+    surface.scrollLeft = 0;
+    surface.scrollTop = 0;
+  };
+
+  const add = async (kind: string) => {
+    setAddOpen(false);
+    const error = await addNode(kind);
+    // A refusal has to say so: the menu closing over a graph that did not
+    // change looks exactly like success.
+    setHint(error ?? t("canvas.added", { kind: kindLabel(kind) }));
+  };
+
+  // Escape clears the selection, and with it the chain focus. Window-level
+  // for the same reason the wire's Escape is: the surface has no focus of
+  // its own, so an onKeyDown there only fires for a focused descendant.
+  useEffect(() => {
+    if (!selectedNode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // A wire in flight owns Escape first — that handler cancels the wire
+      // and leaves the selection alone.
+      if (wire) return;
+      // Not while typing in the search box: Escape there clears the query.
+      if (document.activeElement?.classList.contains("canvas-search-input")) return;
+      select(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedNode, wire, select]);
 
   // Keyed on whether a wire exists rather than on the wire itself: the live
   // end is rewritten on every pointermove, so depending on the object would
@@ -257,110 +429,259 @@ export function NodeCanvas() {
           {plural("canvas.nodes", layout.nodes.length)} ·{" "}
           {plural("canvas.edges", graph.edges.length)}
         </span>
+
+        <div className="canvas-search">
+          <Search size={12} strokeWidth={1.8} aria-hidden="true" />
+          <input
+            className="canvas-search-input"
+            value={query}
+            placeholder={t("canvas.searchPlaceholder")}
+            aria-label={t("canvas.searchAria")}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setMatchAt(0);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                jumpToMatch();
+              }
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                setQuery("");
+              }
+            }}
+          />
+          {query.trim() && (
+            <span className="canvas-search-count">
+              {matches.length === 0
+                ? t("canvas.noMatches")
+                : plural("canvas.matches", matches.length)}
+            </span>
+          )}
+        </div>
+
         {hint && <span className="canvas-hint">{hint}</span>}
+
+        <div className="canvas-zoom" role="group" aria-label={t("canvas.title")}>
+          <button
+            type="button"
+            aria-label={t("canvas.zoomOut")}
+            onClick={() => zoomFromCentre((from) => stepZoom(from, -1))}
+          >
+            <Minus size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <span
+            className="canvas-zoom-value"
+            role="status"
+            aria-label={t("canvas.zoomValueAria", {
+              pct: Math.round(zoom * 100),
+            })}
+          >
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            aria-label={t("canvas.zoomIn")}
+            onClick={() => zoomFromCentre((from) => stepZoom(from, +1))}
+          >
+            <Plus size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <button type="button" aria-label={t("canvas.zoomFit")} onClick={fitToPanel}>
+            {t("canvas.fit")}
+          </button>
+        </div>
+
+        <div className="canvas-add">
+          <button
+            type="button"
+            className="btn-ghost"
+            aria-expanded={addOpen}
+            aria-label={t("canvas.addNodeAria")}
+            onClick={() => setAddOpen(!addOpen)}
+          >
+            {t("canvas.addNode")}
+          </button>
+          {addOpen && (
+            <div className="menu-pop" role="menu">
+              {ADDABLE_KINDS.map((kind) => (
+                <button key={kind} role="menuitem" onClick={() => void add(kind)}>
+                  <span className="grow">{kindLabel(kind)}</span>
+                  <small>{(m().canvas.kindHints as Record<string, string>)[kind]}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <PanelHelp panel="canvas" />
       </div>
       <div
-        className="canvas-surface"
+        className={`canvas-surface${panning ? " panning" : ""}`}
         ref={surfaceRef}
         onKeyDown={onSurfaceKeyDown}
+        // Ctrl+wheel only. A bare wheel is the surface's own scroll — the
+        // gesture a plain mouse has for moving around a graph taller than
+        // the panel — and taking it would leave no way to scroll at all.
+        onWheel={(event) => {
+          if (!event.ctrlKey) return;
+          event.preventDefault();
+          zoomAt((from) => wheelZoom(from, event.deltaY), event);
+        }}
+        onPointerDown={(event) => {
+          // Empty space only: a press on a node, a port or the toolbar is
+          // that control's own gesture.
+          if (wire || event.button !== 0) return;
+          if (event.target instanceof Element && event.target.closest(".canvas-node")) return;
+          const surface = surfaceRef.current;
+          if (!surface) return;
+          panRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            left: surface.scrollLeft,
+            top: surface.scrollTop,
+          };
+          setPanning(true);
+        }}
         onPointerMove={(event) => {
-          if (wire) setWire({ ...wire, ...toCanvas(event) });
+          if (wire) {
+            setWire({ ...wire, ...toCanvas(event) });
+            return;
+          }
+          const pan = panRef.current;
+          const surface = surfaceRef.current;
+          if (!pan || !surface) return;
+          // Scroll the opposite way to the drag: the graph follows the hand.
+          surface.scrollLeft = pan.left - (event.clientX - pan.x);
+          surface.scrollTop = pan.top - (event.clientY - pan.y);
         }}
         // Releasing anywhere but on a port abandons the wire. Without this a
         // half-made connection follows the pointer forever.
         onPointerUp={() => {
+          panRef.current = null;
+          setPanning(false);
           if (wire) {
             setWire(null);
             setHint(null);
           }
         }}
+        onPointerLeave={() => {
+          panRef.current = null;
+          setPanning(false);
+        }}
       >
+        {/* A transform does not change the layout box, so without this the
+            surface kept scrolling over the full-size graph however far it
+            was zoomed out — Fit left a scrollbar over a screen of nothing.
+            The sizer carries the SCALED extent; the stage inside it keeps
+            graph units, which is what every node's position is in. */}
         <div
-          className="canvas-stage"
-          style={{ width: layout.width, height: layout.height }}
-          // A GROUP, not `application`. `application` takes a screen reader
-          // out of browse mode for everything inside — which would undo the
-          // reason NodeBox is a group rather than a button (keeping the port
-          // buttons individually reachable). Every control here is a real
-          // button already, so there is no custom key handling to protect,
-          // and `group` is the container role the rest of the app uses.
-          role="group"
-          aria-label={t("canvas.title")}
+          className="canvas-sizer"
+          style={{ width: layout.width * zoom, height: layout.height * zoom }}
         >
-          <svg className="canvas-wires" width={layout.width} height={layout.height} aria-hidden>
-            {graph.edges.map((edge) => {
-              const from = layout.byId[edge.src];
-              const to = layout.byId[edge.dst];
-              if (!from || !to) return null; // an edge to a node the graph lost
-              const active = selectedNode === edge.src || selectedNode === edge.dst;
-              return (
+          <div
+            className="canvas-stage"
+            style={{
+              width: layout.width,
+              height: layout.height,
+              transform: `scale(${zoom})`,
+              // From the top-left, not the centre: the scroll offsets that
+              // position the stage are measured from that corner, and scaling
+              // about the middle slides the graph out from under them.
+              transformOrigin: "0 0",
+            }}
+            // A GROUP, not `application`. `application` takes a screen reader
+            // out of browse mode for everything inside — which would undo the
+            // reason NodeBox is a group rather than a button (keeping the port
+            // buttons individually reachable). Every control here is a real
+            // button already, so there is no custom key handling to protect,
+            // and `group` is the container role the rest of the app uses.
+            role="group"
+            aria-label={t("canvas.title")}
+          >
+            <svg className="canvas-wires" width={layout.width} height={layout.height} aria-hidden>
+              {graph.edges.map((edge) => {
+                const from = layout.byId[edge.src];
+                const to = layout.byId[edge.dst];
+                if (!from || !to) return null; // an edge to a node the graph lost
+                const active = selectedNode === edge.src || selectedNode === edge.dst;
+                return (
+                  <path
+                    key={`${edge.src}->${edge.dst}:${edge.port}`}
+                    className={`canvas-wire${active ? " active" : ""}`}
+                    d={edgePath(from, to)}
+                  />
+                );
+              })}
+              {wire && layout.byId[wire.src] && (
                 <path
-                  key={`${edge.src}->${edge.dst}:${edge.port}`}
-                  className={`canvas-wire${active ? " active" : ""}`}
-                  d={edgePath(from, to)}
+                  className="canvas-wire pending"
+                  d={edgePath(layout.byId[wire.src]!, {
+                    // The live end follows the pointer: shift back by half a box
+                    // so the curve terminates AT the cursor, not past it.
+                    x: wire.x,
+                    y: wire.y - NODE_HEIGHT / 2,
+                  })}
+                />
+              )}
+            </svg>
+
+            {layout.nodes.map((placed) => {
+              const node = graph.nodes[placed.id]!;
+              const state = statuses[placed.id];
+              const held = occupied[placed.id] ?? EMPTY_PORTS;
+              return (
+                <NodeBox
+                  key={placed.id}
+                  node={node}
+                  state={state}
+                  x={placed.x}
+                  y={placed.y}
+                  selected={selectedNode === placed.id}
+                  // Outside the selected node's chain: still legible, just not
+                  // competing with it. Nothing dims when nothing is selected.
+                  dimmed={chain.size > 0 && !chain.has(placed.id)}
+                  matched={matchSet.has(placed.id)}
+                  thumbUrl={
+                    IMAGE_KINDS.has(node.kind) && state?.artifact_hash && client && projectId
+                      ? client.artifactUrl(projectId, state.artifact_hash)
+                      : null
+                  }
+                  wiring={wiring}
+                  heldPorts={held}
+                  vacatedPorts={vacated[placed.id] ?? NO_VACATED}
+                  onSelect={() => select(placed.id)}
+                  onStartWire={(event) => startWire(placed.id, event)}
+                  onDropWire={(port) => void dropWire(placed.id, port)}
+                  // Same reporting as a wire and a delete: an unwire the engine
+                  // refuses has to say so, or the edge simply stays on screen
+                  // with nothing to explain why the click did nothing.
+                  onDisconnect={(port) =>
+                    void disconnectPort(placed.id, port).then((error) => {
+                      if (error) {
+                        setHint(error);
+                        return;
+                      }
+                      // Only once the engine agreed it is gone: keeping the
+                      // port drawn is what lets the same click be undone.
+                      setVacated((previous) => {
+                        const held = previous[placed.id] ?? [];
+                        if (held.includes(port)) return previous;
+                        return { ...previous, [placed.id]: [...held, port] };
+                      });
+                    })
+                  }
+                  onRemove={() => {
+                    if (placed.id === SCRIPT_NODE_ID) {
+                      setHint(t("canvas.cannotRemove"));
+                      return;
+                    }
+                    setPendingDelete(placed.id);
+                  }}
                 />
               );
             })}
-            {wire && layout.byId[wire.src] && (
-              <path
-                className="canvas-wire pending"
-                d={edgePath(layout.byId[wire.src]!, {
-                  // The live end follows the pointer: shift back by half a box
-                  // so the curve terminates AT the cursor, not past it.
-                  x: wire.x,
-                  y: wire.y - NODE_HEIGHT / 2,
-                })}
-              />
-            )}
-          </svg>
-
-          {layout.nodes.map((placed) => {
-            const node = graph.nodes[placed.id]!;
-            const state = statuses[placed.id];
-            const held = occupied[placed.id] ?? EMPTY_PORTS;
-            return (
-              <NodeBox
-                key={placed.id}
-                node={node}
-                state={state}
-                x={placed.x}
-                y={placed.y}
-                selected={selectedNode === placed.id}
-                wiring={wiring}
-                heldPorts={held}
-                vacatedPorts={vacated[placed.id] ?? NO_VACATED}
-                onSelect={() => select(placed.id)}
-                onStartWire={(event) => startWire(placed.id, event)}
-                onDropWire={(port) => void dropWire(placed.id, port)}
-                // Same reporting as a wire and a delete: an unwire the engine
-                // refuses has to say so, or the edge simply stays on screen
-                // with nothing to explain why the click did nothing.
-                onDisconnect={(port) =>
-                  void disconnectPort(placed.id, port).then((error) => {
-                    if (error) {
-                      setHint(error);
-                      return;
-                    }
-                    // Only once the engine agreed it is gone: keeping the
-                    // port drawn is what lets the same click be undone.
-                    setVacated((previous) => {
-                      const held = previous[placed.id] ?? [];
-                      if (held.includes(port)) return previous;
-                      return { ...previous, [placed.id]: [...held, port] };
-                    });
-                  })
-                }
-                onRemove={() => {
-                  if (placed.id === SCRIPT_NODE_ID) {
-                    setHint(t("canvas.cannotRemove"));
-                    return;
-                  }
-                  setPendingDelete(placed.id);
-                }}
-              />
-            );
-          })}
+          </div>
         </div>
       </div>
       {pendingDelete && (
@@ -389,6 +710,12 @@ interface NodeBoxProps {
   x: number;
   y: number;
   selected: boolean;
+  /** Outside the selected node's chain. */
+  dimmed: boolean;
+  /** Hit by the current search. */
+  matched: boolean;
+  /** The node's own render, when it is a still image. */
+  thumbUrl: string | null;
   wiring: boolean;
   heldPorts: Record<string, string>;
   /** Ports this session emptied — still offered, so the unwire is undoable. */
@@ -429,8 +756,16 @@ function NodeBox(props: NodeBoxProps) {
       // would only be a class nothing styles.
       className={`canvas-node${props.selected ? " selected" : ""}${
         status ? ` status-${status}` : ""
-      }`}
-      style={{ left: props.x, top: props.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
+      }${props.dimmed ? " dimmed" : ""}${props.matched ? " match" : ""}`}
+      style={{
+        left: props.x,
+        top: props.y,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+      }}
+      // The id, for the walk and the parity rig: every other handle on a
+      // node is a translated accessible name.
+      data-node={node.id}
       // A GROUP, not a button, even though the whole box is clickable. The
       // ports below are real buttons, and ARIA specifies the children of a
       // `button` as presentational: nesting them inside one hides the only
@@ -463,8 +798,39 @@ function NodeBox(props: NodeBoxProps) {
           }
         }}
       >
-        <span className="canvas-node-kind">{kindLabel(node.kind)}</span>
-        <span className="canvas-node-id">{node.id}</span>
+        {/* The node's own render, when it is a still. Decorative: the
+            button's accessible name already says which node this is and
+            what state it is in, so an alt would repeat it. */}
+        {props.thumbUrl && (
+          <img
+            className="canvas-node-thumb"
+            src={props.thumbUrl}
+            alt=""
+            role="img"
+            aria-label={t("canvas.thumbAlt", { id: node.id })}
+            loading="lazy"
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+        <span className="canvas-node-text">
+          <span className="canvas-node-kind">{kindLabel(node.kind)}</span>
+          <span className="canvas-node-id">{node.id}</span>
+        </span>
+        {/* Live progress, on the node rather than only in the queue tray:
+            mid-render is exactly when someone opens the canvas to see which
+            part of the pipeline is moving. */}
+        {status === "rendering" && (
+          <>
+            <span className="canvas-node-pct">{Math.round((state?.progress ?? 0) * 100)}%</span>
+            <span
+              className="canvas-node-bar"
+              style={{ width: `${Math.round((state?.progress ?? 0) * 100)}%` }}
+              aria-hidden="true"
+            />
+          </>
+        )}
       </button>
       {node.pinned && (
         <span className="canvas-node-pin" title={t("canvas.pinned")} aria-hidden>
@@ -478,7 +844,10 @@ function NodeBox(props: NodeBoxProps) {
             key={port}
             type="button"
             className={`canvas-port${heldPorts[port] ? " filled" : ""}`}
-            aria-label={t("canvas.portAria", { port: portLabel(port), id: node.id })}
+            aria-label={t("canvas.portAria", {
+              port: portLabel(port),
+              id: node.id,
+            })}
             // Pointer-up rather than click: the wire is a drag, and a click
             // needs a matching down on the same element, which the drag
             // started elsewhere.
