@@ -103,3 +103,20 @@ describe("addNode", () => {
     expect(await useApp.getState().addNode("clip")).toBe(t("errors.engineUnavailable"));
   });
 });
+
+describe("opening a project the engine refuses", () => {
+  it("reports it instead of letting the failure escape", async () => {
+    // A state file written before the store forced UTF-8 answers 409 with a
+    // reason. openProject awaited the fetch with nothing around it, so the
+    // rejection escaped every `void openProject(id)` call site and reached
+    // window.onerror — the user saw a tile that simply did nothing.
+    const message = "engine 409: project.json is not valid UTF-8";
+    useApp.setState({
+      client: fakeClient({ getProject: vi.fn().mockRejectedValue(new Error(message)) }),
+      actionError: null,
+    } as never);
+
+    await expect(useApp.getState().openProject("p1")).resolves.toBeUndefined();
+    expect(useApp.getState().actionError).toEqual({ scope: "open", message });
+  });
+});

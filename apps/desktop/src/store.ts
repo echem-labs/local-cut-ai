@@ -125,7 +125,7 @@ export interface SeedPatch {
 /** A failed user action, tagged so the screen that started it can show
  * the message next to its own button. */
 export interface ActionError {
-  scope: "create" | "tool" | "promote" | "approve" | "enhance";
+  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open";
   message: string;
 }
 
@@ -1112,13 +1112,27 @@ export const useApp = create<AppState>((set, get) => {
       // Fetch jobs alongside the board: without this the jobs slice keeps
       // showing the previously open project's jobs until some WS event happens
       // to trigger a refresh (never, for an idle project).
-      const [{ project, board }, jobs] = await Promise.all([
-        client.getProject(id),
-        // Jobs are secondary: a transient /jobs failure must not abort opening
-        // the project. Empty is fine — the next non-progress job event triggers
-        // a board refresh (scheduleRefresh) that repopulates the list.
-        client.listJobs(id).catch(() => [] as Job[]),
-      ]);
+      let project: Project;
+      let board: Board;
+      let jobs: Job[];
+      try {
+        // The engine refuses a project it cannot read (a state file from a
+        // build that wrote the machine's ANSI code page answers 409 with the
+        // byte and the offset). Every call site here is a `void
+        // openProject(id)` from a tile or a rail row, so an escaping
+        // rejection reached window.onerror and the click simply did nothing.
+        [{ project, board }, jobs] = await Promise.all([
+          client.getProject(id),
+          // Jobs are secondary: a transient /jobs failure must not abort opening
+          // the project. Empty is fine — the next non-progress job event triggers
+          // a board refresh (scheduleRefresh) that repopulates the list.
+          client.listJobs(id).catch(() => [] as Job[]),
+        ]);
+      } catch (err) {
+        if (generation !== openGen || get().client !== client) return;
+        set({ actionError: { scope: "open", message: messageOf(err) } });
+        return;
+      }
       // Superseded while we awaited (another openProject, or a closeProject):
       // drop this result rather than navigating backwards into it.
       if (generation !== openGen || get().client !== client) return;

@@ -70,7 +70,12 @@ from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import configured_providers, textgen_for_model
 from ..providers.textgen import ProviderError
-from ..project.store import PROJECT_ID_PATTERN, ProjectStore, ProjectTooNew
+from ..project.store import (
+    PROJECT_ID_PATTERN,
+    ProjectStore,
+    ProjectTooNew,
+    ProjectUnreadable,
+)
 from ..service import (
     CLOUD_SPEND_ALLOWED,
     CloudSpendRefused,
@@ -585,6 +590,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         """
         del request
         return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    @app.exception_handler(ProjectUnreadable)
+    async def _project_unreadable(request: Request, exc: ProjectUnreadable) -> JSONResponse:
+        """A state file this build cannot decode is a conflict about the file,
+        not a server fault — and the answer has to name it. As a 500 it
+        reached the app as "Internal Server Error", which says neither which
+        project is broken nor that the rest of the library is fine."""
+        del request
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(ProjectTooNew)
     async def _project_too_new(request: Request, exc: ProjectTooNew) -> JSONResponse:

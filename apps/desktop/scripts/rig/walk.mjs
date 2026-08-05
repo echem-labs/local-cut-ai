@@ -285,11 +285,148 @@ try {
     `);
   }
 
+  // U4: the flowchart. Its bar is the densest row in the app — counts,
+  // search, hint, zoom cluster, Add node and help — and the surface below
+  // it scrolls in BOTH axes on purpose, which is exactly the shape that
+  // hides a horizontal overflow of the page itself. A screen the walk
+  // cannot reach is a screen nothing gates (plan rule 5).
+  const canvasStop = await evalInApp(`
+    // Through the Library's Videos filter, not off Home's shelf: the shelf
+    // is the four most RECENT of everything, and a run of quick tools
+    // pushes every video off it — a tool session opens its own
+    // single-artifact page, which has no flowchart because it has no
+    // pipeline. The filter is where a video is guaranteed to be listed.
+    await page.evaluate(() => {
+      const label = (button) =>
+        (button.textContent || "") + " " + (button.getAttribute("aria-label") || "");
+      [...document.querySelectorAll(".rail button")]
+        .find((button) => label(button).includes("Library"))
+        ?.click();
+    });
+    // Waited for, not slept past: the grid arrives with the engine's list,
+    // and a fixed delay measured an empty Library on a cold start.
+    await page.waitForSelector(".library .project-tile", { timeout: 20000 });
+    await page.evaluate(() => {
+      // Tabs are All / Videos / Tool outputs.
+      document.querySelectorAll(".library-bar .filter-tabs button")[1]?.click();
+    });
+    await page.waitForSelector(".library .project-tile", { timeout: 20000 });
+    // Try each video in turn rather than insisting on the first. A project
+    // whose state file predates the store's encoding fix cannot be read at
+    // all, and one such project in a long-lived profile would otherwise
+    // stop the walk from ever reaching the canvas.
+    const count = await page.evaluate(
+      () => document.querySelectorAll(".library .project-tile .tile-open").length,
+    );
+    let workspace = false;
+    for (let at = 0; at < count && !workspace; at += 1) {
+      await page.evaluate((at) => {
+        document.querySelectorAll(".library .project-tile .tile-open")[at]?.click();
+      }, at);
+      workspace = await page
+        .waitForSelector(".dockview-theme-localcut", { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!workspace) {
+        // Back to the list for the next candidate.
+        await page.evaluate(() => {
+          const label = (b) => (b.textContent || "") + " " + (b.getAttribute("aria-label") || "");
+          [...document.querySelectorAll(".rail button")]
+            .find((button) => label(button).includes("Library"))
+            ?.click();
+        });
+        await page.waitForSelector(".library .project-tile", { timeout: 20000 }).catch(() => {});
+      }
+    }
+    if (!workspace) return null;
+    await page.evaluate(() => {
+      const tab = [...document.querySelectorAll("button")].find((b) =>
+        /flowchart/i.test((b.textContent || "") + " " + (b.getAttribute("title") || "")));
+      tab?.click();
+    });
+    return page
+      .waitForSelector(".canvas-stage", { timeout: 20000 })
+      .then(() => true)
+      .catch(() => false);
+  `);
+  check(
+    "the flowchart opens from a video in the Library",
+    canvasStop === true,
+    "the walk needs a profile with at least one VIDEO project (tool outputs have no flowchart)",
+  );
+  if (canvasStop) {
+    for (const [width, height] of [
+      [1200, 800],
+      [1440, 900],
+      [1920, 1080],
+    ]) {
+      await setSize(width, height);
+      const canvas = await evalInApp(`
+        return page.evaluate(() => {
+          const bar = document.querySelector(".canvas-bar");
+          const panel = document.querySelector(".canvas-panel").getBoundingClientRect();
+          const controls = [...bar.children];
+          const escaped = controls.filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < panel.left - 1 || r.right > panel.right + 1);
+          }).length;
+          const surface = document.querySelector(".canvas-surface");
+          const sizer = document.querySelector(".canvas-sizer").getBoundingClientRect();
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+            escaped,
+            // One line means one shared CENTRE, not one shared top: the bar
+            // centres its children, so a 15px label and a 24px button sit at
+            // different tops while being perfectly on the same row.
+            barWraps:
+              new Set(
+                controls.map((el) => {
+                  const r = el.getBoundingClientRect();
+                  return Math.round(r.top + r.height / 2);
+                }),
+              ).size > 1,
+            // The surface scrolls over the SCALED graph (the sizer), or over
+            // itself when the panel is wider than the graph — never over the
+            // raw layout box, which a transform leaves untouched.
+            scrollsOverScaled:
+              Math.abs(surface.scrollWidth - Math.max(Math.round(sizer.width), surface.clientWidth)) <=
+              2,
+          };
+        });
+      `);
+      check(
+        `${width}px: the flowchart bar keeps its controls on one line inside the panel`,
+        canvas.escaped === 0 && !canvas.barWraps,
+        JSON.stringify(canvas),
+      );
+      check(
+        `${width}px: the flowchart adds no horizontal scroll to the page`,
+        canvas.scrollWidth <= canvas.innerWidth + 1,
+        `scrollWidth ${canvas.scrollWidth}`,
+      );
+      check(
+        `${width}px: the surface scrolls over the scaled graph, not the raw layout`,
+        canvas.scrollsOverScaled,
+        JSON.stringify(canvas),
+      );
+    }
+    await shoot("flowchart-1920.png");
+  }
+
   const report = await health();
+  // A 409 is a refusal the product is designed to make and to explain — the
+  // canvas stop deliberately opens projects until one works, and a state
+  // file written by a build older than the store's encoding fix answers 409
+  // by design. Chromium logs every failed response as a console error, so
+  // that one status is filtered; 4xx of any other kind, every 5xx and every
+  // app-level error still fail the walk.
+  const noise = /Failed to load resource[^|]*409 \(Conflict\)|engine 409:/;
+  const consoleErrors = report.consoleErrors.filter((line) => !noise.test(line));
   check(
     "no console errors during the walk",
-    report.consoleErrors.length === 0 && report.pageErrors.length === 0,
-    JSON.stringify([...report.consoleErrors, ...report.pageErrors].slice(0, 3)),
+    consoleErrors.length === 0 && report.pageErrors.length === 0,
+    JSON.stringify([...consoleErrors, ...report.pageErrors].slice(0, 3)),
   );
 } finally {
   await stopRig(rig);
