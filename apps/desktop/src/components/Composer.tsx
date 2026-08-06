@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EngineError } from "../api/client";
 import type { EditProposal, EditResult } from "../api/types";
 import { plural, t } from "../i18n";
+import { pendingCheckpoint } from "../lib/checkpoints";
 import { type LogEntry, MAX_LOG_ENTRIES, loadLog, saveLog } from "../lib/editlog";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
@@ -27,6 +28,7 @@ export function Composer() {
     select,
     proposeEdit,
     applyEditPlan,
+    enhance,
     editBusy,
     regenerate,
     togglePin,
@@ -77,6 +79,9 @@ export function Composer() {
   // The compiled plan waiting for a yes. Cleared on project change, on
   // Discard, and whenever it turns out to be stale.
   const [proposal, setProposal] = useState<EditProposal | null>(null);
+  /** The script rewrite waiting for a yes — the note it would be given. */
+  const [confirmScript, setConfirmScript] = useState<string | null>(null);
+  const [rewriting, setRewriting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const scopeChipRef = useRef<HTMLButtonElement>(null);
@@ -111,6 +116,7 @@ export function Composer() {
     setReplyApplied(false);
     setError(null);
     setProposal(null);
+    setConfirmScript(null);
   }, [projectId]);
 
   // Ctrl+K belongs to the global command palette now (review 4 §SH4);
@@ -141,10 +147,24 @@ export function Composer() {
   }, [scopeOpen]);
 
   const selectedScene = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
-  // Scope: explicit override wins; else it follows the selection.
-  const scope = scopeOverride ?? selectedScene ?? "project";
+  /** The screenplay is editable through this box too, but not by the same
+   * door. `EDITABLE_PARAMS` has no entry for the script node, so the LLM
+   * edit view never shows it — a plan can rewrite a scene's narration and
+   * can never rewrite the script it came from. `/script/enhance` is that
+   * verb, and until now it existed only on the quick-tool page: a project
+   * sitting at its script checkpoint had no way to say "rewrite this,
+   * shorter". Offered only once there IS a script to amend. */
+  const canEnhanceScript = !!board?.aux.script;
+  /** Sitting at the script gate, with nothing else picked, what the box is
+   * for IS the script. A selected scene still wins — that is a deliberate
+   * click, and this is only a default. */
+  const scriptStage = pendingCheckpoint(currentProject, board) === "script";
+  const scope =
+    scopeOverride ?? selectedScene ?? (scriptStage && canEnhanceScript ? "script" : "project");
   const scopeLabel =
-    scope === "project"
+    scope === "script"
+      ? t("composer.theScript")
+      : scope === "project"
       ? t("composer.wholeVideo")
       : t("composer.scene", { n: scope.replace(/^s/, "") });
 
@@ -217,6 +237,16 @@ export function Composer() {
     setFeedback(null);
     setReplyApplied(false);
     setProposal(null);
+    // The script has no dry run — the engine cannot say what a rewritten
+    // screenplay will contain without writing one. So the preview this scope
+    // CAN offer is what the rewrite costs: a new screenplay re-expands the
+    // graph, and every scene it produces is written fresh. Asked first,
+    // because the plan card next to it set the expectation that nothing in
+    // this box lands unannounced.
+    if (scope === "script") {
+      setConfirmScript(instruction);
+      return;
+    }
     try {
       const proposed = await proposeEdit(instruction, scope);
       if (!proposed) return;
@@ -240,6 +270,33 @@ export function Composer() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  /** Send the note to `/script/enhance`. Internally a `/patch` on the script
+   * node — feedback plus the screenplay it amends — so the re-render, the
+   * cycle check and the undo entry all come from the chokepoint rather than
+   * a private path. Undo is what makes saying yes here reversible. */
+  const rewriteScript = async () => {
+    if (!confirmScript || rewriting) return;
+    setError(null);
+    setRewriting(true);
+    const notes = confirmScript;
+    const message = await enhance(notes);
+    setRewriting(false);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setConfirmScript(null);
+    setFeedback(t("composer.scriptRewriting"));
+    pushLog({
+      at: Date.now(),
+      instruction: notes,
+      summary: t("composer.scriptRewritten"),
+      dirty: ["script"],
+      warnings: [],
+    });
+    setText("");
   };
 
   /** Land the plan on screen. The revision it was compiled against travels
@@ -313,6 +370,33 @@ export function Composer() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* What a script rewrite costs, since what it will SAY cannot be
+          previewed. Same shape as the plan card beside it and the same
+          reason: nothing typed into this box lands unannounced. */}
+      {confirmScript && (
+        <div className="edit-plan" role="group" aria-label={t("composer.scriptConfirmAria")}>
+          <p className="plan-summary">{t("composer.scriptConfirm")}</p>
+          <p className="plan-counts">{t("composer.scriptConfirmCost")}</p>
+          <div className="plan-actions">
+            <button
+              className="btn-primary"
+              disabled={rewriting}
+              title={t("terms.tips.rewriteScript")}
+              onClick={() => void rewriteScript()}
+            >
+              {rewriting ? t("composer.scriptRewritingShort") : t("composer.scriptRewrite")}
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={rewriting}
+              onClick={() => setConfirmScript(null)}
+            >
+              {t("composer.discard")}
+            </button>
+          </div>
         </div>
       )}
 
@@ -466,6 +550,21 @@ export function Composer() {
               >
                 <span className="grow">{t("composer.wholeVideo")}</span>
               </button>
+              {/* Above the scenes because it is upstream of them: a rewritten
+                  script is what the scenes are made FROM. */}
+              {canEnhanceScript && (
+                <button
+                  role="option"
+                  aria-selected={scope === "script"}
+                  className={scope === "script" ? "selected" : ""}
+                  onClick={() => {
+                    setScopeOverride("script");
+                    setScopeOpen(false);
+                  }}
+                >
+                  <span className="grow">{t("composer.theScript")}</span>
+                </button>
+              )}
               {sceneOptions.map((id) => (
                 <button
                   key={id}

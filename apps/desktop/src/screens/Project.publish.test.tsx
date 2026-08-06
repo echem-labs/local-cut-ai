@@ -52,7 +52,10 @@ const mount = (exportNode: NodeState) => {
   render(<Project />);
 };
 
-const prepare = () => screen.queryByRole("button", { name: /prepare to publish/i });
+// The header button that opens the dialog. The kit itself is a dialog now,
+// beside the final-video CTA rather than a band above the storyboard — what
+// this file pins is WHEN it is offered, which is the part that changed.
+const prepare = () => screen.queryByRole("button", { name: /^publish kit$/i });
 
 beforeEach(() => useApp.setState({ nodeFailures: {}, nodeRetries: {} } as never));
 

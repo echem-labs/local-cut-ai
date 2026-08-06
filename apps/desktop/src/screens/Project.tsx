@@ -3,6 +3,7 @@ import {
   Grid2x2,
   Grid3x3,
   LayoutGrid,
+  Megaphone,
   MonitorPlay,
   MoreHorizontal,
   Sparkles,
@@ -446,6 +447,7 @@ export function Project() {
   // fails the restore gate, or no engine at all) would otherwise be
   // indistinguishable from a board that simply did not move.
   const [historyKeyError, setHistoryKeyError] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   useEffect(() => {
     void refreshBoard();
@@ -729,6 +731,20 @@ export function Project() {
           </>
         )}
         <BoardMenu />
+        {/* Before the final-video CTA, and beside it: the kit is the step
+            after the cut, so it belongs where the end of the job is rather
+            than in a band above the storyboard that has to be scrolled past
+            on the way to everything earlier. */}
+        {hasCut && !checkpointPending && (
+          <button
+            className="btn-secondary"
+            title={t("terms.tips.publishKit")}
+            onClick={() => setPublishOpen(true)}
+          >
+            <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
+            {t("publish.open")}
+          </button>
+        )}
         {!checkpointPending &&
           (exported && client ? (
             <a
@@ -774,12 +790,7 @@ export function Project() {
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
       <StalledNotice />
-      {/* Only once there is a video to publish. Offering to write a title
-          for a cut that does not exist yet puts the last step first, and the
-          engine refuses it anyway while the script is unrendered. A DRAFT
-          cut counts: the kit is written from the script, so waiting for
-          final quality would withhold it for no reason. */}
-      {hasCut && <PublishKit />}
+      {publishOpen && <PublishKit onClose={() => setPublishOpen(false)} />}
       {historyKeyError && (
         <div role="status" className="banner error">
           {historyKeyError}

@@ -38,6 +38,8 @@ const KIT = {
   hashtags: ["snakes", "nature"],
 };
 
+const onClose = vi.fn();
+
 const mount = (aux: Record<string, NodeState>, extra: Record<string, unknown> = {}) => {
   useApp.setState({
     client: { artifactUrl: (_p: string, hash: string) => `http://engine/a/${hash}` },
@@ -45,10 +47,12 @@ const mount = (aux: Record<string, NodeState>, extra: Record<string, unknown> = 
     board: { scenes: [], aux, assembled_durations: {} } as unknown as Board,
     ...extra,
   } as never);
-  render(<PublishKit />);
+  render(<PublishKit onClose={onClose} />);
 };
 
 beforeEach(() => {
+  localStorage.clear();
+  onClose.mockClear();
   vi.restoreAllMocks();
   vi.stubGlobal(
     "fetch",
@@ -60,7 +64,9 @@ describe("before anything has been packaged", () => {
   it("offers one button and nothing else", () => {
     mount({});
     expect(screen.getByRole("button", { name: /prepare to publish/i })).toBeEnabled();
-    expect(screen.queryByText(/hashtags/i)).toBeNull();
+    // By field, not by any text: the dialog's own hint names the hashtags
+    // it is about to write, which is not the same as offering the field.
+    expect(screen.queryByLabelText(/^hashtags$/i)).toBeNull();
   });
 
   it("asks the engine to build the kit", async () => {
@@ -99,22 +105,22 @@ describe("once the kit has rendered", () => {
 
   it("shows each field the engine wrote", async () => {
     mount(done);
-    expect(await screen.findByText(KIT.title)).toBeInTheDocument();
-    expect(screen.getByText(KIT.description)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/^title$/i)).toHaveValue(KIT.title);
+    expect(screen.getByLabelText(/^description$/i)).toHaveValue(KIT.description);
   });
 
   it("puts the # back on the hashtags", async () => {
     // The engine strips it, so bare words would be pasted into a caption box
     // and mean nothing.
     mount(done);
-    expect(await screen.findByText("#snakes #nature")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/^hashtags$/i)).toHaveValue("#snakes #nature");
   });
 
   it("copies a field to the clipboard", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     mount(done);
-    await screen.findByText(KIT.title);
+    await screen.findByLabelText(/^title$/i);
 
     await userEvent.click(screen.getByRole("button", { name: /copy the title/i }));
     expect(writeText).toHaveBeenCalledWith(KIT.title);
@@ -134,5 +140,76 @@ describe("once the kit has rendered", () => {
     mount({ metadata: node("metadata", "rendering", "m".repeat(64)) });
     await waitFor(() => expect(screen.getByRole("status")).toBeInTheDocument());
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The kit is a staging area for a paste into someone else's upload form, so
+ * the text has to be editable — the engine's first guess at a title is a
+ * starting point, not a verdict.
+ *
+ * Where those edits live is forced: `metadata` is a graph node whose
+ * ARTIFACT is what the model wrote, and its params are the prompt that
+ * produced it, so there is no `set_params` meaning "keep my title instead".
+ * localStorage per project, the shape `editlog` already uses.
+ */
+describe("editing what will be pasted", () => {
+  const done = {
+    metadata: node("metadata", "final", "m".repeat(64)),
+    thumbnail: node("thumbnail", "final", "t".repeat(64)),
+  };
+
+  it("copies the edited text, not the engine's", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    mount(done);
+    const title = await screen.findByLabelText(/^title$/i);
+
+    await userEvent.clear(title);
+    await userEvent.type(title, "Snakes, ranked");
+    await userEvent.click(screen.getByRole("button", { name: /copy the title/i }));
+
+    expect(writeText).toHaveBeenCalledWith("Snakes, ranked");
+  });
+
+  it("keeps an edit for the next time the dialog opens", async () => {
+    mount(done);
+    const title = await screen.findByLabelText(/^title$/i);
+    await userEvent.clear(title);
+    await userEvent.type(title, "Snakes, ranked");
+
+    // A fresh mount, as reopening the dialog is.
+    screen.getByRole("dialog").remove();
+    mount(done);
+    expect(await screen.findByLabelText(/^title$/i)).toHaveValue("Snakes, ranked");
+  });
+
+  it("leaves untouched fields to follow a regenerate", async () => {
+    // Only edited fields are remembered. Storing the whole kit would shadow
+    // a rewritten description forever behind one that was never changed.
+    mount(done);
+    const title = await screen.findByLabelText(/^title$/i);
+    await userEvent.clear(title);
+    await userEvent.type(title, "Snakes, ranked");
+
+    const draft = JSON.parse(localStorage.getItem("localcut.publishDraft.p1") ?? "{}");
+    expect(Object.keys(draft)).toEqual(["title"]);
+  });
+
+  it("takes hashtags with or without the hash and stores them bare", async () => {
+    mount(done);
+    const tags = await screen.findByLabelText(/^hashtags$/i);
+    await userEvent.clear(tags);
+    await userEvent.type(tags, "#reptiles nature");
+
+    const draft = JSON.parse(localStorage.getItem("localcut.publishDraft.p1") ?? "{}");
+    expect(draft.hashtags).toEqual(["reptiles", "nature"]);
+  });
+
+  it("closes on Escape without leaving the keystroke for the board", async () => {
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
   });
 });

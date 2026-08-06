@@ -153,6 +153,12 @@
   "durationTipHint": "How long the finished video should run. The script is written to fit it.",
   "styleTip": "Visual style",
   "styleTipHint": "The look the shot prompts are written for. Applies to every scene.",
+  "scriptModelTip": "Script model",
+  "scriptModelTipHint": "Which local LLM writes the screenplay. The default is whatever your engine is configured with.",
+  "toolDurationTip": "Target length",
+  "toolDurationTipHint": "How long the result should run. The script or music is written to fit it.",
+  "toolAspectTip": "Frame shape",
+  "toolAspectTipHint": "9:16 for Shorts, Reels and TikTok; 16:9 for YouTube; 1:1 for feed posts.",
   "styles": {
     "cinematic": "Cinematic",
     "documentary": "Documentary",
