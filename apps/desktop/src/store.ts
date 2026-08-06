@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { nextNodeId } from "./lib/graphIds";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -118,13 +119,20 @@ export interface SeedPatch {
    * it, and `freeze` keeps refreshBoard from writing the truth back. */
   board?: Board;
   jobs?: Job[];
+  /** The flowchart's graph and its selection (U4). The canvas is the one
+   * surface whose entire geometry is a function of the document rather than
+   * of the window, so its reference frame needs the exact graph posed — a
+   * real project's graph is whatever the engine planned that day, and the
+   * mock cannot be drawn against "whatever". */
+  graph?: StoryGraph;
+  selectedNode?: string | null;
   freeze?: boolean;
 }
 
 /** A failed user action, tagged so the screen that started it can show
  * the message next to its own button. */
 export interface ActionError {
-  scope: "create" | "tool" | "promote" | "approve" | "enhance";
+  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open";
   message: string;
 }
 
@@ -297,6 +305,10 @@ interface AppState {
   /** Free an input port. The node stays; only the edge goes. */
   disconnectPort: (dst: string, port: string) => Promise<string | null>;
   removeNode: (nodeId: string) => Promise<string | null>;
+  /** Add an unwired node of `kind` and select it. The id is generated
+   * against the live graph; params, seed and model are left at their
+   * defaults for the inspector to fill in. */
+  addNode: (kind: string) => Promise<string | null>;
   /** Re-render a node. With `seed`, a reroll pinned to that seed (one
    * atomic call — RegenerateBody.seed); without, the engine bumps it. */
   regenerate: (nodeId: string, seed?: number) => Promise<void>;
@@ -1107,13 +1119,27 @@ export const useApp = create<AppState>((set, get) => {
       // Fetch jobs alongside the board: without this the jobs slice keeps
       // showing the previously open project's jobs until some WS event happens
       // to trigger a refresh (never, for an idle project).
-      const [{ project, board }, jobs] = await Promise.all([
-        client.getProject(id),
-        // Jobs are secondary: a transient /jobs failure must not abort opening
-        // the project. Empty is fine — the next non-progress job event triggers
-        // a board refresh (scheduleRefresh) that repopulates the list.
-        client.listJobs(id).catch(() => [] as Job[]),
-      ]);
+      let project: Project;
+      let board: Board;
+      let jobs: Job[];
+      try {
+        // The engine refuses a project it cannot read (a state file from a
+        // build that wrote the machine's ANSI code page answers 409 with the
+        // byte and the offset). Every call site here is a `void
+        // openProject(id)` from a tile or a rail row, so an escaping
+        // rejection reached window.onerror and the click simply did nothing.
+        [{ project, board }, jobs] = await Promise.all([
+          client.getProject(id),
+          // Jobs are secondary: a transient /jobs failure must not abort opening
+          // the project. Empty is fine — the next non-progress job event triggers
+          // a board refresh (scheduleRefresh) that repopulates the list.
+          client.listJobs(id).catch(() => [] as Job[]),
+        ]);
+      } catch (err) {
+        if (generation !== openGen || get().client !== client) return;
+        set({ actionError: { scope: "open", message: messageOf(err) } });
+        return;
+      }
       // Superseded while we awaited (another openProject, or a closeProject):
       // drop this result rather than navigating backwards into it.
       if (generation !== openGen || get().client !== client) return;
@@ -1418,7 +1444,10 @@ export const useApp = create<AppState>((set, get) => {
 
     refreshGraph: async () => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      // Frozen like the board: the canvas mounts and asks for the graph, so
+      // without this the posed reference graph is replaced by the engine's
+      // own between the seed and the shutter.
+      if (!client || !currentProject || seedFrozen) return;
       const projectId = currentProject.id;
       const generation = ++graphGen;
       try {
@@ -1442,6 +1471,36 @@ export const useApp = create<AppState>((set, get) => {
     connectNodes: async (src, dst, port) => patchGraph([{ op: "connect", node_id: dst, src, port }]),
 
     disconnectPort: async (dst, port) => patchGraph([{ op: "disconnect", node_id: dst, port }]),
+
+    addNode: async (kind) => {
+      // The id is computed from the graph in hand rather than asked of the
+      // engine: `add_node` refuses a collision, and a refusal is a better
+      // failure than a second round trip on every add.
+      const id = nextNodeId(get().graph, kind);
+      const error = await patchGraph([
+        {
+          op: "add_node",
+          node_id: id,
+          // Every field the engine's Node model carries, at its default.
+          // `pinned`/`frozen_hash` are server-owned — patch.py zeroes them
+          // whatever a client sends — but sending the model's own shape is
+          // what keeps this call honest about what an added node IS.
+          node: {
+            id,
+            kind,
+            params: {},
+            seed: 0,
+            model: null,
+            pinned: false,
+            frozen_hash: null,
+          },
+        },
+      ]);
+      // Only on success: selecting a node the graph never received would
+      // open Details on nothing.
+      if (!error) set({ selectedNode: id });
+      return error;
+    },
 
     removeNode: async (nodeId) => {
       const error = await patchGraph([{ op: "remove_node", node_id: nodeId }]);
@@ -2088,6 +2147,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.openProjects !== undefined) next.openProjects = patch.openProjects;
     if (patch.board !== undefined) next.board = patch.board;
     if (patch.jobs !== undefined) next.jobs = patch.jobs;
+    if (patch.graph !== undefined) next.graph = patch.graph;
+    if (patch.selectedNode !== undefined) next.selectedNode = patch.selectedNode;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

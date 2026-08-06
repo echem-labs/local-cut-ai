@@ -45,6 +45,10 @@
       "what": "Reset interface zoom"
     },
     {
+      "keys": "Ctrl wheel",
+      "what": "Zoom the flowchart (Fit brings the graph back)"
+    },
+    {
       "keys": "?",
       "what": "This overlay"
     },
@@ -86,8 +90,10 @@
       "title": "The flowchart",
       "bullets": [
         "The same project as the storyboard, shown as what it really is — every step of the render and what feeds it.",
-        "Drag from a node's right edge onto another node's input dot to rewire it; a filled dot means that input is already taken.",
-        "Click a filled input dot to disconnect it. Select a node to edit it in Details, or press Delete to remove it — it will ask first, because a node cannot be added back here."
+        "Drag from a node's right edge onto another node's input dot to rewire it; a filled dot means that input is already taken. Click a filled dot to disconnect it.",
+        "Select a node to edit it in Details and to light up its chain — everything that feeds it and everything it feeds; Escape clears that focus.",
+        "Ctrl+wheel zooms around the pointer, dragging empty space pans, and Fit brings the whole graph back into view. The zoom is not saved: the layout is derived, so a project opens the same way everywhere.",
+        "Add node puts an empty node on the canvas, unwired — wire it up and fill it in from Details. Delete asks first: Add node can put an empty one back, but not its wiring or its render."
       ]
     }
   },
