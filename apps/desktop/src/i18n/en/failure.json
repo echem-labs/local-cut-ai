@@ -1,0 +1,20 @@
+{
+  "title": "This render ran out of memory",
+  "outOfMemoryHint": "The graphics card could not fit this render, even after the engine retried it smaller. Any of these will make it fit:",
+  "suggestion": {
+    "lower_resolution": "Render it smaller",
+    "smaller_model": "Use {model}",
+    "smaller_model_none": "Use a lighter model",
+    "cloud": "Set up a cloud provider"
+  },
+  "suggestionHint": {
+    "lower_resolution": "Drops this node to {pct} of full size. Quality goes with it, and nothing else in the video changes.",
+    "smaller_model": "Switches this node to a lighter model you already have: {vram} GB instead of {was} GB.",
+    "cloud": "Renders this on someone else's hardware, billed to your own API key. Opens Settings, where the key goes."
+  },
+  "alreadySmallest": "This node is already at the smallest size worth rendering.",
+  "noSmallerModel": "No smaller model for this step is installed. Settings - Models has the full library.",
+  "unknownSuggestion": "This build does not know how to act on that suggestion.",
+  "retrying": "Retrying at {pct} - attempt {n}",
+  "retryingOffload": "Retrying at {pct}, offloading to system memory - attempt {n}"
+}
