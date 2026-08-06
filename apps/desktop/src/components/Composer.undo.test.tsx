@@ -4,11 +4,16 @@
  * newest recorded mutation stays whatever came before it. Offering Undo on
  * that reply reverted the EARLIER edit while the text on screen said "No
  * changes made" — the button has to belong to the reply it sits under.
+ *
+ * The edit is two steps now (propose, then apply), so a reply only exists
+ * after Apply. A zero-op plan never gets that far — there is nothing to
+ * apply — and answers in the composer directly, which is why that case
+ * still submits and reads its reply in one go.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Board, EditResult, NodeState } from "../api/types";
+import type { Board, EditProposal, EditResult, NodeState } from "../api/types";
 import { Composer } from "./Composer";
 import { useApp } from "../store";
 
@@ -38,15 +43,25 @@ const AFTER_AN_EDIT = {
   savepoints: [],
 };
 
-let edit: ReturnType<typeof vi.fn>;
+let proposeEdit: ReturnType<typeof vi.fn>;
+let applyEditPlan: ReturnType<typeof vi.fn>;
 let undoEdit: ReturnType<typeof vi.fn>;
 
-/** `recorded` mirrors what the engine does: the real `edit` action awaits a
- * board refresh (which re-reads /history) before it resolves, so by the time
- * the reply is on screen the store already knows whether a snapshot was
- * pushed. Only a mutation that actually changed the graph pushes one. */
+/** `recorded` mirrors what the engine does: the real apply awaits a board
+ * refresh (which re-reads /history) before it resolves, so by the time the
+ * reply is on screen the store already knows whether a snapshot was pushed.
+ * Only a mutation that actually changed the graph pushes one. */
 function mount(result: EditResult, recorded = false) {
-  edit = vi.fn().mockImplementation(() => {
+  proposeEdit = vi.fn().mockResolvedValue({
+    summary: result.summary,
+    plan: { summary: result.summary, edits: [] },
+    revision: "rev-1",
+    ops: result.ops,
+    planned: [],
+    dirty: result.dirty,
+    warnings: result.warnings,
+  } satisfies EditProposal);
+  applyEditPlan = vi.fn().mockImplementation(() => {
     if (recorded) {
       useApp.setState({
         history: {
@@ -65,17 +80,26 @@ function mount(result: EditResult, recorded = false) {
     history: AFTER_AN_EDIT,
     selectedNode: null,
     editBusy: false,
-    edit,
+    proposeEdit,
+    applyEditPlan,
     undoEdit,
   } as never);
   render(<Composer />);
 }
 
+/** Type the instruction and send it — which now only PROPOSES. */
 async function submit(text: string) {
   const box = screen.getByRole("textbox");
   fireEvent.change(box, { target: { value: text } });
   fireEvent.keyDown(box, { key: "Enter" });
-  await waitFor(() => expect(edit).toHaveBeenCalled());
+  await waitFor(() => expect(proposeEdit).toHaveBeenCalled());
+}
+
+/** Send, then accept the plan that comes back. */
+async function submitAndApply(text: string) {
+  await submit(text);
+  fireEvent.click(await screen.findByRole("button", { name: /^apply$/i }));
+  await waitFor(() => expect(applyEditPlan).toHaveBeenCalled());
 }
 
 beforeEach(() => {
@@ -86,7 +110,7 @@ beforeEach(() => {
 describe("composer reply Undo", () => {
   it("offers Undo when the edit actually changed something", async () => {
     mount({ summary: "made it night", ops: 1, dirty: ["s1.clip"], warnings: [] }, true);
-    await submit("make it night");
+    await submitAndApply("make it night");
 
     const undo = await screen.findByRole("button", { name: /undo/i });
     fireEvent.click(undo);
@@ -111,7 +135,7 @@ describe("composer reply Undo", () => {
     // so `ops > 0` offered Undo for an edit the history does not contain,
     // and clicking it reverted the previous, unrelated one.
     mount({ summary: "made it night", ops: 1, dirty: ["s1.clip"], warnings: [] }, false);
-    await submit("make it night");
+    await submitAndApply("make it night");
 
     await screen.findByText(/made it night/i);
     expect(screen.queryByRole("button", { name: /undo/i })).toBeNull();

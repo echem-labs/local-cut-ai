@@ -16,6 +16,7 @@ import {
 import type {
   Board,
   Checkpoint,
+  EditProposal,
   EditResult,
   EngineEvent,
   HistoryInfo,
@@ -330,7 +331,18 @@ interface AppState {
     changes: { params?: Record<string, unknown>; seed?: number; model?: string | null },
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
-  edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
+  /** Compile an edit and report what it WOULD do, committing nothing.
+   *
+   * There is deliberately no one-step "edit and apply" beside this. The
+   * composer had one, and keeping it would leave a second route that
+   * rewrites the graph with nothing on screen first — the same objection
+   * the `/patch` chokepoint rule makes about private mutation paths. The
+   * engine's own non-dry-run /edit is still there for the CLI and MCP,
+   * where there is no card to show anyone. */
+  proposeEdit: (instruction: string, scope?: string) => Promise<EditProposal | null>;
+  /** Land a proposal. Rejects with an EngineError(409) when the graph moved
+   * under it — the plan is stale and has to be asked for again. */
+  applyEditPlan: (proposal: EditProposal, scope?: string) => Promise<EditResult | null>;
   refreshHistory: () => Promise<void>;
   /** Walk back/forward one recorded graph mutation. */
   undoEdit: () => Promise<string | null>;
@@ -1678,16 +1690,34 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshBoard();
     },
 
-    edit: async (instruction, scope = "project") => {
+    proposeEdit: async (instruction, scope = "project") => {
       const { client, currentProject, editBusy } = get();
       if (!client || !currentProject || editBusy) return null;
-      // Claim the single-edit guard synchronously, before any await: otherwise
-      // two rapid calls both read editBusy=false and fire concurrent LLM edits.
+      // Same synchronous claim as `edit`: two rapid submits would otherwise
+      // both read editBusy=false and fire concurrent LLM calls.
       set({ editBusy: true });
       try {
-        // The LLM's view must include the user's latest manual tweaks.
+        // The model's view must include the user's latest manual tweaks, and
+        // the revision it reports is what apply is checked against — so a
+        // pending patch flushed AFTER this would make every plan stale.
         await flushPatches();
-        const result = await client.edit(currentProject.id, { instruction, scope });
+        return await client.proposeEdit(currentProject.id, { instruction, scope });
+      } finally {
+        set({ editBusy: false });
+      }
+    },
+
+    applyEditPlan: async (proposal, scope = "project") => {
+      const { client, currentProject, editBusy } = get();
+      if (!client || !currentProject || editBusy) return null;
+      set({ editBusy: true });
+      try {
+        await flushPatches();
+        const result = await client.editApply(currentProject.id, {
+          plan: proposal.plan,
+          scope,
+          revision: proposal.revision,
+        });
         await get().refreshBoard();
         return result;
       } finally {

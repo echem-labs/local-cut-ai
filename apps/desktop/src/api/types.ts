@@ -252,6 +252,31 @@ export interface EditResult {
   warnings: string[];
 }
 
+/**
+ * A dry-run edit: what applying it WOULD do, and everything needed to apply
+ * it later without asking the model again.
+ *
+ * `plan` is deliberately opaque here. It is the engine's own `EditPlan`
+ * echoed back verbatim, and the desktop neither reads nor edits it — giving
+ * it a shape would invite exactly that. `/edit/apply` re-validates every op
+ * against the same whitelist the LLM's output goes through, so the round
+ * trip through this client grants the plan no authority it did not have.
+ *
+ * `revision` is the graph revision the plan was compiled against. Sending it
+ * back is what makes a stale plan refuse with a 409 rather than land on a
+ * project that has moved on.
+ */
+export interface EditProposal {
+  summary: string;
+  plan: unknown;
+  revision: string | null;
+  ops: number;
+  /** The compiled patch ops, for a caller that wants to show the specifics. */
+  planned: Record<string, unknown>[];
+  dirty: string[];
+  warnings: string[];
+}
+
 /** What the next undo/redo step would revert — mirrors SNAPSHOT_KINDS in
  * the engine's project/store.py (test_ui_contract compares the kinds
  * against the historyKinds catalog). */
