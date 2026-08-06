@@ -330,6 +330,16 @@ export interface StorageInfo {
  * something; an absent kind means "no data", never "instant". */
 export type EngineEtas = Record<string, Record<string, { seconds: number; samples: number }>>;
 
+/** One rung of the engine's OOM ladder (`scheduler.FALLBACK_LADDER`): the
+ * spec params a retry runs with after the previous attempt ran out of
+ * memory. `resolution_scale` is the part worth saying out loud — the retry
+ * that finally succeeds produces a SMALLER render than the one that failed,
+ * and without this nothing on screen says so. */
+export interface OomFallback {
+  resolution_scale?: number;
+  offload?: string;
+}
+
 export type EngineEvent =
   // job.* events carry project_id so a subscriber (the WS is a global stream)
   // can drop events for a project it isn't viewing — node ids like "timeline"
@@ -350,12 +360,7 @@ export type EngineEvent =
       job_id: string;
       node_id: string;
       attempt: number;
-      // The rung of the OOM ladder this attempt runs at — the engine has
-      // always sent it (`scheduler.FALLBACK_LADDER`), and without it here
-      // "retrying" could only be reported as a bare word. `resolution_scale`
-      // is the part worth saying out loud: the retry that succeeds produces a
-      // SMALLER render than the one that failed, and nothing else says so.
-      fallback?: { resolution_scale?: number; offload?: string };
+      fallback?: OomFallback;
       project_id: string;
     }
   | { type: "project.compiled"; project_id: string; enqueued: number }
