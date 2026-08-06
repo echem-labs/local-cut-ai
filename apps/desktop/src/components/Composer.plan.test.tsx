@@ -260,6 +260,42 @@ describe("the scope menu", () => {
     expect(screen.getAllByRole("option")).toHaveLength(8);
   });
 
+  /** Open the menu with the chip reporting a real box — jsdom measures
+   * everything as zero, and every coordinate here is measured. */
+  const openScope = async (chipWidth: number) => {
+    const chip = screen.getByRole("button", { name: /whole video/i });
+    chip.getBoundingClientRect = () =>
+      ({
+        left: 40,
+        top: 700,
+        width: chipWidth,
+        height: 26,
+        right: 40 + chipWidth,
+        bottom: 726,
+      }) as DOMRect;
+    fireEvent.click(chip);
+    return screen.findByRole("listbox", { name: /scope/i });
+  };
+
+  it("is as wide as its chip, not as wide as the window", async () => {
+    // The shared rule says `min-width: max(100%, 150px)`, and a percentage
+    // resolves against the CONTAINING BLOCK. Positioning the menu against
+    // the viewport silently changed which block that is, and the menu
+    // stretched across the whole window — eight short scene names in a bar
+    // wider than the storyboard behind it.
+    mount({ board: BIG, proposeEdit: vi.fn() });
+    const menu = await openScope(320);
+
+    expect(menu.style.minWidth).toBe("320px");
+    expect(Number.parseFloat(menu.style.minWidth)).toBeLessThan(window.innerWidth);
+  });
+
+  it("keeps the readable floor a narrow chip would fall below", async () => {
+    mount({ board: BIG, proposeEdit: vi.fn() });
+    const menu = await openScope(96);
+    expect(menu.style.minWidth).toBe("150px");
+  });
+
   it("is never taller than the room above the chip", async () => {
     mount({ board: BIG, proposeEdit: vi.fn() });
     fireEvent.click(screen.getByRole("button", { name: /whole video/i }));
