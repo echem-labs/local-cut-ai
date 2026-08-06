@@ -1,6 +1,7 @@
 import { ChevronDown, History, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EditResult } from "../api/types";
+import { EngineError } from "../api/client";
+import type { EditProposal, EditResult } from "../api/types";
 import { plural, t } from "../i18n";
 import { type LogEntry, MAX_LOG_ENTRIES, loadLog, saveLog } from "../lib/editlog";
 import { orderedScenes } from "../lib/order";
@@ -19,7 +20,8 @@ export function Composer() {
     currentProject,
     selectedNode,
     select,
-    edit,
+    proposeEdit,
+    applyEditPlan,
     editBusy,
     regenerate,
     togglePin,
@@ -53,6 +55,9 @@ export function Composer() {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  // The compiled plan waiting for a yes. Cleared on project change, on
+  // Discard, and whenever it turns out to be stale.
+  const [proposal, setProposal] = useState<EditProposal | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -63,6 +68,7 @@ export function Composer() {
     setFeedback(null);
     setReplyApplied(false);
     setError(null);
+    setProposal(null);
   }, [projectId]);
 
   // Ctrl+K belongs to the global command palette now (review 4 §SH4);
@@ -137,39 +143,86 @@ export function Composer() {
     saveLog(projectId, next);
   };
 
+  /**
+   * Propose, don't apply.
+   *
+   * The instruction used to go straight to the graph: a sentence typed into
+   * a box silently rewrote the project, and the only way to find out what it
+   * had done was to read the reply afterwards and press Undo. The engine has
+   * always been able to compile a plan and report it without committing
+   * anything — `dry_run` saves nothing, enqueues nothing, records no history
+   * entry and fires no event — so the plan is shown first and lands only
+   * when the user says so.
+   */
   const submit = async () => {
     const instruction = text.trim();
     if (!instruction || editBusy) return;
     setError(null);
     setFeedback(null);
     setReplyApplied(false);
+    setProposal(null);
     try {
-      const before = historyMark();
-      const result: EditResult | null = await edit(instruction, scope);
-      if (result) {
-        const summary =
-          result.ops === 0
-            ? t("composer.noChanges") +
-              (result.summary ? t("composer.summarySuffix", { summary: result.summary }) : "")
-            : plural("composer.rerendering", result.dirty.length, {
-                summary: result.summary || t("composer.editApplied"),
-              });
-        const skipped =
-          result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
-        setFeedback(summary + skipped);
-        setReplyApplied(historyMark() !== before);
+      const proposed = await proposeEdit(instruction, scope);
+      if (!proposed) return;
+      if (proposed.ops === 0) {
+        // Nothing to preview and nothing to apply. Reported as a reply
+        // rather than an empty card offering an Apply that would do nothing.
+        setFeedback(
+          t("composer.noChanges") +
+            (proposed.summary ? t("composer.summarySuffix", { summary: proposed.summary }) : ""),
+        );
         pushLog({
           at: Date.now(),
           instruction,
-          summary:
-            result.summary ||
-            (result.ops === 0 ? t("composer.noChangesLog") : t("composer.editApplied")),
-          dirty: result.dirty,
-          warnings: result.warnings,
+          summary: proposed.summary || t("composer.noChangesLog"),
+          dirty: [],
+          warnings: proposed.warnings,
         });
-        if (result.ops > 0) setText("");
+        return;
       }
+      setProposal(proposed);
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** Land the plan on screen. The revision it was compiled against travels
+   * with it, so an edit made in another window (or by the CLI) between the
+   * preview and this click refuses with a 409 rather than applying to a
+   * project the preview no longer describes. */
+  const applyProposal = async () => {
+    if (!proposal || editBusy) return;
+    const instruction = text.trim();
+    setError(null);
+    try {
+      const before = historyMark();
+      const result: EditResult | null = await applyEditPlan(proposal, scope);
+      if (!result) return;
+      setProposal(null);
+      setFeedback(
+        plural("composer.rerendering", result.dirty.length, {
+          summary: result.summary || t("composer.editApplied"),
+        }) + (result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : ""),
+      );
+      setReplyApplied(historyMark() !== before);
+      pushLog({
+        at: Date.now(),
+        instruction,
+        summary: result.summary || t("composer.editApplied"),
+        dirty: result.dirty,
+        warnings: result.warnings,
+      });
+      setText("");
+    } catch (err) {
+      // A stale plan is its own outcome, not a generic failure: the preview
+      // describes a graph that no longer exists, so the plan is dropped and
+      // the instruction kept for a re-propose. Anything else leaves the
+      // proposal up — the user can try Apply again.
+      if (err instanceof EngineError && err.status === 409) {
+        setProposal(null);
+        setError(t("composer.planStale"));
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -204,6 +257,48 @@ export function Composer() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* What the edit would do, before it does it. `group`, not `dialog`:
+          it does not trap focus and the composer stays usable behind it —
+          you can reword the instruction and propose again without
+          dismissing anything. */}
+      {proposal && (
+        <div className="edit-plan" role="group" aria-label={t("composer.planAria")}>
+          <p className="plan-summary">{proposal.summary || t("composer.editApplied")}</p>
+          <p className="plan-counts">
+            {plural("composer.planOps", proposal.ops)}
+            {proposal.dirty.length > 0 && plural("composer.planDirty", proposal.dirty.length)}
+          </p>
+          {proposal.dirty.length > 0 && (
+            <div className="chips">
+              {proposal.dirty.slice(0, 8).map((id) => (
+                <button key={id} onClick={() => select(id)} title={t("composer.showChanged")}>
+                  {id.includes(".")
+                    ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
+                    : id}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Warnings are ops the compiler REFUSED — the plan lands without
+              them, so they are part of what Apply means, not an aside. */}
+          {proposal.warnings.length > 0 && (
+            <ul className="plan-warnings">
+              {proposal.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+          <div className="plan-actions">
+            <button className="btn-primary" disabled={editBusy} onClick={() => void applyProposal()}>
+              {editBusy ? t("composer.applying") : t("composer.apply")}
+            </button>
+            <button className="btn-ghost" disabled={editBusy} onClick={() => setProposal(null)}>
+              {t("composer.discard")}
+            </button>
+          </div>
         </div>
       )}
 
