@@ -15,7 +15,7 @@ from localcut_engine.graph.model import GRAPH_VERSION, Node, NodeKind, StoryGrap
 from localcut_engine.jobs.models import Job, JobStatus
 from localcut_engine.jobs.queue import JobQueue
 from localcut_engine.jobs.scheduler import Scheduler, _relative_artifact
-from localcut_engine.project.store import ProjectStore, ProjectTooNew
+from localcut_engine.project.store import ProjectStore, ProjectTooNew, ProjectUnreadable
 from localcut_engine.service import ProjectService
 
 
@@ -233,6 +233,69 @@ def test_a_project_from_the_future_is_refused_not_silently_reduced(tmp_path):
         store.load_graph(project.id)
     # Refusing means refusing: the file is not rewritten on the way out.
     assert "someFutureField" in path.read_text(encoding="utf-8")
+
+
+def test_a_state_file_that_is_not_utf8_is_refused_with_a_reason(tmp_path):
+    """Builds before the store forced encoding="utf-8" wrote project.json in
+    the Windows ANSI code page, so any em dash in a prompt — which the app's
+    own generated titles are full of — landed as a lone 0x97. The file is
+    unreadable forever afterwards, and the read raised UnicodeDecodeError
+    out of a route whose contract is to refuse with a reason: the project
+    became a bare 500 with nothing on screen to say which one, or why."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph())
+    path = store.project_dir(project.id) / "project.json"
+
+    # Exactly what the old writer produced: valid cp1252, invalid UTF-8.
+    # An extra key keeps the document valid JSON, so the ONLY thing wrong
+    # with it is the encoding.
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved["note"] = "whats new in LA — it starts with a question"
+    path.write_bytes(json.dumps(saved, ensure_ascii=False).encode("cp1252"))
+    assert bytes([0x97]) in path.read_bytes()  # the cp1252 em dash
+
+    with pytest.raises(ProjectUnreadable, match="project.json"):
+        store.load_graph(project.id)
+
+
+def _make_ansi(path):
+    """Rewrite a JSON state file the way a pre-UTF-8 build would have."""
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved["note"] = "whats new in LA — it starts with a question"
+    path.write_bytes(json.dumps(saved, ensure_ascii=False).encode("cp1252"))
+    assert bytes([0x97]) in path.read_bytes()  # the cp1252 em dash
+
+
+def test_one_undecodable_project_does_not_take_the_listing_down_with_it(tmp_path):
+    """A title is the likeliest place an em dash landed, so meta.json is the
+    likeliest file to be undecodable — and the listing is what the whole
+    library is drawn from. Refusing it hides every healthy project behind
+    the one broken one, which is the opposite of what naming the refusal was
+    for."""
+    store = ProjectStore(tmp_path / "projects")
+    fine = store.create(title="fine", graph=_seed_graph())
+    broken = store.create(title="broken", graph=_seed_graph())
+    _make_ansi(store.project_dir(broken.id) / "meta.json")
+
+    listed = store.list()
+
+    assert [p.id for p in listed] == [fine.id]
+    # And the one that IS asked for by id still refuses with its reason.
+    with pytest.raises(ProjectUnreadable, match="meta.json"):
+        store.get(broken.id)
+
+
+def test_an_undecodable_sidecar_resets_instead_of_blocking_every_edit(tmp_path):
+    """history.json and takes.json are convenience records over state that
+    lives in the graph, which is why an unreadable one resets to empty. An
+    undecodable one has to reset for the same reason: refusing it would take
+    patching the project down with it, over a file nothing depends on."""
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph())
+    store.save_history(project.id, store.load_history(project.id))
+    _make_ansi(store.project_dir(project.id) / "history.json")
+
+    assert store.load_history(project.id).undo == []
 
 
 def test_a_project_with_no_version_is_a_pre_versioning_project(tmp_path):

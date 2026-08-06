@@ -285,11 +285,197 @@ try {
     `);
   }
 
+  // U4: the flowchart. Its bar is the densest row in the app — counts,
+  // search, hint, zoom cluster, Add node and help — and the surface below
+  // it scrolls in BOTH axes on purpose, which is exactly the shape that
+  // hides a horizontal overflow of the page itself. A screen the walk
+  // cannot reach is a screen nothing gates (plan rule 5).
+  //
+  // Where the designed 409s begin. Only the errors logged from here on are
+  // eligible for the filter below — a 409 anywhere earlier is a surprise,
+  // and a filter that spans the whole run would swallow it.
+  const beforeCanvas = (await health()).consoleErrors.length;
+  const canvasStop = await evalInApp(`
+    // Through the Library's Videos filter, not off Home's shelf: the shelf
+    // is the four most RECENT of everything, and a run of quick tools
+    // pushes every video off it — a tool session opens its own
+    // single-artifact page, which has no flowchart because it has no
+    // pipeline. The filter is where a video is guaranteed to be listed.
+    await page.evaluate(() => {
+      const label = (button) =>
+        (button.textContent || "") + " " + (button.getAttribute("aria-label") || "");
+      [...document.querySelectorAll(".rail button")]
+        .find((button) => label(button).includes("Library"))
+        ?.click();
+    });
+    // Waited for, not slept past: the grid arrives with the engine's list,
+    // and a fixed delay measured an empty Library on a cold start.
+    await page.waitForSelector(".library .project-tile", { timeout: 20000 });
+    await page.evaluate(() => {
+      // Tabs are All / Videos / Tool outputs.
+      document.querySelectorAll(".library-bar .filter-tabs button")[1]?.click();
+    });
+    await page.waitForSelector(".library .project-tile", { timeout: 20000 });
+    // Try each video in turn rather than insisting on the first. A project
+    // whose state file predates the store's encoding fix cannot be read at
+    // all, and one such project in a long-lived profile would otherwise
+    // stop the walk from ever reaching the canvas.
+    const count = await page.evaluate(
+      () => document.querySelectorAll(".library .project-tile .tile-open").length,
+    );
+    let workspace = false;
+    for (let at = 0; at < count && !workspace; at += 1) {
+      await page.evaluate((at) => {
+        document.querySelectorAll(".library .project-tile .tile-open")[at]?.click();
+      }, at);
+      workspace = await page
+        .waitForSelector(".dockview-theme-localcut", { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!workspace) {
+        // Back to the list for the next candidate.
+        await page.evaluate(() => {
+          const label = (b) => (b.textContent || "") + " " + (b.getAttribute("aria-label") || "");
+          [...document.querySelectorAll(".rail button")]
+            .find((button) => label(button).includes("Library"))
+            ?.click();
+        });
+        await page.waitForSelector(".library .project-tile", { timeout: 20000 }).catch(() => {});
+      }
+    }
+    if (!workspace) return null;
+    // The view picker is a dropdown, not a row of tabs: open it, then take
+    // the option. (Its trigger carries the CURRENT view's label, so the old
+    // "find a button that says Flowchart" matched nothing once it changed.)
+    await page.evaluate(() => {
+      const trigger = [...document.querySelectorAll(".dropdown-trigger")].find((b) =>
+        /view/i.test(b.getAttribute("aria-label") || ""));
+      trigger?.click();
+    });
+    await page.waitForTimeout(120);
+    await page.evaluate(() => {
+      const option = [...document.querySelectorAll('[role="option"]')].find((b) =>
+        /flowchart/i.test(b.textContent || ""));
+      option?.click();
+    });
+    return page
+      .waitForSelector(".canvas-stage", { timeout: 20000 })
+      .then(() => true)
+      .catch(() => false);
+  `);
+  check(
+    "the flowchart opens from a video in the Library",
+    canvasStop === true,
+    "the walk needs a profile with at least one VIDEO project (tool outputs have no flowchart)",
+  );
+  if (canvasStop) {
+    for (const [width, height] of [
+      [1200, 800],
+      [1440, 900],
+      [1920, 1080],
+    ]) {
+      await setSize(width, height);
+      const canvas = await evalInApp(`
+        return page.evaluate(() => {
+          const bar = document.querySelector(".canvas-bar");
+          const panel = document.querySelector(".canvas-panel").getBoundingClientRect();
+          const controls = [...bar.children];
+          const escaped = controls.filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < panel.left - 1 || r.right > panel.right + 1);
+          }).length;
+          const surface = document.querySelector(".canvas-surface");
+          const sizer = document.querySelector(".canvas-sizer").getBoundingClientRect();
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            innerWidth: window.innerWidth,
+            escaped,
+            // One line means one shared CENTRE, not one shared top: the bar
+            // centres its children, so a 15px label and a 24px button sit at
+            // different tops while being perfectly on the same row.
+            barWraps:
+              new Set(
+                controls.map((el) => {
+                  const r = el.getBoundingClientRect();
+                  return Math.round(r.top + r.height / 2);
+                }),
+              ).size > 1,
+            // The surface scrolls over the SCALED graph (the sizer), or over
+            // itself when the panel is wider than the graph — never over the
+            // raw layout box, which a transform leaves untouched.
+            scrollsOverScaled:
+              Math.abs(surface.scrollWidth - Math.max(Math.round(sizer.width), surface.clientWidth)) <=
+              2,
+          };
+        });
+      `);
+      check(
+        `${width}px: the flowchart bar keeps its controls on one line inside the panel`,
+        canvas.escaped === 0 && !canvas.barWraps,
+        JSON.stringify(canvas),
+      );
+      check(
+        `${width}px: the flowchart adds no horizontal scroll to the page`,
+        canvas.scrollWidth <= canvas.innerWidth + 1,
+        `scrollWidth ${canvas.scrollWidth}`,
+      );
+      check(
+        `${width}px: the surface scrolls over the scaled graph, not the raw layout`,
+        canvas.scrollsOverScaled,
+        JSON.stringify(canvas),
+      );
+    }
+    await shoot("flowchart-1920.png");
+
+    // The zoom gesture itself, with a TRUSTED wheel event — the only way to
+    // find out whether the app refuses the browser's own ctrl+wheel zoom.
+    // React registers `wheel` passively, so an onWheel preventDefault is
+    // ignored and Chromium logs the violation as a console error: the check
+    // below is the zoom landing, and the console gate at the end of the walk
+    // is the violation not being logged.
+    const { dpr: dprBefore, inner: innerBefore } = await evalInApp(`
+      return page.evaluate(() => ({ dpr: window.devicePixelRatio, inner: window.innerWidth }));
+    `);
+    const wheel = await evalInApp(`
+      const box = await page.evaluate(() => {
+        const r = document.querySelector(".canvas-surface").getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await page.mouse.move(box.x, box.y);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, -200);
+      await page.waitForTimeout(400);
+      await page.keyboard.up("Control");
+      return page.evaluate(() => ({
+        zoom: document.querySelector(".canvas-zoom-value").textContent,
+        // The app's own interface zoom must NOT have moved with it.
+        dpr: window.devicePixelRatio,
+        inner: window.innerWidth,
+      }));
+    `);
+    check(
+      "ctrl+wheel zooms the flowchart and nothing else",
+      wheel.zoom !== "100%" && wheel.dpr === dprBefore && wheel.inner === innerBefore,
+      JSON.stringify({ ...wheel, dprBefore, innerBefore }),
+    );
+  }
+
   const report = await health();
+  // A 409 is a refusal the product is designed to make and to explain — the
+  // canvas stop deliberately opens projects until one works, and a state
+  // file written by a build older than the store's encoding fix answers 409
+  // by design. Chromium logs every failed response as a console error, so
+  // that one status is filtered — but only among the errors the canvas stop
+  // itself produced. Everything before it, 4xx of any other kind, every 5xx
+  // and every app-level error still fail the walk.
+  const noise = /Failed to load resource[^|]*409 \(Conflict\)|engine 409:/;
+  const consoleErrors = report.consoleErrors.filter(
+    (line, at) => !(at >= beforeCanvas && noise.test(line)),
+  );
   check(
     "no console errors during the walk",
-    report.consoleErrors.length === 0 && report.pageErrors.length === 0,
-    JSON.stringify([...report.consoleErrors, ...report.pageErrors].slice(0, 3)),
+    consoleErrors.length === 0 && report.pageErrors.length === 0,
+    JSON.stringify([...consoleErrors, ...report.pageErrors].slice(0, 3)),
   );
 } finally {
   await stopRig(rig);

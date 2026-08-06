@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "../components/Alert";
 import { Dropdown } from "../components/Dropdown";
 import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
 import { StageSummaryRow } from "../components/StageSummaryRow";
@@ -775,6 +776,11 @@ export function Home() {
       {/* One shelf, four tiles: what you were last working on. Everything
           else — including every tool output — is one click away in the
           Library, which is where a browsing surface belongs (v5). */}
+      {/* Same refusal, reported on the shelf that was clicked. */}
+      {actionError?.scope === "open" && (
+        <Alert message={actionError.message} onDismiss={dismissActionError} />
+      )}
+
       {recent.length > 0 && (
         <div className="recent">
           <div className="recent-head">
