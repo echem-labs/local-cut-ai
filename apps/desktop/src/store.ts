@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { forgetPublishDraft } from "./lib/publishDraft";
 import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
 import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom";
@@ -309,8 +310,14 @@ interface AppState {
    * voice_ref, exactly like the workspace's applyClonedVoice. */
   applySessionVoiceClone: (file: File) => Promise<string | null>;
   promote: () => Promise<void>;
-  /** Rewrite the current project's script from user feedback. */
-  enhance: (notes: string) => Promise<void>;
+  /** Rewrite the current project's script from user feedback.
+   *
+   * Reports BOTH ways, and deliberately: the tool session renders
+   * `actionError` in the block it shares with promote, while the composer —
+   * which reaches this through its Script scope — follows the return-the-
+   * message convention like every other action it calls. The two surfaces
+   * are never mounted together, so nothing is said twice. */
+  enhance: (notes: string) => Promise<string | null>;
   /** Drop a shown action error — e.g. when the surface that earned it
    * (a tool panel) is being swapped for another. */
   dismissActionError: () => void;
@@ -1465,16 +1472,24 @@ export const useApp = create<AppState>((set, get) => {
 
     enhance: async (notes) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      if (!client || !currentProject) return t("errors.engineUnavailable");
       set({ actionError: null });
       try {
+        // The composer's Script scope reaches this with unflushed inspector
+        // edits possibly still pending, and the rewrite amends the screenplay
+        // the graph holds NOW — a patch landing after it would be written
+        // against a script that had already moved.
+        await flushPatches();
         await client.enhanceScript(currentProject.id, notes);
         // The re-render is on the queue; the board flip arrives over WS, but
         // refresh now so the status ring never shows a stale "draft".
         await get().refreshBoard();
+        return null;
       } catch (err) {
         console.warn("enhance failed:", err);
-        set({ actionError: { scope: "enhance", message: messageOf(err) } });
+        const message = messageOf(err);
+        set({ actionError: { scope: "enhance", message } });
+        return message;
       }
     },
 
@@ -2156,6 +2171,7 @@ export const useApp = create<AppState>((set, get) => {
       try {
         await client.deleteProject(id);
         forgetEditLog(id); // only once the engine agreed it is gone
+        forgetPublishDraft(id);
         return null;
       } catch (err) {
         console.warn("delete project failed:", err);

@@ -43,7 +43,8 @@
     "resume": "Queue whatever this project still owes. Useful if the engine stopped mid-render and the board is waiting on work that is no longer in the queue.",
     "publishKit": "Writes a title, description and hashtags from your script, and renders a thumbnail to go with them. Nothing is uploaded anywhere.",
     "applyEdit": "Make the changes listed above. Until you press this, nothing has been touched.",
-    "audioLane": "The sound under your cut: one row for the narration in each scene, one for the music. A gap means nothing has rendered there yet."
+    "audioLane": "The sound under your cut: one row for the narration in each scene, one for the music. A gap means nothing has rendered there yet.",
+    "rewriteScript": "Ask for a new screenplay from your note. The storyboard is rebuilt from it, so scene-level edits are replaced."
   },
   "glossary": [
     {
