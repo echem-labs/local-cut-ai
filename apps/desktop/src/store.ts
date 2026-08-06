@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
 import { usePlayback } from "./lib/playback";
 import {
@@ -898,7 +899,18 @@ export const useApp = create<AppState>((set, get) => {
           event.type.startsWith("job.") ||
           event.type === "project.expanded" ||
           event.type === "project.edited" ||
-          event.type === "project.restored"
+          event.type === "project.restored" ||
+          // The three that used to reach the end of this chain and be
+          // dropped. Each moves something on screen, and none of them is
+          // reliably followed by a job event that would refresh anyway: a
+          // compile can enqueue nothing, an approval enqueues nothing by
+          // itself, and an upload is finished work the moment it lands.
+          // They matter most from ANOTHER client — the CLI and the MCP
+          // server drive this same engine — where no local call site exists
+          // to refresh on the way out.
+          event.type === "project.compiled" ||
+          event.type === "project.approved" ||
+          event.type === "project.asset"
         ) {
           scheduleRefresh();
         } else if (event.type === "project.deleted") {
@@ -958,6 +970,17 @@ export const useApp = create<AppState>((set, get) => {
       /* system info is cosmetic at this stage */
     }
     try {
+      // This engine's own render-time medians. Guarded by the same
+      // generation check as the hardware above, and for a sharper reason:
+      // an estimate carried over from the previous engine would be a
+      // measurement of the wrong machine, which is exactly the bug the
+      // route exists to fix.
+      const { etas } = await client.systemEtas();
+      if (gen === establishGen) setEngineEtas(etas);
+    } catch {
+      /* no calibration — estimates fall back to what this session saw */
+    }
+    try {
       // Version handshake for Settings → About.
       const health = await client.health();
       if (gen === establishGen) {
@@ -993,6 +1016,10 @@ export const useApp = create<AppState>((set, get) => {
   // project list can't bleed into the new one, then reconnect.
   const switchEngine = async () => {
     resetEngineScopedState();
+    // Timings belong to the machine that measured them. Carrying a laptop's
+    // medians onto a GPU box (or the reverse) is worse than having none:
+    // the number looks authoritative and is about the wrong hardware.
+    setEngineEtas(null);
     set({
       currentProject: null,
       board: null,

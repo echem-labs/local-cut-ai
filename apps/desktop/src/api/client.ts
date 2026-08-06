@@ -9,6 +9,7 @@ import type {
   Checkpoint,
   EditResult,
   EngineConnection,
+  EngineEtas,
   EngineEvent,
   GraphNode,
   HistoryInfo,
@@ -285,6 +286,13 @@ export class EngineClient {
 
   system(): Promise<SystemInfo> {
     return this.request("/system");
+  }
+
+  /** Render-time medians this engine measured on its own completed jobs.
+   * The estimate has to come from the machine that renders, which on a
+   * remote engine is not this one. */
+  systemEtas(): Promise<{ etas: EngineEtas }> {
+    return this.request("/system/etas");
   }
 
   listModels(): Promise<ModelRow[]> {
