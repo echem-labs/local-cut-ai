@@ -380,6 +380,10 @@ interface AppState {
   /** Act on one of the engine's OOM suggestions for a failed node. `null`
    * means it applied; any other return is a message to show. */
   applyOomSuggestion: (nodeId: string, code: string) => Promise<string | null>;
+  /** Enqueue whatever the graph still owes, at draft quality. The only way
+   * back into flight for a project whose queue was lost — an empty /patch
+   * re-plans nothing. */
+  resumeRender: () => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
@@ -1901,6 +1905,21 @@ export const useApp = create<AppState>((set, get) => {
     applyTimeline: (params) => applyAuxParams("timeline", params),
 
     applyExport: (params) => applyAuxParams("export", params),
+
+    resumeRender: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // Same discipline as finalize: the engine must compile against the
+        // flushed params rather than race them.
+        await flushPatches();
+        await client.render(currentProject.id);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
 
     finalize: async () => {
       const { client, currentProject, defaults } = get();
