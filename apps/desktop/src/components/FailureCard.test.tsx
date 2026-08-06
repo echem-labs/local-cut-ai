@@ -125,6 +125,25 @@ describe("a failure the engine had suggestions for", () => {
     expect(screen.getByTitle(/already at the smallest/i)).toBeInTheDocument();
   });
 
+  it("does not dress an unrecognised code up as one it knows", async () => {
+    // A newer engine sending a fourth code fell through to the cloud arm: the
+    // chip read "Set up a cloud provider", and pressing it answered "this
+    // build does not know how to act on that suggestion". Still shown and
+    // still disabled — for the same reason an unservable chip is, the engine
+    // believes a way out exists — but labelled as what it is.
+    seed({
+      nodeFailures: {
+        "s1.clip": { error: "cuda oom", suggestions: ["lower_resolution", "reduce_frames"] },
+      },
+      models: [],
+    });
+    render(<FailureCard node={node()} />);
+
+    expect(screen.queryByRole("button", { name: /cloud provider/i })).toBeNull();
+    const chip = screen.getByTitle(/does not know how to act/i);
+    expect(chip).toBeDisabled();
+  });
+
   it("applies the suggestion it was asked to", async () => {
     const applyOomSuggestion = vi.fn().mockResolvedValue(null);
     seed({ ...withSuggestions, models: [], applyOomSuggestion });

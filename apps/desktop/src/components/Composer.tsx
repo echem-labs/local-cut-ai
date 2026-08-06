@@ -271,8 +271,12 @@ export function Composer() {
             {plural("composer.planOps", proposal.ops)}
             {proposal.dirty.length > 0 && plural("composer.planDirty", proposal.dirty.length)}
           </p>
+          {/* `plan-chips`, not the log's `.chips`: that one is styled only as
+              a descendant of `.edit-log-entry`, so the same markup here drew
+              bare browser buttons. A class that works in one ancestor and
+              nowhere else should not be spelled as though it works anywhere. */}
           {proposal.dirty.length > 0 && (
-            <div className="chips">
+            <div className="plan-chips">
               {proposal.dirty.slice(0, 8).map((id) => (
                 <button key={id} onClick={() => select(id)} title={t("composer.showChanged")}>
                   {id.includes(".")

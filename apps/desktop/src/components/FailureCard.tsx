@@ -78,10 +78,23 @@ export function FailureCard({ node }: { node: NodeState }) {
         ready: smaller !== null,
       };
     }
+    if (code === "cloud") {
+      return {
+        label: t("failure.suggestion.cloud"),
+        hint: t("failure.suggestionHint.cloud"),
+        ready: true,
+      };
+    }
+    // A code this build has no arm for — a newer engine offering a way out
+    // this app predates. Shown and disabled for the same reason an unservable
+    // chip is: the engine believes a way out exists. Labelled as unknown
+    // rather than as whichever arm happens to be last, which is what the
+    // fallthrough used to do — a chip reading "Set up a cloud provider" that
+    // answered "this build does not know how to act on that suggestion".
     return {
-      label: t("failure.suggestion.cloud"),
-      hint: t("failure.suggestionHint.cloud"),
-      ready: true,
+      label: t("failure.suggestion.unknown"),
+      hint: t("failure.unknownSuggestion"),
+      ready: false,
     };
   };
 

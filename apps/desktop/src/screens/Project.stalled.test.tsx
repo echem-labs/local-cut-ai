@@ -76,6 +76,44 @@ describe("a project waiting on a queue that is gone", () => {
     expect(screen.queryByRole("button", { name: /resume rendering/i })).toBeNull();
   });
 
+  it("stays quiet while a beginner checkpoint is holding the work back", () => {
+    // Beginner mode is the false positive this detector invites. The engine
+    // deliberately enqueues nothing past an unapproved checkpoint, so every
+    // node behind it reads `queued` with no job — the exact shape of a stall,
+    // and not one. The banner above is already saying what to do, and
+    // approving is itself what re-plans: `approve` calls the same enqueue
+    // `/render` would. A second banner here contradicts the first and offers
+    // a button that would enqueue nothing.
+    mount("queued", [], {
+      currentProject: { id: "p1", title: "t", mode: "beginner", approvals: [] },
+    });
+    expect(screen.queryByRole("button", { name: /resume rendering/i })).toBeNull();
+  });
+
+  it("stays quiet at the storyboard checkpoint too", () => {
+    // The second gate holds back the clips, the timeline and the export —
+    // most of the board — for as long as the storyboard is unapproved.
+    mount("queued", [], {
+      currentProject: { id: "p1", title: "t", mode: "beginner", approvals: ["script"] },
+    });
+    expect(screen.queryByRole("button", { name: /resume rendering/i })).toBeNull();
+  });
+
+  it("still offers to resume a beginner project past both gates", () => {
+    // Suppressing the offer must not extend past the gates themselves: a
+    // beginner project with every checkpoint passed loses its queue the same
+    // way any other does.
+    mount("rendering", [], {
+      currentProject: {
+        id: "p1",
+        title: "t",
+        mode: "beginner",
+        approvals: ["script", "storyboard"],
+      },
+    });
+    expect(screen.getByRole("button", { name: /resume rendering/i })).toBeEnabled();
+  });
+
   it("asks the engine to enqueue what the graph still owes", async () => {
     const resumeRender = vi.fn().mockResolvedValue(null);
     mount("queued", [], { resumeRender });

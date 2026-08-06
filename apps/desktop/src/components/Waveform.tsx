@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { t } from "../i18n";
 import { shortDuration } from "../lib/time";
@@ -30,6 +30,13 @@ export function Waveform({
   /** Pointer position over the bars, 0..1 — drives the seek-time tip. */
   const [hover, setHover] = useState<number | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  // The transport belongs to the artifact, not to this component. A
+  // regenerate swaps `hash` under a mounted player: the element's own
+  // currentTime resets with its src, but nothing fires `timeupdate` until the
+  // new track plays, so a position left over from the old one paints the new
+  // bars and its clock to somewhere it has never been.
+  useEffect(() => setPlayed(0), [projectId, hash]);
 
   const fractionAt = (event: React.MouseEvent<HTMLButtonElement>) => {
     const box = event.currentTarget.getBoundingClientRect();

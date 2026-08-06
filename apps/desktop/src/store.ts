@@ -143,7 +143,11 @@ export interface SeedPatch {
 /** A failed user action, tagged so the screen that started it can show
  * the message next to its own button. */
 export interface ActionError {
-  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open";
+  // `board` is the scope for a project-level action fired from somewhere with
+  // no surface of its own — the command palette, which can run resume and
+  // prepare-publish from any screen. Every other scope belongs to the one
+  // component that raises it and renders it.
+  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open" | "board";
   message: string;
 }
 
@@ -960,31 +964,43 @@ export const useApp = create<AppState>((set, get) => {
           // absent on ordinary failures — only the exhausted OOM ladder
           // offers choices — so an empty list here means "no advice", which
           // the card reads as "show the error alone".
-          set({
-            nodeFailures: {
-              ...get().nodeFailures,
-              [event.node_id]: { error: event.error, suggestions: event.suggestions ?? [] },
-            },
-            nodeRetries: without(get().nodeRetries, event.node_id),
-          });
+          //
+          // Frozen means a rig posed these, and the engine's own traffic must
+          // not touch them — the same rule `refreshBoard` and the download
+          // bars already follow. It is not hypothetical: the rig's project
+          // renders an `s1.clip` of its own, and its `job.done` cleared the
+          // posed failure out from under the frame being photographed.
+          if (!seedFrozen) {
+            set({
+              nodeFailures: {
+                ...get().nodeFailures,
+                [event.node_id]: { error: event.error, suggestions: event.suggestions ?? [] },
+              },
+              nodeRetries: without(get().nodeRetries, event.node_id),
+            });
+          }
           scheduleRefresh();
         } else if (event.type === "job.retrying") {
-          set({
-            nodeRetries: {
-              ...get().nodeRetries,
-              [event.node_id]: { attempt: event.attempt, fallback: event.fallback ?? {} },
-            },
-          });
+          if (!seedFrozen) {
+            set({
+              nodeRetries: {
+                ...get().nodeRetries,
+                [event.node_id]: { attempt: event.attempt, fallback: event.fallback ?? {} },
+              },
+            });
+          }
           scheduleRefresh();
         } else if (event.type === "job.started" || event.type === "job.done") {
           // A fresh attempt makes the previous verdict stale in both
           // directions: left in place, a node that has since succeeded still
           // carries "out of memory" advice, and a chip would act on a job
           // that no longer exists.
-          set({
-            nodeFailures: without(get().nodeFailures, event.node_id),
-            nodeRetries: without(get().nodeRetries, event.node_id),
-          });
+          if (!seedFrozen) {
+            set({
+              nodeFailures: without(get().nodeFailures, event.node_id),
+              nodeRetries: without(get().nodeRetries, event.node_id),
+            });
+          }
           scheduleRefresh();
         } else if (event.type === "project.error") {
           // The engine reports a failed expansion (a screenplay that would
