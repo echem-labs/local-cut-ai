@@ -1,8 +1,17 @@
 {
   "transitions": {
-    "cut": { "label": "Cut", "hint": "instant switch" },
-    "crossfade": { "label": "Crossfade", "hint": "one fades into the next" },
-    "dip": { "label": "Dip", "hint": "fades to black between" }
+    "cut": {
+      "label": "Cut",
+      "hint": "instant switch"
+    },
+    "crossfade": {
+      "label": "Crossfade",
+      "hint": "one fades into the next"
+    },
+    "dip": {
+      "label": "Dip",
+      "hint": "fades to black between"
+    }
   },
   "goToStart": "Go to start",
   "prevScene": "Previous scene",
@@ -22,5 +31,10 @@
   "diamondTitle": "Scene {a} → {b}: {kind}. Click to change.",
   "diamondAria": "Transition into scene {n}: {kind}",
   "blockAria": "Scene {n}, {d}s, {status}",
-  "seconds": "{n}s"
+  "seconds": "{n}s",
+  "narrationLane": "Voice",
+  "musicLane": "Music",
+  "narrationLaneAria": "Narration waveform for each scene",
+  "musicLaneAria": "Music waveform across the cut",
+  "narrationOf": "Narration for scene {n}"
 }
