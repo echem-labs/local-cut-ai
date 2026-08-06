@@ -3864,6 +3864,74 @@ button.link:hover {
   margin: 0;
 }
 
+/* The audio lanes under the block track. Same scale, same scroll box, so
+   they travel with the pictures they describe. */
+.tl-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+}
+
+.tl-lane {
+  position: relative;
+  height: 22px;
+}
+
+/* The label floats over the start of the lane rather than taking a column:
+   a label column would push the lanes out of alignment with the blocks
+   above them, which is the one thing these have to get right. */
+.lane-label {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-1);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.lane-track {
+  display: flex;
+  align-items: stretch;
+  gap: 15px; /* the diamond gutter, so segments sit under their blocks */
+  height: 100%;
+}
+
+.lane-seg {
+  flex-shrink: 0;
+  height: 100%;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+/* A scene whose narration never rendered. The gap IS the information, so it
+   keeps its width and simply holds nothing. */
+.lane-seg.empty {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--surface-2) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.lane-seg svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.lane-seg svg rect {
+  fill: var(--text-tertiary);
+}
+
 /* The proposed edit, above the box that proposed it. Sits in the composer's
    own column and reads as an answer to what was typed, not as a dialog over
    it - the composer stays usable, so rewording and re-proposing needs no
