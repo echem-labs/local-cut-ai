@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
+import { Alert } from "../components/Alert";
 import { CheckpointBanner } from "../components/CheckpointBanner";
 import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
@@ -21,6 +22,7 @@ import { Workspace } from "../components/Workspace";
 import { m, t } from "../i18n";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
+import { isStalled } from "../lib/jobs";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { isDone, isSettled } from "../lib/status";
@@ -136,6 +138,47 @@ function PipelineIntro({
   );
 }
 
+/**
+ * The board says work is coming and the queue disagrees.
+ *
+ * Kill the engine mid-render, or reconnect to one that restarted, and nodes
+ * keep reading `rendering` with nothing behind them — a progress bar that
+ * will never move again, and no route back into flight, since an empty
+ * `/patch` re-plans nothing. `POST /render` is that route; this is the one
+ * place the app can tell it is needed.
+ *
+ * A `note`, not an `alert`: nothing failed, and the state is true until
+ * acted on rather than in response to something the user just did.
+ */
+function StalledNotice() {
+  const board = useApp((state) => state.board);
+  const jobs = useApp((state) => state.jobs);
+  const resumeRender = useApp((state) => state.resumeRender);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!isStalled(board, jobs)) return null;
+  return (
+    <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
+      <span>{t("project.stalled")}</span>
+      <button
+        className="btn-secondary"
+        disabled={busy}
+        onClick={() => {
+          setError(null);
+          setBusy(true);
+          void resumeRender()
+            .then(setError)
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? t("project.resuming") : t("project.resume")}
+      </button>
+      {error && <Alert message={error} onDismiss={() => setError(null)} />}
+    </div>
+  );
+}
+
 /** Header overflow menu (⋯): history, audio behavior, caption mode, export
  * encode choices, pro-editor handoff, and layout reset. */
 function BoardMenu() {
@@ -148,6 +191,7 @@ function BoardMenu() {
     history,
     undoEdit,
     redoEdit,
+    resumeRender,
   } = useApp();
   const resetLayout = useWorkspace((state) => state.resetLayout);
   const [open, setOpen] = useState(false);
@@ -234,6 +278,20 @@ function BoardMenu() {
           >
             <span className="check" />
             {t("project.menu.savePoints")}
+          </button>
+          {/* Always available, not only when the stall is detected: the
+              detection reads the board, and the case worth covering is the
+              one where the board is wrong about itself. */}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setHistoryError(null);
+              void resumeRender().then(setHistoryError);
+              setOpen(false);
+            }}
+          >
+            <span className="check" />
+            {t("project.menu.resume")}
           </button>
           {timeline && (
             <>
@@ -688,6 +746,7 @@ export function Project() {
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
+      <StalledNotice />
       {historyKeyError && (
         <div role="status" className="banner error">
           {historyKeyError}

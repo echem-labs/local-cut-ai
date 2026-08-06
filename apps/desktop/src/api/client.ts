@@ -268,6 +268,14 @@ export class EngineClient {
     });
   }
 
+  /** Enqueue whatever the graph still owes, at draft quality — the
+   * draft-side counterpart of finalize. An empty /patch does NOT do this:
+   * the engine re-plans only when an op dirtied something, so a project
+   * whose queue was lost has no other way back into flight. */
+  render(projectId: string): Promise<{ enqueued: number }> {
+    return this.request(`/projects/${projectId}/render`, { method: "POST" });
+  }
+
   finalize(projectId: string, clipModel?: string | null): Promise<{ enqueued: number }> {
     return this.request(`/projects/${projectId}/finalize`, {
       method: "POST",

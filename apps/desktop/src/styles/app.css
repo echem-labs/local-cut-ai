@@ -3864,6 +3864,21 @@ button.link:hover {
   margin: 0;
 }
 
+/* The stalled-project offer: a sentence and the action that answers it, on
+   one line where there is room. Not `.banner.error` - nothing failed, and
+   red would make a recoverable stall read as a broken project. */
+.banner.stalled {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.banner.stalled > span {
+  flex: 1;
+  min-width: 220px;
+}
+
 /* The out-of-memory failure card. Same restraint as `.alert` - the failed
    colour lives on the mark and the left edge only - but this one is a group
    of choices rather than a sentence, so it stacks: what happened, why, then
