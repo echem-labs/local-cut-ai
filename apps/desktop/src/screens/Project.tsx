@@ -174,7 +174,7 @@ function StalledNotice() {
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
       <span>{t("project.stalled")}</span>
       <button
-        className="btn-secondary"
+        className="btn-ghost"
         disabled={busy}
         title={t("terms.tips.resume")}
         onClick={() => {
@@ -737,7 +737,7 @@ export function Project() {
             on the way to everything earlier. */}
         {hasCut && !checkpointPending && (
           <button
-            className="btn-secondary"
+            className="btn-ghost"
             title={t("terms.tips.publishKit")}
             onClick={() => setPublishOpen(true)}
           >
@@ -812,7 +812,7 @@ export function Project() {
               {/* With no scenes there is no board, composer or inspector to
                   regenerate from — the banner is the only surface left, so
                   it carries the retry itself. */}
-              <button className="btn-secondary" onClick={() => void regenerate("script")}>
+              <button className="btn-outline" onClick={() => void regenerate("script")}>
                 {t("project.retryScript")}
               </button>
             </>
