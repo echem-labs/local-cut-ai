@@ -27,7 +27,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Minus, Plus, Search } from "lucide-react";
+import { Minus, Plus, Search, X } from "lucide-react";
 
 import type { GraphNode, NodeState } from "../api/types";
 import { m, plural, t } from "../i18n";
@@ -503,6 +503,10 @@ export function NodeCanvas() {
             value={query}
             placeholder={t("canvas.searchPlaceholder")}
             aria-label={t("canvas.searchAria")}
+            // The Enter hint lives here rather than in the tally beside the
+            // field: it is the same sentence on every keystroke, and the bar
+            // is the narrowest row in the app.
+            title={t("canvas.searchHint")}
             onChange={(event) => {
               setQuery(event.target.value);
               setMatchAt(0);
@@ -518,14 +522,17 @@ export function NodeCanvas() {
               }
             }}
           />
-          {query.trim() && (
-            <span className="canvas-search-count">
-              {matches.length === 0
-                ? t("canvas.noMatches")
-                : plural("canvas.matches", matches.length)}
-            </span>
-          )}
         </div>
+        {/* The tally sits BESIDE the field, not inside it. Inside, the field
+            grew when you typed and grew again when the count changed length
+            — a text box that resizes under the cursor mid-word. */}
+        {query.trim() && (
+          <span className="canvas-search-count">
+            {matches.length === 0
+              ? t("canvas.noMatches")
+              : plural("canvas.matches", matches.length)}
+          </span>
+        )}
 
         {hint && <span className="canvas-hint">{hint}</span>}
 
@@ -912,7 +919,24 @@ function NodeBox(props: NodeBoxProps) {
         </span>
       )}
 
-      <div className="canvas-ports in">
+      {/* Delete, as a control rather than only a key. Backspace on a focused
+          node was the only way to remove one, which is a thing you have to
+          be told; a sibling button (never nested in the body, see above) is
+          a thing you can find. It asks first, like the key does. */}
+      <button
+        type="button"
+        className="canvas-node-del"
+        aria-label={t("canvas.actions.remove", { id: node.id })}
+        title={t("canvas.actions.remove", { id: node.id })}
+        onClick={(event) => {
+          event.stopPropagation();
+          props.onRemove();
+        }}
+      >
+        <X size={11} strokeWidth={2.4} aria-hidden="true" />
+      </button>
+
+      <div className={`canvas-ports in${ports.length > 4 ? " crowded" : ""}`}>
         {ports.map((port) => (
           <button
             key={port}

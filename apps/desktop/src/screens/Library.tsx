@@ -1,6 +1,7 @@
 import { ChevronDown, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../api/types";
+import { Alert } from "../components/Alert";
 import { FilterTabs } from "../components/FilterTabs";
 import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
 import { plural, t } from "../i18n";
@@ -49,6 +50,7 @@ export function Library() {
     librarySearchFocus,
     openSaveTemplate,
     actionError,
+    dismissActionError,
   } = useApp();
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
@@ -135,9 +137,7 @@ export function Library() {
           reported where the click happened — the tile stays, so without this
           the click reads as a dead control. */}
       {actionError?.scope === "open" && (
-        <p className="hint error-text" role="alert">
-          {actionError.message}
-        </p>
+        <Alert message={actionError.message} onDismiss={dismissActionError} />
       )}
 
       <div className="library-bar">

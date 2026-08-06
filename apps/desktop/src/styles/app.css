@@ -3832,6 +3832,53 @@ button.link:hover {
   color: var(--status-failed);
 }
 
+/* A refusal, as a notice rather than as red prose. See components/Alert. */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  /* The one place the failed colour appears at full strength is the mark and
+     this edge — enough to find the box, not enough to make a sentence hard
+     to read. */
+  border-left: 3px solid var(--status-failed);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.alert > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--status-failed);
+}
+
+.alert p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.alert-close {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.alert-close:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
 .badge {
   font-size: var(--text-xs);
   padding: 1px var(--space-2);
@@ -4365,6 +4412,53 @@ button.link:hover {
 
 .model-row .meta.error-text {
   color: var(--status-failed);
+}
+
+/* A refusal, as a notice rather than as red prose. See components/Alert. */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  /* The one place the failed colour appears at full strength is the mark and
+     this edge — enough to find the box, not enough to make a sentence hard
+     to read. */
+  border-left: 3px solid var(--status-failed);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.alert > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--status-failed);
+}
+
+.alert p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.alert-close {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.alert-close:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
 }
 
 .model-row input[type="checkbox"] {
@@ -5253,10 +5347,18 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* ...except a popover, which is only ANCHORED in the bar. It is a paragraph
+   of prose in a fixed-width box: inheriting nowrap made it one long line
+   that ran off the window instead of wrapping at 264px. */
+.canvas-bar .panel-help-pop {
+  white-space: normal;
+}
+
 .canvas-counts {
-  /* The counts do not give way: they are the shortest thing in the row and
-     the only one that says what the graph IS. The search field is what
-     shrinks, down to its own input. */
+  /* Gives way only after the search tally has: what the graph IS outranks
+     how many nodes a query happened to match. */
+  min-width: 0;
+  flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -5272,14 +5374,14 @@ button.link:hover {
 
 /* ---- the bar's controls: find, zoom, add ---- */
 /* A field, not a pill: it is the one control in this bar that takes typing,
-   and the mock gives it the same corner as the boxes beside it. */
+   and the mock gives it the same corner as the boxes beside it.
+   One width, always — see .canvas-search-count. */
 .canvas-search {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: 0 var(--space-2);
-  min-width: 0;
-  flex-shrink: 1;
+  width: 150px;
   min-height: 24px;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -5292,11 +5394,8 @@ button.link:hover {
 }
 
 .canvas-search-input {
-  /* Sized so the whole row fits the panel a 1440x900 window gives the
-     flowchart (about 630px) without anything having to shrink. Node ids are
-     short and the field scrolls; a wider one only pushed the counts into an
-     ellipsis. */
-  width: 60px;
+  /* Fills whatever the fixed field leaves after the glyph. */
+  flex: 1;
   min-width: 0;
   background: none;
   border: none;
@@ -5305,9 +5404,15 @@ button.link:hover {
   font: inherit;
 }
 
+/* Beside the field rather than in it, so typing never resizes the box under
+   the cursor. It is also the first thing allowed to give up width, since a
+   tally is the least of what this row is carrying. */
 .canvas-search-count {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-tertiary);
-  white-space: nowrap;
 }
 
 /* One segmented control, not four buttons in a row: −, the reading, + and
@@ -5571,6 +5676,43 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* Quiet until the node is wanted: a delete on every box at once would read
+   as the canvas's main offer, which it is not. Focus counts as hover so the
+   control is reachable by keyboard alone. */
+.canvas-node-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.canvas-node:hover .canvas-node-del,
+.canvas-node.selected .canvas-node-del,
+.canvas-node-del:focus-visible {
+  opacity: 1;
+}
+
+.canvas-node-del:hover {
+  background: var(--status-failed);
+  color: #fff;
+}
+
+/* Both live in the top-right; when a node is pinned the pin steps aside. */
+.canvas-node:hover .canvas-node-pin,
+.canvas-node.selected .canvas-node-pin {
+  right: 26px;
+}
+
 .canvas-node-pin {
   position: absolute;
   top: 6px;
@@ -5608,8 +5750,37 @@ button.link:hover {
   bottom: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* `safe` because the column can overflow: a plain centred flex column
+     puts its first items at a negative offset, where nothing can scroll
+     back to them. */
+  justify-content: safe center;
   gap: 6px;
+  /* The rail belongs to the node. A timeline in a seven-scene project has
+     twenty inputs — 350px of dots down a 64px box — which drew as a ladder
+     running clean through the graph above and below it. */
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.canvas-ports::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Past what fits, the dots tighten before they scroll: at 8px with a 2px
+   gap a node shows six of them instead of three. */
+.canvas-ports.crowded {
+  gap: 2px;
+}
+
+.canvas-ports.crowded.in {
+  left: -5px;
+}
+
+.canvas-ports.crowded .canvas-port {
+  width: 8px;
+  height: 8px;
 }
 
 .canvas-ports.in {

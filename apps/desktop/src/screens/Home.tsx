@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "../components/Alert";
 import { Dropdown } from "../components/Dropdown";
 import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
 import { StageSummaryRow } from "../components/StageSummaryRow";
@@ -777,9 +778,7 @@ export function Home() {
           Library, which is where a browsing surface belongs (v5). */}
       {/* Same refusal, reported on the shelf that was clicked. */}
       {actionError?.scope === "open" && (
-        <p className="hint error-text" role="alert">
-          {actionError.message}
-        </p>
+        <Alert message={actionError.message} onDismiss={dismissActionError} />
       )}
 
       {recent.length > 0 && (
