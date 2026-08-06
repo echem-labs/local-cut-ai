@@ -9,6 +9,11 @@ import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { ModelsPopover } from "./ModelsPopover";
 
+/** Floor for the scope menu's width — the `150px` half of the shared
+ * `.dropdown-menu` rule's `min-width: max(100%, 150px)`, which this menu
+ * cannot inherit once it is positioned against the viewport. */
+const SCOPE_MENU_MIN_W = 150;
+
 /** The one composer (review 3): a scope-aware natural-language edit box
  * that is ALSO the command palette — typed text fuzzy-matches quick
  * commands, anything else goes to the engine's NL editor. Ctrl+K focuses
@@ -62,6 +67,7 @@ export function Composer() {
     left: number;
     bottom: number;
     maxHeight: number;
+    minWidth: number;
   } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -86,6 +92,13 @@ export function Composer() {
       left: rect.left,
       bottom: window.innerHeight - rect.top + 8,
       maxHeight: Math.max(120, rect.top - 16),
+      // What the shared rule says as `min-width: max(100%, 150px)`, computed
+      // rather than inherited. A percentage resolves against the containing
+      // block, and going from `absolute` (the chip) to `fixed` (the viewport)
+      // silently changed which one that is — the menu stretched to the width
+      // of the window. The intent is unchanged: at least as wide as the chip
+      // it hangs off, never narrower than a readable menu.
+      minWidth: Math.max(rect.width, SCOPE_MENU_MIN_W),
     });
     setScopeOpen(true);
   };
@@ -439,6 +452,7 @@ export function Composer() {
                 left: scopeMenu.left,
                 bottom: scopeMenu.bottom,
                 maxHeight: scopeMenu.maxHeight,
+                minWidth: scopeMenu.minWidth,
               }}
             >
               <button
