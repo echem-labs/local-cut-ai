@@ -9,6 +9,8 @@ an added scene lives until the script itself re-renders.
 import pytest
 
 from localcut_engine.events import EventBus
+from localcut_engine.graph.compiler import unready_nodes
+from localcut_engine.graph.model import KEYFRAME_PORT, Node, NodeKind
 from localcut_engine.graph.patch import PatchOp
 from localcut_engine.graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph
 from localcut_engine.jobs.queue import JobQueue
@@ -231,3 +233,50 @@ def test_a_null_in_the_op_is_an_unwritten_scene_not_the_word_none(tmp_path):
     card = next(c for c in service.scene_board(pid)["scenes"] if c["scene_id"] == "s2")
     assert card["keyframe"]["status"] == "blocked"
     assert card["narration"]["status"] == "blocked"
+
+
+def test_a_node_added_with_no_inputs_is_not_enqueued_to_fail(tmp_path):
+    """U4's Add node puts an empty, UNWIRED node on the canvas -- that is the
+    whole point of it, you wire it up and fill it in afterwards.
+
+    `unready_nodes` already refuses to enqueue a node whose own content is
+    empty, for exactly this reason: a scene nobody has written must not go
+    red seconds after it appears. A clip's missing piece is an INPUT rather
+    than a param, so it slipped past that guard, reached the queue, and the
+    ffmpeg backend raised "still clip needs a keyframe input" on arrival --
+    the node the user had just added was red before they could wire it.
+    """
+    service, pid = _service(tmp_path)
+    service.patch(
+        pid,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="clip-1",
+                node=Node(id="clip-1", kind=NodeKind.CLIP),
+            )
+        ],
+    )
+
+    graph = service.store.load_graph(pid)
+    assert "clip-1" in graph.nodes  # it IS added; it is just not runnable yet
+    assert "clip-1" in unready_nodes(graph)
+    # And nothing was queued for it, so nothing can fail for it.
+    assert all(job.spec.node_id != "clip-1" for job in service.queue.list(pid, 1000))
+
+
+def test_wiring_the_keyframe_in_makes_the_added_clip_runnable(tmp_path):
+    """The other half: refusing to enqueue must not be a dead end. Wire the
+    input the backend needs and the node becomes ordinary work."""
+    service, pid = _service(tmp_path)
+    service.patch(
+        pid,
+        [PatchOp(op="add_node", node_id="clip-1", node=Node(id="clip-1", kind=NodeKind.CLIP))],
+    )
+    service.patch(
+        pid,
+        [PatchOp(op="connect", node_id="clip-1", src="s1.keyframe", port=KEYFRAME_PORT)],
+    )
+
+    graph = service.store.load_graph(pid)
+    assert "clip-1" not in unready_nodes(graph)
