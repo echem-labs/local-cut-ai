@@ -344,10 +344,19 @@ try {
       }
     }
     if (!workspace) return null;
+    // The view picker is a dropdown, not a row of tabs: open it, then take
+    // the option. (Its trigger carries the CURRENT view's label, so the old
+    // "find a button that says Flowchart" matched nothing once it changed.)
     await page.evaluate(() => {
-      const tab = [...document.querySelectorAll("button")].find((b) =>
-        /flowchart/i.test((b.textContent || "") + " " + (b.getAttribute("title") || "")));
-      tab?.click();
+      const trigger = [...document.querySelectorAll(".dropdown-trigger")].find((b) =>
+        /view/i.test(b.getAttribute("aria-label") || ""));
+      trigger?.click();
+    });
+    await page.waitForTimeout(120);
+    await page.evaluate(() => {
+      const option = [...document.querySelectorAll('[role="option"]')].find((b) =>
+        /flowchart/i.test(b.textContent || ""));
+      option?.click();
     });
     return page
       .waitForSelector(".canvas-stage", { timeout: 20000 })

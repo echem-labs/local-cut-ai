@@ -2,6 +2,7 @@ import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
+import { Alert } from "./Alert";
 import { t } from "../i18n";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
@@ -620,7 +621,10 @@ export function Inspector() {
             </div>
           )}
 
-          {activeNode.error && <div className="banner error">{activeNode.error}</div>}
+          {/* What the engine said about this node's last render. The same
+              notice the Library uses for a refusal: it is an answer, not a
+              crash, and long red prose reads as the second thing. */}
+          {activeNode.error && <Alert message={activeNode.error} />}
         </>
       )}
     </aside>
