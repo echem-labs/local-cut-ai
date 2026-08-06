@@ -4084,6 +4084,14 @@ button.link:hover {
   min-height: 30px;
 }
 
+/* The note under the last field. `.field` carries its spacing above itself,
+   so anything FOLLOWING one inherits none and sat against the hashtags
+   input as though it were that field's own error text. */
+.publish-modal .field + .hint {
+  display: block;
+  margin-top: var(--space-3);
+}
+
 /* The footer's two buttons are not a pair — "write them again" asks the
    engine for new text, Close is done. Pushed apart rather than sat side by
    side, which would read as a choice between equals. */
