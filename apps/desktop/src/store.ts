@@ -200,6 +200,16 @@ interface AppState {
   models: ModelRow[];
   // model id → last download failure, cleared on retry/success.
   downloadErrors: Record<string, string>;
+  // node id → what the engine said when this node's render gave up, and what
+  // it suggested doing about it. Only the websocket ever carries these: the
+  // scheduler computes `suggestions` at publish time and persists nothing, so
+  // they are on neither the Job row nor the board's NodeState (which has a
+  // bare `error` string). Cleared the moment the node runs again.
+  nodeFailures: Record<string, { error: string; suggestions: string[] }>;
+  // node id → the OOM-ladder rung a retry is running at. "Rendering" alone
+  // hides that the attempt now in flight will produce a SMALLER result than
+  // the one that failed.
+  nodeRetries: Record<string, { attempt: number; fallback: OomFallback }>;
   firstRunDone: boolean;
   // True when the wizard was reopened from Settings rather than being a
   // genuine first launch — it then starts at the machine step: the welcome
@@ -518,6 +528,15 @@ const terminalDownloads = new Set<string>();
 // live model refreshes and WS progress are dropped so the injected frame
 // holds still. Never true outside a rig-driven dev run.
 let seedFrozen = false;
+
+/** A copy of `record` without `key` — the per-node failure/retry maps are
+ * cleared one node at a time, and mutating them in place would not re-render
+ * a subscriber. */
+const without = <T>(record: Record<string, T>, key: string): Record<string, T> => {
+  if (!(key in record)) return record;
+  const { [key]: _dropped, ...rest } = record;
+  return rest;
+};
 
 const messageOf = (err: unknown): string => {
   // fetch's network-level failure is a TypeError whose message ("Failed to
@@ -886,6 +905,37 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "job.failed") {
+          // Keep the advice with the node it is about. `suggestions` is
+          // absent on ordinary failures — only the exhausted OOM ladder
+          // offers choices — so an empty list here means "no advice", which
+          // the card reads as "show the error alone".
+          set({
+            nodeFailures: {
+              ...get().nodeFailures,
+              [event.node_id]: { error: event.error, suggestions: event.suggestions ?? [] },
+            },
+            nodeRetries: without(get().nodeRetries, event.node_id),
+          });
+          scheduleRefresh();
+        } else if (event.type === "job.retrying") {
+          set({
+            nodeRetries: {
+              ...get().nodeRetries,
+              [event.node_id]: { attempt: event.attempt, fallback: event.fallback ?? {} },
+            },
+          });
+          scheduleRefresh();
+        } else if (event.type === "job.started" || event.type === "job.done") {
+          // A fresh attempt makes the previous verdict stale in both
+          // directions: left in place, a node that has since succeeded still
+          // carries "out of memory" advice, and a chip would act on a job
+          // that no longer exists.
+          set({
+            nodeFailures: without(get().nodeFailures, event.node_id),
+            nodeRetries: without(get().nodeRetries, event.node_id),
+          });
+          scheduleRefresh();
         } else if (event.type === "project.error") {
           // The engine reports a failed expansion (a screenplay that would
           // not parse, a post-completion hook that threw). Nothing handled
@@ -1029,6 +1079,8 @@ export const useApp = create<AppState>((set, get) => {
       projects: [],
       models: [],
       downloadErrors: {},
+      nodeFailures: {},
+      nodeRetries: {},
       // The old engine's hardware/recommendations must not survive the switch
       // (establish repopulates it, or leaves it null if the new engine's
       // /system errors — better blank than another box's specs).
@@ -1064,6 +1116,8 @@ export const useApp = create<AppState>((set, get) => {
     selectedNode: null,
     models: [],
     downloadErrors: {},
+    nodeFailures: {},
+    nodeRetries: {},
     firstRunDone: readFlag(FIRST_RUN_KEY),
     firstRunReturning: false,
     libraryOpen: false,
@@ -1192,6 +1246,11 @@ export const useApp = create<AppState>((set, get) => {
         // Cleared then fetched: the previous project's undo depths must not
         // enable Ctrl+Z against this one for however long the fetch takes.
         history: null,
+        // Keyed by node id, which repeats across projects ("timeline",
+        // "s1.clip"), so carrying these over would hang the last project's
+        // OOM advice on this one's identically-named node.
+        nodeFailures: {},
+        nodeRetries: {},
       });
       void get().refreshHistory();
     },
@@ -1208,6 +1267,8 @@ export const useApp = create<AppState>((set, get) => {
         selectedNode: null,
         graph: null,
         graphError: null,
+        nodeFailures: {},
+        nodeRetries: {},
       });
     },
 

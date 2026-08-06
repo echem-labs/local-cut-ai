@@ -95,6 +95,91 @@ describe("events that change the project from outside this window", () => {
     await vi.waitFor(() => expect(calls.getProject).toBeGreaterThan(0));
   });
 
+  it("keeps what a failure suggested, per node", async () => {
+    // The engine computes these three codes at publish time and persists
+    // nothing: they are not on the Job row and not on the board's NodeState,
+    // which carries only `error`. If the store drops the event, the advice
+    // is gone for good — and scheduler.py's own comment says "the UI renders
+    // this as choices, not an error code".
+    const send = await connected();
+    send({
+      type: "job.failed",
+      job_id: "j1",
+      node_id: "s1.clip",
+      error: "out of memory after 2 fallback attempts",
+      suggestions: ["lower_resolution", "smaller_model", "cloud"],
+      project_id: "p1",
+    } as EngineEvent);
+    expect(useApp.getState().nodeFailures["s1.clip"]?.suggestions).toEqual([
+      "lower_resolution",
+      "smaller_model",
+      "cloud",
+    ]);
+  });
+
+  it("keeps the rung a retry dropped to", async () => {
+    const send = await connected();
+    send({
+      type: "job.retrying",
+      job_id: "j1",
+      node_id: "s1.clip",
+      attempt: 1,
+      fallback: { resolution_scale: 0.75 },
+      project_id: "p1",
+    } as EngineEvent);
+    expect(useApp.getState().nodeRetries["s1.clip"]).toEqual({
+      attempt: 1,
+      fallback: { resolution_scale: 0.75 },
+    });
+  });
+
+  it("forgets both when the node starts over", async () => {
+    // A new attempt makes the previous verdict stale. Left in place, the
+    // node renders green while still carrying "out of memory" advice, and
+    // the chips would act on a job that no longer exists.
+    const send = await connected();
+    send({
+      type: "job.failed",
+      job_id: "j1",
+      node_id: "s1.clip",
+      error: "out of memory",
+      suggestions: ["lower_resolution"],
+      project_id: "p1",
+    } as EngineEvent);
+    send({
+      type: "job.retrying",
+      job_id: "j1",
+      node_id: "s1.clip",
+      attempt: 1,
+      fallback: { resolution_scale: 0.75 },
+      project_id: "p1",
+    } as EngineEvent);
+    send({ type: "job.started", job_id: "j2", node_id: "s1.clip", project_id: "p1" } as EngineEvent);
+
+    expect(useApp.getState().nodeFailures["s1.clip"]).toBeUndefined();
+    expect(useApp.getState().nodeRetries["s1.clip"]).toBeUndefined();
+  });
+
+  it("forgets a retry once the job lands", async () => {
+    const send = await connected();
+    send({
+      type: "job.retrying",
+      job_id: "j1",
+      node_id: "s1.clip",
+      attempt: 2,
+      fallback: { resolution_scale: 0.5, offload: "aggressive" },
+      project_id: "p1",
+    } as EngineEvent);
+    send({
+      type: "job.done",
+      job_id: "j1",
+      node_id: "s1.clip",
+      artifact: "abc",
+      project_id: "p1",
+    } as EngineEvent);
+    expect(useApp.getState().nodeRetries["s1.clip"]).toBeUndefined();
+  });
+
   it("still drops them when they belong to another project", async () => {
     // The scoping rule the whole dispatch depends on: node ids repeat across
     // projects, so an unscoped apply paints this board with another's news.
