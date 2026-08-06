@@ -31,7 +31,8 @@
     "rig:refs": "electron scripts/rig/render-mock.cjs",
     "rig:parity": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-wiz.mjs",
     "rig:parity:home": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-home.mjs",
-    "rig:parity:session": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-session.mjs"
+    "rig:parity:session": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-session.mjs",
+    "rig:parity:canvas": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-canvas.mjs"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",

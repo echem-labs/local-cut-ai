@@ -74,6 +74,15 @@ const SETS = {
       ["session-clip-rendering", "session-mock.html?view=session-clip-rendering"],
     ],
   },
+  /* The flowchart panel (U4). Not a window: the canvas is one panel of the
+     workspace, so the frame is the panel and the gate clips the app to it.
+     Fixed size — the mock's own `.panel` box IS the frame, drawn to what
+     the panel measures in a 1440x900 window (see parity-canvas.mjs). */
+  canvas: {
+    width: 630,
+    height: 145,
+    states: [["canvas", "canvas-mock.html"]],
+  },
 };
 const setName = arg("set", "wizard");
 const SET = SETS[setName];
@@ -134,6 +143,14 @@ const MASKABLE = {
   "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .models"],
   "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .models"],
   "session-clip-rendering": [".rail .item .count", ".rail .item .glyph", ".status"],
+  /* canvas set (U4). The graph's GEOMETRY is the whole point of this frame,
+     so almost nothing is masked — the layout is derived and the pose is
+     fixed, which is exactly what makes the node grid diffable. What is
+     masked is what the two renderers draw differently rather than what the
+     data says: the search glyph and the help mark (unicode here, lucide
+     paths in the app), and the one node thumbnail (a JPEG here, a generated
+     artifact there). */
+  canvas: [".search .gl", ".help", ".thumb"],
 };
 const MASK_PAD = 6;
 
@@ -271,7 +288,7 @@ async function render(win, name, file) {
   // body is min-height:100vh, so its box reports the viewport, not the
   // content; the card is the content — its bottom edge (padding included)
   // is the true page height.
-  const height = await win.webContents.executeJavaScript(
+  const height = SET.height ?? await win.webContents.executeJavaScript(
     setName === "home"
       ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
       : setName === "session"

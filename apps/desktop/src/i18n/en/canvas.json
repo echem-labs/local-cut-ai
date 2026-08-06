@@ -29,11 +29,12 @@
     "voice_ref": "voice"
   },
   "actions": {
-    "disconnect": "Disconnect {port}"
+    "disconnect": "Disconnect {port}",
+    "remove": "Delete {id} and every connection to it"
   },
   "confirmDelete": {
     "title": "Delete {id}?",
-    "message": "The node goes, and so does every connection to it. There is no undo, and nothing in the canvas can add a node back.",
+    "message": "The node goes, and so does every connection to it. There is no undo — Add node can put an empty one back, but not its wiring or its render.",
     "confirm": "Delete node"
   },
   "wiring": {
@@ -48,5 +49,28 @@
   "edges_other": "{count} connections",
   "cannotRemove": "The script node stays — the rest of the pipeline is rebuilt from it",
   "pinned": "Pinned — held at its current render",
-  "reload": "Reload the graph"
+  "reload": "Reload the graph",
+  "zoomOut": "Zoom out",
+  "zoomIn": "Zoom in",
+  "zoomFit": "Fit the graph to the panel",
+  "zoomValueAria": "Zoom, {pct} percent",
+  "searchAria": "Find a node",
+  "searchPlaceholder": "Find a node",
+  "matches_one": "{count} match",
+  "matches_other": "{count} matches",
+  "noMatches": "no match",
+  "addNode": "Add node",
+  "addNodeAria": "Add a node to the graph",
+  "added": "{kind} added — its inputs are empty until you wire them",
+  "kindHints": {
+    "keyframe": "an image to condition on",
+    "clip": "a video take",
+    "narration": "spoken audio",
+    "music": "a background bed",
+    "thumbnail": "a cover image"
+  },
+  "fit": "Fit",
+  "chainOf": "{id} selected · showing its upstream and downstream chain",
+  "panHint": "Ctrl+wheel zooms · drag empty space to pan",
+  "searchHint": "Find a node by id or kind - Enter jumps to the next match"
 }

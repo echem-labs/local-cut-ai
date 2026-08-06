@@ -611,32 +611,26 @@ export function Project() {
         </div>
         {board.scenes.length > 0 && (
           <>
-            <div className="seg-toggle view-switch" role="group" aria-label={t("project.viewAria")}>
-              <button
-                className={view === "storyboard" ? "active" : ""}
-                onClick={() => setView("storyboard")}
-                title={t("project.view.storyboardTitle")}
-              >
-                <LayoutGrid size={12} strokeWidth={1.8} />
-                {t("project.view.storyboard")}
-              </button>
-              <button
-                className={view === "player" ? "active" : ""}
-                onClick={() => setView("player")}
-                title={t("project.view.playerTitle")}
-              >
-                <MonitorPlay size={12} strokeWidth={1.8} />
-                {t("project.view.player")}
-              </button>
-              <button
-                className={view === "flowchart" ? "active" : ""}
-                onClick={() => setView("flowchart")}
-                title={t("project.view.flowchartTitle")}
-              >
-                <Workflow size={12} strokeWidth={1.8} />
-                {t("project.view.flowchart")}
-              </button>
-            </div>
+            {/* One picker, not three buttons: the views are mutually
+                exclusive and only one can be current, which is what a
+                dropdown says and a row of toggles only implies. It also
+                stops the header growing a segment every time a view is
+                added, beside the tile-size picker that already works this
+                way. */}
+            <Dropdown
+              value={view}
+              ariaLabel={t("project.viewAria")}
+              options={[
+                {
+                  value: "storyboard",
+                  label: t("project.view.storyboard"),
+                  icon: LayoutGrid,
+                },
+                { value: "player", label: t("project.view.player"), icon: MonitorPlay },
+                { value: "flowchart", label: t("project.view.flowchart"), icon: Workflow },
+              ]}
+              onChange={setView}
+            />
             <Dropdown
               value={density}
               ariaLabel={t("project.tileSize.aria")}
@@ -674,6 +668,20 @@ export function Project() {
                 : eta
                   ? t("project.cta.createWithEta", { eta })
                   : t("project.cta.create")}
+            </button>
+          ) : scenes.length > 0 ? (
+            /* Present but not pressable, rather than absent. The screen's
+               one primary action used to vanish while the videos rendered
+               and reappear when they finished, which reads as the app
+               having lost it — and left nothing on screen to say what the
+               final cut is waiting for. */
+            <button
+              className="btn-primary"
+              disabled
+              title={t("project.cta.pendingTitle", { done: clipDone, total: scenes.length })}
+            >
+              <Sparkles size={14} strokeWidth={2} />
+              {t("project.cta.pending", { done: clipDone, total: scenes.length })}
             </button>
           ) : null)}
       </div>
