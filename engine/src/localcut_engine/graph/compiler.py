@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .model import NodeKind, StoryGraph
+from .model import KEYFRAME_PORT, NodeKind, StoryGraph
 
 # Node kinds that require an execution job (assets are user-provided).
 EXECUTABLE_KINDS = {
@@ -119,6 +119,20 @@ _CONTENT_PARAM = {
     NodeKind.NARRATION: "text",
 }
 
+# The input a node cannot run without. Absent, the backend raises on arrival
+# rather than producing something lesser — which is the difference between
+# this and OPTIONAL_PORTS, whose absence merely degrades the output (no bed,
+# no burned captions).
+#
+# A clip is the case: every clip backend conditions on a still, and the
+# ffmpeg one says so outright ("still clip needs a keyframe input"). Until
+# U4 nothing could put an unwired clip in a graph — the template builder
+# wires what it makes — so the queue was the only thing that ever found out.
+# Add node can, and did: the node went red before the user could wire it.
+_REQUIRED_PORT = {
+    NodeKind.CLIP: KEYFRAME_PORT,
+}
+
 
 def unready_nodes(graph: StoryGraph) -> set[str]:
     """Nodes whose content is still empty, plus everything downstream.
@@ -148,7 +162,19 @@ def unready_nodes(graph: StoryGraph) -> set[str]:
         if (param := _CONTENT_PARAM.get(node.kind)) is not None
         and not str(node.params.get(param, "")).strip()
     }
-    return empty.union(*(graph.downstream_of(node_id) for node_id in empty)) if empty else set()
+    # Missing a required INPUT is the same state as missing content: there is
+    # nothing to render from. It arrives by a different route — U4's Add node
+    # puts an unwired node on the canvas on purpose — and it needs the same
+    # answer, including the transitive sweep, since a consumer of a node that
+    # never renders has no artifact to read either.
+    unwired = {
+        node_id
+        for node_id, node in graph.nodes.items()
+        if (port := _REQUIRED_PORT.get(node.kind)) is not None
+        and not any(edge.port == port for edge in graph.inputs_of(node_id))
+    }
+    blocked = empty | unwired
+    return blocked.union(*(graph.downstream_of(node_id) for node_id in blocked)) if blocked else set()
 
 
 def compile_graph(
