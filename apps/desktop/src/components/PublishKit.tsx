@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Megaphone, RotateCw } from "lucide-react";
+import { Check, Copy, RotateCw } from "lucide-react";
 
 import type { PublishKit as PublishKitData } from "../api/types";
 import { t } from "../i18n";
@@ -110,6 +110,27 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
       .finally(() => setBusy(false));
   };
 
+  /**
+   * Nothing asked for yet? Ask now.
+   *
+   * This opened onto a dialog whose only content was a button repeating the
+   * one just pressed — two clicks and two headings to reach a task the user
+   * had already named by opening it. The cost is a thumbnail render and one
+   * LLM call, which is what "Publish kit" means; there is nothing here the
+   * button was withholding a decision about.
+   *
+   * Once, on the mount that found nothing: `build` is also what "Write them
+   * again" calls, and a dependency on `asked` would re-fire the moment that
+   * request cleared the old nodes.
+   */
+  const requested = useRef(false);
+  useEffect(() => {
+    if (requested.current || asked || !currentProject) return;
+    requested.current = true;
+    build();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, currentProject]);
+
   return (
     <div className="modal-backdrop" onMouseDown={() => closeRef.current()} role="presentation">
       <div
@@ -124,13 +145,27 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
         <p className="sub">{t("publish.hint")}</p>
 
         {!asked ? (
-          // Nothing asked for yet: one button, and it is the whole dialog.
-          <div className="modal-actions">
-            <button className="btn-primary" disabled={busy} onClick={build}>
-              <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
-              {busy ? t("publish.preparing") : t("publish.prepare")}
-            </button>
-          </div>
+          // The request is in flight (or was refused). Not a second button
+          // repeating the one that opened this — only a way back in when the
+          // engine said no.
+          <>
+            <p className="hint" role="status">
+              {busy ? t("publish.preparing") : t("publish.pending")}
+            </p>
+            {error && <Alert message={error} onDismiss={() => setError(null)} />}
+            <div className="modal-actions">
+              {error && (
+                <button className="btn-ghost" disabled={busy} onClick={build}>
+                  <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
+                  {t("common.retry")}
+                </button>
+              )}
+              <div className="spacer" />
+              <button className="btn-primary" onClick={() => closeRef.current()}>
+                {t("common.close")}
+              </button>
+            </div>
+          </>
         ) : (
           <>
             <MediaThumb
@@ -196,7 +231,6 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
             </div>
           </>
         )}
-        {!asked && error && <Alert message={error} onDismiss={() => setError(null)} />}
       </div>
     </div>
   );
@@ -245,10 +279,14 @@ function Field({
   return (
     <label className="field publish-field">
       <span>{label}</span>
-      <span className="field-row">
+      {/* A DIV, not a span. `.modal .field span` is the label rule and it
+          matches every span in the field, so a span here was laid out as a
+          block — the copy button fell under the input — and the control
+          inherited the label's 10px uppercase type. */}
+      <div className="field-row">
         {multiline ? (
           <textarea
-            rows={4}
+            rows={3}
             value={value}
             aria-label={label}
             onChange={(event) => onChange(event.target.value)}
@@ -276,7 +314,7 @@ function Field({
             <Copy size={13} strokeWidth={2} aria-hidden="true" />
           )}
         </button>
-      </span>
+      </div>
     </label>
   );
 }

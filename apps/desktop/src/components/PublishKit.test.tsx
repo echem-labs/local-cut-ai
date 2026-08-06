@@ -61,30 +61,33 @@ beforeEach(() => {
 });
 
 describe("before anything has been packaged", () => {
-  it("offers one button and nothing else", () => {
-    mount({});
-    expect(screen.getByRole("button", { name: /prepare to publish/i })).toBeEnabled();
-    // By field, not by any text: the dialog's own hint names the hashtags
-    // it is about to write, which is not the same as offering the field.
-    expect(screen.queryByLabelText(/^hashtags$/i)).toBeNull();
-  });
-
-  it("asks the engine to build the kit", async () => {
+  it("asks the engine the moment it opens", async () => {
+    // It used to open onto a dialog whose only content was a button
+    // repeating the one just pressed: two clicks and two headings to reach
+    // a task the user had already named by opening it.
     const preparePublish = vi.fn().mockResolvedValue(null);
     mount({}, { preparePublish });
 
-    await userEvent.click(screen.getByRole("button", { name: /prepare to publish/i }));
-    expect(preparePublish).toHaveBeenCalledOnce();
+    await waitFor(() => expect(preparePublish).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: /prepare to publish/i })).toBeNull();
   });
 
-  it("reports the engine's refusal where the button was", async () => {
+  it("says it is working rather than showing empty fields", async () => {
+    mount({}, { preparePublish: vi.fn().mockResolvedValue(null) });
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByLabelText(/^title$/i)).toBeNull());
+  });
+
+  it("reports the engine's refusal, and offers the way back in", async () => {
     // The real one: 409 "script has not rendered yet" — an answer, not a
-    // fault, and the user can act on it.
+    // fault, and the user can act on it. A retry is the only button worth
+    // having here, and only once there is something to retry.
     const preparePublish = vi.fn().mockResolvedValue("script has not rendered yet");
     mount({}, { preparePublish });
 
-    await userEvent.click(screen.getByRole("button", { name: /prepare to publish/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/script has not rendered/i);
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+    expect(preparePublish).toHaveBeenCalledTimes(2);
   });
 });
 

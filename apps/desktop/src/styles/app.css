@@ -4032,11 +4032,13 @@ button.link:hover {
   max-width: 560px;
 }
 
-/* The suggested thumbnail, above the fields it belongs to. Full width, so
-   it reads as a preview of the post rather than an avatar beside a form. */
+/* The suggested thumbnail. Sized like a thumbnail rather than stretched to
+   the dialog: at full width a 16:9 preview is 315px of the window's height
+   before the first field, which pushed the footer off a short screen. */
 .publish-thumb {
   display: block;
-  width: 100%;
+  width: 240px;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border: 1px solid var(--border);
@@ -4045,9 +4047,21 @@ button.link:hover {
   margin-top: var(--space-4);
 }
 
+/* Long enough for a description, short enough that the footer stays on a
+   1080p window with the browser chrome and the title bar taken off. */
+.publish-modal {
+  max-height: min(84vh, 720px);
+  overflow-y: auto;
+}
+
 /* Control and copy button on one row. The button is a SIBLING of the input,
    never wrapping it: a control inside a control is unreachable to a screen
-   reader, and a field you cannot click into is not editable at all. */
+   reader, and a field you cannot click into is not editable at all.
+
+   A `div`, and the markup says so too: `.modal .field span` is the LABEL
+   rule and matches every span in the field, so a span wrapper here was laid
+   out as a block with the button under the input, wearing 10px uppercase
+   type. */
 .publish-field .field-row {
   display: flex;
   align-items: flex-start;
@@ -4056,8 +4070,18 @@ button.link:hover {
 
 .publish-field .field-row > .icon-btn-sm {
   flex-shrink: 0;
-  /* On the control's first row, not centred against a four-row textarea. */
-  margin-top: var(--space-1);
+  /* Beside the control's first row, not centred against a tall textarea. */
+  margin-top: 3px;
+}
+
+/* Tighter than the modal recipe's default and the same as Settings'
+   `.setting-row .sc input`: three stacked fields at 32px with 8px/12px
+   padding read as a form to fill in, where these are text to skim and
+   copy. */
+.publish-field .field-row input,
+.publish-field .field-row textarea {
+  padding: var(--space-1) var(--space-2);
+  min-height: 30px;
 }
 
 /* The footer's two buttons are not a pair — "write them again" asks the
