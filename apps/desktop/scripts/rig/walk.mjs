@@ -458,6 +458,71 @@ try {
       wheel.zoom !== "100%" && wheel.dpr === dprBefore && wheel.inner === innerBefore,
       JSON.stringify({ ...wheel, dprBefore, innerBefore }),
     );
+
+    // U5: the audio lanes under the timeline. Their whole value is being
+    // ALIGNED with the blocks above them — a segment at the wrong width
+    // points at the wrong scene, which is worse than drawing nothing — and
+    // alignment is a layout property, so it belongs here rather than in a
+    // component test that has no real widths.
+    const lanes = await evalInApp(`
+      await page.evaluate(() => {
+        const trigger = [...document.querySelectorAll(".dropdown-trigger")].find((b) =>
+          /view/i.test(b.getAttribute("aria-label") || ""));
+        trigger?.click();
+      });
+      await page.waitForTimeout(120);
+      await page.evaluate(() => {
+        const option = [...document.querySelectorAll('[role="option"]')].find((b) =>
+          /storyboard/i.test(b.textContent || ""));
+        option?.click();
+      });
+      await page.waitForSelector(".tl-scroll", { timeout: 20000 });
+      return page.evaluate(() => {
+        const audio = document.querySelector(".tl-audio");
+        if (!audio) return { present: false };
+        const blocks = [...document.querySelectorAll(".tl-block")].map((el) =>
+          Math.round(el.getBoundingClientRect().width),
+        );
+        // The narration lane is the one with a segment per scene.
+        const lane = [...document.querySelectorAll(".tl-lane")].find(
+          (el) => el.querySelectorAll(".lane-seg").length === blocks.length,
+        );
+        const segments = lane
+          ? [...lane.querySelectorAll(".lane-seg")].map((el) =>
+              Math.round(el.getBoundingClientRect().width),
+            )
+          : [];
+        return {
+          present: true,
+          blocks,
+          segments,
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        };
+      });
+    `);
+    if (lanes.present) {
+      check(
+        "each audio segment is as wide as the scene block above it",
+        lanes.segments.length === lanes.blocks.length &&
+          lanes.segments.every((width, index) => Math.abs(width - lanes.blocks[index]) <= 1),
+        JSON.stringify(lanes),
+      );
+      check(
+        "the audio lanes add no horizontal scroll to the page",
+        lanes.scrollWidth <= lanes.innerWidth + 1,
+        `scrollWidth ${lanes.scrollWidth}`,
+      );
+      await shoot("timeline-audio-lanes.png");
+    } else {
+      // Said out loud rather than passed over: the lanes appear only once
+      // narration or music has actually rendered, so a profile with no
+      // audio leaves this alignment unmeasured — which is a gap in the run,
+      // not a green light.
+      console.log(
+        "NOTE no audio lanes in this profile (nothing rendered) - segment alignment unchecked",
+      );
+    }
   }
 
   const report = await health();

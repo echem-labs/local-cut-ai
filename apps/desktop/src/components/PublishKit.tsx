@@ -43,6 +43,7 @@ export function PublishKit() {
         <button
           className="btn-secondary"
           disabled={busy}
+          title={t("terms.tips.publishKit")}
           onClick={() => {
             setError(null);
             setBusy(true);

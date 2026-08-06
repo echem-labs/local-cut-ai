@@ -3,6 +3,8 @@ import {
   FileText,
   LayoutTemplate,
   Library as LibraryIcon,
+  Megaphone,
+  PlayCircle,
   Settings as SettingsIcon,
   Sparkles,
   SunMoon,
@@ -93,6 +95,24 @@ export function Palette() {
         label: t("palette.saveTemplate"),
         icon: LayoutTemplate,
         run: () => useApp.getState().openSaveTemplate(currentProject),
+      });
+      // Both are reachable from the workspace already (the board menu, the
+      // export row) — the palette is where you look when you know the words
+      // but not the screen, which is exactly the state a stalled project
+      // leaves you in.
+      list.push({
+        key: "resume-render",
+        group: "projects",
+        label: t("palette.resumeRender"),
+        icon: PlayCircle,
+        run: () => void useApp.getState().resumeRender(),
+      });
+      list.push({
+        key: "prepare-publish",
+        group: "projects",
+        label: t("palette.preparePublish"),
+        icon: Megaphone,
+        run: () => void useApp.getState().preparePublish(),
       });
     }
     for (const project of projects) {
