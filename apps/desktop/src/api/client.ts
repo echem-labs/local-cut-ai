@@ -7,6 +7,7 @@ import type {
   AudioPeaks,
   Board,
   Checkpoint,
+  EditProposal,
   EditResult,
   EngineConnection,
   EngineEtas,
@@ -30,6 +31,27 @@ import type {
 /** Marker subprotocol that tells the engine the next offered protocol is the
  * bearer token. Must match WS_TOKEN_SUBPROTOCOL in the engine's api/app.py. */
 const WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1";
+
+/**
+ * A non-2xx answer from the engine, carrying the status alongside the
+ * message.
+ *
+ * The message shape (`engine 409: ...`) is unchanged and is still what every
+ * `messageOf(err)` shows — this only stops callers who need to BRANCH on the
+ * status from having to parse it back out of the prose. The one that needs
+ * it is the edit composer: a 409 there means the graph moved under a plan
+ * the user is looking at, which is a different outcome from every other
+ * refusal and has a different next step.
+ */
+export class EngineError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "EngineError";
+  }
+}
 
 export class EngineClient {
   constructor(private readonly connection: EngineConnection) {}
@@ -64,7 +86,7 @@ export class EngineClient {
       } catch {
         /* not JSON — use the raw body */
       }
-      throw new Error(`engine ${response.status}: ${detail.slice(0, 300)}`);
+      throw new EngineError(response.status, `engine ${response.status}: ${detail.slice(0, 300)}`);
     }
     return (await response.json()) as T;
   }
@@ -257,12 +279,30 @@ export class EngineClient {
     });
   }
 
-  /** Natural-language edit; scope is "project" or a scene id. */
-  edit(
+  /** Natural-language edit, compiled and reported but NOT committed: no save, no
+   * enqueue, no history entry, no event. The response carries the plan and
+   * the graph revision it was built against, which `editApply` takes to
+   * land it without a second LLM round trip. */
+  proposeEdit(
     projectId: string,
     body: { instruction: string; scope?: string; model?: string },
-  ): Promise<EditResult> {
+  ): Promise<EditProposal> {
     return this.request(`/projects/${projectId}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ ...body, dry_run: true }),
+    });
+  }
+
+  /** Land a plan a dry run returned. The plan travels back as a client
+   * document, which is safe because `compile_edits` re-validates every part
+   * of it against the same whitelist it applies to the LLM's own output —
+   * the engine trusts the plan no more here than it did there. `revision`
+   * is what makes it refuse (409) if the graph moved in between. */
+  editApply(
+    projectId: string,
+    body: { plan: unknown; scope?: string; revision?: string | null },
+  ): Promise<EditResult> {
+    return this.request(`/projects/${projectId}/edit/apply`, {
       method: "POST",
       body: JSON.stringify(body),
     });
