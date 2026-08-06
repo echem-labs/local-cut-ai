@@ -130,6 +130,13 @@ export interface SeedPatch {
    * mock cannot be drawn against "whatever". */
   graph?: StoryGraph;
   selectedNode?: string | null;
+  /** What the engine said about a failed or retrying node (U5). These live
+   * ONLY on the websocket — the scheduler computes `suggestions` when it
+   * publishes and persists nothing — so there is no project a rig could
+   * open that would put the failure card on screen. Posing them is the only
+   * way to photograph it. */
+  nodeFailures?: Record<string, { error: string; suggestions: string[] }>;
+  nodeRetries?: Record<string, { attempt: number; fallback: OomFallback }>;
   freeze?: boolean;
 }
 
@@ -2391,6 +2398,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.jobs !== undefined) next.jobs = patch.jobs;
     if (patch.graph !== undefined) next.graph = patch.graph;
     if (patch.selectedNode !== undefined) next.selectedNode = patch.selectedNode;
+    if (patch.nodeFailures !== undefined) next.nodeFailures = patch.nodeFailures;
+    if (patch.nodeRetries !== undefined) next.nodeRetries = patch.nodeRetries;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }
