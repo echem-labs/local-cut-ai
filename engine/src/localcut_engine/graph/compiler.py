@@ -174,7 +174,9 @@ def unready_nodes(graph: StoryGraph) -> set[str]:
         and not any(edge.port == port for edge in graph.inputs_of(node_id))
     }
     blocked = empty | unwired
-    return blocked.union(*(graph.downstream_of(node_id) for node_id in blocked)) if blocked else set()
+    return (
+        blocked.union(*(graph.downstream_of(node_id) for node_id in blocked)) if blocked else set()
+    )
 
 
 def compile_graph(
