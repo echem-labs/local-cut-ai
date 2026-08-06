@@ -16,5 +16,7 @@
   "toggleTheme": "Toggle theme",
   "openLibrary": "Open library",
   "libraryTools": "Open library · tool outputs",
-  "saveTemplate": "Save this video as a template…"
+  "saveTemplate": "Save this video as a template…",
+  "resumeRender": "Resume rendering",
+  "preparePublish": "Prepare to publish"
 }

@@ -292,7 +292,12 @@ export function Composer() {
             </ul>
           )}
           <div className="plan-actions">
-            <button className="btn-primary" disabled={editBusy} onClick={() => void applyProposal()}>
+            <button
+              className="btn-primary"
+              disabled={editBusy}
+              title={t("terms.tips.applyEdit")}
+              onClick={() => void applyProposal()}
+            >
               {editBusy ? t("composer.applying") : t("composer.apply")}
             </button>
             <button className="btn-ghost" disabled={editBusy} onClick={() => setProposal(null)}>

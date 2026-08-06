@@ -38,7 +38,7 @@ export function AudioLanes({
   if (!hasNarration && !hasMusic) return null;
 
   return (
-    <div className="tl-audio" style={{ width: totalWidth }}>
+    <div className="tl-audio" style={{ width: totalWidth }} title={t("terms.tips.audioLane")}>
       {hasNarration && (
         <div className="tl-lane" role="img" aria-label={t("timeline.narrationLaneAria")}>
           <span className="lane-label">{t("timeline.narrationLane")}</span>
