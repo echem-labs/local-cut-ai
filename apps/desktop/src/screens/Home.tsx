@@ -317,10 +317,17 @@ export function Home() {
             aria-label={t("home.promptAria")}
           />
           <div className="row">
+            {/* Each chip shows its VALUE — "9:16 · Shorts", "Cinematic" —
+                which says nothing about what the control decides. The bubble
+                is where that lives; `side="bottom"` because this row sits
+                near the top of Home and a top bubble is drawn off it. */}
             <Dropdown
               value={aspect}
               onChange={(value) => setDefaults({ aspect: value })}
               ariaLabel={t("home.aspectAria")}
+              tip={t("home.aspectTip")}
+              tipHint={t("home.aspectTipHint")}
+              tipSide="bottom"
               options={ASPECTS.map((entry) => ({
                 value: entry.value,
                 label: `${entry.value} · ${m().aspects[entry.key]}`,
@@ -331,6 +338,9 @@ export function Home() {
               value={duration}
               onChange={(value) => setDefaults({ duration: value })}
               ariaLabel={t("home.durationAria")}
+              tip={t("home.durationTip")}
+              tipHint={t("home.durationTipHint")}
+              tipSide="bottom"
             />
             {/* The engine has taken style_preset since Phase 1 and defaulted
                 it silently; this is the first surface that lets anyone say
@@ -339,26 +349,34 @@ export function Home() {
               value={style}
               onChange={(value) => setDefaults({ style: value })}
               ariaLabel={t("home.styleAria")}
+              tip={t("home.styleTip")}
+              tipHint={t("home.styleTipHint")}
+              tipSide="bottom"
               options={STYLE_PRESETS.map((preset) => ({
                 value: preset,
                 label: (m().home.styles as Record<string, string>)[preset] ?? preset,
               }))}
             />
+            {/* The app's bubble, not the browser's `title`: the same rule the
+                rail follows, and these two sit beside three chips that now
+                use it — one row speaking two ways is worse than either. */}
             <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
-              <button
-                className={mode === "prompt" ? "active" : ""}
-                onClick={() => setDefaults({ mode: "prompt" })}
-                title={t("home.modeAutoTitle")}
-              >
-                {t("home.modeAuto")}
-              </button>
-              <button
-                className={mode === "beginner" ? "active" : ""}
-                onClick={() => setDefaults({ mode: "beginner" })}
-                title={t("home.modeReviewTitle")}
-              >
-                {t("home.modeReview")}
-              </button>
+              <Tip label={t("home.modeAuto")} hint={t("home.modeAutoTitle")} side="bottom">
+                <button
+                  className={mode === "prompt" ? "active" : ""}
+                  onClick={() => setDefaults({ mode: "prompt" })}
+                >
+                  {t("home.modeAuto")}
+                </button>
+              </Tip>
+              <Tip label={t("home.modeReview")} hint={t("home.modeReviewTitle")} side="bottom">
+                <button
+                  className={mode === "beginner" ? "active" : ""}
+                  onClick={() => setDefaults({ mode: "beginner" })}
+                >
+                  {t("home.modeReview")}
+                </button>
+              </Tip>
             </div>
             <div className="spacer" />
             <ModelsPopover />

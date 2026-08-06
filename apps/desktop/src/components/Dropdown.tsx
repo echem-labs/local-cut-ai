@@ -1,6 +1,8 @@
 import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
+
+import { Tip } from "./Tooltip";
 
 export interface DropdownOption<V extends string | number> {
   value: V;
@@ -16,11 +18,24 @@ export function Dropdown<V extends string | number>({
   options,
   onChange,
   ariaLabel,
+  tip,
+  tipHint,
+  tipSide = "top",
 }: {
   value: V;
   options: DropdownOption<V>[];
   onChange: (value: V) => void;
   ariaLabel: string;
+  /** What this control decides, in the app's own bubble. A chip reading
+   * "Cinematic" says what it is set to and nothing about what it is FOR,
+   * and an aria-label answers that for a screen reader only — the pointer
+   * got nothing at all. Optional: a dropdown whose surrounding copy already
+   * names it does not need one. */
+  tip?: string;
+  tipHint?: string;
+  /** "top" suits a control on a bottom-anchored row; a chip near the top of
+   * the window wants "bottom", or the bubble is drawn off it. */
+  tipSide?: "top" | "bottom" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -56,8 +71,21 @@ export function Dropdown<V extends string | number>({
 
   const SelectedIcon = selected?.icon;
 
+  // The bubble wraps only the TRIGGER, never the menu: a tooltip anchored to
+  // the whole control would keep pointing at it while the list is open, over
+  // the options it is describing.
+  const withTip = (trigger: ReactNode) =>
+    tip ? (
+      <Tip label={tip} hint={tipHint} side={tipSide}>
+        {trigger}
+      </Tip>
+    ) : (
+      trigger
+    );
+
   return (
     <div className="dropdown" ref={rootRef}>
+      {withTip(
       <button
         type="button"
         className="dropdown-trigger"
@@ -83,7 +111,8 @@ export function Dropdown<V extends string | number>({
       >
         {SelectedIcon && <SelectedIcon size={13} strokeWidth={1.8} aria-hidden="true" />}
         {selected?.label}
-      </button>
+      </button>,
+      )}
       {open && (
         <div className="dropdown-menu" role="listbox" aria-label={ariaLabel}>
           {options.map((option, index) => {

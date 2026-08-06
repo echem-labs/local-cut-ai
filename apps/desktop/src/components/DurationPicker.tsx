@@ -38,10 +38,19 @@ export function DurationPicker({
   value,
   onChange,
   ariaLabel,
+  tip,
+  tipHint,
+  tipSide,
 }: {
   value: number;
   onChange: (value: number) => void;
   ariaLabel: string;
+  /** Passed through to the chip — see `Dropdown`. Absent while the custom
+   * editor is open: that branch is an input with its own visible hint, and a
+   * bubble over a field being typed into is in the way. */
+  tip?: string;
+  tipHint?: string;
+  tipSide?: "top" | "bottom" | "right";
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -133,6 +142,9 @@ export function DurationPicker({
         value={value}
         options={options}
         ariaLabel={ariaLabel}
+        tip={tip}
+        tipHint={tipHint}
+        tipSide={tipSide}
         onChange={(picked) => {
           if (picked === CUSTOM) {
             setDraft(formatDuration(value));

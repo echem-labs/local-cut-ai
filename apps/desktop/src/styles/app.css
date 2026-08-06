@@ -2521,9 +2521,19 @@ button.link:hover {
   color: var(--text-primary);
 }
 
-.composer-scope .dropdown-menu {
-  bottom: calc(100% + 8px);
+/* Fixed + JS-measured, like `panel-help-pop` and for the same reason: the
+   composer is inside a dockview panel, a panel's overflow clips anything
+   absolutely positioned within it, and the Prompt panel is about one control
+   tall. A seven-scene project lost the top of its own scope list — "Whole
+   video" and the first scenes were cut off with no way to reach them.
+
+   `position`, `left`, `bottom` and `max-height` are all set inline by the
+   component, which is the only thing that can measure them. What is left
+   here is the base rule's `top`, which would fight the measured `bottom`,
+   and the scroll that makes a list longer than the window usable at all. */
+.composer-scope .scope-menu {
   top: auto;
+  overflow-y: auto;
 }
 
 .composer-input {
@@ -3415,6 +3425,31 @@ button.link:hover {
 .banner.checkpoint .script-view,
 .banner.checkpoint .hint {
   margin-top: var(--space-4);
+}
+
+/* The script is as long as the video, and this banner sits ABOVE the
+   workspace on a screen that does not scroll: a seven-scene screenplay
+   pushed the board, the timeline and the composer off the bottom of the
+   window with no way to reach them. The table scrolls inside the banner
+   instead. The cap is a fraction of the window rather than a fixed height —
+   on a short window a fixed one is still most of the screen, and the point
+   is that what is below stays reachable. */
+.banner.checkpoint .script-view {
+  max-height: 42vh;
+  overflow-y: auto;
+  /* Room for the scrollbar so it never sits on the LENGTH column. */
+  padding-right: var(--space-2);
+}
+
+/* The header row stays put while the scenes move under it — a table you
+   scroll without one loses which column is which after two rows. */
+.banner.checkpoint .script-view thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* The banner's own surface, not surface-1: a header that does not match
+     what it sits on lets the scrolled rows show through as a tone change. */
+  background: var(--surface-2);
 }
 
 .banner.checkpoint .hint {
