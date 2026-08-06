@@ -316,3 +316,42 @@ def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():
     # service.finalize enqueues. Both are spelled here, so both are pinned.
     assert qualities == {"draft", "final"}, f"eta.ts asks for unknown qualities: {qualities}"
     assert JobSpec.model_fields["quality"].default == "draft"
+
+
+def test_the_smaller_model_chip_offers_tasks_the_engine_can_actually_serve():
+    """lib/oom.ts mirrors the engine's COMFY_TASKS to decide which models can
+    replace a node's after an out-of-memory failure. The desktop derives the
+    kind from the node id (NodeState carries no kind), so the mirror is a
+    table of id patterns -> manifest task ids.
+
+    Drift is silent in the direction that matters: a task string the manifest
+    no longer uses matches no model row, so the chip finds no candidate and
+    renders as "nothing smaller is installed" — advice that is wrong rather
+    than missing."""
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.manifest.capability import COMFY_TASKS
+
+    oom = (_FORMATS.parent / "oom.ts").read_text(encoding="utf-8")
+    body = re.search(r"export function tasksForNode\(.*?\n}", oom, re.S)
+    assert body, "lib/oom.ts no longer declares tasksForNode — update this test with it"
+    returns = re.findall(r"if \((.+?)\) return \[(.*?)\];", body.group(0))
+    assert returns, "tasksForNode's branches no longer match — update this test with it"
+
+    # Which engine kind each UI guard is about. The guards are id patterns
+    # because that is the only kind signal the board gives the desktop.
+    kind_of_guard = {
+        r"/\.clip\d*$/.test(nodeId)": NodeKind.CLIP,
+        'nodeId.endsWith(".keyframe")': NodeKind.KEYFRAME,
+        'nodeId === "thumbnail"': NodeKind.THUMBNAIL,
+        'nodeId === "music"': NodeKind.MUSIC,
+    }
+    mirrored = {}
+    for guard, tasks in returns:
+        kind = kind_of_guard.get(guard.strip())
+        assert kind is not None, f"unrecognised tasksForNode guard {guard!r} — update this test"
+        mirrored[kind] = tuple(re.findall(r'"([^"]+)"', tasks))
+
+    assert mirrored == COMFY_TASKS, (
+        f"the UI's kind->task mirror drifted from the engine's COMFY_TASKS: "
+        f"UI {mirrored}, engine {COMFY_TASKS}"
+    )

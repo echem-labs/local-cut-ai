@@ -3864,6 +3864,56 @@ button.link:hover {
   margin: 0;
 }
 
+/* The out-of-memory failure card. Same restraint as `.alert` - the failed
+   colour lives on the mark and the left edge only - but this one is a group
+   of choices rather than a sentence, so it stacks: what happened, why, then
+   the chips that act on it. */
+.failure-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-failed);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.failure-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.failure-head > svg {
+  flex-shrink: 0;
+  color: var(--status-failed);
+}
+
+.failure-why {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* The chips wrap: three suggestions, one of which carries a model id, do not
+   fit the inspector's width on one line at any sensible font size. */
+.failure-card .chip-row {
+  flex-wrap: wrap;
+}
+
+/* A retry in flight, reported where the node's status already is. Muted:
+   it is a statement about work in progress, not a second failure. */
+.node-retry {
+  margin: var(--space-2) 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .alert-close {
   flex-shrink: 0;
   display: grid;
