@@ -384,6 +384,9 @@ interface AppState {
    * back into flight for a project whose queue was lost — an empty /patch
    * re-plans nothing. */
   resumeRender: () => Promise<string | null>;
+  /** Re-render a node on a seed borrowed from one of its takes, in one call.
+   * `null` means it applied; any other return is a message. */
+  rerollWithSeed: (nodeId: string, seed: number) => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
@@ -1628,6 +1631,23 @@ export const useApp = create<AppState>((set, get) => {
       if (!client || !currentProject) return;
       await client.regenerate(currentProject.id, nodeId, seed);
       await get().refreshBoard();
+    },
+
+    rerollWithSeed: async (nodeId, seed) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // ONE call. `RegenerateBody.seed` exists for exactly this; doing it
+        // as set_seed-then-regenerate would leave the node carrying a
+        // borrowed seed if the second half failed, which is a silent edit
+        // the user never asked for.
+        await flushPatches();
+        await client.regenerate(currentProject.id, nodeId, seed);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     applyNode: async (nodeId, changes) => {
