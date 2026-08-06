@@ -3864,6 +3864,36 @@ button.link:hover {
   margin: 0;
 }
 
+/* A take and its reroll, kept together. The reroll is a sibling of the
+   chip rather than a child - ARIA makes a button's children presentational,
+   so nesting it would hide it from a screen reader entirely. */
+.take {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.take-reroll {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.take-reroll:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.take-reroll:disabled {
+  opacity: 0.4;
+}
+
 /* The stalled-project offer: a sentence and the action that answers it, on
    one line where there is room. Not `.banner.error` - nothing failed, and
    red would make a recoverable stall read as a broken project. */

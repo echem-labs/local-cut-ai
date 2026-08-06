@@ -22,6 +22,15 @@ type Subscriber = (event: EngineEvent) => void;
 const captured = vi.hoisted(() => ({ subscriber: null as Subscriber | null }));
 const calls = vi.hoisted(() => ({ getProject: 0 }));
 
+/** The store's `scheduleRefresh` debounce (REFRESH_DEBOUNCE_MS), mirrored
+ * because it is not exported. It fires on the LEADING edge and arms a
+ * trailing timer, and that timer is module state shared by every test in
+ * this file — so a refresh armed by one test lands inside the next one. Both
+ * `connected()` and the scoping assertion below wait past it rather than
+ * racing it. */
+const DEBOUNCE_MS = 150;
+const settle = () => new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 60));
+
 vi.mock("./api/client", () => ({
   EngineClient: class {
     baseUrl = "http://127.0.0.1:7830";
@@ -60,6 +69,9 @@ async function connected() {
     currentProject: { id: "p1", title: "t", approvals: [] },
   } as never);
   expect(captured.subscriber).not.toBeNull();
+  // Drain any trailing refresh the previous test armed before this one
+  // starts counting, or its arrival is charged to whatever runs next.
+  await settle();
   calls.getProject = 0;
   return captured.subscriber!;
 }
@@ -185,7 +197,9 @@ describe("events that change the project from outside this window", () => {
     // projects, so an unscoped apply paints this board with another's news.
     const send = await connected();
     send({ type: "project.approved", project_id: "other", checkpoint: "script" } as EngineEvent);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Past the debounce, so a refresh this event wrongly triggered has had
+    // its leading AND trailing edge to show up.
+    await settle();
     expect(calls.getProject).toBe(0);
   });
 });
