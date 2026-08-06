@@ -393,13 +393,22 @@ try {
             // One line means one shared CENTRE, not one shared top: the bar
             // centres its children, so a 15px label and a 24px button sit at
             // different tops while being perfectly on the same row.
+            //
+            // Within a pixel, not identical to one. A centre is top + height/2
+            // over fractional layout boxes, so a control of odd height beside
+            // one of even height rounds a pixel apart while sitting on exactly
+            // the same row — and WHICH way it rounds depends on the bar's own
+            // y offset, so anything above the panel can flip it. A real wrap
+            // moves a control a whole row, which this still catches with room
+            // to spare.
             barWraps:
-              new Set(
-                controls.map((el) => {
+              (() => {
+                const centres = controls.map((el) => {
                   const r = el.getBoundingClientRect();
-                  return Math.round(r.top + r.height / 2);
-                }),
-              ).size > 1,
+                  return r.top + r.height / 2;
+                });
+                return Math.max(...centres) - Math.min(...centres) > 1;
+              })(),
             // The surface scrolls over the SCALED graph (the sizer), or over
             // itself when the panel is wider than the graph — never over the
             // raw layout box, which a transform leaves untouched.
