@@ -65,15 +65,34 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
   // tags is not shadowed by the text of the old one.
   const [tagText, setTagText] = useState<string | null>(null);
 
-  // Escape closes, and consumes the keystroke: the Inspector's own Escape
-  // would otherwise deselect the node behind this dialog.
+  // Escape closes and Tab stays inside — the same discipline SavePoints
+  // follows, because `aria-modal` is a promise about focus and not just a
+  // label. Escape consumes the keystroke: the Inspector's own Escape would
+  // otherwise deselect the node behind this dialog on the way past.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      closeRef.current();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -102,11 +121,11 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
         onMouseDown={(event) => event.stopPropagation()}
       >
         <h2>{t("publish.title")}</h2>
-        <p>{t("publish.hint")}</p>
+        <p className="sub">{t("publish.hint")}</p>
 
         {!asked ? (
           // Nothing asked for yet: one button, and it is the whole dialog.
-          <div className="publish-empty">
+          <div className="modal-actions">
             <button className="btn-primary" disabled={busy} onClick={build}>
               <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
               {busy ? t("publish.preparing") : t("publish.prepare")}
@@ -114,63 +133,62 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <>
-            <div className="publish-body">
-              <MediaThumb
-                className="publish-thumb"
-                src={
-                  thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
-                    ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
-                    : null
-                }
-                alt={t("publish.thumbAlt")}
-                fallback={<span className="publish-thumb empty" aria-hidden="true" />}
-              />
-              {kit ? (
-                <div className="publish-fields">
-                  <Field
-                    label={t("publish.fieldTitle")}
-                    value={kit.title}
-                    onChange={(title) => edit({ title })}
-                  />
-                  <Field
-                    label={t("publish.fieldDescription")}
-                    value={kit.description}
-                    onChange={(description) => edit({ description })}
-                    multiline
-                  />
-                  <Field
-                    label={t("publish.fieldHashtags")}
-                    // The engine strips the `#`, so it is added back here
-                    // rather than assumed — pasting bare words into a caption
-                    // box is not what anyone means by "hashtags". Typing them
-                    // back with or without it works either way.
-                    //
-                    // Displayed from `tagText` while it is being typed, not
-                    // from the stored list: parsing on every keystroke drops
-                    // the separator you just pressed, so the space between
-                    // two tags vanished and the next word joined the last.
-                    value={tagText ?? formatTags(kit.hashtags)}
-                    onChange={(text) => {
-                      setTagText(text);
-                      edit({ hashtags: parseTags(text) });
-                    }}
-                  />
-                </div>
-              ) : (
-                // Asked for, still rendering. Said plainly rather than shown
-                // as empty fields: two model runs is not instant, and a blank
-                // form reads as broken.
-                <p className="publish-pending" role="status">
-                  {t("publish.pending")}
-                </p>
-              )}
-            </div>
-            <div className="publish-actions">
+            <MediaThumb
+              className="publish-thumb"
+              src={
+                thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
+                  ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
+                  : null
+              }
+              alt={t("publish.thumbAlt")}
+              fallback={<span className="publish-thumb empty" aria-hidden="true" />}
+            />
+            {kit ? (
+              <>
+                <Field
+                  label={t("publish.fieldTitle")}
+                  value={kit.title}
+                  onChange={(title) => edit({ title })}
+                />
+                <Field
+                  label={t("publish.fieldDescription")}
+                  value={kit.description}
+                  onChange={(description) => edit({ description })}
+                  multiline
+                />
+                <Field
+                  label={t("publish.fieldHashtags")}
+                  // The engine strips the `#`, so it is added back here
+                  // rather than assumed — pasting bare words into a caption
+                  // box is not what anyone means by "hashtags". Typing them
+                  // back with or without it works either way.
+                  //
+                  // Displayed from `tagText` while it is being typed, not
+                  // from the stored list: parsing on every keystroke drops
+                  // the separator you just pressed, so the space between
+                  // two tags vanished and the next word joined the last.
+                  value={tagText ?? formatTags(kit.hashtags)}
+                  onChange={(text) => {
+                    setTagText(text);
+                    edit({ hashtags: parseTags(text) });
+                  }}
+                />
+                <p className="hint">{t("publish.editNote")}</p>
+              </>
+            ) : (
+              // Asked for, still rendering. Said plainly rather than shown
+              // as empty fields: two model runs is not instant, and a blank
+              // form reads as broken.
+              <p className="hint" role="status">
+                {t("publish.pending")}
+              </p>
+            )}
+            {error && <Alert message={error} onDismiss={() => setError(null)} />}
+            <div className="modal-actions">
               <button className="btn-ghost" disabled={busy} onClick={build}>
                 <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
                 {busy ? t("publish.preparing") : t("publish.regenerate")}
               </button>
-              <span className="publish-note">{t("publish.editNote")}</span>
               <div className="spacer" />
               <button className="btn-primary" onClick={() => closeRef.current()}>
                 {t("common.close")}
@@ -178,7 +196,7 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
             </div>
           </>
         )}
-        {error && <Alert message={error} onDismiss={() => setError(null)} />}
+        {!asked && error && <Alert message={error} onDismiss={() => setError(null)} />}
       </div>
     </div>
   );
@@ -220,35 +238,45 @@ function Field({
     return () => clearTimeout(timer);
   }, [copied]);
 
+  // `.field` is the app's own modal-field recipe — the uppercase micro-cap
+  // label, the surface-2 control, the accent focus ring. The copy button
+  // rides in a row beside the control rather than in the label's flow, so
+  // both stay on the recipe instead of beside it.
   return (
-    <label className={`publish-field${multiline ? " tall" : ""}`}>
-      <span className="publish-label">{label}</span>
-      {multiline ? (
-        <textarea
-          rows={4}
-          value={value}
-          aria-label={label}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      ) : (
-        <input value={value} aria-label={label} onChange={(event) => onChange(event.target.value)} />
-      )}
-      <button
-        type="button"
-        className="icon-btn-sm"
-        aria-label={t("publish.copyField", { field: label })}
-        title={t("publish.copyField", { field: label })}
-        disabled={value.trim() === ""}
-        onClick={() => {
-          void navigator.clipboard.writeText(value).then(() => setCopied(true));
-        }}
-      >
-        {copied ? (
-          <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+    <label className="field publish-field">
+      <span>{label}</span>
+      <span className="field-row">
+        {multiline ? (
+          <textarea
+            rows={4}
+            value={value}
+            aria-label={label}
+            onChange={(event) => onChange(event.target.value)}
+          />
         ) : (
-          <Copy size={13} strokeWidth={2} aria-hidden="true" />
+          <input
+            value={value}
+            aria-label={label}
+            onChange={(event) => onChange(event.target.value)}
+          />
         )}
-      </button>
+        <button
+          type="button"
+          className="icon-btn-sm"
+          aria-label={t("publish.copyField", { field: label })}
+          title={t("publish.copyField", { field: label })}
+          disabled={value.trim() === ""}
+          onClick={() => {
+            void navigator.clipboard.writeText(value).then(() => setCopied(true));
+          }}
+        >
+          {copied ? (
+            <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+          ) : (
+            <Copy size={13} strokeWidth={2} aria-hidden="true" />
+          )}
+        </button>
+      </span>
     </label>
   );
 }

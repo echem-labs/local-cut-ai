@@ -8,7 +8,7 @@
  * screenplay, and it lived only on the quick-tool page — a project sitting
  * at its own script checkpoint had no way to say "rewrite this, shorter".
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Board, NodeState } from "../api/types";
@@ -167,5 +167,66 @@ describe("rewriting from a note", () => {
 
     await waitFor(() => expect(enhance).toHaveBeenCalled());
     expect(proposeEdit).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Approving the script hands the box back to the video.
+ *
+ * The gate is a statement that this stage is done. Leaving the composer
+ * pointed at the script afterwards means the next sentence typed rewrites
+ * the screenplay that was just approved — and re-expansion throws away the
+ * storyboard the approval itself started rendering.
+ */
+describe("passing the script gate", () => {
+  const beginner = (approvals: string[]) => ({
+    id: "p1",
+    title: "P",
+    created_at: 0,
+    mode: "beginner",
+    approvals,
+  });
+
+  it("moves the default back to the whole video", () => {
+    mount({ currentProject: beginner([]) });
+    expect(screen.getByRole("button", { name: /the script/i })).toBeInTheDocument();
+
+    // What `approve` does optimistically, the moment it is clicked.
+    act(() => {
+      useApp.setState({ currentProject: beginner(["script"]) } as never);
+    });
+    expect(screen.getByRole("button", { name: /whole video/i })).toBeInTheDocument();
+  });
+
+  it("moves an explicitly picked script scope back too", () => {
+    // The pick was made while the review was on screen, about the thing the
+    // review was about. That context has ended.
+    mount({ currentProject: beginner([]) });
+    fireEvent.click(screen.getByRole("button", { name: /the script/i }));
+    fireEvent.click(screen.getByRole("option", { name: /the script/i }));
+
+    act(() => {
+      useApp.setState({ currentProject: beginner(["script"]) } as never);
+    });
+    expect(screen.getByRole("button", { name: /whole video/i })).toBeInTheDocument();
+  });
+
+  it("drops a rewrite that was waiting for a yes", () => {
+    mount({ currentProject: beginner([]), enhance: vi.fn() });
+    send("make it shorter");
+    act(() => {
+      useApp.setState({ currentProject: beginner(["script"]) } as never);
+    });
+    expect(screen.queryByRole("group", { name: /rewrite the script/i })).toBeNull();
+  });
+
+  it("still lets the script be picked afterwards", () => {
+    // Removed, it would make beginner mode LESS able than Auto - which has
+    // no gate and offers the scope throughout. The gate is a checkpoint,
+    // not a lock: the card still says what a rewrite costs, and Ctrl+Z
+    // still puts it back.
+    mount({ currentProject: beginner(["script"]) });
+    fireEvent.click(screen.getByRole("button", { name: /whole video/i }));
+    expect(screen.getByRole("option", { name: /the script/i })).toBeInTheDocument();
   });
 });
