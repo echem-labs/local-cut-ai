@@ -21,6 +21,7 @@ import { PromotedFrom } from "../components/Provenance";
 import { PublishKit } from "../components/PublishKit";
 import { Workspace } from "../components/Workspace";
 import { m, t } from "../i18n";
+import { pendingCheckpoint } from "../lib/checkpoints";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { isStalled } from "../lib/jobs";
@@ -150,14 +151,23 @@ function PipelineIntro({
  *
  * A `note`, not an `alert`: nothing failed, and the state is true until
  * acted on rather than in response to something the user just did.
+ *
+ * Silent at a beginner checkpoint. The engine holds every node past an
+ * unapproved gate out of the queue on purpose, which from the board alone
+ * looks exactly like a lost one — and there the offer would be both a
+ * contradiction of the approve banner directly above it and a button that
+ * enqueues nothing. Approving is itself the resume: it runs the same
+ * enqueue `/render` would.
  */
 function StalledNotice() {
   const board = useApp((state) => state.board);
   const jobs = useApp((state) => state.jobs);
+  const currentProject = useApp((state) => state.currentProject);
   const resumeRender = useApp((state) => state.resumeRender);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  if (pendingCheckpoint(currentProject, board) !== null) return null;
   if (!isStalled(board, jobs)) return null;
   return (
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
@@ -416,7 +426,16 @@ function BoardMenu() {
 /** Project window: header chrome over the dockable workspace (board,
  * monitor, details, timeline). Tool sessions get a focused single panel. */
 export function Project() {
-  const { currentProject, board, refreshBoard, finalize, regenerate, client } = useApp();
+  const {
+    currentProject,
+    board,
+    refreshBoard,
+    finalize,
+    regenerate,
+    client,
+    actionError,
+    dismissActionError,
+  } = useApp();
   const view = useWorkspace((state) => state.view);
   const setView = useWorkspace((state) => state.setView);
   const density = useWorkspace((state) => state.density);
@@ -757,6 +776,13 @@ export function Project() {
         <div role="status" className="banner error">
           {historyKeyError}
         </div>
+      )}
+      {/* A project-level action fired from the command palette, which closes
+          on run and so has nowhere to report a refusal. "Prepare to publish"
+          before the script has rendered is the one that happens: the engine
+          answers with the reason, and this is where it lands. */}
+      {actionError?.scope === "board" && (
+        <Alert message={actionError.message} onDismiss={dismissActionError} />
       )}
 
       {board.scenes.length === 0 ? (
