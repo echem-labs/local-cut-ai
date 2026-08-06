@@ -29,7 +29,8 @@
     "voice_ref": "voice"
   },
   "actions": {
-    "disconnect": "Disconnect {port}"
+    "disconnect": "Disconnect {port}",
+    "remove": "Delete {id} and every connection to it"
   },
   "confirmDelete": {
     "title": "Delete {id}?",
@@ -55,8 +56,8 @@
   "zoomValueAria": "Zoom, {pct} percent",
   "searchAria": "Find a node",
   "searchPlaceholder": "Find a node",
-  "matches_one": "{count} match · Enter jumps",
-  "matches_other": "{count} matches · Enter jumps",
+  "matches_one": "{count} match",
+  "matches_other": "{count} matches",
   "noMatches": "no match",
   "addNode": "Add node",
   "addNodeAria": "Add a node to the graph",
@@ -70,5 +71,6 @@
   },
   "fit": "Fit",
   "chainOf": "{id} selected · showing its upstream and downstream chain",
-  "panHint": "Ctrl+wheel zooms · drag empty space to pan"
+  "panHint": "Ctrl+wheel zooms · drag empty space to pan",
+  "searchHint": "Find a node by id or kind - Enter jumps to the next match"
 }

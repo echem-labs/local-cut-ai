@@ -389,3 +389,46 @@ describe("add node", () => {
     expect(await screen.findByText("the graph is locked")).toBeInTheDocument();
   });
 });
+
+describe("removing a node", () => {
+  it("offers a control, not only a key", () => {
+    // Backspace on a focused node was the only way to delete one, which is
+    // a thing you have to be told rather than find.
+    mount();
+    const remove = within(box("music")).getByLabelText(
+      t("canvas.actions.remove", { id: "music" }),
+    );
+    fireEvent.click(remove);
+    expect(screen.getByText(t("canvas.confirmDelete.title", { id: "music" }))).toBeInTheDocument();
+  });
+
+  it("keeps it a sibling of the node's own button, never inside it", () => {
+    // ARIA specifies a button's children as presentational: nested, the
+    // delete would vanish from assistive tech however reachable by Tab.
+    mount();
+    const remove = within(box("music")).getByLabelText(
+      t("canvas.actions.remove", { id: "music" }),
+    );
+    expect(remove.closest("button")).toBe(remove);
+  });
+});
+
+describe("the search field", () => {
+  it("keeps one width whether it is empty, matching or not matching", () => {
+    // It used to grow when you typed and grow again when the tally changed
+    // length — a text box resizing under the cursor mid-word.
+    mount();
+    const field = document.querySelector(".canvas-search") as HTMLElement;
+    const input = screen.getByLabelText(t("canvas.searchAria"));
+    // jsdom has no layout, so the property under test is structural: the
+    // tally is not inside the box whose width is fixed in CSS.
+    expect(field.querySelector(".canvas-search-count")).toBeNull();
+
+    fireEvent.change(input, { target: { value: "s1" } });
+    expect(field.querySelector(".canvas-search-count")).toBeNull();
+    expect(document.querySelector(".canvas-bar > .canvas-search-count")).not.toBeNull();
+
+    fireEvent.change(input, { target: { value: "zzz" } });
+    expect(field.querySelector(".canvas-search-count")).toBeNull();
+  });
+});

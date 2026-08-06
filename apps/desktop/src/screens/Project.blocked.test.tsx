@@ -155,9 +155,17 @@ describe("a project with a scene nobody has written", () => {
     expect(stage(/audio/i)?.className).not.toContain("work");
   });
 
-  it("does not offer to create the final video", () => {
+  it("shows the final-video action disabled, saying what it waits for", () => {
+    // It must not be pressable: with a blank scene there is nothing to
+    // enqueue, and the button would refresh the board and change nothing.
+    // It must also not VANISH — the screen's one primary action disappearing
+    // while the videos render and reappearing when they finish reads as the
+    // app having lost it, and leaves nothing on screen to say what the final
+    // cut is waiting for.
     mount(boardWithABlankScene);
-    expect(screen.queryByRole("button", { name: /create final video/i })).toBeNull();
+    const cta = screen.getByRole("button", { name: /create final video/i });
+    expect(cta).toBeDisabled();
+    expect(cta).toHaveAccessibleName(/1\/2/); // the written scene is ready, the blank one is not
   });
 
   it("offers it again once every scene is written", () => {
