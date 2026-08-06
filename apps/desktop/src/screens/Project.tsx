@@ -18,6 +18,7 @@ import { Dropdown } from "../components/Dropdown";
 import { SavePoints } from "../components/SavePoints";
 import { ToolSession } from "../components/ToolSession";
 import { PromotedFrom } from "../components/Provenance";
+import { PublishKit } from "../components/PublishKit";
 import { Workspace } from "../components/Workspace";
 import { m, t } from "../i18n";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
@@ -747,6 +748,10 @@ export function Project() {
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
       <StalledNotice />
+      {/* Only once there is a video to publish. Offering to write a title
+          for a cut that does not exist yet puts the last step first, and the
+          engine refuses it anyway while the script is unrendered. */}
+      {exported && <PublishKit />}
       {historyKeyError && (
         <div role="status" className="banner error">
           {historyKeyError}

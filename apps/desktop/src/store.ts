@@ -387,6 +387,9 @@ interface AppState {
   /** Re-render a node on a seed borrowed from one of its takes, in one call.
    * `null` means it applied; any other return is a message. */
   rerollWithSeed: (nodeId: string, seed: number) => Promise<string | null>;
+  /** Build the publish kit (thumbnail + title/description/hashtags). Both
+   * land as graph nodes and render through the queue like anything else. */
+  preparePublish: () => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
@@ -1925,6 +1928,21 @@ export const useApp = create<AppState>((set, get) => {
     applyTimeline: (params) => applyAuxParams("timeline", params),
 
     applyExport: (params) => applyAuxParams("export", params),
+
+    preparePublish: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        await client.package(currentProject.id);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        // The engine's 409 here is an answer, not a fault: "script has not
+        // rendered yet" means there is nothing to write a title from.
+        return messageOf(err);
+      }
+    },
 
     resumeRender: async () => {
       const { client, currentProject } = get();
