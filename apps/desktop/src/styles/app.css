@@ -4021,106 +4021,57 @@ button.link:hover {
 /* The publish kit, in the app's own dialog rather than a band above the
    board. It shipped as a full-width panel between the header and the
    storyboard, which put the LAST step of the work above all the earlier
-   ones and gave a text-copying task the visual weight of the project. */
+   ones and gave a text-copying task the visual weight of the project.
+
+   Everything inside it is the modal recipe already in this file — `.field`
+   for the labelled controls, `.modal-actions` for the footer. The first
+   version hand-rolled a grid instead and looked like a different app. */
 .publish-modal {
-  width: min(640px, calc(100vw - 2 * var(--space-8)));
+  /* Wider than the 400px default, like `.template-modal`: three fields and
+     a 16:9 preview do not fit a confirmation's column. */
+  max-width: 560px;
 }
 
-.publish-empty {
-  display: flex;
-  justify-content: center;
-  padding: var(--space-6) 0 var(--space-2);
-}
-
-.publish-body {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  margin-top: var(--space-4);
-}
-
-/* Regenerate on the left, close on the right, the note between them: the
-   two actions are not a pair, and putting them side by side would read as
-   a choice between equals. */
-.publish-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-.publish-actions .spacer {
-  flex: 1;
-}
-
-.publish-note {
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-
+/* The suggested thumbnail, above the fields it belongs to. Full width, so
+   it reads as a preview of the post rather than an avatar beside a form. */
 .publish-thumb {
-  flex-shrink: 0;
-  width: 160px;
+  display: block;
+  width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
-  border-radius: var(--radius-xs);
-  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  margin-top: var(--space-4);
 }
 
-.publish-pending {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-}
-
-.publish-fields {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin: 0;
-}
-
-/* Label, field, copy - the copy button is a sibling of the input rather
-   than wrapping it. A control inside a control is unreachable to a screen
+/* Control and copy button on one row. The button is a SIBLING of the input,
+   never wrapping it: a control inside a control is unreachable to a screen
    reader, and a field you cannot click into is not editable at all. */
-.publish-field {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  gap: var(--space-1) var(--space-2);
+.publish-field .field-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
 
-.publish-label {
-  grid-column: 1 / -1;
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.publish-field .field-row > .icon-btn-sm {
+  flex-shrink: 0;
+  /* On the control's first row, not centred against a four-row textarea. */
+  margin-top: var(--space-1);
 }
 
-.publish-field input,
-.publish-field textarea {
-  width: 100%;
-  min-width: 0;
-  font-size: var(--text-xs);
-  /* The title is pasted somewhere it has to be exact, so it wraps rather
-     than scrolling its own end out of sight. */
-  overflow-wrap: anywhere;
+/* The footer's two buttons are not a pair — "write them again" asks the
+   engine for new text, Close is done. Pushed apart rather than sat side by
+   side, which would read as a choice between equals. */
+.publish-modal .modal-actions .spacer {
+  flex: 1;
 }
 
-.publish-field textarea {
-  resize: vertical;
-  line-height: 1.5;
-}
-
-/* The copy button sits on the field's first row, not centred against a
-   four-row textarea. */
-.publish-field.tall > .icon-btn-sm {
-  align-self: start;
+.publish-modal .modal-actions button {
+  /* Without this the ghost button is a flex item free to shrink, and
+     "Write them again" wrapped onto three lines inside a square. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* A take and its reroll, kept together. The reroll is a sibling of the
@@ -6585,8 +6536,13 @@ button.link:hover {
   margin-bottom: var(--space-2);
 }
 
-.modal .field input {
+/* `textarea` alongside `input`: a multi-line field in a modal is the same
+   control wearing a different tag, and the publish kit's description was
+   the first to need one. */
+.modal .field input,
+.modal .field textarea {
   width: 100%;
+  min-width: 0;
   background: var(--surface-2);
   color: var(--text-primary);
   border: 1px solid var(--border);
@@ -6595,7 +6551,14 @@ button.link:hover {
   min-height: var(--control-h);
 }
 
-.modal .field input:focus {
+.modal .field textarea {
+  resize: vertical;
+  line-height: 1.5;
+  font: inherit;
+}
+
+.modal .field input:focus,
+.modal .field textarea:focus {
   border-color: var(--accent);
   outline: none;
 }

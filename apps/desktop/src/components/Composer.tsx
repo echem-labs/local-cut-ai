@@ -161,6 +161,30 @@ export function Composer() {
   const scriptStage = pendingCheckpoint(currentProject, board) === "script";
   const scope =
     scopeOverride ?? selectedScene ?? (scriptStage && canEnhanceScript ? "script" : "project");
+
+  /**
+   * Passing the gate hands the box back to the video.
+   *
+   * The default flips on its own — `scriptStage` goes false the moment the
+   * approval lands. An explicit pick does not, and that is the one worth
+   * undoing: it was made while the review was on screen, about the thing the
+   * review was about. Left pointing at the script, the next sentence typed
+   * rewrites the screenplay that was just approved and throws away the
+   * storyboard the approval started rendering.
+   *
+   * Only on the TRANSITION, never on `!scriptStage` alone: outside beginner
+   * mode there is no gate at all, and clearing on that condition would make
+   * the option unpickable everywhere else.
+   */
+  const wasScriptStage = useRef(scriptStage);
+  useEffect(() => {
+    const passed = wasScriptStage.current && !scriptStage;
+    wasScriptStage.current = scriptStage;
+    if (!passed) return;
+    setScopeOverride((current) => (current === "script" ? null : current));
+    // A rewrite waiting for a yes was asked for under the old context too.
+    setConfirmScript(null);
+  }, [scriptStage]);
   const scopeLabel =
     scope === "script"
       ? t("composer.theScript")

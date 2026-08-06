@@ -213,3 +213,38 @@ describe("editing what will be pasted", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+/**
+ * `aria-modal` is a promise about focus, not just a label. The dialog
+ * follows the same discipline SavePoints does — Escape closes and consumes
+ * the keystroke, Tab stays inside — and wears the app's own modal recipe
+ * rather than a hand-rolled grid beside it.
+ */
+describe("the dialog itself", () => {
+  const done = {
+    metadata: node("metadata", "final", "m".repeat(64)),
+    thumbnail: node("thumbnail", "final", "t".repeat(64)),
+  };
+
+  it("keeps Tab inside the dialog", async () => {
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    const dialog = screen.getByRole("dialog");
+    const focusable = dialog.querySelectorAll<HTMLElement>("button, input, textarea");
+    const last = focusable[focusable.length - 1];
+
+    last.focus();
+    await userEvent.tab();
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it("wears the app's modal field recipe, not one of its own", async () => {
+    // The first version hand-rolled a grid and looked like a different app.
+    // `.field` is what every other modal here labels a control with.
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelectorAll("label.field")).toHaveLength(3);
+    expect(dialog.querySelector(".modal-actions")).not.toBeNull();
+  });
+});
