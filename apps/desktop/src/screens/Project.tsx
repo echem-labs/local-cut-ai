@@ -165,6 +165,7 @@ function StalledNotice() {
       <button
         className="btn-secondary"
         disabled={busy}
+        title={t("terms.tips.resume")}
         onClick={() => {
           setError(null);
           setBusy(true);
