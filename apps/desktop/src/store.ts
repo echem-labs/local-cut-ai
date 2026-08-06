@@ -4,6 +4,7 @@ import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
 import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
+import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -22,6 +23,7 @@ import type {
   ModelDefaults,
   ModelRow,
   NodeState,
+  OomFallback,
   Project,
   StorageInfo,
   StoryGraph,
@@ -375,6 +377,9 @@ interface AppState {
   closeLibrary: () => void;
   setLibraryFilter: (filter: LibraryFilter) => void;
   openSettings: (tab?: string) => void;
+  /** Act on one of the engine's OOM suggestions for a failed node. `null`
+   * means it applied; any other return is a message to show. */
+  applyOomSuggestion: (nodeId: string, code: string) => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
@@ -528,6 +533,22 @@ const terminalDownloads = new Set<string>();
 // live model refreshes and WS progress are dropped so the injected frame
 // holds still. Never true outside a rig-driven dev run.
 let seedFrozen = false;
+
+/** The board's node with this id, wherever it lives on it. The board is a
+ * scene list plus an aux map rather than a flat index, and nothing else here
+ * needed to look one up by id. */
+const nodeOf = (board: Board | null, nodeId: string): NodeState | undefined => {
+  if (!board) return undefined;
+  for (const scene of board.scenes) {
+    for (const node of [scene.keyframe, scene.clip, scene.narration]) {
+      if (node?.node_id === nodeId) return node;
+    }
+    for (const take of scene.clip_takes ?? []) {
+      if (take?.node_id === nodeId) return take;
+    }
+  }
+  return Object.values(board.aux).find((node) => node?.node_id === nodeId) ?? undefined;
+};
 
 /** A copy of `record` without `key` — the per-node failure/retry maps are
  * cleared one node at a time, and mutating them in place would not re-render
@@ -1704,6 +1725,52 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         return messageOf(err);
       }
+    },
+
+    applyOomSuggestion: async (nodeId, code) => {
+      const { client, currentProject, board, models, jobs } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      // Every arm below is an ordinary /patch. The failure card is a shortcut
+      // to edits the inspector could already make by hand — not a private
+      // path around the cycle check and the re-plan.
+      const node = nodeOf(board, nodeId);
+      try {
+        if (code === "lower_resolution") {
+          const next = nextResolutionScale(node?.params.resolution_scale);
+          if (next === null) return t("failure.alreadySmallest");
+          await flushPatches();
+          await client.patch(currentProject.id, [
+            { op: "set_params", node_id: nodeId, params: { resolution_scale: next } },
+          ]);
+          await get().refreshBoard();
+          return null;
+        }
+        if (code === "smaller_model") {
+          const smaller = smallerModelFor(
+            nodeId,
+            models,
+            modelThatFailed(nodeId, jobs, node),
+          );
+          if (smaller === null) return t("failure.noSmallerModel");
+          await flushPatches();
+          await client.patch(currentProject.id, [
+            { op: "set_model", node_id: nodeId, model: smaller.id },
+          ]);
+          await get().refreshBoard();
+          return null;
+        }
+      } catch (err) {
+        return messageOf(err);
+      }
+      // `cloud` is the one suggestion that is not a graph edit: it needs a
+      // provider key, which lives in Settings and is a spending decision.
+      // Sending the user there IS the next step — quietly wiring a cloud
+      // model would bill them for a click they read as "retry".
+      if (code === "cloud") {
+        get().openSettings("providers");
+        return null;
+      }
+      return t("failure.unknownSuggestion");
     },
 
     selectTake: async (nodeId, outputHash) => {

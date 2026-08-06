@@ -2,7 +2,7 @@ import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
-import { Alert } from "./Alert";
+import { FailureCard } from "./FailureCard";
 import { t } from "../i18n";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
@@ -75,6 +75,10 @@ export function Inspector() {
     : auxNode;
 
   const activeId = activeNode?.node_id ?? null;
+  const retry = useApp((state) => (activeId ? state.nodeRetries[activeId] : undefined));
+  // A rung with no scale (offload only) still ran at whatever the spec asked
+  // for, which is full size unless the node says otherwise.
+  const retryPct = (scale: number | undefined) => `${Math.round((scale ?? 1) * 100)}%`;
 
   // Which content param the active node reads.
   const contentKey =
@@ -621,10 +625,28 @@ export function Inspector() {
             </div>
           )}
 
-          {/* What the engine said about this node's last render. The same
-              notice the Library uses for a refusal: it is an answer, not a
-              crash, and long red prose reads as the second thing. */}
-          {activeNode.error && <Alert message={activeNode.error} />}
+          {/* What the engine said about this node's last render, and what it
+              suggested doing about it. FailureCard falls back to the plain
+              notice when there is no advice, which is the common case: only
+              an exhausted OOM ladder offers choices. */}
+          <FailureCard node={activeNode} />
+
+          {/* A retry in flight is running SMALLER than the attempt that
+              failed. "Rendering" alone hides that, so the result arriving is
+              a surprise rather than the thing that was announced. */}
+          {retry && (
+            <p className="node-retry" role="status">
+              {retry.fallback.offload
+                ? t("failure.retryingOffload", {
+                    pct: retryPct(retry.fallback.resolution_scale),
+                    n: String(retry.attempt),
+                  })
+                : t("failure.retrying", {
+                    pct: retryPct(retry.fallback.resolution_scale),
+                    n: String(retry.attempt),
+                  })}
+            </p>
+          )}
         </>
       )}
     </aside>
