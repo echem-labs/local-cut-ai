@@ -513,6 +513,12 @@ try {
         lanes.scrollWidth <= lanes.innerWidth + 1,
         `scrollWidth ${lanes.scrollWidth}`,
       );
+      // What this run does NOT measure, said out loud: the mock backend
+      // writes narration and music as JSON placeholders named .wav, so the
+      // peaks route refuses them and every segment draws its empty variant.
+      // Alignment is checked; the waveform inside a segment is not, and
+      // cannot be until the mock writes decodable audio.
+      console.log("NOTE mock audio is a placeholder - lanes are checked for width, not waveform");
       await shoot("timeline-audio-lanes.png");
     } else {
       // Said out loud rather than passed over: the lanes appear only once
@@ -534,8 +540,18 @@ try {
   // itself produced. Everything before it, 4xx of any other kind, every 5xx
   // and every app-level error still fail the walk.
   const noise = /Failed to load resource[^|]*409 \(Conflict\)|engine 409:/;
+  // Same shape, same marker — the workspace first mounts inside the canvas
+  // stop, and mounting it is what fires these. The peaks route answers 422
+  // for an artifact that is not decodable audio, which is every narration
+  // and music file the MOCK backend writes: JSON placeholders with a .wav
+  // name. U5's audio lanes ask for peaks on every one of them. The lanes are
+  // built to degrade on exactly that — `useArtifactPeaks` returns null and
+  // the segment draws its empty variant — but Chromium logs the failed
+  // response whatever the app does with it. Everything before the first
+  // workspace, and every other status after it, still fails the walk.
+  const peaksNoise = /Failed to load resource[^|]*422 \(Unprocessable/;
   const consoleErrors = report.consoleErrors.filter(
-    (line, at) => !(at >= beforeCanvas && noise.test(line)),
+    (line, at) => !(at >= beforeCanvas && (noise.test(line) || peaksNoise.test(line))),
   );
   check(
     "no console errors during the walk",

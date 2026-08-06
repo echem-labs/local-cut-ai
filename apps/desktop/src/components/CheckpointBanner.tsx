@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Checkpoint } from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
-import { isSettled } from "../lib/status";
+import { pendingCheckpoint } from "../lib/checkpoints";
 import { ScriptTable, useScreenplay } from "./ToolSession";
 
 /** Beginner-mode gate above the scene board: one message + one accent
@@ -12,24 +12,11 @@ export function CheckpointBanner() {
   const [showScript, setShowScript] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const approvals = currentProject?.approvals ?? [];
   const script = board?.aux.script;
-  const scriptReady = script ? isSettled(script.status) : false;
-  // A skipped keyframe counts as ready: the scene is conditioned on an
-  // uploaded image, so no keyframe is coming. Waiting for one leaves the
-  // storyboard checkpoint — and with it all of beginner mode — unreachable.
-  const keyframesReady =
-    !!board &&
-    board.scenes.length > 0 &&
-    board.scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
-
-  const stage: Checkpoint | null = !approvals.includes("script")
-    ? scriptReady
-      ? "script"
-      : null
-    : !approvals.includes("storyboard") && keyframesReady
-      ? "storyboard"
-      : null;
+  // Shared with the stalled-project notice, which has to know that a gate —
+  // not a lost queue — is why nothing is running. Two copies of this answer
+  // is how the two halves of a gate come to disagree.
+  const stage: Checkpoint | null = pendingCheckpoint(currentProject, board);
 
   const scriptUrl =
     script?.artifact_hash && client && currentProject

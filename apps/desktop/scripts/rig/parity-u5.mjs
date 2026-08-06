@@ -231,9 +231,19 @@ try {
   // Logged, not asserted: when the pixel diff fails, the first thing worth
   // knowing is WHICH row moved, and reading that off a contact sheet is
   // guesswork. These are the three boxes the mock has to reproduce.
+  // Every read below asks whether the card is still there rather than
+  // assuming it. It is not paranoia: the posed failure lives on the
+  // websocket, the rig's own engine renders an `s1.clip` of its own, and
+  // that job's `job.done` used to delete the pose mid-gate — reported as a
+  // `getBoundingClientRect` of null, a node stack trace in place of a
+  // verdict. The store bails on the freeze now; this is what makes the next
+  // way it can vanish readable instead of cryptic.
+  const gone = "the failure card left the page mid-gate";
   const rows = await evalInApp(`
     return page.evaluate(() => {
-      const card = document.querySelector(".failure-card").getBoundingClientRect();
+      const root = document.querySelector(".failure-card");
+      if (!root) return null;
+      const card = root.getBoundingClientRect();
       const box = (selector) => {
         const el = document.querySelector(selector);
         if (!el) return null;
@@ -251,6 +261,7 @@ try {
       };
     });
   `);
+  check("the card is still on screen to be measured", rows !== null, gone);
   console.log(`  ROWS ${JSON.stringify(rows)}`);
 
   // The card lives at the BOTTOM of a scrolling inspector, well past the
@@ -260,11 +271,13 @@ try {
   // off-screen box photographs whatever happens to be at those coordinates.
   const panel = await evalInApp(`
     await page.evaluate(() => {
-      document.querySelector(".failure-card").scrollIntoView({ block: "center" });
+      document.querySelector(".failure-card")?.scrollIntoView({ block: "center" });
     });
     await page.waitForTimeout(200);
     return page.evaluate(() => {
-      const card = document.querySelector(".failure-card").getBoundingClientRect();
+      const root = document.querySelector(".failure-card");
+      if (!root) return null;
+      const card = root.getBoundingClientRect();
       const inspector = document.querySelector(".inspector").getBoundingClientRect();
       return {
         x: Math.round(card.left),
@@ -277,9 +290,17 @@ try {
   `);
   check(
     "the card is the reference's size",
-    Math.abs(panel.width - FRAME.width) <= 1 && Math.abs(panel.height - FRAME.height) <= 1,
-    `card ${panel.width}x${panel.height}, reference ${FRAME.width}x${FRAME.height}`,
+    panel !== null &&
+      Math.abs(panel.width - FRAME.width) <= 1 &&
+      Math.abs(panel.height - FRAME.height) <= 1,
+    panel === null
+      ? gone
+      : `card ${panel.width}x${panel.height}, reference ${FRAME.width}x${FRAME.height}`,
   );
+  // Nothing below this can run without a box to clip to, and every later
+  // check would fail for the same one reason. Stop with the verdict already
+  // reached rather than adding noise to it.
+  if (panel === null) process.exit(1);
   // What a card-sized frame cannot see for itself. This is the property the
   // panel-sized alternative would have been gating, kept as geometry —
   // where it is a sharper check than a pixel diff anyway.
@@ -303,7 +324,9 @@ try {
   // DATA differs there (plan doc 11, U1).
   const boxes = await evalInApp(`
     return page.evaluate((selectors) => {
-      const panel = document.querySelector(".failure-card").getBoundingClientRect();
+      const root = document.querySelector(".failure-card");
+      if (!root) return null;
+      const panel = root.getBoundingClientRect();
       return selectors.flatMap((selector) =>
         [...document.querySelectorAll(selector)].map((el) => {
           const r = el.getBoundingClientRect();
@@ -318,7 +341,8 @@ try {
       );
     }, ${JSON.stringify(MASKED_AS)});
   `);
-  const inFrame = boxes.filter(
+  check("the card survived to have its masks measured", boxes !== null, gone);
+  const inFrame = (boxes ?? []).filter(
     (box) =>
       box.x + box.width > 0 &&
       box.y + box.height > 0 &&

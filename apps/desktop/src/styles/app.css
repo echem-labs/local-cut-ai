@@ -2662,13 +2662,20 @@ button.link:hover {
   flex-wrap: wrap;
 }
 
-.edit-log-entry .chips {
+/* The proposed-edit card shows the same row, so it shares these rules — but
+   under its OWN class rather than by reusing `.chips` inside a second
+   ancestor. `.chips` is styled only as a descendant of `.edit-log-entry`, so
+   the borrowed markup rendered as bare browser buttons, and markup naming a
+   class that only works in one place is how that happens. */
+.edit-log-entry .chips,
+.plan-chips {
   display: inline-flex;
   gap: 4px;
   flex-wrap: wrap;
 }
 
-.edit-log-entry .chips button {
+.edit-log-entry .chips button,
+.plan-chips button {
   font-size: var(--text-2xs);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2676,7 +2683,8 @@ button.link:hover {
   color: var(--text-secondary);
 }
 
-.edit-log-entry .chips button:hover {
+.edit-log-entry .chips button:hover,
+.plan-chips button:hover {
   border-color: var(--accent);
   color: var(--text-primary);
 }

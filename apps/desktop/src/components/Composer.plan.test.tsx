@@ -203,3 +203,28 @@ describe("a plan the project has moved past", () => {
     expect(screen.getByRole("group", { name: /proposed edit/i })).toBeInTheDocument();
   });
 });
+
+/**
+ * The card's chip row carries its OWN class.
+ *
+ * It shipped as `.chips`, borrowed from the edit log — where that class is
+ * styled only as `.edit-log-entry .chips`, a descendant selector. Rendered
+ * anywhere else the same markup draws bare browser buttons, which is what
+ * the card did. jsdom applies no stylesheet and the parity gate frames the
+ * failure card rather than this one, so nothing was going to catch it by
+ * looking; naming the class after the card is what makes the markup and the
+ * rule findable from each other.
+ */
+describe("the plan card's chip row", () => {
+  it("carries the class its own rules are written against", async () => {
+    const proposeEdit = vi.fn().mockResolvedValue(proposal());
+    mount({ proposeEdit });
+    send("make scene 1 night");
+
+    const card = await screen.findByRole("group", { name: /proposed edit/i });
+    expect(card.querySelector(".plan-chips")).not.toBeNull();
+    // And nothing left behind under the log's class, which would render
+    // unstyled here exactly as it did before.
+    expect(card.querySelector(".chips")).toBeNull();
+  });
+});

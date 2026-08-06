@@ -37,11 +37,14 @@ const board = (keyframe: NodeStatus | null): Board => ({
   aux: { script: node("script", "draft") },
 });
 
-/** Script already approved, so the storyboard checkpoint is the one in play. */
+/** Script already approved, so the storyboard checkpoint is the one in play.
+ * `mode` is part of the fixture because the stage is a function of it —
+ * checkpoints exist only in beginner mode, and the stalled-project notice
+ * asks the same question from a call site that has no mode gate above it. */
 function mount(keyframe: NodeStatus | null) {
   useApp.setState({
     board: board(keyframe),
-    currentProject: { id: "p1", title: "t", approvals: ["script"] },
+    currentProject: { id: "p1", title: "t", mode: "beginner", approvals: ["script"] },
   } as never);
   return render(<CheckpointBanner />);
 }

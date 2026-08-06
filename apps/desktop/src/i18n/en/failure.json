@@ -5,7 +5,8 @@
     "lower_resolution": "Render it smaller",
     "smaller_model": "Use {model}",
     "smaller_model_none": "Use a lighter model",
-    "cloud": "Set up a cloud provider"
+    "cloud": "Set up a cloud provider",
+    "unknown": "Needs a newer app"
   },
   "suggestionHint": {
     "lower_resolution": "Drops this node to {pct} of full size. Quality goes with it, and nothing else in the video changes.",

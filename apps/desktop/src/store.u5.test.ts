@@ -52,6 +52,13 @@ vi.mock("./api/client", () => ({
   },
 }));
 
+// The seed hook installs itself at module load, and only when the preload
+// bridge says the shell was launched for a rig. Set before the store is
+// imported or `window.__localcutSeed` never exists, and the freeze the last
+// test in this file asserts on would be unreachable from the suite entirely
+// — which is how it came to be missing from three branches.
+window.localcut.seedHookEnabled = true;
+
 const { useApp } = await import("./store");
 
 async function connected() {
@@ -190,6 +197,43 @@ describe("events that change the project from outside this window", () => {
       project_id: "p1",
     } as EngineEvent);
     expect(useApp.getState().nodeRetries["s1.clip"]).toBeUndefined();
+  });
+
+  it("leaves a posed failure alone while the seed hook holds the app still", async () => {
+    // The freeze is what lets a rig photograph a state the app cannot be
+    // driven into, and `nodeFailures` is the whole reason U5 needed one: it
+    // lives only on this websocket. But the rig's own engine renders a real
+    // project with a real `s1.clip`, and that clip's `job.done` carries the
+    // same node id as the pose — so the engine's traffic deleted the posed
+    // failure out from under the frame being photographed, mid-gate.
+    //
+    // `refreshBoard` and the download bars already bail on the freeze; these
+    // three branches are the ones that did not.
+    const send = await connected();
+    useApp.setState({
+      nodeFailures: { "s1.clip": { error: "posed", suggestions: ["cloud"] } },
+      nodeRetries: { "s1.clip": { attempt: 2, fallback: { resolution_scale: 0.5 } } },
+    } as never);
+    window.__localcutSeed?.({ freeze: true });
+
+    send({
+      type: "job.done",
+      job_id: "real",
+      node_id: "s1.clip",
+      artifact: "abc",
+      project_id: "p1",
+    } as EngineEvent);
+    send({
+      type: "job.failed",
+      job_id: "real",
+      node_id: "s1.clip",
+      error: "the engine's own news",
+      project_id: "p1",
+    } as EngineEvent);
+
+    expect(useApp.getState().nodeFailures["s1.clip"]?.error).toBe("posed");
+    expect(useApp.getState().nodeRetries["s1.clip"]?.attempt).toBe(2);
+    window.__localcutSeed?.({ freeze: false });
   });
 
   it("still drops them when they belong to another project", async () => {

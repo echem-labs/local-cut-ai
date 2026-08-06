@@ -355,3 +355,40 @@ def test_the_smaller_model_chip_offers_tasks_the_engine_can_actually_serve():
         f"the UI's kind->task mirror drifted from the engine's COMFY_TASKS: "
         f"UI {mirrored}, engine {COMFY_TASKS}"
     )
+
+
+def test_every_oom_suggestion_the_scheduler_sends_has_a_chip_that_acts_on_it():
+    """The exhausted OOM ladder publishes suggestion CODES, under the
+    comment "the UI renders this as choices, not an error code". Each one is
+    an id the desktop turns into a chip that does the thing it names.
+
+    Drift here is mislabelling, not silence. The card has an arm per code and
+    a disabled "needs a newer app" chip for anything else, so a code the
+    engine renames or adds still renders — as the fallback, which is a way
+    out the user cannot take. The hint catalog is the tighter of the two
+    checks: it holds exactly the codes the app can ACT on, so a UI-only entry
+    cannot paper over a missing arm."""
+    import inspect
+    import json
+
+    from localcut_engine.jobs import scheduler
+
+    source = inspect.getsource(scheduler)
+    match = re.search(r"suggestions=\[(.*?)\]", source, re.S)
+    assert match, "scheduler.py no longer publishes `suggestions=[...]` — update this test with it"
+    codes = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert codes, "the scheduler's suggestion list is empty — update this test with it"
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "failure.json").read_text(encoding="utf-8")
+    )
+    assert codes <= set(catalog["suggestion"]), (
+        f"no chip label in failure.json for: {sorted(codes - set(catalog['suggestion']))}"
+    )
+    # Every code the engine sends must be one the card has an arm for, and
+    # `suggestionHint` holds exactly those — an unknown code gets the shared
+    # `unknownSuggestion` line instead, so it cannot satisfy this.
+    assert codes == set(catalog["suggestionHint"]), (
+        f"failure.json's actionable suggestions disagree with the scheduler's: "
+        f"engine {sorted(codes)}, UI {sorted(catalog['suggestionHint'])}"
+    )
