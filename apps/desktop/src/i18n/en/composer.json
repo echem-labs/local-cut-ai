@@ -38,5 +38,13 @@
   "apply": "Apply",
   "applying": "Applying...",
   "discard": "Discard",
-  "planStale": "The project changed while this edit was being written, so the preview no longer describes it. Send the instruction again to get a fresh plan."
+  "planStale": "The project changed while this edit was being written, so the preview no longer describes it. Send the instruction again to get a fresh plan.",
+  "theScript": "The script",
+  "scriptConfirmAria": "Rewrite the script",
+  "scriptConfirm": "Rewrite the script from your note.",
+  "scriptConfirmCost": "The screenplay is written again and every scene is rebuilt from it - scene edits are replaced. Ctrl+Z puts it back.",
+  "scriptRewrite": "Rewrite script",
+  "scriptRewritingShort": "Rewriting...",
+  "scriptRewriting": "Rewriting the script - the storyboard follows once it lands.",
+  "scriptRewritten": "Script rewritten"
 }

@@ -458,12 +458,22 @@ export function Home() {
             }
             autoFocus
           />
+          {/* A preset chip writes a whole SENTENCE into the box above it, and
+              its one-word label says nothing about which. The bubble carries
+              the text itself — the only honest preview of what a click does. */}
           {activeTool.kind === "script" && (
             <div className="chip-row" role="group" aria-label={t("home.scriptPresetsAria")}>
               {SCRIPT_PRESETS.map((key) => (
-                <button key={key} className="chip" onClick={() => applyScriptPreset(key)}>
-                  {m().home.scriptPresets[key].label}
-                </button>
+                <Tip
+                  key={key}
+                  label={m().home.scriptPresets[key].label}
+                  hint={m().home.scriptPresets[key].text}
+                  side="top"
+                >
+                  <button className="chip" onClick={() => applyScriptPreset(key)}>
+                    {m().home.scriptPresets[key].label}
+                  </button>
+                </Tip>
               ))}
             </div>
           )}
@@ -507,13 +517,19 @@ export function Home() {
           {activeTool.kind === "clip" && (
             <div className="chip-row" role="group" aria-label={t("home.motionPresetsAria")}>
               {MOTION_PRESETS.map((key) => (
-                <button
+                <Tip
                   key={key}
-                  className={`chip${motion === m().home.motionPresets[key].text ? " active" : ""}`}
-                  onClick={() => applyMotionPreset(key)}
+                  label={m().home.motionPresets[key].label}
+                  hint={m().home.motionPresets[key].text}
+                  side="top"
                 >
-                  {m().home.motionPresets[key].label}
-                </button>
+                  <button
+                    className={`chip${motion === m().home.motionPresets[key].text ? " active" : ""}`}
+                    onClick={() => applyMotionPreset(key)}
+                  >
+                    {m().home.motionPresets[key].label}
+                  </button>
+                </Tip>
               ))}
             </div>
           )}
@@ -618,6 +634,9 @@ export function Home() {
                   setHomeDraft({ scriptModel: value === scriptModels.default ? "" : value })
                 }
                 ariaLabel={t("home.scriptModelAria")}
+                tip={t("home.scriptModelTip")}
+                tipHint={t("home.scriptModelTipHint")}
+                tipSide="top"
                 options={[...new Set([scriptModels.default, ...scriptModels.models])].map(
                   (name) => ({
                     value: name,
@@ -632,6 +651,9 @@ export function Home() {
                 value={toolDuration}
                 onChange={(value) => setHomeDraft({ toolDuration: value })}
                 ariaLabel={t("home.toolDurationAria")}
+                tip={t("home.toolDurationTip")}
+                tipHint={t("home.toolDurationTipHint")}
+                tipSide="top"
               />
             )}
             {(activeTool.kind === "script" ||
@@ -642,6 +664,9 @@ export function Home() {
                 value={toolAspect}
                 onChange={(value) => setHomeDraft({ toolAspect: value })}
                 ariaLabel={t("home.toolAspectAria")}
+                tip={t("home.toolAspectTip")}
+                tipHint={t("home.toolAspectTipHint")}
+                tipSide="top"
                 options={ASPECTS.map((entry) => ({
                   value: entry.value,
                   label: `${entry.value} · ${m().aspects[entry.key]}`,
