@@ -1,13 +1,22 @@
-import type { Board, NodeState } from "../api/types";
+import type { Board, EngineEtas, NodeState } from "../api/types";
 import { t } from "../i18n";
 
-/** Session-observed render timing (review 3: the "honest ETA"). Estimates
- * come only from renders actually watched this session — no invented
- * numbers. No observations yet → no estimate shown. */
+/** Render timing, measured — never invented. Nothing observed → nothing
+ * shown.
+ *
+ * Two sources, in this order. The ENGINE's own medians (`/system/etas`,
+ * over completed jobs from every project on that machine) are the
+ * authority: they are measured where the work actually happens, which is
+ * the whole point on a remote engine, and they survive a restart. This
+ * window's own observation of a live render is the fallback — it is all
+ * `remainingLabel` can use (a job in flight has no median yet), and it
+ * covers the beat before /system/etas has answered. */
 
-// Finals render at full quality — slower than the draft renders we sample.
+// Finals render at full quality — slower than a draft. A GUESS, and used
+// only when the engine has no final-quality median of its own to offer.
 const FINAL_QUALITY_FACTOR = 1.5;
-// Timeline assembly + MP4 export tail, added once.
+// Timeline assembly + MP4 export tail, added once — the fallback for the
+// same pair of kinds when the engine has not measured them either.
 const ASSEMBLY_TAIL_S = 30;
 // A render first observed beyond this progress was joined too late for its
 // duration to be a trustworthy sample.
@@ -25,27 +34,33 @@ interface RenderStart {
 // node ids (s1.clip) repeat across projects.
 const startedAt = new Map<string, RenderStart>();
 // Completed DRAFT clip render durations (seconds), newest last. Finals are
-// excluded: finalizeEta multiplies by FINAL_QUALITY_FACTOR, so a
-// final-speed sample would be double-counted. Persisted per machine so the
-// CTA estimate is there from the first board of a new session, not only
-// after this session's first render.
-const STATS_KEY = "localcut.renderStats.v1";
-const clipSeconds: number[] = (() => {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STATS_KEY) ?? "[]");
-    return Array.isArray(parsed)
-      ? parsed.filter((n): n is number => Number.isFinite(n) && n > 0).slice(-20)
-      : [];
-  } catch {
-    return [];
-  }
-})();
-const saveStats = () => {
-  try {
-    localStorage.setItem(STATS_KEY, JSON.stringify(clipSeconds));
-  } catch {
-    /* storage full — the estimate degrades to session-only */
-  }
+// excluded: they would be double-counted by FINAL_QUALITY_FACTOR below.
+//
+// In memory only, and deliberately no longer persisted. It used to be
+// cached in `localStorage` under one global key so a new session had an
+// estimate before its first render — but that key belongs to no engine in
+// particular, and pointing the desktop at a remote engine quoted the
+// laptop's timings for work a GPU box was about to do. /system/etas answers
+// the same need correctly: it persists on the machine that renders, and it
+// cannot disagree with itself about which machine that is.
+const clipSeconds: number[] = [];
+
+// The engine's own medians, newest snapshot wins. `null` until /system/etas
+// has answered — which is not the same as "answered with nothing", and both
+// mean the same thing here: fall through to what this session saw.
+let engineEtas: EngineEtas | null = null;
+
+/** Store the engine's calibration. Call with `null` to forget it (a
+ * disconnect, or a switch to a different engine — whose timings are its
+ * own). */
+export function setEngineEtas(etas: EngineEtas | null): void {
+  engineEtas = etas;
+}
+
+/** Median seconds the engine has measured for one kind at one quality. */
+const engineMedian = (kind: string, quality: "draft" | "final"): number | null => {
+  const seconds = engineEtas?.[kind]?.[quality]?.seconds;
+  return typeof seconds === "number" && seconds > 0 ? seconds : null;
 };
 
 const isClip = (nodeId: string) => /\.clip\d*$/.test(nodeId);
@@ -79,7 +94,6 @@ export function recordBoard(projectId: string, board: Board): void {
         if (secs > 0.5) {
           clipSeconds.push(secs);
           if (clipSeconds.length > 20) clipSeconds.shift();
-          saveStats();
         }
       }
     }
@@ -95,15 +109,38 @@ const formatEta = (secs: number): string =>
     ? t("eta.etaMin", { n: Math.ceil(secs / 60) })
     : t("eta.etaSec", { n: Math.max(10, Math.round(secs / 10) * 10) });
 
-/** "~9 min" for the Create-final-video CTA, or null before any clip render
- * has been observed this session. */
-export function finalizeEta(board: Board): string | null {
+/** Seconds one clip costs at FINAL quality, or null if nothing has measured
+ * one. The engine's final-quality median is the only source that needs no
+ * arithmetic; everything below it is a draft timing with the factor
+ * applied. */
+function finalClipSeconds(): number | null {
+  const measured = engineMedian("clip", "final");
+  if (measured !== null) return measured;
+  const draft = engineMedian("clip", "draft");
+  if (draft !== null) return draft * FINAL_QUALITY_FACTOR;
   if (clipSeconds.length === 0) return null;
   const avg = clipSeconds.reduce((sum, s) => sum + s, 0) / clipSeconds.length;
+  return avg * FINAL_QUALITY_FACTOR;
+}
+
+/** "~9 min" for the Create-final-video CTA, or null when no clip render has
+ * been measured anywhere — by this session or by the engine. */
+export function finalizeEta(board: Board): string | null {
+  const perClip = finalClipSeconds();
+  if (perClip === null) return null;
   const toRender = board.scenes.filter(
     (scene) => scene.clip.status !== "final" && !scene.clip.pinned,
   ).length;
-  return formatEta(toRender * avg * FINAL_QUALITY_FACTOR + ASSEMBLY_TAIL_S);
+  // Assembly is two more renders the engine also times. Falling back to one
+  // flat constant for the pair only when it has measured neither: half a
+  // measured tail plus half a guess is a worse number than either.
+  const timeline = engineMedian("timeline", "final") ?? engineMedian("timeline", "draft");
+  const exportTail = engineMedian("export", "final") ?? engineMedian("export", "draft");
+  const tail =
+    timeline !== null || exportTail !== null
+      ? (timeline ?? 0) + (exportTail ?? 0)
+      : ASSEMBLY_TAIL_S;
+  return formatEta(toRender * perClip + tail);
 }
 
 /** "about 40s left" for a node mid-render, projected from the progress
