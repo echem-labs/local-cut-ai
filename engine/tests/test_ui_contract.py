@@ -289,3 +289,30 @@ def test_voice_swatches_match_the_kokoro_voice_map():
         f"swatches and kokoro disagree: only in UI {sorted(offered - engine_voices)}, "
         f"only in engine {sorted(engine_voices - offered)}"
     )
+
+
+def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():
+    """lib/eta.ts asks /system/etas for specific kinds ("clip", "timeline",
+    "export") at specific qualities ("draft"/"final"). Those keys are
+    NodeKind values and the compiler's quality strings — mirrored across the
+    boundary with nothing on the TypeScript side able to check them.
+
+    Drift here fails SILENTLY and in the worst direction: an unknown key
+    reads as "no data", so the estimate simply disappears and the CTA goes
+    back to saying nothing. That is indistinguishable from a fresh install,
+    which is the one state the whole route exists to fix."""
+    from localcut_engine.graph.compiler import JobSpec
+    from localcut_engine.graph.model import NodeKind
+
+    eta = (_FORMATS.parent / "eta.ts").read_text(encoding="utf-8")
+    kinds = set(re.findall(r'engineMedian\("([a-z_]+)",', eta))
+    assert kinds, "lib/eta.ts no longer calls engineMedian — update this test with it"
+    known = {kind.value for kind in NodeKind}
+    assert kinds <= known, f"eta.ts reads kinds the engine has no NodeKind for: {kinds - known}"
+
+    qualities = set(re.findall(r'engineMedian\("[a-z_]+",\s*"([a-z]+)"\)', eta))
+    assert qualities, "eta.ts no longer names a quality — update this test with it"
+    # The default is one of the two the engine plans with; `final` is what
+    # service.finalize enqueues. Both are spelled here, so both are pinned.
+    assert qualities == {"draft", "final"}, f"eta.ts asks for unknown qualities: {qualities}"
+    assert JobSpec.model_fields["quality"].default == "draft"
