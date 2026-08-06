@@ -30,6 +30,7 @@ import eta from "./en/eta.json";
 import palette from "./en/palette.json";
 import notices from "./en/notices.json";
 import failure from "./en/failure.json";
+import publish from "./en/publish.json";
 
 /** LocalCut AI internationalization.
  *
@@ -78,6 +79,7 @@ const en = {
   palette,
   notices,
   failure,
+  publish,
 };
 
 export type Catalog = typeof en;

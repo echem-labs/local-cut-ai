@@ -323,6 +323,16 @@ export interface StorageInfo {
   disk_total_bytes: number;
 }
 
+/** The `metadata` node's artifact — the text half of the publish kit, as
+ * `backends/llm.py::_parse_metadata` writes it. `hashtags` arrive WITHOUT
+ * the leading `#` (the engine strips it), so anything that displays them
+ * adds it back rather than assuming it is there. */
+export interface PublishKit {
+  title: string;
+  description: string;
+  hashtags: string[];
+}
+
 /** `/system/etas`: the engine's own render-time medians, keyed by node kind
  * then quality ("draft" | "final"). `samples` is how many completed jobs the
  * median was taken over — a one-sample median is a single observation, and

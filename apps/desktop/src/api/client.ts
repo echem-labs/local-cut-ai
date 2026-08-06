@@ -276,6 +276,15 @@ export class EngineClient {
     return this.request(`/projects/${projectId}/render`, { method: "POST" });
   }
 
+  /** Build the publish kit: a thumbnail conditioned on the screenplay plus
+   * an LLM title/description/hashtags. Both join the GRAPH as nodes, so
+   * they render, cache and regenerate like everything else — the returned
+   * ids are where to watch for them on the board. 409 while the script has
+   * not rendered: there is nothing to write a title from. */
+  package(projectId: string): Promise<{ nodes: string[] }> {
+    return this.request(`/projects/${projectId}/package`, { method: "POST" });
+  }
+
   finalize(projectId: string, clipModel?: string | null): Promise<{ enqueued: number }> {
     return this.request(`/projects/${projectId}/finalize`, {
       method: "POST",
