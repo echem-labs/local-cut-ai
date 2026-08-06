@@ -3832,7 +3832,10 @@ button.link:hover {
   color: var(--status-failed);
 }
 
-/* A refusal, as a notice rather than as red prose. See components/Alert. */
+/* A refusal, as a notice rather than as red prose. See components/Alert.
+   No margin of its own: the Inspector stacks it in a gapped flex column,
+   and a flex gap does not collapse with a margin (see .provenance). The
+   two hosts whose rhythm IS margins give it one below. */
 .alert {
   display: flex;
   align-items: flex-start;
@@ -3877,6 +3880,14 @@ button.link:hover {
 .alert-close:hover {
   background: var(--surface-3);
   color: var(--text-primary);
+}
+
+/* Home and the Library are margin-rhythm grids with no gap, so a notice
+   dropped between two sections sat flush against both. It takes the same
+   step the section above it uses. */
+.home > .alert,
+.library > .alert {
+  margin: var(--space-4) 0;
 }
 
 .badge {
@@ -4414,52 +4425,6 @@ button.link:hover {
   color: var(--status-failed);
 }
 
-/* A refusal, as a notice rather than as red prose. See components/Alert. */
-.alert {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  /* The one place the failed colour appears at full strength is the mark and
-     this edge — enough to find the box, not enough to make a sentence hard
-     to read. */
-  border-left: 3px solid var(--status-failed);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-}
-
-.alert > svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--status-failed);
-}
-
-.alert p {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-}
-
-.alert-close {
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: none;
-  color: var(--text-tertiary);
-}
-
-.alert-close:hover {
-  background: var(--surface-3);
-  color: var(--text-primary);
-}
 
 .model-row input[type="checkbox"] {
   width: 16px;
