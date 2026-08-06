@@ -50,6 +50,19 @@ export function Composer() {
   const undoable = replyApplied && history?.undo_top?.kind === "edit";
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
+  /** Where the open scope menu sits, in viewport coordinates.
+   *
+   * It has to be `position: fixed`, because the composer lives in a dockview
+   * panel and a panel's overflow clips anything absolutely positioned inside
+   * it. The Prompt panel is about one control tall, so a project with seven
+   * scenes lost the top of its own list — "Whole video" and the first
+   * scenes were cut off, and there was no way to reach them. Same treatment
+   * `panel-help-pop` already gets, for the same reason. */
+  const [scopeMenu, setScopeMenu] = useState<{
+    left: number;
+    bottom: number;
+    maxHeight: number;
+  } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -60,6 +73,22 @@ export function Composer() {
   const [proposal, setProposal] = useState<EditProposal | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const scopeChipRef = useRef<HTMLButtonElement>(null);
+
+  /** Open the scope menu above the chip, in viewport coordinates, no taller
+   * than the room above it. The composer sits at the foot of the window, so
+   * upward is the only direction with space — and the ceiling is the window,
+   * not the panel. */
+  const openScopeMenu = () => {
+    const rect = scopeChipRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setScopeMenu({
+      left: rect.left,
+      bottom: window.innerHeight - rect.top + 8,
+      maxHeight: Math.max(120, rect.top - 16),
+    });
+    setScopeOpen(true);
+  };
 
   const projectId = currentProject?.id ?? null;
   useEffect(() => {
@@ -82,6 +111,20 @@ export function Composer() {
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
+  }, [scopeOpen]);
+
+  // The coordinates were measured when the menu opened, so anything that
+  // moves the chip — a window resize, a panel being dragged, a scroll —
+  // would strand it. Close instead of trying to follow.
+  useEffect(() => {
+    if (!scopeOpen) return;
+    const close = () => setScopeOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
   }, [scopeOpen]);
 
   const selectedScene = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
@@ -372,17 +415,32 @@ export function Composer() {
         <div className="composer-controls">
         <div className="composer-scope">
           <button
+            ref={scopeChipRef}
             className="scope-chip"
             aria-haspopup="listbox"
             aria-expanded={scopeOpen}
-            onClick={() => setScopeOpen(!scopeOpen)}
+            onClick={() => (scopeOpen ? setScopeOpen(false) : openScopeMenu())}
             title={t("composer.scopeTitle")}
           >
             {scopeLabel}
             <ChevronDown size={11} strokeWidth={2} />
           </button>
-          {scopeOpen && (
-            <div className="dropdown-menu" role="listbox" aria-label={t("composer.scopeMenuAria")}>
+          {scopeOpen && scopeMenu && (
+            <div
+              className="dropdown-menu scope-menu"
+              role="listbox"
+              aria-label={t("composer.scopeMenuAria")}
+              // `position` rides with the coordinates rather than sitting in
+              // the stylesheet: viewport coordinates mean nothing under any
+              // other positioning scheme, so a CSS edit must not be able to
+              // decouple the two.
+              style={{
+                position: "fixed",
+                left: scopeMenu.left,
+                bottom: scopeMenu.bottom,
+                maxHeight: scopeMenu.maxHeight,
+              }}
+            >
               <button
                 role="option"
                 aria-selected={scope === "project"}

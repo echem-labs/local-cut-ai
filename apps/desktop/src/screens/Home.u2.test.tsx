@@ -156,7 +156,17 @@ describe("the style preset", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(t("common.generate")) }));
     });
-    expect(createFromPrompt).toHaveBeenCalledWith("a bee", 60, expect.any(String), "prompt", "anime");
+    // The mode here is incidental to the style — it is whatever Home starts
+    // on, which is "beginner" (store.homeDefaults.test.ts owns that choice).
+    // Spelled out rather than loosened to any(String): the argument order is
+    // worth catching, and two adjacent strings are exactly where it slips.
+    expect(createFromPrompt).toHaveBeenCalledWith(
+      "a bee",
+      60,
+      expect.any(String),
+      "beginner",
+      "anime",
+    );
   });
 });
 

@@ -228,3 +228,46 @@ describe("the plan card's chip row", () => {
     expect(card.querySelector(".chips")).toBeNull();
   });
 });
+
+/**
+ * The scope menu has to escape its panel.
+ *
+ * The composer lives in a dockview panel, and a panel's overflow clips
+ * anything absolutely positioned inside it. The Prompt panel is about one
+ * control tall, so a seven-scene project lost the top of its own scope list:
+ * "Whole video" and the first scenes were cut off, with no way to reach
+ * them. `panel-help-pop` already solved this by measuring at open time and
+ * positioning against the VIEWPORT; this does the same.
+ */
+describe("the scope menu", () => {
+  const BIG = {
+    scenes: Array.from({ length: 7 }, (_, at) => ({
+      scene_id: `s${at + 1}`,
+      keyframe: node(`s${at + 1}.keyframe`),
+      clip: node(`s${at + 1}.clip`),
+      narration: null,
+    })),
+    aux: {},
+  } as unknown as Board;
+
+  it("is positioned against the window, not the panel that clips it", async () => {
+    mount({ board: BIG, proposeEdit: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: /whole video/i }));
+
+    const menu = await screen.findByRole("listbox", { name: /scope/i });
+    expect(menu).toHaveStyle({ position: "fixed" });
+    // Every scene reachable, plus the whole-video option itself.
+    expect(screen.getAllByRole("option")).toHaveLength(8);
+  });
+
+  it("is never taller than the room above the chip", async () => {
+    mount({ board: BIG, proposeEdit: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: /whole video/i }));
+
+    const menu = await screen.findByRole("listbox", { name: /scope/i });
+    // A cap alone would only move the clipping; the scroll is what makes a
+    // list longer than the window usable.
+    expect(Number.parseFloat(menu.style.maxHeight)).toBeGreaterThan(0);
+    expect(Number.parseFloat(menu.style.maxHeight)).toBeLessThanOrEqual(window.innerHeight);
+  });
+});

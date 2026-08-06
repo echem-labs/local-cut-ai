@@ -468,7 +468,13 @@ const FALLBACK_DEFAULTS: HomeDefaults = {
   aspect: "9:16",
   duration: 60,
   style: "cinematic",
-  mode: "prompt",
+  // "Review steps" out of the box. A first video is the one most likely to
+  // need changing, and the checkpoints are where changing it is cheap: the
+  // script is a text file, the storyboard a handful of stills, and both come
+  // before the clips that cost the GPU hours. Auto is one click away and
+  // persists once chosen; an unreviewed run that has to be thrown away is
+  // not.
+  mode: "beginner",
   voice: "",
   videoModel: null,
 };

@@ -639,6 +639,12 @@ export function Project() {
   // change nothing — a primary action that silently does nothing at all.
   const allReady = scenes.length > 0 && scenes.every((scene) => isDone(scene.clip.status));
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
+  // The publish kit asks a weaker question than Download does. Its title,
+  // description and hashtags are written from the SCRIPT — nothing in it
+  // depends on final quality — so gating it on `final` meant sitting through
+  // a full finalize before the app would even suggest a title. A draft cut is
+  // still a cut to publish.
+  const hasCut = !!exportNode && isDone(exportNode.status) && !!exportNode.artifact_hash;
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
   const eta = finalizeEta(board);
@@ -770,8 +776,10 @@ export function Project() {
       <StalledNotice />
       {/* Only once there is a video to publish. Offering to write a title
           for a cut that does not exist yet puts the last step first, and the
-          engine refuses it anyway while the script is unrendered. */}
-      {exported && <PublishKit />}
+          engine refuses it anyway while the script is unrendered. A DRAFT
+          cut counts: the kit is written from the script, so waiting for
+          final quality would withhold it for no reason. */}
+      {hasCut && <PublishKit />}
       {historyKeyError && (
         <div role="status" className="banner error">
           {historyKeyError}
