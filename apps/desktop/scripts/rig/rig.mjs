@@ -132,8 +132,17 @@ export async function stopRig(child) {
  * subject); a pixel gate cannot. Detected at boot, the cure is a fresh
  * process. On a healthy display stack this costs one extra eval. */
 export async function startRigTrueToScale(extraEnv = {}) {
+  // The reference frames are rendered at a forced scale of 1 (render-mock
+  // does it in its first three lines). Without the same forcing here the
+  // app lays out in the OS scale's device pixels — on a 125% display every
+  // box lands on a multiple of 0.8 while the reference sits on whole ones,
+  // so boxes that agree by design still drift up to a pixel apart, and one
+  // pixel of drift makes every glyph below it a difference. launch.cjs has
+  // carried the switch since the first gate ("parity: 1") and nothing ever
+  // set it.
+  const env = { RIG_SCALE: "1", ...extraEnv };
   for (let attempt = 0; attempt < 6; attempt++) {
-    const child = await startRig(extraEnv);
+    const child = await startRig(env);
     try {
       await evalInApp(
         "await page.waitForSelector('.setup, .home', { timeout: 30000 }); return null;",

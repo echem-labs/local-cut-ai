@@ -60,12 +60,17 @@ const MASK_PAD = 6;
  * `.chips`     → both draw a chip per fact, but the facts are this
  *                machine's: the mock names an RTX 3080 and the reference
  *                would otherwise gate whatever GPU the runner has.
+ * `.kv dd`     → the same, in the list under it: tier, backend chain,
+ *                engine URL, data folder. The `dt` labels are diffed.
+ * `.privacy p` → the app says "LocalCut AI" where the mock said
+ *                "LocalCut", so the sentence wraps a word earlier.
  */
 const MASKED_AS = {
   ".mark": ".about-version svg",
   ".uptodate": ".about-update-row",
   ".whatsnew": ".about-whatsnew",
   ".chips": ".about-card .spec-chips",
+  ".kv dd": ".about-kv dd",
   ".privacy p": ".about-privacy p",
 };
 
@@ -239,9 +244,23 @@ try {
     }),
   );
 
+  // --masks, or the regions checked for geometry above are still diffed as
+  // pixels: compare.mjs masks nothing unless it is handed the file, and the
+  // "outside masks" in its own verdict line then means outside no masks at
+  // all.
   const compared = spawnSync(
     process.execPath,
-    [path.join(HERE, "compare.mjs"), "--refs", refsDir, "--shots", dir, "--only", FRAME_NAME],
+    [
+      path.join(HERE, "compare.mjs"),
+      "--refs",
+      refsDir,
+      "--shots",
+      dir,
+      "--masks",
+      path.join(refsDir, "masks.json"),
+      "--only",
+      FRAME_NAME,
+    ],
     { stdio: "inherit" },
   );
   check("the pane matches the mock within budget", compared.status === 0, `compare exited ${compared.status}`);
