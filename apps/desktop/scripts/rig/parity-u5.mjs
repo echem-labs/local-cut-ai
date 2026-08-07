@@ -365,6 +365,8 @@ try {
     JSON.stringify({ inFrame, drawn }),
   );
 
+  // --masks: without it compare.mjs masks nothing, and the region checked
+  // for geometry just above is diffed as pixels anyway.
   const compare = spawnSync(
     process.execPath,
     [
@@ -373,6 +375,8 @@ try {
       refsDir,
       "--shots",
       dir,
+      "--masks",
+      path.join(refsDir, "masks.json"),
       "--only",
       FRAME_NAME,
     ],
