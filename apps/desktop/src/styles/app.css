@@ -5207,11 +5207,16 @@ button.link:hover {
   margin: var(--space-6) 0 var(--space-2);
 }
 
+/* Mark · identity · update status on one row, with the "checked at" line
+   spanning under a rule — the mock's shape, and the reason it is a grid.
+   As a wrapping flex row this collapsed onto two lines: the checked-at
+   sentence is wider than the button above it, so the right-hand block
+   grew past what was left beside the mark. */
 .about-version {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: var(--space-4);
-  flex-wrap: wrap;
 }
 
 .about-name {
@@ -5226,13 +5231,6 @@ button.link:hover {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   user-select: text;
-}
-
-/* Pushed to the trailing edge, but only as far as there is room — below the
-   card's own wrap it drops to its own line rather than crushing the mark. */
-.about-update {
-  margin-left: auto;
-  text-align: right;
 }
 
 .about-update-row {
@@ -5256,10 +5254,24 @@ button.link:hover {
   text-decoration: none;
 }
 
-.about-checked {
-  margin-top: var(--space-2);
+/* Spans the card, under a rule, with the release link pushed to the far
+   edge — the mock's `.whatsnew` row. */
+.about-whatsnew {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
   font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
+}
+
+.about-whatsnew a {
+  margin-left: auto;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .about-kv {

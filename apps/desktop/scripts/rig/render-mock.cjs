@@ -92,6 +92,14 @@ const SETS = {
     height: 142,
     states: [["inspector-failure", "u5-mock.html"]],
   },
+  /* About (U6). The mock is a 640px reading column on a padded body, and
+     the app's About pane is the same column inside the Settings layer —
+     so the frame is `main`, not a window, and the gate clips the app to
+     the pane's own box (see parity-u6.mjs). */
+  about: {
+    width: 640,
+    states: [["about", "about-mock.html"]],
+  },
 };
 const setName = arg("set", "wizard");
 const SET = SETS[setName];
@@ -163,6 +171,20 @@ const MASKABLE = {
      paths in the app), and the one node thumbnail (a JPEG here, a generated
      artifact there). */
   canvas: [".search .gl", ".help", ".thumb"],
+  /* About (U6). Four regions, and each is a decision rather than a data
+     difference:
+     - `.mark` — the app draws the Cut-Play mark as an SVG, the mock as a
+       CSS box with a clip-path triangle.
+     - `.uptodate` — the update controls do not render until a release feed
+       is configured (plan U6: "the button hides behind a config flag"), so
+       this half of the card is deliberately empty in the app.
+     - `.whatsnew` — the same flag; the row exists only alongside a check.
+     - the first `.kv` row — the mock spells the hardware out as one text
+       line; the app renders SpecChips above the list (plan U6 inventory:
+       "SpecChips reused for About 'This machine'"), which is a different
+       shape by design.
+     All four are recorded deviations, not diffs waived to get green. */
+  about: [".mark", ".uptodate", ".whatsnew", ".chips", ".privacy p"],
 };
 const MASK_PAD = 6;
 
@@ -290,11 +312,48 @@ const SNAP_U5 = `
 .chip { line-height: 18px !important; }
 `;
 
+/* ---- the about set's snaps. The mock's card geometry already IS the
+   token scale (surface-1 on border at radius-m, 16px padding), so what is
+   left is type: a 12.5/13px reading size that predates --text-xs, a name
+   one step above --text-s, and a key column the app's own .kv fixes at
+   140px. Snapping these is what makes the remaining pixels mean
+   something. */
+const SNAP_ABOUT = `
+/* The mock centres its column inside a 36px-padded body. Drop the padding
+   so the frame IS the 640px reading column and nothing else — the app's
+   pane is clipped to the same column, and a frame carrying the mock's page
+   margins would be diffing the margin against the Settings layer. */
+body { padding: 0 !important; }
+.sub, h2, .whatsnew, .kv, .links { font-size: 12px !important; }
+.vrow .name { font-size: 14px !important; }
+.vrow .ver, .ok, .ghost, .kv dd, .whatsnew a, .privacy p { font-size: 12px !important; }
+/* one control height, as everywhere else in the app */
+.ghost { min-height: 32px !important; }
+/* the app's .kv, which About shares with the pairing review */
+.kv { grid-template-columns: 140px 1fr !important; }
+.privacy b { font-size: 14px !important; }
+/* the mock's 22/14px vertical rhythm is hand-tuned off the scale; the
+   app's --space-6 / --space-3 win */
+h2 { margin-top: 24px !important; margin-bottom: 8px !important; }
+/* the mock's own .card + h2 (14px) would out-specify the rule above, so
+   it is restated: the app's section heading keeps --space-6 above it
+   whatever precedes it. No backticks in here - this block IS a template
+   literal, and one would close it. */
+.card + h2 { margin-top: 24px !important; }
+/* and the card under a heading rides the heading's --space-2, not a
+   margin of its own */
+h2 + .card { margin-top: 0 !important; }
+.card + .card { margin-top: 12px !important; }
+.privacy { margin-top: 24px !important; }
+.links { margin-top: 16px !important; }
+`;
+
 const SNAP =
   SNAP_COMMON +
   (setName === "home" ? SNAP_HOME : "") +
   (setName === "session" ? SNAP_SESSION : "") +
-  (setName === "u5" ? SNAP_U5 : "");
+  (setName === "u5" ? SNAP_U5 : "") +
+  (setName === "about" ? SNAP_ABOUT : "");
 
 async function render(win, name, file) {
   const [base, query] = file.split("?");
@@ -314,7 +373,9 @@ async function render(win, name, file) {
       ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
       : setName === "session"
         ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
-        : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
+        : setName === "about"
+          ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
+          : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
   );
   // Resize, then paint the frame fresh: an offscreen window that grows after
   // painting composites the old frame under the new one, which ghosts

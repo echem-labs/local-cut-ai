@@ -224,7 +224,8 @@
     "linkDocs": "Documentation",
     "linkIssues": "Report an issue",
     "fine": "© {year} · Built on open models — each one's license is shown where you download it.",
-    "machineLoading": "Reading this machine…"
+    "machineLoading": "Reading this machine…",
+    "whatsNew": "What's new in {version} →"
   },
   "workflows": {
     "hint": "Custom ComfyUI graphs, and the third-party node packs they need. Only relevant if you run ComfyUI — everything ships working without any of this.",
