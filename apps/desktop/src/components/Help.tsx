@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
 import { useOutsideClick } from "../lib/useOutsideClick";
+import { useMenuFit } from "../lib/useMenuFit";
 import { Modal } from "./Modal";
 import { Tip } from "./Tooltip";
 
@@ -116,6 +117,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
 
   useOutsideClick(ref, open, () => setOpen(false));
+  const fit = useMenuFit();
 
   // "?" opens the shortcut overlay when no field owns the keyboard.
   useEffect(() => {
@@ -182,7 +184,7 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
           helpButton
         )}
         {open && (
-          <div className="menu-pop help-pop" role="menu">
+          <div className="menu-pop help-pop" role="menu" ref={fit}>
             <button
               role="menuitem"
               onClick={() => {

@@ -889,6 +889,7 @@ textarea {
   color: var(--accent);
 }
 
+/* Capped and scrolled by `useMenuFit`, as .menu-pop is. */
 .dropdown-menu {
   position: absolute;
   top: calc(100% + var(--space-1));
@@ -902,6 +903,8 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: var(--z-modal);
 }
 
@@ -2375,6 +2378,12 @@ button.link:hover {
   position: relative;
 }
 
+/* The height cap comes from `useMenuFit` — only script can know how far
+   down the window the trigger sits. This is the other half of it: without
+   `overflow-y` the cap would clip the last rows off with no way to reach
+   them, which is the bug with a scrollbar's worth of extra confusion.
+   `overscroll-behavior` so reaching the end of a menu does not hand the
+   wheel to the board behind it. */
 .menu-pop {
   position: absolute;
   top: calc(100% + var(--space-1));
@@ -2388,7 +2397,18 @@ button.link:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: var(--z-modal);
+}
+
+/* A column flex container shrinks its children before it overflows, so
+   without this a capped menu compresses its rows to fit instead of
+   scrolling — the labels and the rules, which have no min-height, squash
+   away first. */
+.menu-pop > *,
+.dropdown-menu > * {
+  flex-shrink: 0;
 }
 
 .menu-pop .menu-label {
@@ -4167,15 +4187,11 @@ button.link:hover {
   margin-top: 3px;
 }
 
-/* Tighter than the modal recipe's default and the same as Settings'
-   `.setting-row .sc input`: three stacked fields at 32px with 8px/12px
-   padding read as a form to fill in, where these are text to skim and
-   copy. */
-.publish-field .field-row input,
-.publish-field .field-row textarea {
-  padding: var(--space-1) var(--space-2);
-  min-height: 30px;
-}
+/* No padding override here. One asking for a tighter box than the dialog
+   field recipe used to sit at this spot and had never once applied: same
+   specificity as the recipe, declared earlier in the file, so the recipe won
+   every time. What is on screen is the shared field — which is what it
+   should be, and now says so. */
 
 /* A take and its reroll, kept together. The reroll is a sibling of the
    chip rather than a child - ARIA makes a button's children presentational,
@@ -5221,13 +5237,35 @@ button.link:hover {
   font-weight: 600;
 }
 
-/* A repo URL has no spaces to break at and is the widest thing in the row. */
+/* A repo URL has no spaces to break at and is the widest thing in the row.
+
+   `inline-block`, not `block`: the link is the address, and a full-width box
+   would send the browser off on a click landing in the empty space beside a
+   short one. The underline is what says it can be clicked at all — three
+   accent-coloured URLs down a list of packs is a lot of shouting for a line
+   that is meant to be read as provenance. */
 .pack-repo {
+  display: inline-block;
+  max-width: 100%;
   margin-top: 2px;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--border-hi);
+  text-underline-offset: 2px;
   overflow-wrap: anywhere;
+}
+
+.pack-repo:hover,
+.pack-repo:focus-visible {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+
+/* The dialog's subtitle already carries the gap under the title. */
+.modal-sub .pack-repo {
+  margin-top: 0;
 }
 
 .pack-row .btn-ghost,
@@ -6581,12 +6619,21 @@ button.link:hover {
 
 .savepoint-new {
   display: flex;
-  gap: 8px;
-  margin: 10px 0;
+  align-items: stretch;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
 }
 
+/* The box takes the row and the button keeps its label — a Save that
+   shrinks to fit a long project name is the wrong one of the two to give
+   way. Everything about how the box LOOKS comes from the dialog's field
+   recipe now; this only says how wide it is. */
 .savepoint-new input {
   flex: 1;
+}
+
+.savepoint-new .btn-primary {
+  flex: none;
 }
 
 .savepoint-list {
@@ -6901,11 +6948,22 @@ button.link:hover {
   margin-bottom: var(--space-2);
 }
 
-/* `textarea` alongside `input`: a multi-line field in a modal is the same
-   control wearing a different tag, and the publish kit's description was
-   the first to need one. */
-.modal .field input,
-.modal .field textarea {
+/* Bound to the CONTROL, not to the `.field` wrapper it usually comes in.
+   Save points' name box sits in a form row beside its button rather than
+   under a label, so it matched none of this and rendered as the platform's
+   own text box — a light fill and a white ring in the middle of a dark
+   dialog. A recipe that only reaches controls dressed a particular way is
+   how one dialog ends up looking like a different app.
+
+   `textarea` alongside `input`: a multi-line field in a dialog is the same
+   control wearing a different tag, and the publish kit's description was the
+   first to need one. Checkboxes and radios are excluded by naming the types
+   this does apply to — those are a different control sharing the tag, and
+   the grant dialog's acknowledgement is one. */
+.modal input:not([type]),
+.modal input[type="text"],
+.modal input[type="search"],
+.modal textarea {
   width: 100%;
   min-width: 0;
   background: var(--surface-2);
@@ -6916,14 +6974,16 @@ button.link:hover {
   min-height: var(--control-h);
 }
 
-.modal .field textarea {
+.modal textarea {
   resize: vertical;
   line-height: 1.5;
   font: inherit;
 }
 
-.modal .field input:focus,
-.modal .field textarea:focus {
+.modal input:not([type]):focus,
+.modal input[type="text"]:focus,
+.modal input[type="search"]:focus,
+.modal textarea:focus {
   border-color: var(--accent);
   outline: none;
 }
