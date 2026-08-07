@@ -5110,6 +5110,80 @@ button.link:hover {
   font-size: var(--text-xs);
 }
 
+/* ---- Settings → Workflows (U6): ComfyUI node packs and graphs ---- */
+.pack-list,
+.workflow-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.pack-row,
+.workflow-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+}
+
+/* An enabled pack is running third-party code — the accent border is the
+   only place on this screen that says so at a glance. */
+.pack-row.on {
+  border-color: var(--accent);
+}
+
+.pack-id,
+.workflow-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.pack-name,
+.workflow-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+
+/* A repo URL has no spaces to break at and is the widest thing in the row. */
+.pack-repo {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.pack-row .btn-ghost,
+.workflow-row .icon-btn {
+  flex: none;
+}
+
+.pack-modal {
+  max-width: 520px;
+}
+
+/* The acknowledgement is a sentence, not a label — it wraps, and the box
+   stays with its first line rather than centring against the block. */
+.ack-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.ack-row input {
+  margin-top: 2px;
+  flex: none;
+}
+
 /* ---- About (U6, mock reference/v3/about-proposed.png) ----
    The one settings pane built from cards rather than .setting-row: it is a
    document about the app, not a list of things to change. The mock's own

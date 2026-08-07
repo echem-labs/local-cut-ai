@@ -18,6 +18,7 @@ import {
   SunMoon,
   Trash2,
   Waypoints,
+  Workflow,
   X,
   ZoomIn,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
 import { InfoDot } from "../components/Tooltip";
+import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
@@ -59,6 +61,7 @@ type SettingsTab =
   | "models"
   | "storage"
   | "engine"
+  | "workflows"
   | "about";
 
 const NAV: { id: SettingsTab; icon: typeof SunMoon }[] = [
@@ -68,6 +71,7 @@ const NAV: { id: SettingsTab; icon: typeof SunMoon }[] = [
   { id: "models", icon: Boxes },
   { id: "storage", icon: HardDrive },
   { id: "engine", icon: Server },
+  { id: "workflows", icon: Workflow },
   { id: "about", icon: Info },
 ];
 
@@ -1207,6 +1211,8 @@ export function Settings() {
               )}
             </>
           )}
+
+          {tab === "workflows" && <WorkflowsPane />}
 
           {tab === "about" && <AboutPane onShowLicenses={() => setShowLicenses(true)} />}
         </div>

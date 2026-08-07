@@ -59,7 +59,8 @@
     "licenseNote": "⚠ Not from the curated catalog — check this model's license yourself. Outputs are your responsibility.",
     "licenseAck": "I've checked this model's license and accept responsibility for how outputs are used",
     "add": "Add model",
-    "adding": "Adding…"
+    "adding": "Adding…",
+    "workflowPickAria": "Workflows you have imported"
   },
   "recommended": "Recommended",
   "tightFit": "tight fit",

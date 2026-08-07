@@ -14,10 +14,12 @@ import type {
   EngineEvent,
   GraphNode,
   HistoryInfo,
+  InstalledWorkflow,
   Job,
   LlmModels,
   ModelDefaults,
   ModelRow,
+  NodePacks,
   Project,
   ProjectTemplate,
   Provider,
@@ -26,6 +28,7 @@ import type {
   SystemInfo,
   TemplateImport,
   ToolKind,
+  WorkflowReview,
 } from "./types";
 
 /** Marker subprotocol that tells the engine the next offered protocol is the
@@ -394,6 +397,57 @@ export class EngineClient {
 
   deleteCustomModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
     return this.request(`/models/custom/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
+  /* ---- ComfyUI node packs and workflows (Settings → Workflows) ----
+     Two resources, deliberately not collapsed into one "import": a pack
+     grant permits third-party Python to run on this machine, and a
+     workflow is a document judged against that grant. Enabling code as a
+     side effect of importing a file is exactly the shape to avoid. */
+
+  nodePacks(): Promise<NodePacks> {
+    return this.request("/comfy/node-packs");
+  }
+
+  /** `version` is the one installed HERE — the engine refuses to guess it,
+   * because a pin to a guessed version pins nothing. `acknowledged` is the
+   * caller stating the warning was shown; the engine rejects a false. */
+  enableNodePack(
+    packId: string,
+    version: string,
+    acknowledged: boolean,
+  ): Promise<{ ok: boolean; pack_id: string; version: string }> {
+    return this.request(`/comfy/node-packs/${encodeURIComponent(packId)}/enable`, {
+      method: "POST",
+      body: JSON.stringify({ version, acknowledge_code_execution: acknowledged }),
+    });
+  }
+
+  disableNodePack(packId: string): Promise<{ ok: boolean; was_enabled: boolean }> {
+    return this.request(`/comfy/node-packs/${encodeURIComponent(packId)}`, { method: "DELETE" });
+  }
+
+  /** What an import would say, without storing anything. */
+  reviewWorkflow(name: string, workflow: unknown): Promise<WorkflowReview> {
+    return this.request("/comfy/workflows/review", {
+      method: "POST",
+      body: JSON.stringify({ name, workflow }),
+    });
+  }
+
+  importWorkflow(name: string, workflow: unknown): Promise<WorkflowReview & { name: string }> {
+    return this.request("/comfy/workflows", {
+      method: "POST",
+      body: JSON.stringify({ name, workflow }),
+    });
+  }
+
+  workflows(): Promise<InstalledWorkflow[]> {
+    return this.request("/comfy/workflows");
+  }
+
+  deleteWorkflow(name: string): Promise<{ ok: boolean }> {
+    return this.request(`/comfy/workflows/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
 
   health(): Promise<{ ok: boolean; engine_version: string; api_version: number }> {
