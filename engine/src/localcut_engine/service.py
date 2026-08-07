@@ -1954,4 +1954,18 @@ class ProjectService:
             for seg in (edl.get("video", []) if edl else [])
             if isinstance(seg, dict) and isinstance(seg.get("duration"), (int, float))
         }
-        return {"scenes": scenes, "aux": aux, "assembled_durations": assembled_durations}
+        # Whether this cut burns any titles. Answered here because overlays
+        # are timeline PARAMS and the board sends node status, so the client
+        # has no way to see them - and it needs to, since an ffmpeg without
+        # drawtext (FFmpeg 7 static builds lacking libharfbuzz) fails the
+        # export only after the whole ladder has re-rendered at final
+        # quality. A boolean rather than the overlay map: the question the
+        # UI asks is "will this need drawtext", not which scenes say what.
+        timeline_node = graph.nodes.get("timeline")
+        has_onscreen_text = bool(timeline_node and timeline_node.params.get("overlays"))
+        return {
+            "scenes": scenes,
+            "aux": aux,
+            "assembled_durations": assembled_durations,
+            "has_onscreen_text": has_onscreen_text,
+        }
