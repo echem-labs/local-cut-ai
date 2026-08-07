@@ -52,6 +52,11 @@ def compute_storage(config: EngineConfig, store: ProjectStore) -> dict:
     projects.sort(key=lambda row: row["bytes"], reverse=True)
     usage = shutil.disk_usage(config.data_dir)
     return {
+        # Resolved, not as configured: every byte below is measured from this
+        # directory, and a relative path answers "used where?" only for
+        # whoever knows the engine's working directory. On a remote engine
+        # that is a different machine entirely.
+        "data_dir": str(Path(config.data_dir).resolve()),
         "projects": projects,
         "models_bytes": _dir_size(config.resolved_models_dir),
         "cache_bytes": cache_bytes,

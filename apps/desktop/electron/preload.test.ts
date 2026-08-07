@@ -28,18 +28,30 @@ describe("the exposed surface", () => {
     // failing this test is the prompt to decide whether that is intended.
     expect(Object.keys(bridge).sort()).toEqual([
       "armProviderKeys",
+      "checkForUpdates",
       "clearProviderKey",
+      "exportSupportBundle",
       "getEngineConnection",
       "getProviderKeyPresence",
       "getSystemTextScale",
       "inspectPairing",
+      "openLogsFolder",
       "pairEngine",
       "seedHookEnabled",
       "setProviderKeys",
       "setTitleBarTheme",
       "setUiZoom",
       "unpairEngine",
+      "updatesConfigured",
     ]);
+  });
+
+  // Both take no path and no URL. The point of routing these through main
+  // is that main decides WHICH folder and WHICH feed — a renderer-supplied
+  // argument would turn them into "open anything" and "fetch anything".
+  it("gives the shell errands nothing to aim", () => {
+    expect((bridge.openLogsFolder as () => unknown).length).toBe(0);
+    expect((bridge.checkForUpdates as () => unknown).length).toBe(0);
   });
 
   // seedHookEnabled gates window.__localcutSeed — arbitrary state
@@ -62,6 +74,14 @@ describe("channel routing", () => {
     ["clearProviderKey", ["openai"], "providers:clear-key", ["openai"]],
     ["setTitleBarTheme", ["dark"], "window:set-titlebar-theme", ["dark"]],
     ["getSystemTextScale", [], "window:system-text-scale", []],
+    ["openLogsFolder", [], "support:open-logs", []],
+    [
+      "exportSupportBundle",
+      [{ versions: { app: "0.1.0" }, system: null }],
+      "support:export-bundle",
+      [{ versions: { app: "0.1.0" }, system: null }],
+    ],
+    ["checkForUpdates", [], "update:check", []],
   ];
 
   it.each(cases)("%s invokes %s", async (method, args, channel, expected) => {

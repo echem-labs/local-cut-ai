@@ -51,6 +51,10 @@ export function resetElectron(): void {
   state.shouldUseDarkColors = false;
   ipcHandlers.clear();
   appEvents.clear();
+  openedPaths.length = 0;
+  saveDialogs.length = 0;
+  shell.openPathFailure = "";
+  dialog.result = { canceled: false, filePath: "" };
   windows.length = 0;
   certificateVerifyProc = null;
   quitCalls = 0;
@@ -278,6 +282,34 @@ export const ipcRenderer = {
   },
 };
 
+/* ----------------------------------------------------- shell and dialog -- */
+
+/** Paths handed to shell.openPath, and the reason the next call returns.
+ * Electron reports failure here by RESOLVING with a message — "" is
+ * success — so a test that only checks the call happened would miss it. */
+export const openedPaths: string[] = [];
+export const shell = {
+  openPathFailure: "" as string,
+  openPath(target: string): Promise<string> {
+    openedPaths.push(target);
+    return Promise.resolve(shell.openPathFailure);
+  },
+};
+
+/** What the next save dialog answers, and what it was asked. */
+export const saveDialogs: unknown[] = [];
+interface SaveResult {
+  canceled: boolean;
+  filePath: string;
+}
+export const dialog = {
+  result: { canceled: false, filePath: "" } as SaveResult,
+  showSaveDialog(_window: unknown, options: unknown): Promise<SaveResult> {
+    saveDialogs.push(options);
+    return Promise.resolve(dialog.result);
+  },
+};
+
 export const zoomFactors: number[] = [];
 export const webFrame = {
   /** The stub's live zoom — read by the redundant-set guard. */
@@ -295,11 +327,13 @@ export default {
   app,
   BrowserWindow,
   contextBridge,
+  dialog,
   ipcMain,
   ipcRenderer,
   Menu,
   nativeTheme,
   safeStorage,
   session,
+  shell,
   webFrame,
 };
