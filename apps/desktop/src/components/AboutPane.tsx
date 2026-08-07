@@ -1,4 +1,4 @@
-import { Activity, Check, Cpu, FileText, Keyboard, LifeBuoy, Package, RotateCw } from "lucide-react";
+import { Check, Cpu, Package } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { t } from "../i18n";
@@ -168,6 +168,10 @@ type UpdateState =
  */
 function UpdateCheck() {
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
+  // The release page the last check named, kept so "What's new" survives
+  // the up-to-date verdict — a check that finds no update still learned
+  // where the notes for THIS version are.
+  const [releaseUrl, setReleaseUrl] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<number | null>(() => {
     const stored = Number(localStorage.getItem(CHECKED_KEY));
     return Number.isFinite(stored) && stored > 0 ? stored : null;
@@ -182,6 +186,7 @@ function UpdateCheck() {
       localStorage.setItem(CHECKED_KEY, String(now));
       setCheckedAt(now);
       if (result.error) return setState({ kind: "failed", message: result.error });
+      if (result.url) setReleaseUrl(result.url);
       // Same version, or an older one: a feed that has rolled back is not
       // an update, and offering one would walk the user backwards.
       if (!result.latest || !isNewer(result.latest, __APP_VERSION__))
@@ -190,8 +195,14 @@ function UpdateCheck() {
     });
   };
 
+  // A fragment, not a wrapper: the card is a grid, and these are two of
+  // its items. The status row rides beside the version; the "checked at"
+  // line spans the card under a rule. Nesting the second inside the first
+  // is what this looked like at first, and the sentence is wider than the
+  // button above it — so the whole right-hand block grew past what was
+  // left beside the mark and wrapped the card onto two rows.
   return (
-    <div className="about-update">
+    <>
       <div className="about-update-row">
         {state.kind === "current" && (
           <span className="about-uptodate">
@@ -205,19 +216,33 @@ function UpdateCheck() {
           </a>
         )}
         <button className="btn-ghost" disabled={state.kind === "checking"} onClick={check}>
-          <RotateCw {...ICON_SM} aria-hidden="true" />
           {state.kind === "checking"
             ? t("settings.about.checking")
             : t("settings.about.checkUpdates")}
         </button>
       </div>
+      <div className="about-whatsnew">
+        <span>
+          {checkedAt
+            ? t("settings.about.checkedAt", { when: relativeTime(checkedAt) })
+            : t("settings.about.neverChecked")}
+        </span>
+        {/* Only once a check has actually returned a link. The version is
+            this build's either way, but a "what's new" that goes nowhere
+            is worse than no link at all. */}
+        {state.kind === "available" && state.url && (
+          <a href={state.url} target="_blank" rel="noreferrer">
+            {t("settings.about.whatsNew", { version: state.version })}
+          </a>
+        )}
+        {state.kind === "current" && releaseUrl && (
+          <a href={releaseUrl} target="_blank" rel="noreferrer">
+            {t("settings.about.whatsNew", { version: __APP_VERSION__ })}
+          </a>
+        )}
+      </div>
       {state.kind === "failed" && <Alert message={state.message} />}
-      <p className="about-checked">
-        {checkedAt
-          ? t("settings.about.checkedAt", { when: relativeTime(checkedAt) })
-          : t("settings.about.neverChecked")}
-      </p>
-    </div>
+    </>
   );
 }
 
@@ -309,26 +334,31 @@ function SupportActions() {
     <>
       <div className="about-actions">
         <button className="btn-ghost" onClick={copyDiagnostics}>
-          <Activity {...ICON_SM} aria-hidden="true" />
           {copied ? t("settings.about.copied") : t("settings.about.copy")}
         </button>
-        <button className="btn-ghost" disabled={busy} onClick={exportBundle}>
-          <LifeBuoy {...ICON_SM} aria-hidden="true" />
+        {/* What the bundle holds rides on the button rather than in a line
+            under the row. The sentence was there, and the privacy card two
+            cards below already promises nothing is sent — so it was
+            repeating a claim in the place a reader had just read it, and
+            pushing every card under it down a line to do so. */}
+        <button
+          className="btn-ghost"
+          disabled={busy}
+          title={t("settings.about.supportHint")}
+          onClick={exportBundle}
+        >
           {busy ? t("settings.about.bundling") : t("settings.about.exportBundle")}
         </button>
         <button className="btn-ghost" onClick={openLogs}>
-          <FileText {...ICON_SM} aria-hidden="true" />
           {t("settings.about.openLogs")}
         </button>
         <button
           className="btn-ghost"
           onClick={() => window.dispatchEvent(new Event(OPEN_SHORTCUTS_EVENT))}
         >
-          <Keyboard {...ICON_SM} aria-hidden="true" />
           {t("settings.about.shortcuts")}
         </button>
       </div>
-      <p className="sd">{t("settings.about.supportHint")}</p>
       {/* Where it landed, named. A save dialog that closes with no trace
           leaves the user hunting for the file they just made. */}
       {saved && (
