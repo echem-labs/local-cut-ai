@@ -21,9 +21,11 @@ import type {
   EditResult,
   EngineEvent,
   HistoryInfo,
+  InstalledWorkflow,
   Job,
   ModelDefaults,
   ModelRow,
+  NodePacks,
   NodeState,
   OomFallback,
   Project,
@@ -452,6 +454,21 @@ interface AppState {
     vram_gb?: number;
     workflow_template?: string;
   }) => Promise<string | null>;
+
+  /* ---- ComfyUI node packs and workflows (Settings → Workflows) ---- */
+  nodePacks: NodePacks | null;
+  workflows: InstalledWorkflow[];
+  refreshComfy: () => Promise<string | null>;
+  /** `acknowledged` states that the engine's own warning was shown. The
+   * engine rejects a false, so this can never become a default. */
+  enableNodePack: (
+    packId: string,
+    version: string,
+    acknowledged: boolean,
+  ) => Promise<string | null>;
+  disableNodePack: (packId: string) => Promise<string | null>;
+  importWorkflow: (name: string, workflow: unknown) => Promise<string | null>;
+  deleteWorkflow: (name: string) => Promise<string | null>;
   deleteCustomModel: (modelId: string) => Promise<void>;
   setDefaults: (patch: Partial<HomeDefaults>) => void;
   setHomeDraft: (patch: Partial<HomeDraft>) => void;
@@ -2378,6 +2395,70 @@ export const useApp = create<AppState>((set, get) => {
         console.warn("cache cleanup failed:", err);
         return null;
       }
+    },
+
+    nodePacks: null,
+    workflows: [],
+
+    refreshComfy: async () => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        // Both together: the pane's whole job is showing workflows AGAINST
+        // the grants they are judged by, and one arriving without the other
+        // renders a document as broken when the answer is "enable a pack".
+        const [nodePacks, workflows] = await Promise.all([client.nodePacks(), client.workflows()]);
+        set({ nodePacks, workflows });
+      } catch (err) {
+        return messageOf(err);
+      }
+      return null;
+    },
+
+    enableNodePack: async (packId, version, acknowledged) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.enableNodePack(packId, version, acknowledged);
+      } catch (err) {
+        return messageOf(err);
+      }
+      // Refetch rather than patch the row in place: enabling a pack can
+      // change the verdict on every installed workflow, not just this one.
+      return await get().refreshComfy();
+    },
+
+    disableNodePack: async (packId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.disableNodePack(packId);
+      } catch (err) {
+        return messageOf(err);
+      }
+      return await get().refreshComfy();
+    },
+
+    importWorkflow: async (name, workflow) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.importWorkflow(name, workflow);
+      } catch (err) {
+        return messageOf(err);
+      }
+      return await get().refreshComfy();
+    },
+
+    deleteWorkflow: async (name) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.deleteWorkflow(name);
+      } catch (err) {
+        return messageOf(err);
+      }
+      return await get().refreshComfy();
     },
 
     addCustomModel: async (body) => {

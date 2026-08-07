@@ -201,6 +201,53 @@ export interface BackendTask {
   installed_models: string[];
 }
 
+/* ---- ComfyUI node packs and workflows (Settings → Workflows) ---- */
+
+/** A catalog entry: third-party ComfyUI nodes, inert until granted. */
+export interface NodePack {
+  id: string;
+  name: string;
+  repo: string;
+  summary: string;
+  nodes: string[];
+  enabled: boolean;
+  /** The version the grant pinned, present only while enabled. */
+  version: string | null;
+}
+
+export interface NodePacks {
+  /** The engine's own wording for what enabling a pack permits. Shipped
+   * with every response so no client can present the action without the
+   * sentence — it is displayed verbatim, never paraphrased. */
+  warning: string;
+  builtin_nodes: string[];
+  packs: NodePack[];
+}
+
+/** What importing a workflow would do, before it does it. */
+export interface WorkflowReview {
+  class_types: string[];
+  packs_required: string[];
+  /** Packs this document needs that are not enabled. Non-empty means the
+   * engine refuses the import (409) until they are. */
+  packs_missing: string[];
+  /** Node types matching nothing at all — not builtin, not in any pack. */
+  unknown_nodes: string[];
+  /** `%%TOKEN%%` slots the engine fills per render. A workflow with none
+   * still renders; it just renders the same thing every time. */
+  placeholders: string[];
+  warnings: string[];
+}
+
+export interface InstalledWorkflow {
+  name: string;
+  nodes: number;
+  placeholders: string[];
+  /** False for a file on disk that cannot be parsed. Listed anyway: it
+   * still shadows a packaged template of the same name. */
+  readable: boolean;
+}
+
 export type LicenseVerdict = "commercial" | "conditions" | "personal-only";
 
 export interface ModelLicense {
