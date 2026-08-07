@@ -133,6 +133,7 @@ afterEach(async () => {
   await new Promise<void>((resolve) => engineServer.close(() => resolve()));
   fs.rmSync(dir, { recursive: true, force: true });
   delete process.env.VITE_DEV_SERVER_URL;
+  delete process.env.LOCALCUT_UPDATE_FEED;
 });
 
 const settle = async (ready: () => boolean): Promise<void> => {
@@ -151,7 +152,15 @@ const settle = async (ready: () => boolean): Promise<void> => {
  * imported at the top of the file.
  */
 async function loadMain(
-  options: { devUrl?: string; pairing?: unknown; keys?: Record<string, string>; lock?: boolean } = {},
+  options: {
+    devUrl?: string;
+    pairing?: unknown;
+    keys?: Record<string, string>;
+    lock?: boolean;
+    /** Stands in for the release feed. Read at module scope, so it has to
+     * be in the environment before main.ts is imported. */
+    feed?: string;
+  } = {},
 ) {
   const lock = options.lock ?? true;
   vi.resetModules();
@@ -166,6 +175,8 @@ async function loadMain(
   // tests in the same shell would otherwise send every store below at that
   // profile instead of this test's tmp dir. The override has its own tests.
   delete process.env.LOCALCUT_USERDATA;
+  if (options.feed === undefined) delete process.env.LOCALCUT_UPDATE_FEED;
+  else process.env.LOCALCUT_UPDATE_FEED = options.feed;
   if (options.pairing) fs.writeFileSync(pairingFile, JSON.stringify(options.pairing));
   if (options.keys) {
     // Written as `encrypted: false` so the blobs are plain base64 and this
@@ -191,6 +202,48 @@ async function loadMain(
 /** An IPC event from the app's own top frame. */
 const trusted = (url = APP_URL) => ({ senderFrame: { url, parent: null }, sender: {} });
 
+/** The same, but with the sender of the window main actually created — the
+ * handlers that show a dialog resolve it back through fromWebContents, and
+ * a bare `{}` sender is indistinguishable there from a closed window.
+ * Takes the stub instance because resetModules gives each test its own. */
+const senderStub = (electron: { BrowserWindow: { instances: { webContents: unknown }[] } }) => ({
+  senderFrame: { url: APP_URL, parent: null },
+  sender: electron.BrowserWindow.instances[0]?.webContents,
+});
+
+/** Entry names read out of a zip's central directory, so an assertion about
+ * a written bundle does not go through the code that wrote it. */
+function zipNames(zip: Buffer): string[] {
+  const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  let cursor = zip.readUInt32LE(eocd + 16);
+  const names: string[] = [];
+  for (let index = 0; index < zip.readUInt16LE(eocd + 10); index += 1) {
+    const nameLength = zip.readUInt16LE(cursor + 28);
+    names.push(zip.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8"));
+    cursor += 46 + nameLength + zip.readUInt16LE(cursor + 30) + zip.readUInt16LE(cursor + 32);
+  }
+  return names;
+}
+
+/** A loopback stand-in for the release feed. Real HTTP rather than a fetch
+ * stub: the handler's job includes reading a status code and a body it did
+ * not construct. */
+async function feedServing(status: number, body: unknown) {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/latest`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 const storedPairing = (): Record<string, unknown> | null =>
   fs.existsSync(pairingFile) ? JSON.parse(fs.readFileSync(pairingFile, "utf8")) : null;
 
@@ -204,6 +257,9 @@ describe("who may call the IPC handlers", () => {
     ["engine:pair", ["code", {}]],
     ["engine:unpair", []],
     ["providers:arm-keys", []],
+    // Opens a file-manager window. No secret leaves, but a page that can
+    // make the shell act on the OS at all is a foothold.
+    ["support:open-logs", []],
   ];
 
   it.each(gated)("%s refuses an untrusted sender", async (channel, args) => {
@@ -222,6 +278,21 @@ describe("who may call the IPC handlers", () => {
     expect(() => electron.invokeIpc(channel, trusted("https://evil.example/"), payload)).toThrow(
       /untrusted sender/,
     );
+  });
+
+  it.each([
+    // Both refuse in their own shape rather than the shared {ok,error} one,
+    // so they cannot ride the table above. The side effects are a native
+    // save dialog over the app and an outbound request — neither is
+    // something an injected frame gets to start.
+    ["support:export-bundle", { path: null, error: "untrusted sender" }],
+    ["update:check", { latest: null, url: null, error: "untrusted sender" }],
+  ])("%s refuses an untrusted sender", async (channel, expected) => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    expect(await electron.invokeIpc(channel, trusted("https://evil.example/"), {})).toEqual(
+      expected,
+    );
+    expect(electron.saveDialogs).toEqual([]);
   });
 
   it("engine:connection reports the refusal instead of rejecting", async () => {
@@ -955,5 +1026,132 @@ describe("the dev-only userData override", () => {
   it("leaves the profile alone when the variable is unset", async () => {
     const electron = await loadWith(false, undefined);
     expect(electron.app.getPath("userData")).toBe(dir);
+  });
+});
+
+describe("About → Support", () => {
+  it("opens the app's own log folder and nothing the renderer names", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+
+    // No argument is passed even though the renderer could send one — the
+    // handler takes the directory from main's own state.
+    const result = await electron.invokeIpc("support:open-logs", senderStub(electron), "/etc");
+
+    expect(electron.openedPaths).toEqual([path.join(dir, "logs")]);
+    expect(result).toEqual({ ok: true, error: null });
+  });
+
+  it("reports a folder the OS would not open", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    // openPath resolves with a reason rather than rejecting, so a handler
+    // that only awaited it would report success on every failure.
+    electron.shell.openPathFailure = "no application is registered";
+
+    expect(await electron.invokeIpc("support:open-logs", senderStub(electron))).toEqual({
+      ok: false,
+      error: "no application is registered",
+    });
+  });
+
+  it("writes a bundle carrying the logs, the versions and the system report", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const target = path.join(dir, "bundle.zip");
+    electron.dialog.result = { canceled: false, filePath: target };
+    console.log("[engine] a line worth keeping");
+
+    const result = await electron.invokeIpc("support:export-bundle", senderStub(electron), {
+      versions: { app: "0.1.0", engine: "0.1.0" },
+      system: { backend_mode: "local" },
+    });
+
+    expect(result).toEqual({ path: target, error: null });
+    const zip = fs.readFileSync(target);
+    // Read the names out of the central directory rather than trusting the
+    // writer: this asserts the file on disk, which is the artifact a user
+    // would actually send.
+    expect(zipNames(zip)).toEqual(["versions.json", "system.json", "logs/localcut.log"]);
+  });
+
+  it("treats a cancelled save as an outcome, not an error", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    electron.dialog.result = { canceled: true, filePath: "" };
+
+    // null error, null path: About shows a message for every non-null
+    // error it gets back, and there is nothing to apologize for here.
+    expect(await electron.invokeIpc("support:export-bundle", senderStub(electron), {})).toEqual({
+      path: null,
+      error: null,
+    });
+  });
+
+  it("refuses to write a report the renderer inflated", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const target = path.join(dir, "huge.zip");
+    electron.dialog.result = { canceled: false, filePath: target };
+
+    await electron.invokeIpc("support:export-bundle", senderStub(electron), {
+      versions: { app: "0.1.0" },
+      system: { padding: "x".repeat(512 * 1024) },
+    });
+
+    // The bundle is still written — the logs are the point of it — but the
+    // oversized half is replaced by its own size rather than carried.
+    const written = fs.readFileSync(target).toString("binary");
+    expect(written).not.toContain("xxxxxxxxxx");
+    expect(fs.statSync(target).size).toBeLessThan(64 * 1024);
+  });
+});
+
+describe("About → the update check", () => {
+  it("declines when no release feed was configured", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    // The default. The button is hidden in this state, so this is the
+    // answer for anything that calls the channel anyway.
+    expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
+      latest: null,
+      url: null,
+      error: "updates are not configured",
+    });
+  });
+
+  it("reads the version and link out of a GitHub release", async () => {
+    const feed = await feedServing(200, { tag_name: "v0.2.0", html_url: "https://example/rel" });
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
+        latest: "0.2.0", // the leading v is the tag's, not the version's
+        url: "https://example/rel",
+        error: null,
+      });
+    } finally {
+      await feed.close();
+    }
+  });
+
+  it("reports a feed that answered with an error status", async () => {
+    const feed = await feedServing(503, {});
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
+        latest: null,
+        url: null,
+        error: "HTTP 503",
+      });
+    } finally {
+      await feed.close();
+    }
+  });
+
+  it("reports a feed whose body says nothing about a version", async () => {
+    const feed = await feedServing(200, { message: "Not Found" });
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      expect(await electron.invokeIpc("update:check", senderStub(electron))).toMatchObject({
+        latest: null,
+        error: "the release feed made no sense",
+      });
+    } finally {
+      await feed.close();
+    }
   });
 });

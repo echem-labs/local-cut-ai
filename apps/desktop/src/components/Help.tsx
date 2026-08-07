@@ -11,6 +11,11 @@ type Panel = "shortcuts" | "glossary" | null;
  * HelpMenu hosts — one modal, many entry points. */
 export const OPEN_GLOSSARY_EVENT = "localcut:open-glossary";
 
+/** Same trick for the shortcut overlay: About's Support row offers it, and
+ * a second copy of the shortcut list to keep in sync is exactly the drift
+ * this modal exists to prevent. */
+export const OPEN_SHORTCUTS_EVENT = "localcut:open-shortcuts";
+
 const POP_WIDTH = 264;
 
 /** A small "What am I looking at?" popover for a workspace panel: three
@@ -134,6 +139,15 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
     const onOpen = () => setPanel("glossary");
     window.addEventListener(OPEN_GLOSSARY_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_GLOSSARY_EVENT, onOpen);
+  }, []);
+
+  // About → Support does the same for the shortcut overlay. Not a toggle
+  // like the "?" key: the caller is a button that says "open this", and a
+  // second click on it closing the modal it opened reads as a dead button.
+  useEffect(() => {
+    const onOpen = () => setPanel("shortcuts");
+    window.addEventListener(OPEN_SHORTCUTS_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_SHORTCUTS_EVENT, onOpen);
   }, []);
 
   // Modal focus management: trap Tab, own Escape, and hand focus back where

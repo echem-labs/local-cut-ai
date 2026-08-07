@@ -1,11 +1,17 @@
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 /**
- * The renderer gets exactly two things from the shell: where the engine is
- * (and how to authenticate), and a write-only surface for provider keys.
- * Keys flow renderer → main → engine; only presence booleans ever come
- * back. All other data flows over the engine's HTTP/WS API — no
- * filesystem shortcuts.
+ * The renderer gets three things from the shell: where the engine is (and
+ * how to authenticate), a write-only surface for provider keys, and the
+ * About pane's own errands. Keys flow renderer → main → engine; only
+ * presence booleans ever come back. All other data flows over the engine's
+ * HTTP/WS API — no filesystem shortcuts.
+ *
+ * The About errands are here because they are shell facts, not engine
+ * facts: the app's log files and the release feed belong to the process
+ * that writes and fetches them. Each is deliberately narrow — the renderer
+ * names no path and no URL, it only asks for the one folder and the one
+ * feed that main already knows about.
  */
 contextBridge.exposeInMainWorld("localcut", {
   getEngineConnection: () => ipcRenderer.invoke("engine:connection"),
@@ -22,6 +28,20 @@ contextBridge.exposeInMainWorld("localcut", {
   clearProviderKey: (id: string) => ipcRenderer.invoke("providers:clear-key", id),
   setTitleBarTheme: (theme: "dark" | "light") =>
     ipcRenderer.invoke("window:set-titlebar-theme", theme),
+  // Opens the app's own log directory. No argument: a path from the
+  // renderer would make this "open any folder on the machine".
+  openLogsFolder: () => ipcRenderer.invoke("support:open-logs"),
+  // The renderer contributes what only it has — the engine's versions and
+  // system report, which reach it over HTTP — and main adds the logs and
+  // asks the user where to save.
+  exportSupportBundle: (report: { versions: unknown; system: unknown }) =>
+    ipcRenderer.invoke("support:export-bundle", report),
+  checkForUpdates: () => ipcRenderer.invoke("update:check"),
+  // Whether a release feed was configured at all. Data, not a call: About
+  // needs the answer to decide whether to render the button, and a pane
+  // that must await an IPC round trip before it can lay itself out would
+  // flash a control it then takes away.
+  updatesConfigured: !!process.env.LOCALCUT_UPDATE_FEED?.trim(),
   getSystemTextScale: () => ipcRenderer.invoke("window:system-text-scale"),
   setUiZoom: (factor: number) => {
     const value = Number(factor);
