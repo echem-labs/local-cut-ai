@@ -1,0 +1,343 @@
+import { Activity, Check, Cpu, FileText, Keyboard, LifeBuoy, Package, RotateCw } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { t } from "../i18n";
+import { formatSize } from "./ModelLibrary";
+import { relativeTime } from "../lib/time";
+import { useApp } from "../store";
+import { Alert } from "./Alert";
+import { BrandMark } from "./BrandMark";
+import { OPEN_SHORTCUTS_EVENT } from "./Help";
+import { SpecChips } from "./SpecChips";
+
+/**
+ * About — what version this is, what machine it is on, and what the app
+ * does and does not send anywhere.
+ *
+ * The one pane that is a document rather than a settings list, so it is
+ * built from cards instead of `.setting-row`s (mock:
+ * `reference/v3/about-proposed.png`). Its job is to be readable by someone
+ * who is already having a bad time: the version line they are about to
+ * paste into an issue, the hardware that explains why a render was slow,
+ * and one button that packages the rest.
+ */
+export function AboutPane({ onShowLicenses }: { onShowLicenses: () => void }) {
+  const client = useApp((state) => state.client);
+  const system = useApp((state) => state.system);
+  const engineVersions = useApp((state) => state.engineVersions);
+  const storage = useApp((state) => state.storage);
+  const refreshStorage = useApp((state) => state.refreshStorage);
+  const remoteEngine = useApp((state) => state.remoteEngine);
+
+  // The data-folder row is the only thing here that needs a disk walk, and
+  // the Storage pane is the one that usually pays for it. Ask once on open
+  // so About is not blank for whoever came straight to it.
+  useEffect(() => {
+    void refreshStorage();
+  }, [refreshStorage]);
+
+  const dash = t("settings.engine.dash");
+  const versionLine = t("settings.about.versionLine", {
+    app: __APP_VERSION__,
+    engine: engineVersions?.engine_version ?? dash,
+    api: engineVersions ? `v${engineVersions.api_version}` : dash,
+  });
+
+  const used = storage
+    ? storage.models_bytes +
+      storage.cache_bytes +
+      storage.projects.reduce((sum, row) => sum + row.bytes, 0)
+    : null;
+
+  return (
+    <section className="about">
+      <h2>
+        <Package {...ICON} />
+        {t("settings.tabs.about")}
+      </h2>
+      <p className="hint">{t("settings.about.hint")}</p>
+
+      <div className="about-card about-version">
+        <BrandMark size={44} />
+        <div className="about-id">
+          <div className="about-name">{t("settings.about.appName")}</div>
+          {/* Mono, and one line: this is the string that gets pasted into
+              an issue, so it has to survive being copied by hand. */}
+          <div className="about-versions">{versionLine}</div>
+        </div>
+        <UpdateCheck />
+      </div>
+
+      <h3>{t("settings.about.machineHeading")}</h3>
+      <div className="about-card">
+        {/* The same chips the wizard showed when it picked models for this
+            machine — one rendering of what was detected, so the two
+            screens can never disagree about it. */}
+        {system ? <SpecChips system={system} /> : <p className="hint">{t("settings.about.machineLoading")}</p>}
+        <dl className="kv about-kv">
+          <dt>{t("settings.about.tier")}</dt>
+          <dd>{system ? system.hardware.tier : dash}</dd>
+          <dt>{t("settings.about.backends")}</dt>
+          <dd>{system?.backends?.chain.join(", ") ?? system?.backend_mode ?? dash}</dd>
+          <dt>{t("settings.about.engineRow")}</dt>
+          <dd>
+            {t(remoteEngine ? "settings.about.engineRemote" : "settings.about.engineLocal", {
+              url: client?.baseUrl ?? dash,
+            })}
+          </dd>
+          <dt>{t("settings.about.dataFolder")}</dt>
+          {/* Path and size together: "41 GB used" means nothing without
+              saying used where, and on a paired engine that is not even
+              this machine. An older engine sends no path — say so rather
+              than render an empty cell. */}
+          {storage?.data_dir ? (
+            <dd>
+              {storage.data_dir}
+              {used !== null && ` · ${t("settings.about.used", { size: formatSize(used) })}`}
+            </dd>
+          ) : (
+            // Prose, so it must leave the mono column style behind: set in
+            // the same face as a path, "this engine does not report its
+            // folder" reads as a value rather than as its absence.
+            <dd className="about-unset">{t("settings.about.dataFolderUnknown")}</dd>
+          )}
+        </dl>
+      </div>
+
+      <h3>{t("settings.about.supportHeading")}</h3>
+      <div className="about-card">
+        <SupportActions />
+      </div>
+
+      <div className="about-card about-privacy">
+        <div className="about-privacy-title">{t("settings.about.privacyHeading")}</div>
+        <p>{t("settings.about.privacyBody")}</p>
+      </div>
+
+      <div className="about-links">
+        <a href={LINKS.website} target="_blank" rel="noreferrer">
+          {t("settings.about.linkWebsite")}
+        </a>
+        <a href={LINKS.docs} target="_blank" rel="noreferrer">
+          {t("settings.about.linkDocs")}
+        </a>
+        <a href={LINKS.issues} target="_blank" rel="noreferrer">
+          {t("settings.about.linkIssues")}
+        </a>
+        <button className="link" onClick={onShowLicenses}>
+          {t("settings.about.licenses")}
+        </button>
+      </div>
+      <p className="about-fine">{t("settings.about.fine", { year: BUILD_YEAR })}</p>
+    </section>
+  );
+}
+
+const ICON = { size: 15, strokeWidth: 1.8 } as const;
+const ICON_SM = { size: 13, strokeWidth: 1.8 } as const;
+
+/** Derived from package.json's `homepage`, so there is one place to change
+ * when the repo moves and no URL is retyped into a catalog string. */
+const LINKS = {
+  website: __HOMEPAGE__,
+  docs: `${__HOMEPAGE__}#readme`,
+  issues: `${__HOMEPAGE__}/issues`,
+};
+
+/** The copyright year is the BUILD's, not the reader's clock: a machine
+ * with a wrong date should not restate this app's provenance. */
+const BUILD_YEAR = __BUILD_YEAR__;
+
+const CHECKED_KEY = "localcut.updateCheckedAt";
+
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "current" }
+  | { kind: "available"; version: string; url: string }
+  | { kind: "failed"; message: string };
+
+/**
+ * The update check, which happens only when asked.
+ *
+ * Absent entirely until a release feed is configured — the shell reports
+ * whether one is, and hiding the control is the honest form of "we cannot
+ * answer that yet". A button that always said "could not check" would be
+ * worse than no button, and a background check would break the promise the
+ * privacy card makes two cards down.
+ */
+function UpdateCheck() {
+  const [state, setState] = useState<UpdateState>({ kind: "idle" });
+  const [checkedAt, setCheckedAt] = useState<number | null>(() => {
+    const stored = Number(localStorage.getItem(CHECKED_KEY));
+    return Number.isFinite(stored) && stored > 0 ? stored : null;
+  });
+
+  if (!window.localcut?.updatesConfigured) return null;
+
+  const check = () => {
+    setState({ kind: "checking" });
+    void window.localcut.checkForUpdates().then((result) => {
+      const now = Math.floor(Date.now() / 1000);
+      localStorage.setItem(CHECKED_KEY, String(now));
+      setCheckedAt(now);
+      if (result.error) return setState({ kind: "failed", message: result.error });
+      // Same version, or an older one: a feed that has rolled back is not
+      // an update, and offering one would walk the user backwards.
+      if (!result.latest || !isNewer(result.latest, __APP_VERSION__))
+        return setState({ kind: "current" });
+      setState({ kind: "available", version: result.latest, url: result.url ?? "" });
+    });
+  };
+
+  return (
+    <div className="about-update">
+      <div className="about-update-row">
+        {state.kind === "current" && (
+          <span className="about-uptodate">
+            <Check size={13} strokeWidth={2.4} aria-hidden="true" />
+            {t("settings.about.upToDate")}
+          </span>
+        )}
+        {state.kind === "available" && (
+          <a className="about-newer" href={state.url} target="_blank" rel="noreferrer">
+            {t("settings.about.updateAvailable", { version: state.version })}
+          </a>
+        )}
+        <button className="btn-ghost" disabled={state.kind === "checking"} onClick={check}>
+          <RotateCw {...ICON_SM} aria-hidden="true" />
+          {state.kind === "checking"
+            ? t("settings.about.checking")
+            : t("settings.about.checkUpdates")}
+        </button>
+      </div>
+      {state.kind === "failed" && <Alert message={state.message} />}
+      <p className="about-checked">
+        {checkedAt
+          ? t("settings.about.checkedAt", { when: relativeTime(checkedAt) })
+          : t("settings.about.neverChecked")}
+      </p>
+    </div>
+  );
+}
+
+/** Numeric semver compare, prerelease ignored — enough to answer "is the
+ * feed ahead of us", which is the only question asked. A tag that does not
+ * parse compares as not-newer: never offering an update is a smaller
+ * failure than offering a downgrade. */
+function isNewer(candidate: string, current: string): boolean {
+  const parts = (value: string) => value.split(".").map((piece) => Number.parseInt(piece, 10));
+  const a = parts(candidate);
+  const b = parts(current);
+  for (let index = 0; index < 3; index += 1) {
+    const left = a[index];
+    const right = b[index];
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+    if (left !== right) return left > right;
+  }
+  return false;
+}
+
+/**
+ * The four things someone can do when they need help, in the order they
+ * escalate: copy a line, package the details, read the log yourself, or
+ * find out which key you were looking for.
+ */
+function SupportActions() {
+  const system = useApp((state) => state.system);
+  const engineVersions = useApp((state) => state.engineVersions);
+  const client = useApp((state) => state.client);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  const unknown = t("settings.about.diagUnknown");
+  const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
+
+  const copyDiagnostics = () => {
+    const lines = [
+      t("settings.about.diagApp", { version: __APP_VERSION__ }),
+      t("settings.about.diagEngine", {
+        engine: engineVersions?.engine_version ?? unknown,
+        api: engineVersions?.api_version ?? unknown,
+      }),
+      t("settings.about.diagBackend", { backend: system?.backend_mode ?? unknown }),
+      t("settings.about.diagUrl", { url: client?.baseUrl ?? unknown }),
+      system
+        ? t("settings.about.diagHardware", {
+            tier: system.hardware.tier,
+            gpu: gpu
+              ? t("settings.about.diagGpu", { name: gpu.name, vram: gpu.vram_gb })
+              : t("settings.about.diagNoGpu"),
+            ram: system.hardware.ram_gb,
+          })
+        : t("settings.about.diagHardwareUnknown"),
+    ];
+    void navigator.clipboard.writeText(lines.join("\n")).then(() => setCopied(true));
+  };
+
+  const exportBundle = () => {
+    setError(null);
+    setSaved(null);
+    setBusy(true);
+    // The renderer contributes what only it has — these reach it over
+    // HTTP — and the shell adds its own logs and asks where to save.
+    void window.localcut
+      ?.exportSupportBundle({ versions: { app: __APP_VERSION__, ...engineVersions }, system })
+      .then((result) => {
+        if (result.error) setError(result.error);
+        else if (result.path) setSaved(result.path);
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const openLogs = () => {
+    setError(null);
+    void window.localcut?.openLogsFolder().then((result) => {
+      if (result.error) setError(result.error);
+    });
+  };
+
+  return (
+    <>
+      <div className="about-actions">
+        <button className="btn-ghost" onClick={copyDiagnostics}>
+          <Activity {...ICON_SM} aria-hidden="true" />
+          {copied ? t("settings.about.copied") : t("settings.about.copy")}
+        </button>
+        <button className="btn-ghost" disabled={busy} onClick={exportBundle}>
+          <LifeBuoy {...ICON_SM} aria-hidden="true" />
+          {busy ? t("settings.about.bundling") : t("settings.about.exportBundle")}
+        </button>
+        <button className="btn-ghost" onClick={openLogs}>
+          <FileText {...ICON_SM} aria-hidden="true" />
+          {t("settings.about.openLogs")}
+        </button>
+        <button
+          className="btn-ghost"
+          onClick={() => window.dispatchEvent(new Event(OPEN_SHORTCUTS_EVENT))}
+        >
+          <Keyboard {...ICON_SM} aria-hidden="true" />
+          {t("settings.about.shortcuts")}
+        </button>
+      </div>
+      <p className="sd">{t("settings.about.supportHint")}</p>
+      {/* Where it landed, named. A save dialog that closes with no trace
+          leaves the user hunting for the file they just made. */}
+      {saved && (
+        <p className="about-saved" role="status">
+          <Cpu {...ICON_SM} aria-hidden="true" />
+          {t("settings.about.bundleSaved", { path: saved })}
+        </p>
+      )}
+      {error && <Alert message={error} onDismiss={() => setError(null)} />}
+    </>
+  );
+}

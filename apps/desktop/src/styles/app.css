@@ -5110,6 +5110,169 @@ button.link:hover {
   font-size: var(--text-xs);
 }
 
+/* ---- About (U6, mock reference/v3/about-proposed.png) ----
+   The one settings pane built from cards rather than .setting-row: it is a
+   document about the app, not a list of things to change. The mock's own
+   values ARE the tokens (surface-1 on border at radius-m), so nothing here
+   introduces a color or a radius — see cross-cutting rule 1. */
+.about-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-4);
+}
+
+.about-card + .about-card {
+  margin-top: var(--space-3);
+}
+
+.about h3 {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: var(--space-6) 0 var(--space-2);
+}
+
+.about-version {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.about-name {
+  font-size: var(--text-s);
+  font-weight: 650;
+}
+
+/* Selectable and mono: this line exists to be copied into a bug report. */
+.about-versions {
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  user-select: text;
+}
+
+/* Pushed to the trailing edge, but only as far as there is room — below the
+   card's own wrap it drops to its own line rather than crushing the mark. */
+.about-update {
+  margin-left: auto;
+  text-align: right;
+}
+
+.about-update-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.about-uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--status-final);
+}
+
+.about-newer {
+  font-size: var(--text-xs);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.about-checked {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.about-kv {
+  margin-top: var(--space-3);
+}
+
+/* The path can be long and has no spaces to break at — let it wrap rather
+   than widen the grid column and push the whole pane sideways. */
+.about-kv dd {
+  overflow-wrap: anywhere;
+}
+
+/* A sentence standing in for a missing value — the mono face of the column
+   beside it would present the explanation as the answer. */
+.about-kv dd.about-unset {
+  font-family: var(--font-ui);
+  color: var(--text-tertiary);
+}
+
+.about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.about-card .sd {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  max-width: 60ch;
+}
+
+.about-saved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* The one card that carries a promise rather than a fact — the brighter
+   border is the mock's way of saying read this one. */
+.about-privacy {
+  margin-top: var(--space-6);
+  border-color: var(--border-hi);
+}
+
+.about-privacy-title {
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+
+.about-privacy p {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  max-width: 68ch;
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+}
+
+.about-links a,
+.about-links button.link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: inherit;
+}
+
+.about-links a:hover,
+.about-links button.link:hover {
+  text-decoration: underline;
+}
+
+.about-fine {
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
 /* ---- global command palette (review 4 §SH4) ---- */
 .cmdk-backdrop {
   position: fixed;
