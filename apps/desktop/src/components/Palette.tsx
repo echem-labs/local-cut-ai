@@ -3,6 +3,8 @@ import {
   FileText,
   LayoutTemplate,
   Library as LibraryIcon,
+  Megaphone,
+  PlayCircle,
   Settings as SettingsIcon,
   Sparkles,
   SunMoon,
@@ -93,6 +95,31 @@ export function Palette() {
         label: t("palette.saveTemplate"),
         icon: LayoutTemplate,
         run: () => useApp.getState().openSaveTemplate(currentProject),
+      });
+      // Both are reachable from the workspace already (the board menu, the
+      // export row) — the palette is where you look when you know the words
+      // but not the screen, which is exactly the state a stalled project
+      // leaves you in.
+      // Both report a rejection by returning it, and the palette closes on
+      // run — so the message has nowhere of its own to land. `board` is the
+      // scope the project screen renders for exactly this. Dropping it would
+      // leave "Prepare to publish" on a project whose script has not rendered
+      // doing nothing at all, when the engine said precisely why.
+      const report = (message: string | null) =>
+        useApp.setState(message ? { actionError: { scope: "board", message } } : {});
+      list.push({
+        key: "resume-render",
+        group: "projects",
+        label: t("palette.resumeRender"),
+        icon: PlayCircle,
+        run: () => void useApp.getState().resumeRender().then(report),
+      });
+      list.push({
+        key: "prepare-publish",
+        group: "projects",
+        label: t("palette.preparePublish"),
+        icon: Megaphone,
+        run: () => void useApp.getState().preparePublish().then(report),
       });
     }
     for (const project of projects) {

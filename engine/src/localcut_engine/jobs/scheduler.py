@@ -391,7 +391,18 @@ class Scheduler:
         if job.attempt < len(FALLBACK_LADDER):
             rung = FALLBACK_LADDER[job.attempt]
             job.attempt += 1
-            job.spec.params = {**job.spec.params, **rung}
+            params = {**job.spec.params, **rung}
+            # A rung's resolution is a CEILING, not an assignment. The plain
+            # merge was right only while nothing else set `resolution_scale`
+            # — and the failure card's "render this smaller" now does exactly
+            # that. Without the min, a node the user had pinned to 0.5 came
+            # back from an out-of-memory failure at rung zero's 0.75: a
+            # bigger render than the one that just exhausted the GPU, chosen
+            # by the mechanism meant to rescue it.
+            asked = job.spec.params.get("resolution_scale")
+            if asked is not None and "resolution_scale" in rung:
+                params["resolution_scale"] = min(float(asked), float(rung["resolution_scale"]))
+            job.spec.params = params
             job.status = JobStatus.QUEUED
             job.progress = 0.0
             if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
@@ -401,7 +412,10 @@ class Scheduler:
                 job_id=job.id,
                 node_id=job.spec.node_id,
                 attempt=job.attempt,
-                fallback=rung,
+                # The rung as APPLIED, not as written: the desktop renders
+                # this as "retrying at N%", which has to be the scale the
+                # retry actually runs at.
+                fallback={key: params[key] for key in rung},
                 project_id=job.project_id,
             )
             self.notify()

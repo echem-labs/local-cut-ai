@@ -75,7 +75,8 @@
       "bullets": [
         "Your scenes in play order — a wider block runs longer.",
         "The diamonds between blocks set the transition: cut, crossfade, or dip to black.",
-        "▶ plays a quick draft preview of the whole cut, scene by scene."
+        "▶ plays a quick draft preview of the whole cut, scene by scene.",
+        "Under the blocks: the voice in each scene and the music across the cut. A gap means nothing has rendered there yet."
       ]
     },
     "inspector": {

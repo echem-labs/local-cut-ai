@@ -49,7 +49,8 @@
     "fpsValue": "{fps} fps",
     "resolution": "Resolution",
     "resolutionAuto": "Auto (full size)",
-    "resolutionValue": "{px}p"
+    "resolutionValue": "{px}p",
+    "resume": "Resume rendering"
   },
   "cta": {
     "create": "Create final video",
@@ -57,7 +58,8 @@
     "creating": "Creating final video…",
     "download": "Download MP4",
     "pending": "Create final video · {done}/{total}",
-    "pendingTitle": "Every scene's video has to finish first - {done} of {total} are done"
+    "pendingTitle": "Every scene's video has to finish first - {done} of {total} are done",
+    "busyTitle": "Something else is still rendering - this becomes available once the queue is clear"
   },
   "scriptFailed": "Script generation failed: {error}",
   "retryScript": "Try again",
@@ -80,5 +82,9 @@
     "edit": "AI edit",
     "regenerate": "new take",
     "restore": "restore"
-  }
+  },
+  "stalled": "This project is waiting on renders that are no longer queued - the engine was restarted or stopped mid-render.",
+  "resume": "Resume rendering",
+  "resuming": "Resuming...",
+  "stalledLabel": "Rendering stopped"
 }

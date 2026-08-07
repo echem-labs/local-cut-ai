@@ -83,6 +83,15 @@ const SETS = {
     height: 145,
     states: [["canvas", "canvas-mock.html"]],
   },
+  /* The out-of-memory failure card (U5). Same doctrine as the canvas set:
+     not a window, and not even a panel — the card sits past the fold of a
+     scrolling inspector, so the frame is the card's own box at the size it
+     measures in a 1440x900 window (see parity-u5.mjs). */
+  u5: {
+    width: 388,
+    height: 142,
+    states: [["inspector-failure", "u5-mock.html"]],
+  },
 };
 const setName = arg("set", "wizard");
 const SET = SETS[setName];
@@ -123,6 +132,9 @@ const MASKABLE = {
   library: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
   "library-tools": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
   "library-menu": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
+  /* The card masks only its warning mark: a 14px lucide triangle in the
+     app, a text glyph here. Everything else in the frame IS the design. */
+  "inspector-failure": [".head .mark"],
   "wiz-1": [".mark"],
   "wiz-2": [],
   "wiz-3": [".row .meta", ".row .check", ".primary", ".hintline"],
@@ -270,10 +282,19 @@ const SNAP_SESSION = `
 .actions { margin-top: 0 !important; }
 `;
 
+/* ---- the u5 set's snap. The app's `.chip` pins an 18px line box (it is
+   what anchors the chip-row's rhythm), and SNAP_COMMON's blanket
+   line-height:normal would otherwise draw every chip 3px shorter here than
+   the app draws it. */
+const SNAP_U5 = `
+.chip { line-height: 18px !important; }
+`;
+
 const SNAP =
   SNAP_COMMON +
   (setName === "home" ? SNAP_HOME : "") +
-  (setName === "session" ? SNAP_SESSION : "");
+  (setName === "session" ? SNAP_SESSION : "") +
+  (setName === "u5" ? SNAP_U5 : "");
 
 async function render(win, name, file) {
   const [base, query] = file.split("?");

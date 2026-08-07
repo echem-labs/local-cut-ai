@@ -39,7 +39,12 @@
     "voice": "Which narrator speaks — a style like \"deep male\" or a Kokoro id. Empty uses the default.",
     "speed": "1.0 is normal. The scene re-times to match the new length.",
     "ownImage": "The clip animates from your picture instead of the generated still.",
-    "transition": "How one scene flows into the next."
+    "transition": "How one scene flows into the next.",
+    "resume": "Queue whatever this project still owes. Useful if the engine stopped mid-render and the board is waiting on work that is no longer in the queue.",
+    "publishKit": "Writes a title, description and hashtags from your script, and renders a thumbnail to go with them. Nothing is uploaded anywhere.",
+    "applyEdit": "Make the changes listed above. Until you press this, nothing has been touched.",
+    "audioLane": "The sound under your cut: one row for the narration in each scene, one for the music. A gap means nothing has rendered there yet.",
+    "rewriteScript": "Ask for a new screenplay from your note. The storyboard is rebuilt from it, so scene-level edits are replaced."
   },
   "glossary": [
     {
@@ -141,6 +146,18 @@
     {
       "term": "Chain",
       "def": "Everything that feeds a node plus everything it feeds. Select a node in the flowchart and its chain lights up while the rest dims, so you can see what a change will touch."
+    },
+    {
+      "term": "Publish kit",
+      "def": "A suggested thumbnail plus a title, description and hashtags, written from your script. Built on request once the video is finished - it renders like anything else, so it takes a moment and can be regenerated."
+    },
+    {
+      "term": "Proposed edit",
+      "def": "What an instruction WOULD change, worked out and shown before anything happens. Nothing is saved, queued or recorded until you press Apply."
+    },
+    {
+      "term": "Out of memory",
+      "def": "The graphics card could not fit a render. The engine retries it smaller on its own; when even that fails it says so and offers the ways out - a smaller size, a lighter model, or cloud hardware."
     }
   ]
 }

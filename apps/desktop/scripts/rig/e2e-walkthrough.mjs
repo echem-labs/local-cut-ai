@@ -229,6 +229,10 @@ try {
   // round trip Add node makes through /patch (U4). Promote is the bridge a
   // tool session already offers, and it is what gives this walk a full
   // pipeline graph without a second trip through Home.
+  //
+  // Everything from here on has a project workspace mounted, which is what
+  // makes the peaks 422 below possible; nothing before it is excused.
+  const beforeWorkspace = (await health()).consoleErrors.length;
   const canvas = await evalInApp(`
     await page.evaluate(() => {
       const button = [...document.querySelectorAll(".tool-actions button")].find((b) =>
@@ -284,6 +288,41 @@ try {
   );
   await shoot("02d-canvas-add-node.png");
 
+  // 2e. The publish kit (U5). `POST /package` is the last project-level
+  // engine verb the desktop had never called, and it is a real round trip
+  // here: the mock backend implements the metadata task, so the two nodes
+  // it adds to the graph actually render and come back through the queue.
+  //
+  // Driven from the palette rather than the export row, because the kit's
+  // own surface waits for a finished export and this walk has no time to
+  // render one — the round trip is what is being checked, not the gating.
+  const publish = await evalInApp(`
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyK");
+    await page.keyboard.up("Control");
+    // .cmdk, which is what the palette's root and input actually are.
+    await page.waitForSelector(".cmdk input", { timeout: 5000 });
+    await page.type(".cmdk input", "publish");
+    await page.evaluate(() => {
+      const row = [...document.querySelectorAll('.cmdk [role="option"]')].find((b) =>
+        /prepare to publish/i.test(b.textContent || ""),
+      );
+      row?.click();
+    });
+    // Both nodes join the GRAPH, so the flowchart is where they show up.
+    await page.waitForSelector('[data-node="metadata"]', { timeout: 30000 });
+    return page.evaluate(() => ({
+      metadata: !!document.querySelector('[data-node="metadata"]'),
+      thumbnail: !!document.querySelector('[data-node="thumbnail"]'),
+    }));
+  `);
+  check(
+    "Prepare to publish adds both kit nodes to the graph",
+    publish.metadata && publish.thumbnail,
+    JSON.stringify(publish),
+  );
+  await shoot("02e-publish-kit.png");
+
   // Back to Home for the stops that follow.
   await evalInApp(`
     await page.evaluate(() => {
@@ -317,10 +356,22 @@ try {
   await shoot("03-after-settings.png");
 
   const report = await health();
+  // The peaks route answers 422 for an artifact that is not decodable audio,
+  // which is every narration and music file the MOCK backend writes: JSON
+  // placeholders with a .wav name. U5's audio lanes ask for peaks on each of
+  // them the moment a timeline is on screen, and Chromium logs the failed
+  // response however gracefully the app handles it (`useArtifactPeaks`
+  // returns null; the segment draws empty). Scoped to after the first
+  // workspace and to that one status — the walk filters the same thing the
+  // same way, and every other status still fails here.
+  const peaksNoise = /Failed to load resource[^|]*422 \(Unprocessable/;
+  const consoleErrors = report.consoleErrors.filter(
+    (line, at) => !(at >= beforeWorkspace && peaksNoise.test(line)),
+  );
   check(
     "no console errors across the walkthrough",
-    report.consoleErrors.length === 0 && report.pageErrors.length === 0,
-    JSON.stringify([...report.consoleErrors, ...report.pageErrors].slice(0, 3)),
+    consoleErrors.length === 0 && report.pageErrors.length === 0,
+    JSON.stringify([...consoleErrors, ...report.pageErrors].slice(0, 3)),
   );
 } finally {
   await stopRig(rig);

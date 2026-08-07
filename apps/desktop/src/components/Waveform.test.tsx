@@ -93,6 +93,31 @@ describe("Waveform", () => {
     expect(audio.currentTime).toBeCloseTo(10);
   });
 
+  it("rewinds the readout when the artifact underneath it changes", async () => {
+    // The transport belongs to the artifact, not to the component. A
+    // regenerate swaps `hash` under a mounted player, and the element's own
+    // currentTime resets with its src — but nothing fires `timeupdate` until
+    // the new track plays, so a `played` left where the old one stopped
+    // paints the new bars and its clock to a position it has never been at.
+    const { view } = mount();
+    await waitFor(() =>
+      expect(view.container.querySelectorAll(".wave-plot rect").length).toBeGreaterThan(0),
+    );
+    const plot = view.container.querySelector(".wave-plot") as HTMLButtonElement;
+    plot.getBoundingClientRect = () =>
+      ({ left: 0, width: 200, top: 0, height: 64, right: 200, bottom: 64 }) as DOMRect;
+    fireEvent.click(plot, { clientX: 50 });
+    expect(view.container.querySelector(".wave-time")?.textContent).toBe("0:10 / 0:40");
+
+    view.rerender(
+      <Waveform projectId="p1" hash="h2" src="http://engine/b.wav" ariaLabel="music preview" />,
+    );
+    await waitFor(() =>
+      expect(view.container.querySelectorAll(".wave-plot rect").length).toBeGreaterThan(0),
+    );
+    expect(view.container.querySelector(".wave-time")?.textContent).toBe("0:00 / 0:40");
+  });
+
   it("previews the seek-to time under the pointer, and clears it on leave", async () => {
     const { view } = mount();
     await waitFor(() =>
