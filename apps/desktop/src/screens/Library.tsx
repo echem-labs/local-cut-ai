@@ -7,6 +7,7 @@ import { ProjectTile, useTileLifecycle } from "../components/ProjectTile";
 import { plural, t } from "../i18n";
 import { tileStatus } from "../lib/tiles";
 import { isToolSession } from "../lib/tools";
+import { useMenuFit } from "../lib/useMenuFit";
 import { useApp, type LibraryFilter } from "../store";
 
 const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
@@ -56,6 +57,7 @@ export function Library() {
   const [sort, setSort] = useState<SortKey>("recent");
   const [desc, setDesc] = useState(SORT_STARTS_DESCENDING.recent);
   const [sortOpen, setSortOpen] = useState(false);
+  const fit = useMenuFit();
   const [shown, setShown] = useState(PAGE);
   const searchRef = useRef<HTMLInputElement>(null);
   const tiles = useTileLifecycle({ onSaveTemplate: openSaveTemplate });
@@ -199,7 +201,7 @@ export function Library() {
             <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           {sortOpen && (
-            <div className="menu-pop sort-menu" role="menu">
+            <div className="menu-pop sort-menu" role="menu" ref={fit}>
               {SORTS.map((key) => (
                 <button
                   key={key}

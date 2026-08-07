@@ -13,7 +13,7 @@
  * decorative: it is what makes the decision *informed*, which is the half
  * an API cannot enforce.
  */
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkflowsPane } from "./WorkflowsPane";
@@ -105,6 +105,34 @@ describe("what the pane shows", () => {
     expect(
       screen.getByText(t("settings.workflows.enabledAt", { version: "1.0.7" })),
     ).toBeInTheDocument();
+  });
+
+  it("makes the repo somewhere you can go, not an address to retype", async () => {
+    // A pack is third-party Python that will run with the models, the files
+    // and the network. Going and looking at it first is the whole of the
+    // diligence this screen asks for, and the repo was printed as text.
+    await mount();
+    const link = screen.getByRole("link", {
+      name: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+    });
+    expect(link).toHaveAttribute("href", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite");
+    // `_blank` is what routes the click through the main process's window
+    // open handler, which hands http(s) to the system browser and denies
+    // every other scheme. A same-window navigation would bypass it.
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("offers that link again in the dialog that asks for the grant", async () => {
+    // The moment it is worth following is the one where the operator is
+    // being asked to vouch for the code behind it.
+    await mount();
+    await openEnable();
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByRole("link", {
+        name: "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+      }),
+    ).toHaveAttribute("href", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite");
   });
 
   it("says a workflow with no slots renders the same thing every time", async () => {

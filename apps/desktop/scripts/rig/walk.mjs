@@ -538,6 +538,99 @@ try {
         "NOTE no audio lanes in this profile (nothing rendered) - segment alignment unchecked",
       );
     }
+
+    // The board's overflow menu, at the smallest window the walk uses.
+    //
+    // It carries about twenty rows — history, audio, captions, frame rate,
+    // resolution, the pro-editor handoff, workspace — and was drawn at its
+    // full height wherever it happened to land, so the last sections were
+    // simply off the bottom of the screen with no scrollbar to say so. This
+    // is a layout fact and needs real widths and a real window, which is
+    // why it is here rather than in a component test.
+    await setSize(1200, 800);
+    const menu = await evalInApp(`
+      await page.evaluate(() => {
+        const trigger = [...document.querySelectorAll(".board-menu .icon-btn")][0];
+        trigger?.click();
+      });
+      await page.waitForSelector(".menu-pop", { timeout: 5000 });
+      return page.evaluate(() => {
+        const pop = document.querySelector(".menu-pop");
+        const box = pop.getBoundingClientRect();
+        const rows = [...pop.querySelectorAll('[role^="menuitem"], a[role="menuitem"]')];
+        const last = rows[rows.length - 1]?.getBoundingClientRect() ?? null;
+        return {
+          bottom: Math.round(box.bottom),
+          innerHeight: window.innerHeight,
+          rows: rows.length,
+          // Capped and scrolled, not capped and clipped: the content is
+          // taller than the box, and the box can be scrolled to reach it.
+          scrollable: pop.scrollHeight > pop.clientHeight + 1,
+          scrolls: getComputedStyle(pop).overflowY,
+          // The last row is inside the scroll container's own content, so
+          // scrolling to the end must actually bring it into the window.
+          lastReachable: last ? last.height > 0 : false,
+        };
+      });
+    `);
+    check(
+      "the board menu stays inside the window instead of running off the bottom",
+      menu.bottom <= menu.innerHeight + 1,
+      JSON.stringify(menu),
+    );
+    check(
+      "a board menu too tall for the window scrolls rather than clipping",
+      !menu.scrollable || menu.scrolls === "auto" || menu.scrolls === "scroll",
+      JSON.stringify(menu),
+    );
+    await shoot("board-menu-1200.png");
+
+    // Save points, opened from that menu: the dialog the field recipe used
+    // to miss. Its name box sits in a form row rather than under a label,
+    // so every rule that dressed a dialog control was scoped past it and it
+    // rendered as the platform's own text box — a light fill and a white
+    // ring in the middle of a dark dialog. Nothing in the unit suite can see
+    // that: vitest stubs CSS imports away and jsdom loads no stylesheet.
+    const fields = await evalInApp(`
+      await page.evaluate(() => {
+        const row = [...document.querySelectorAll('.menu-pop [role="menuitem"]')].find(
+          (b) => /save points/i.test(b.textContent || ""));
+        row?.click();
+      });
+      await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+      return page.evaluate(() => {
+        const modal = document.querySelector('[role="dialog"]');
+        // Resolve the token the same way the stylesheet does rather than
+        // hardcoding an rgb() here, which would be a third copy of it.
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = "var(--surface-2)";
+        modal.appendChild(probe);
+        const want = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const controls = [...modal.querySelectorAll("input, textarea")].filter(
+          (el) => !["checkbox", "radio", "file", "range"].includes(el.type),
+        );
+        const box = modal.getBoundingClientRect();
+        return {
+          want,
+          controls: controls.length,
+          backgrounds: controls.map((el) => getComputedStyle(el).backgroundColor),
+          insideViewport: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+        };
+      });
+    `);
+    check(
+      "every text control in a dialog wears the app's field, not the platform's",
+      fields.controls > 0 && fields.backgrounds.every((background) => background === fields.want),
+      JSON.stringify(fields),
+    );
+    check(
+      "the save points dialog fits the window",
+      fields.insideViewport,
+      JSON.stringify(fields),
+    );
+    await shoot("save-points-1200.png");
+    await evalInApp(`await page.keyboard.press("Escape"); return null;`);
   }
 
   // U6: Settings → About. A reading surface built from cards rather than
