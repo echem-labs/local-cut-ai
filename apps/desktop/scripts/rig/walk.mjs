@@ -625,6 +625,93 @@ try {
     }
     await shoot(`about-${width}.png`);
   }
+  // U6: Settings → Workflows. Two list shapes the rest of Settings has no
+  // equivalent of — a pack row with a repo URL (long, unbreakable, and the
+  // widest thing on the pane) beside a right-aligned button, and the grant
+  // dialog, which carries the engine's code-execution warning as a
+  // paragraph inside a modal that also holds a field and a checkbox.
+  await setSize(1200, 800);
+  const packs = await evalInApp(`
+    await page.evaluate(() => {
+      const tab = [...document.querySelectorAll(".settings-grid nav button")].find(
+        (b) => (b.textContent || "").trim() === "Workflows");
+      tab?.click();
+    });
+    await page.waitForTimeout(600);
+    return page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".pack-row")];
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+        packs: rows.length,
+        // The repo URL must wrap inside its row rather than push the row
+        // wider than the pane that holds it.
+        escaped: rows.filter((row) => {
+          const box = row.getBoundingClientRect();
+          return [...row.querySelectorAll("button, .pack-repo")].some((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1);
+          });
+        }).length,
+      };
+    });
+  `);
+  // Zero packs is a legitimate catalog, and an engine that never answered
+  // looks identical from here — so this reports rather than fails, and the
+  // dialog check below is skipped rather than silently passed.
+  if (packs.packs === 0) {
+    console.log("NOTE Workflows: no node packs listed - the grant dialog went unchecked");
+  }
+  check(
+    "1200px Workflows: adds no horizontal scroll",
+    packs.scrollWidth <= packs.innerWidth + 1,
+    JSON.stringify(packs),
+  );
+  check(
+    "1200px Workflows: nothing overflows its pack row",
+    packs.escaped === 0,
+    JSON.stringify(packs),
+  );
+  await shoot("workflows-1200.png");
+
+  if (packs.packs > 0) {
+    const grant = await evalInApp(`
+      await page.evaluate(() => {
+        const enable = [...document.querySelectorAll(".pack-row button")].find(
+          (b) => (b.textContent || "").trim() === "Enable");
+        enable?.click();
+      });
+      await page.waitForSelector(".pack-modal", { timeout: 5000 });
+      return page.evaluate(() => {
+        const modal = document.querySelector(".pack-modal");
+        const box = modal.getBoundingClientRect();
+        const confirm = [...modal.querySelectorAll("button")].pop();
+        return {
+          warned: !!modal.querySelector(".banner.warning")?.textContent?.trim(),
+          // The dangerous button starts unpressable, and stays that way
+          // until a version is typed AND the box is ticked.
+          confirmDisabled: confirm.disabled,
+          checkbox: !!modal.querySelector('input[type="checkbox"]'),
+          insideViewport: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        };
+      });
+    `);
+    check(
+      "1200px Workflows: the grant dialog warns, and cannot be confirmed unread",
+      grant.warned && grant.confirmDisabled && grant.checkbox,
+      JSON.stringify(grant),
+    );
+    check(
+      "1200px Workflows: the grant dialog fits the window",
+      grant.insideViewport && grant.scrollWidth <= grant.innerWidth + 1,
+      JSON.stringify(grant),
+    );
+    await shoot("workflows-grant.png");
+    await evalInApp(`await page.keyboard.press("Escape"); return null;`);
+  }
+
   // Leave Settings so the walk's last screenshots show Home, as before.
   await evalInApp(`
     await page.evaluate(() => {

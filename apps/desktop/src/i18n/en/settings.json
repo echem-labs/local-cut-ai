@@ -10,7 +10,8 @@
     "models": "Models",
     "storage": "Storage",
     "engine": "Engine",
-    "about": "About"
+    "about": "About",
+    "workflows": "Workflows"
   },
   "theme": {
     "system": "System",
@@ -224,5 +225,35 @@
     "linkIssues": "Report an issue",
     "fine": "© {year} · Built on open models — each one's license is shown where you download it.",
     "machineLoading": "Reading this machine…"
+  },
+  "workflows": {
+    "hint": "Custom ComfyUI graphs, and the third-party node packs they need. Only relevant if you run ComfyUI — everything ships working without any of this.",
+    "packsHeading": "Node packs",
+    "packsHint": "A pack is third-party code. Enabling one lets it run on this machine; nothing here installs anything, it records that you allow what you already installed.",
+    "noPacks": "This engine's catalog lists no node packs.",
+    "packNodes_one": "{count} node type",
+    "packNodes_other": "{count} node types",
+    "enable": "Enable",
+    "disable": "Disable",
+    "enabledAt": "enabled · {version}",
+    "enableTitle": "Enable {name}?",
+    "enableConfirm": "Enable this pack",
+    "enabling": "Enabling…",
+    "versionLabel": "Installed version",
+    "versionPlaceholder": "e.g. 1.4.2",
+    "versionHint": "The version you installed in ComfyUI. The grant is pinned to it, so updating the pack asks you again.",
+    "acknowledge": "I installed this pack myself, I trust its source, and I understand it runs unsandboxed.",
+    "filesHeading": "Imported workflows",
+    "filesHint": "Exported ComfyUI graphs (Save (API Format)). Each is checked against the packs you have enabled before it is stored.",
+    "import": "Import a workflow…",
+    "importing": "Checking…",
+    "nodeCount_one": "{count} node",
+    "nodeCount_other": "{count} nodes",
+    "slots": "slots: {slots}",
+    "noSlots": "no prompt slots — renders the same output every time",
+    "unreadable": "unreadable",
+    "removeAria": "Remove {name}",
+    "removeTitle": "Remove {name}?",
+    "removeMessage": "The file is deleted from this engine's workflow folder. Any custom model pointing at it will stop rendering until you import it again."
   }
 }
