@@ -1,5 +1,4 @@
 import {
-  Activity,
   Boxes,
   Cpu,
   Database,
@@ -17,7 +16,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   SunMoon,
-  Tag,
   Trash2,
   Waypoints,
   X,
@@ -25,6 +23,7 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendTask, Provider } from "../api/types";
+import { AboutPane } from "../components/AboutPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
@@ -271,7 +270,6 @@ export function Settings() {
   // A failed delete or cache purge — shown in the storage pane rather than
   // discarded, which is what used to happen to both.
   const [storageError, setStorageError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [showLicenses, setShowLicenses] = useState(false);
   const locale = useLocale((state) => state.locale);
   const setLocale = useLocale((state) => state.setLocale);
@@ -390,7 +388,6 @@ export function Settings() {
     }
   };
 
-  const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
 
   // The provider keys a pairing would hand over, by name. "3 keys" is not
   // something anyone can weigh; "Anthropic, OpenAI" is.
@@ -412,6 +409,7 @@ export function Settings() {
   // a finished export is worse than a clear failure — so this is the one
   // place that failure is explained rather than just showing "unrouted"
   // against two rows the user has no reason to connect to a missing binary.
+  const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
   const assemblyUnrouted = (system?.backends?.tasks ?? []).some(
     (row) => (row.kind === "timeline" || row.kind === "export") && !row.backend,
   );
@@ -474,31 +472,6 @@ export function Settings() {
       .finally(() => setPairBusy(false));
   };
 
-  const copyDiagnostics = () => {
-    const unknown = t("settings.about.diagUnknown");
-    const lines = [
-      t("settings.about.diagApp", { version: __APP_VERSION__ }),
-      t("settings.about.diagEngine", {
-        engine: engineVersions?.engine_version ?? unknown,
-        api: engineVersions?.api_version ?? unknown,
-      }),
-      t("settings.about.diagBackend", { backend: system?.backend_mode ?? unknown }),
-      t("settings.about.diagUrl", { url: client?.baseUrl ?? unknown }),
-      system
-        ? t("settings.about.diagHardware", {
-            tier: system.hardware.tier,
-            gpu: gpu
-              ? t("settings.about.diagGpu", { name: gpu.name, vram: gpu.vram_gb })
-              : t("settings.about.diagNoGpu"),
-            ram: system.hardware.ram_gb,
-          })
-        : t("settings.about.diagHardwareUnknown"),
-    ];
-    void navigator.clipboard.writeText(lines.join("\n")).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
 
   const videoModelOptions = [
     { value: "", label: t("settings.defaults.autoModel") },
@@ -1223,48 +1196,7 @@ export function Settings() {
             </>
           )}
 
-          {tab === "about" && (
-            <section>
-              <h2>
-                <Info {...ICON_CONTROL} />
-                {t("settings.tabs.about")}
-              </h2>
-              <p className="hint">{t("settings.about.hint")}</p>
-              <div className="setting-row">
-                <div className="st">
-                  <Tag {...ICON_SUBHEAD} />
-                  {t("settings.about.versionHeading")}
-                </div>
-                <dl className="kv" style={{ marginTop: 8 }}>
-                  <dt>{t("settings.about.app")}</dt>
-                  <dd>{__APP_VERSION__}</dd>
-                  <dt>{t("settings.about.engine")}</dt>
-                  <dd>{engineVersions?.engine_version ?? t("settings.engine.dash")}</dd>
-                  <dt>{t("settings.about.api")}</dt>
-                  <dd>
-                    {engineVersions ? `v${engineVersions.api_version}` : t("settings.engine.dash")}
-                  </dd>
-                  <dt>{t("settings.engine.backend")}</dt>
-                  <dd>{system?.backend_mode ?? t("settings.engine.dash")}</dd>
-                </dl>
-              </div>
-              <div className="setting-row">
-                <div className="st">
-                  <Activity {...ICON_SUBHEAD} />
-                  {t("settings.about.diagnosticsHeading")}
-                </div>
-                <div className="sd">{t("settings.about.diagnosticsHint")}</div>
-                <div className="sc" style={{ display: "flex", gap: 8 }}>
-                  <button className="btn-ghost" onClick={copyDiagnostics}>
-                    {copied ? t("settings.about.copied") : t("settings.about.copy")}
-                  </button>
-                  <button className="btn-ghost" onClick={() => setShowLicenses(true)}>
-                    {t("settings.about.licenses")}
-                  </button>
-                </div>
-              </div>
-            </section>
-          )}
+          {tab === "about" && <AboutPane onShowLicenses={() => setShowLicenses(true)} />}
         </div>
       </div>
 
