@@ -681,11 +681,14 @@ try {
           (b) => (b.textContent || "").trim() === "Enable");
         enable?.click();
       });
-      await page.waitForSelector(".pack-modal", { timeout: 5000 });
+      await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
       return page.evaluate(() => {
-        const modal = document.querySelector(".pack-modal");
+        // Addressed by its role rather than a class: every dialog in the
+        // app is the one shell now, and only one is ever open at a time.
+        // A per-dialog class would exist only to be selected here.
+        const modal = document.querySelector('[role="dialog"]');
         const box = modal.getBoundingClientRect();
-        const confirm = [...modal.querySelectorAll("button")].pop();
+        const confirm = [...modal.querySelectorAll(".modal-foot button")].pop();
         return {
           warned: !!modal.querySelector(".banner.warning")?.textContent?.trim(),
           // The dangerous button starts unpressable, and stays that way

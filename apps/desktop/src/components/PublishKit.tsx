@@ -8,6 +8,7 @@ import { isDone } from "../lib/status";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
 import { MediaThumb } from "./MediaThumb";
+import { Modal } from "./Modal";
 
 /**
  * The last mile: what you paste into the upload form.
@@ -33,7 +34,6 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
   const preparePublish = useApp((state) => state.preparePublish);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
@@ -64,39 +64,6 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
   // typed yet, show the list"; a regenerate clears it so a rewritten set of
   // tags is not shadowed by the text of the old one.
   const [tagText, setTagText] = useState<string | null>(null);
-
-  // Escape closes and Tab stays inside — the same discipline SavePoints
-  // follows, because `aria-modal` is a promise about focus and not just a
-  // label. Escape consumes the keystroke: the Inspector's own Escape would
-  // otherwise deselect the node behind this dialog on the way past.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        closeRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusable || focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
 
   const kit = engineKit ? mergeDraft(engineKit, draft) : null;
   const asked = !!metadata || !!thumbnail;
@@ -132,107 +99,98 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
   }, [asked, currentProject]);
 
   return (
-    <div className="modal-backdrop" onMouseDown={() => closeRef.current()} role="presentation">
-      <div
-        className="modal publish-modal"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("publish.title")}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <h2>{t("publish.title")}</h2>
-        <p className="sub">{t("publish.hint")}</p>
-
-        {!asked ? (
-          // The request is in flight (or was refused). Not a second button
-          // repeating the one that opened this — only a way back in when the
-          // engine said no.
-          <>
+    <Modal
+      title={t("publish.title")}
+      subtitle={t("publish.hint")}
+      size="l"
+      onClose={onClose}
+      footer={
+        <>
+          {/* The regenerate is available in both states — before anything
+              has been asked for it is a retry, after it is a rewrite. */}
+          {(asked || error) && (
+            <button className="btn-ghost" disabled={busy} onClick={build}>
+              <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
+              {asked
+                ? busy
+                  ? t("publish.preparing")
+                  : t("publish.regenerate")
+                : t("common.retry")}
+            </button>
+          )}
+          <div className="spacer" />
+          <button className="btn-primary" onClick={() => closeRef.current()}>
+            {t("common.close")}
+          </button>
+        </>
+      }
+    >
+      {!asked ? (
+        // The request is in flight (or was refused). Not a second button
+        // repeating the one that opened this — only a way back in when the
+        // engine said no.
+        <>
+          <p className="hint" role="status">
+            {busy ? t("publish.preparing") : t("publish.pending")}
+          </p>
+          {error && <Alert message={error} onDismiss={() => setError(null)} />}
+        </>
+      ) : (
+        <>
+          <MediaThumb
+            className="publish-thumb"
+            src={
+              thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
+                ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
+                : null
+            }
+            alt={t("publish.thumbAlt")}
+            fallback={<span className="publish-thumb empty" aria-hidden="true" />}
+          />
+          {kit ? (
+            <>
+              <Field
+                label={t("publish.fieldTitle")}
+                value={kit.title}
+                onChange={(title) => edit({ title })}
+              />
+              <Field
+                label={t("publish.fieldDescription")}
+                value={kit.description}
+                onChange={(description) => edit({ description })}
+                multiline
+              />
+              <Field
+                label={t("publish.fieldHashtags")}
+                // The engine strips the `#`, so it is added back here
+                // rather than assumed — pasting bare words into a caption
+                // box is not what anyone means by "hashtags". Typing them
+                // back with or without it works either way.
+                //
+                // Displayed from `tagText` while it is being typed, not
+                // from the stored list: parsing on every keystroke drops
+                // the separator you just pressed, so the space between
+                // two tags vanished and the next word joined the last.
+                value={tagText ?? formatTags(kit.hashtags)}
+                onChange={(text) => {
+                  setTagText(text);
+                  edit({ hashtags: parseTags(text) });
+                }}
+              />
+              <p className="hint">{t("publish.editNote")}</p>
+            </>
+          ) : (
+            // Asked for, still rendering. Said plainly rather than shown
+            // as empty fields: two model runs is not instant, and a blank
+            // form reads as broken.
             <p className="hint" role="status">
-              {busy ? t("publish.preparing") : t("publish.pending")}
+              {t("publish.pending")}
             </p>
-            {error && <Alert message={error} onDismiss={() => setError(null)} />}
-            <div className="modal-actions">
-              {error && (
-                <button className="btn-ghost" disabled={busy} onClick={build}>
-                  <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
-                  {t("common.retry")}
-                </button>
-              )}
-              <div className="spacer" />
-              <button className="btn-primary" onClick={() => closeRef.current()}>
-                {t("common.close")}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <MediaThumb
-              className="publish-thumb"
-              src={
-                thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
-                  ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
-                  : null
-              }
-              alt={t("publish.thumbAlt")}
-              fallback={<span className="publish-thumb empty" aria-hidden="true" />}
-            />
-            {kit ? (
-              <>
-                <Field
-                  label={t("publish.fieldTitle")}
-                  value={kit.title}
-                  onChange={(title) => edit({ title })}
-                />
-                <Field
-                  label={t("publish.fieldDescription")}
-                  value={kit.description}
-                  onChange={(description) => edit({ description })}
-                  multiline
-                />
-                <Field
-                  label={t("publish.fieldHashtags")}
-                  // The engine strips the `#`, so it is added back here
-                  // rather than assumed — pasting bare words into a caption
-                  // box is not what anyone means by "hashtags". Typing them
-                  // back with or without it works either way.
-                  //
-                  // Displayed from `tagText` while it is being typed, not
-                  // from the stored list: parsing on every keystroke drops
-                  // the separator you just pressed, so the space between
-                  // two tags vanished and the next word joined the last.
-                  value={tagText ?? formatTags(kit.hashtags)}
-                  onChange={(text) => {
-                    setTagText(text);
-                    edit({ hashtags: parseTags(text) });
-                  }}
-                />
-                <p className="hint">{t("publish.editNote")}</p>
-              </>
-            ) : (
-              // Asked for, still rendering. Said plainly rather than shown
-              // as empty fields: two model runs is not instant, and a blank
-              // form reads as broken.
-              <p className="hint" role="status">
-                {t("publish.pending")}
-              </p>
-            )}
-            {error && <Alert message={error} onDismiss={() => setError(null)} />}
-            <div className="modal-actions">
-              <button className="btn-ghost" disabled={busy} onClick={build}>
-                <RotateCw size={13} strokeWidth={2} aria-hidden="true" />
-                {busy ? t("publish.preparing") : t("publish.regenerate")}
-              </button>
-              <div className="spacer" />
-              <button className="btn-primary" onClick={() => closeRef.current()}>
-                {t("common.close")}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+          )}
+          {error && <Alert message={error} onDismiss={() => setError(null)} />}
+        </>
+      )}
+    </Modal>
   );
 }
 
