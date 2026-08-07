@@ -2,7 +2,7 @@ import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
-import { Alert } from "./Alert";
+import { FailureCard } from "./FailureCard";
 import { t } from "../i18n";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
@@ -31,6 +31,7 @@ export function Inspector() {
     conditionScene,
     applyClonedVoice,
     selectTake,
+    rerollWithSeed,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
@@ -75,6 +76,10 @@ export function Inspector() {
     : auxNode;
 
   const activeId = activeNode?.node_id ?? null;
+  const retry = useApp((state) => (activeId ? state.nodeRetries[activeId] : undefined));
+  // A rung with no scale (offload only) still ran at whatever the spec asked
+  // for, which is full size unless the node says otherwise.
+  const retryPct = (scale: number | undefined) => `${Math.round((scale ?? 1) * 100)}%`;
 
   // Which content param the active node reads.
   const contentKey =
@@ -589,28 +594,57 @@ export function Inspector() {
                 const billed =
                   !take.current && !take.available && (take.model ?? "").startsWith("cloud:");
                 return (
-                  <button
-                    key={take.output_hash}
-                    className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
-                    disabled={pinned || take.current}
-                    aria-pressed={take.current}
-                    title={
-                      take.current
-                        ? t("inspector.takeCurrentTitle")
-                        : take.available
-                          ? t("inspector.takeSwitchTitle")
-                          : billed
-                            ? t("inspector.takeCloudTitle", { model: take.model ?? "" })
-                            : t("inspector.takeMissingTitle")
-                    }
-                    onClick={() => {
-                      setTakeError(null);
-                      void selectTake(activeNode.node_id, take.output_hash).then(setTakeError);
-                    }}
-                  >
-                    {t("inspector.takeChip", { n: index + 1 })}
-                    {billed && <span aria-hidden="true"> ☁</span>}
-                  </button>
+                  // The reroll control is a SIBLING of the take chip, never
+                  // inside it: ARIA specifies a button's children as
+                  // presentational, so a nested control is unreachable to a
+                  // screen reader however reachable it stays by Tab.
+                  <span className="take" key={take.output_hash}>
+                    <button
+                      className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
+                      disabled={pinned || take.current}
+                      aria-pressed={take.current}
+                      title={
+                        take.current
+                          ? t("inspector.takeCurrentTitle")
+                          : take.available
+                            ? t("inspector.takeSwitchTitle")
+                            : billed
+                              ? t("inspector.takeCloudTitle", { model: take.model ?? "" })
+                              : t("inspector.takeMissingTitle")
+                      }
+                      onClick={() => {
+                        setTakeError(null);
+                        void selectTake(activeNode.node_id, take.output_hash).then(setTakeError);
+                      }}
+                    >
+                      {t("inspector.takeChip", { n: index + 1 })}
+                      {billed && <span aria-hidden="true"> ☁</span>}
+                    </button>
+                    {/* Render again on THIS take's seed. The point is not to
+                        reproduce the take — a seed with unchanged params is
+                        already on disk — but to re-roll the CURRENT prompt,
+                        motion and model against a seed whose composition the
+                        user liked, so the parameter change is the only
+                        difference between the two.
+
+                        One atomic call: `RegenerateBody.seed` exists exactly
+                        for this, and doing it as set_seed-then-regenerate
+                        would leave the node carrying the borrowed seed if the
+                        second half failed. */}
+                    <button
+                      type="button"
+                      className="take-reroll"
+                      disabled={pinned}
+                      aria-label={t("inspector.rerollSeedAria", { n: String(index + 1) })}
+                      title={t("inspector.rerollSeedTitle", { seed: String(take.seed) })}
+                      onClick={() => {
+                        setTakeError(null);
+                        void rerollWithSeed(activeNode.node_id, take.seed).then(setTakeError);
+                      }}
+                    >
+                      <RotateCw size={11} strokeWidth={2.2} aria-hidden="true" />
+                    </button>
+                  </span>
                 );
               })}
             </div>
@@ -621,10 +655,28 @@ export function Inspector() {
             </div>
           )}
 
-          {/* What the engine said about this node's last render. The same
-              notice the Library uses for a refusal: it is an answer, not a
-              crash, and long red prose reads as the second thing. */}
-          {activeNode.error && <Alert message={activeNode.error} />}
+          {/* What the engine said about this node's last render, and what it
+              suggested doing about it. FailureCard falls back to the plain
+              notice when there is no advice, which is the common case: only
+              an exhausted OOM ladder offers choices. */}
+          <FailureCard node={activeNode} />
+
+          {/* A retry in flight is running SMALLER than the attempt that
+              failed. "Rendering" alone hides that, so the result arriving is
+              a surprise rather than the thing that was announced. */}
+          {retry && (
+            <p className="node-retry" role="status">
+              {retry.fallback.offload
+                ? t("failure.retryingOffload", {
+                    pct: retryPct(retry.fallback.resolution_scale),
+                    n: String(retry.attempt),
+                  })
+                : t("failure.retrying", {
+                    pct: retryPct(retry.fallback.resolution_scale),
+                    n: String(retry.attempt),
+                  })}
+            </p>
+          )}
         </>
       )}
     </aside>

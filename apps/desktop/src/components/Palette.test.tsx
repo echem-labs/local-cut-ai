@@ -110,3 +110,42 @@ describe("saving the open video as a template", () => {
     expect(screen.queryByText(t("palette.saveTemplate"))).toBeNull();
   });
 });
+
+/**
+ * The palette closes on run, so a command that fires a project-level action
+ * has nowhere of its own to report a refusal. Both of U5's are ones the
+ * engine refuses for good reasons — "prepare to publish" before the script
+ * has rendered answers 409 with the reason — and a palette command that
+ * silently does nothing is indistinguishable from one that is broken.
+ */
+describe("reporting what a palette command was refused", () => {
+  beforeEach(() => useApp.setState({ actionError: null } as never));
+
+  it("surfaces a refused publish where the project screen can show it", async () => {
+    const preparePublish = vi.fn().mockResolvedValue("the script has not rendered yet");
+    await openPalette({ currentProject: project("p3", "prompt", "a doc"), preparePublish });
+
+    await userEvent.click(screen.getByText(t("palette.preparePublish")));
+    expect(preparePublish).toHaveBeenCalledOnce();
+    expect(useApp.getState().actionError).toEqual({
+      scope: "board",
+      message: "the script has not rendered yet",
+    });
+  });
+
+  it("surfaces a refused resume the same way", async () => {
+    const resumeRender = vi.fn().mockResolvedValue("the engine could not be reached");
+    await openPalette({ currentProject: project("p3", "prompt", "a doc"), resumeRender });
+
+    await userEvent.click(screen.getByText(t("palette.resumeRender")));
+    expect(useApp.getState().actionError?.scope).toBe("board");
+  });
+
+  it("says nothing when the action applied", async () => {
+    const resumeRender = vi.fn().mockResolvedValue(null);
+    await openPalette({ currentProject: project("p3", "prompt", "a doc"), resumeRender });
+
+    await userEvent.click(screen.getByText(t("palette.resumeRender")));
+    expect(useApp.getState().actionError).toBeNull();
+  });
+});

@@ -3,6 +3,7 @@ import {
   Grid2x2,
   Grid3x3,
   LayoutGrid,
+  Megaphone,
   MonitorPlay,
   MoreHorizontal,
   Sparkles,
@@ -11,16 +12,20 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { NodeState } from "../api/types";
+import { Alert } from "../components/Alert";
 import { CheckpointBanner } from "../components/CheckpointBanner";
 import { NoticeBar } from "../components/NoticeBar";
 import { Dropdown } from "../components/Dropdown";
 import { SavePoints } from "../components/SavePoints";
 import { ToolSession } from "../components/ToolSession";
 import { PromotedFrom } from "../components/Provenance";
+import { PublishKit } from "../components/PublishKit";
 import { Workspace } from "../components/Workspace";
 import { m, t } from "../i18n";
+import { pendingCheckpoint } from "../lib/checkpoints";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
+import { isStalled } from "../lib/jobs";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { isDone, isSettled } from "../lib/status";
@@ -136,6 +141,57 @@ function PipelineIntro({
   );
 }
 
+/**
+ * The board says work is coming and the queue disagrees.
+ *
+ * Kill the engine mid-render, or reconnect to one that restarted, and nodes
+ * keep reading `rendering` with nothing behind them — a progress bar that
+ * will never move again, and no route back into flight, since an empty
+ * `/patch` re-plans nothing. `POST /render` is that route; this is the one
+ * place the app can tell it is needed.
+ *
+ * A `note`, not an `alert`: nothing failed, and the state is true until
+ * acted on rather than in response to something the user just did.
+ *
+ * Silent at a beginner checkpoint. The engine holds every node past an
+ * unapproved gate out of the queue on purpose, which from the board alone
+ * looks exactly like a lost one — and there the offer would be both a
+ * contradiction of the approve banner directly above it and a button that
+ * enqueues nothing. Approving is itself the resume: it runs the same
+ * enqueue `/render` would.
+ */
+function StalledNotice() {
+  const board = useApp((state) => state.board);
+  const jobs = useApp((state) => state.jobs);
+  const currentProject = useApp((state) => state.currentProject);
+  const resumeRender = useApp((state) => state.resumeRender);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (pendingCheckpoint(currentProject, board) !== null) return null;
+  if (!isStalled(board, jobs)) return null;
+  return (
+    <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
+      <span>{t("project.stalled")}</span>
+      <button
+        className="btn-ghost"
+        disabled={busy}
+        title={t("terms.tips.resume")}
+        onClick={() => {
+          setError(null);
+          setBusy(true);
+          void resumeRender()
+            .then(setError)
+            .finally(() => setBusy(false));
+        }}
+      >
+        {busy ? t("project.resuming") : t("project.resume")}
+      </button>
+      {error && <Alert message={error} onDismiss={() => setError(null)} />}
+    </div>
+  );
+}
+
 /** Header overflow menu (⋯): history, audio behavior, caption mode, export
  * encode choices, pro-editor handoff, and layout reset. */
 function BoardMenu() {
@@ -148,6 +204,7 @@ function BoardMenu() {
     history,
     undoEdit,
     redoEdit,
+    resumeRender,
   } = useApp();
   const resetLayout = useWorkspace((state) => state.resetLayout);
   const [open, setOpen] = useState(false);
@@ -234,6 +291,20 @@ function BoardMenu() {
           >
             <span className="check" />
             {t("project.menu.savePoints")}
+          </button>
+          {/* Always available, not only when the stall is detected: the
+              detection reads the board, and the case worth covering is the
+              one where the board is wrong about itself. */}
+          <button
+            role="menuitem"
+            onClick={() => {
+              setHistoryError(null);
+              void resumeRender().then(setHistoryError);
+              setOpen(false);
+            }}
+          >
+            <span className="check" />
+            {t("project.menu.resume")}
           </button>
           {timeline && (
             <>
@@ -356,7 +427,17 @@ function BoardMenu() {
 /** Project window: header chrome over the dockable workspace (board,
  * monitor, details, timeline). Tool sessions get a focused single panel. */
 export function Project() {
-  const { currentProject, board, refreshBoard, finalize, regenerate, client } = useApp();
+  const {
+    currentProject,
+    board,
+    jobs,
+    refreshBoard,
+    finalize,
+    regenerate,
+    client,
+    actionError,
+    dismissActionError,
+  } = useApp();
   const view = useWorkspace((state) => state.view);
   const setView = useWorkspace((state) => state.setView);
   const density = useWorkspace((state) => state.density);
@@ -367,6 +448,7 @@ export function Project() {
   // fails the restore gate, or no engine at all) would otherwise be
   // indistinguishable from a board that simply did not move.
   const [historyKeyError, setHistoryKeyError] = useState<string | null>(null);
+  const [publishOpen, setPublishOpen] = useState(false);
 
   useEffect(() => {
     void refreshBoard();
@@ -559,7 +641,31 @@ export function Project() {
   // there is nothing to enqueue, and the button would refresh the board and
   // change nothing — a primary action that silently does nothing at all.
   const allReady = scenes.length > 0 && scenes.every((scene) => isDone(scene.clip.status));
+  /**
+   * What the queue is doing for this project right now.
+   *
+   * `allReady` counts scene CLIPS, and finalize renders more than those: the
+   * timeline and the export always, plus the keyframes, music and thumbnail
+   * at final quality. So the moment the last clip landed the CTA re-armed
+   * itself and offered to create a final video that was at that moment being
+   * assembled — an enabled primary action beside a still-spinning tray.
+   *
+   * Jobs, not node status: a node reading `queued` with nothing behind it is
+   * the stalled case, and there the offer is exactly what is wanted.
+   */
+  const active = jobs.filter((job) => job.status === "queued" || job.status === "rendering");
+  // `job.spec?.` even though the type requires it: this runs on every render
+  // of the whole project screen, and a job row missing its spec would take
+  // that screen to the ErrorBoundary rather than degrade — the failure mode
+  // the palette's tool-kind cast already taught this app about.
+  const finalInFlight = active.some((job) => job.spec?.quality === "final");
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
+  // The publish kit asks a weaker question than Download does. Its title,
+  // description and hashtags are written from the SCRIPT — nothing in it
+  // depends on final quality — so gating it on `final` meant sitting through
+  // a full finalize before the app would even suggest a title. A draft cut is
+  // still a cut to publish.
+  const hasCut = !!exportNode && isDone(exportNode.status) && !!exportNode.artifact_hash;
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
   const eta = finalizeEta(board);
@@ -644,6 +750,20 @@ export function Project() {
           </>
         )}
         <BoardMenu />
+        {/* Before the final-video CTA, and beside it: the kit is the step
+            after the cut, so it belongs where the end of the job is rather
+            than in a band above the storyboard that has to be scrolled past
+            on the way to everything earlier. */}
+        {hasCut && !checkpointPending && (
+          <button
+            className="btn-ghost"
+            title={t("terms.tips.publishKit")}
+            onClick={() => setPublishOpen(true)}
+          >
+            <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
+            {t("publish.open")}
+          </button>
+        )}
         {!checkpointPending &&
           (exported && client ? (
             <a
@@ -655,19 +775,32 @@ export function Project() {
               <Download size={14} strokeWidth={2} />
               {t("project.cta.download")}
             </a>
-          ) : allReady ? (
+          ) : finalizing || finalInFlight ? (
+            /* The render outlives the request that started it, so this holds
+               from the click until the last final-quality job lands — not
+               just while the HTTP call is open. */
+            <button className="btn-primary" disabled title={t("terms.tips.createFinal")}>
+              <Sparkles size={14} strokeWidth={2} />
+              {t("project.cta.creating")}
+            </button>
+          ) : allReady && active.length === 0 ? (
             <button
               className="btn-primary"
-              disabled={finalizing}
               onClick={() => void runFinalize()}
               title={t("terms.tips.createFinal")}
             >
               <Sparkles size={14} strokeWidth={2} />
-              {finalizing
-                ? t("project.cta.creating")
-                : eta
-                  ? t("project.cta.createWithEta", { eta })
-                  : t("project.cta.create")}
+              {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
+            </button>
+          ) : allReady ? (
+            /* Every clip is done and something else is not — a draft
+               timeline or export still assembling. Says what the button
+               does, and why it cannot do it yet: the count the branch below
+               shows would read "7/7" and explain nothing. No ETA either,
+               which on an unpressable button is noise. */
+            <button className="btn-primary" disabled title={t("project.cta.busyTitle")}>
+              <Sparkles size={14} strokeWidth={2} />
+              {t("project.cta.create")}
             </button>
           ) : scenes.length > 0 ? (
             /* Present but not pressable, rather than absent. The screen's
@@ -688,10 +821,19 @@ export function Project() {
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
+      <StalledNotice />
+      {publishOpen && <PublishKit onClose={() => setPublishOpen(false)} />}
       {historyKeyError && (
         <div role="status" className="banner error">
           {historyKeyError}
         </div>
+      )}
+      {/* A project-level action fired from the command palette, which closes
+          on run and so has nowhere to report a refusal. "Prepare to publish"
+          before the script has rendered is the one that happens: the engine
+          answers with the reason, and this is where it lands. */}
+      {actionError?.scope === "board" && (
+        <Alert message={actionError.message} onDismiss={dismissActionError} />
       )}
 
       {board.scenes.length === 0 ? (
@@ -702,7 +844,7 @@ export function Project() {
               {/* With no scenes there is no board, composer or inspector to
                   regenerate from — the banner is the only surface left, so
                   it carries the retry itself. */}
-              <button className="btn-secondary" onClick={() => void regenerate("script")}>
+              <button className="btn-outline" onClick={() => void regenerate("script")}>
                 {t("project.retryScript")}
               </button>
             </>

@@ -6,6 +6,7 @@ import { movedOrder, orderedScenes, sceneDurations } from "../lib/order";
 import { formatTime, parseTime, usePlayback } from "../lib/playback";
 import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
+import { AudioLanes } from "./AudioLanes";
 import { PanelHelp } from "./Help";
 
 // Stable transition ids only — engine wire contract. Display label/hint
@@ -423,6 +424,17 @@ export function TimelineStrip() {
             );
           })}
         </div>
+        {/* Under the pictures, at the same scale and inside the same scroll
+            — the lanes have to travel with the blocks they describe. */}
+        <AudioLanes
+          scenes={scenes.map((scene) => ({
+            sceneId: scene.scene_id,
+            narration: scene.narration ?? null,
+          }))}
+          widths={blockWidths}
+          music={board.aux.music}
+          totalWidth={totalWidth}
+        />
       </div>
     </div>
   );

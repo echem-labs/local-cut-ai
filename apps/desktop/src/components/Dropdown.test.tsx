@@ -72,3 +72,53 @@ describe("Dropdown", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 });
+
+/**
+ * A chip shows its VALUE — "9:16 · Shorts", "Cinematic", "60s" — which says
+ * what it is set to and nothing about what it decides. On Home that left
+ * three controls with no pointer affordance at all: the aria-label answers
+ * for a screen reader, and a mouse got silence.
+ */
+describe("the trigger's tooltip", () => {
+  it("describes what the control decides, not what it is set to", async () => {
+    const user = userEvent.setup();
+    render(
+      <Dropdown
+        value="a"
+        options={OPTIONS}
+        onChange={vi.fn()}
+        ariaLabel="Pick one"
+        tip="Frame shape"
+        tipHint="9:16 for Shorts."
+      />,
+    );
+
+    await user.hover(screen.getByRole("button", { name: /Pick one/ }));
+    // The bubble is a portal into document.body, and the hint rides in the
+    // same node behind a separator - so match the text, not the node.
+    const bubble = await screen.findByText(/Frame shape/);
+    expect(bubble).toHaveTextContent(/9:16 for Shorts\./);
+  });
+
+  it("wraps the trigger only, so the bubble is not left over the open list", async () => {
+    const user = userEvent.setup();
+    render(
+      <Dropdown value="a" options={OPTIONS} onChange={vi.fn()} ariaLabel="Pick one" tip="Frame shape" />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Pick one/ }));
+    // The menu is a sibling of the wrapper, not inside it.
+    const menu = screen.getByRole("listbox");
+    expect(screen.getByRole("button", { name: /Pick one/ }).parentElement).not.toBe(menu);
+    expect(menu.contains(screen.getByRole("button", { name: /Pick one/ }))).toBe(false);
+  });
+
+  it("stays bare when no tip is given", async () => {
+    // The bubble is aria-hidden and role=presentation, so it is invisible to
+    // every by-role query - assert on the element the portal renders.
+    const user = userEvent.setup();
+    render(<Dropdown value="a" options={OPTIONS} onChange={vi.fn()} ariaLabel="Pick one" />);
+    await user.hover(screen.getByRole("button", { name: /Pick one/ }));
+    expect(document.querySelector(".tip")).toBeNull();
+  });
+});

@@ -2,7 +2,10 @@ import { create } from "zustand";
 import { EngineClient } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { forgetPublishDraft } from "./lib/publishDraft";
+import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
+import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -14,6 +17,7 @@ import {
 import type {
   Board,
   Checkpoint,
+  EditProposal,
   EditResult,
   EngineEvent,
   HistoryInfo,
@@ -21,6 +25,7 @@ import type {
   ModelDefaults,
   ModelRow,
   NodeState,
+  OomFallback,
   Project,
   StorageInfo,
   StoryGraph,
@@ -126,13 +131,24 @@ export interface SeedPatch {
    * mock cannot be drawn against "whatever". */
   graph?: StoryGraph;
   selectedNode?: string | null;
+  /** What the engine said about a failed or retrying node (U5). These live
+   * ONLY on the websocket — the scheduler computes `suggestions` when it
+   * publishes and persists nothing — so there is no project a rig could
+   * open that would put the failure card on screen. Posing them is the only
+   * way to photograph it. */
+  nodeFailures?: Record<string, { error: string; suggestions: string[] }>;
+  nodeRetries?: Record<string, { attempt: number; fallback: OomFallback }>;
   freeze?: boolean;
 }
 
 /** A failed user action, tagged so the screen that started it can show
  * the message next to its own button. */
 export interface ActionError {
-  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open";
+  // `board` is the scope for a project-level action fired from somewhere with
+  // no surface of its own — the command palette, which can run resume and
+  // prepare-publish from any screen. Every other scope belongs to the one
+  // component that raises it and renders it.
+  scope: "create" | "tool" | "promote" | "approve" | "enhance" | "open" | "board";
   message: string;
 }
 
@@ -199,6 +215,16 @@ interface AppState {
   models: ModelRow[];
   // model id → last download failure, cleared on retry/success.
   downloadErrors: Record<string, string>;
+  // node id → what the engine said when this node's render gave up, and what
+  // it suggested doing about it. Only the websocket ever carries these: the
+  // scheduler computes `suggestions` at publish time and persists nothing, so
+  // they are on neither the Job row nor the board's NodeState (which has a
+  // bare `error` string). Cleared the moment the node runs again.
+  nodeFailures: Record<string, { error: string; suggestions: string[] }>;
+  // node id → the OOM-ladder rung a retry is running at. "Rendering" alone
+  // hides that the attempt now in flight will produce a SMALLER result than
+  // the one that failed.
+  nodeRetries: Record<string, { attempt: number; fallback: OomFallback }>;
   firstRunDone: boolean;
   // True when the wizard was reopened from Settings rather than being a
   // genuine first launch — it then starts at the machine step: the welcome
@@ -284,8 +310,14 @@ interface AppState {
    * voice_ref, exactly like the workspace's applyClonedVoice. */
   applySessionVoiceClone: (file: File) => Promise<string | null>;
   promote: () => Promise<void>;
-  /** Rewrite the current project's script from user feedback. */
-  enhance: (notes: string) => Promise<void>;
+  /** Rewrite the current project's script from user feedback.
+   *
+   * Reports BOTH ways, and deliberately: the tool session renders
+   * `actionError` in the block it shares with promote, while the composer —
+   * which reaches this through its Script scope — follows the return-the-
+   * message convention like every other action it calls. The two surfaces
+   * are never mounted together, so nothing is said twice. */
+  enhance: (notes: string) => Promise<string | null>;
   /** Drop a shown action error — e.g. when the surface that earned it
    * (a tool panel) is being swapped for another. */
   dismissActionError: () => void;
@@ -317,7 +349,18 @@ interface AppState {
     changes: { params?: Record<string, unknown>; seed?: number; model?: string | null },
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
-  edit: (instruction: string, scope?: string) => Promise<EditResult | null>;
+  /** Compile an edit and report what it WOULD do, committing nothing.
+   *
+   * There is deliberately no one-step "edit and apply" beside this. The
+   * composer had one, and keeping it would leave a second route that
+   * rewrites the graph with nothing on screen first — the same objection
+   * the `/patch` chokepoint rule makes about private mutation paths. The
+   * engine's own non-dry-run /edit is still there for the CLI and MCP,
+   * where there is no card to show anyone. */
+  proposeEdit: (instruction: string, scope?: string) => Promise<EditProposal | null>;
+  /** Land a proposal. Rejects with an EngineError(409) when the graph moved
+   * under it — the plan is stale and has to be asked for again. */
+  applyEditPlan: (proposal: EditProposal, scope?: string) => Promise<EditResult | null>;
   refreshHistory: () => Promise<void>;
   /** Walk back/forward one recorded graph mutation. */
   undoEdit: () => Promise<string | null>;
@@ -364,6 +407,19 @@ interface AppState {
   closeLibrary: () => void;
   setLibraryFilter: (filter: LibraryFilter) => void;
   openSettings: (tab?: string) => void;
+  /** Act on one of the engine's OOM suggestions for a failed node. `null`
+   * means it applied; any other return is a message to show. */
+  applyOomSuggestion: (nodeId: string, code: string) => Promise<string | null>;
+  /** Enqueue whatever the graph still owes, at draft quality. The only way
+   * back into flight for a project whose queue was lost — an empty /patch
+   * re-plans nothing. */
+  resumeRender: () => Promise<string | null>;
+  /** Re-render a node on a seed borrowed from one of its takes, in one call.
+   * `null` means it applied; any other return is a message. */
+  rerollWithSeed: (nodeId: string, seed: number) => Promise<string | null>;
+  /** Build the publish kit (thumbnail + title/description/hashtags). Both
+   * land as graph nodes and render through the queue like anything else. */
+  preparePublish: () => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
@@ -419,7 +475,13 @@ const FALLBACK_DEFAULTS: HomeDefaults = {
   aspect: "9:16",
   duration: 60,
   style: "cinematic",
-  mode: "prompt",
+  // "Review steps" out of the box. A first video is the one most likely to
+  // need changing, and the checkpoints are where changing it is cheap: the
+  // script is a text file, the storyboard a handful of stills, and both come
+  // before the clips that cost the GPU hours. Auto is one click away and
+  // persists once chosen; an unreviewed run that has to be thrown away is
+  // not.
+  mode: "beginner",
   voice: "",
   videoModel: null,
 };
@@ -517,6 +579,31 @@ const terminalDownloads = new Set<string>();
 // live model refreshes and WS progress are dropped so the injected frame
 // holds still. Never true outside a rig-driven dev run.
 let seedFrozen = false;
+
+/** The board's node with this id, wherever it lives on it. The board is a
+ * scene list plus an aux map rather than a flat index, and nothing else here
+ * needed to look one up by id. */
+const nodeOf = (board: Board | null, nodeId: string): NodeState | undefined => {
+  if (!board) return undefined;
+  for (const scene of board.scenes) {
+    for (const node of [scene.keyframe, scene.clip, scene.narration]) {
+      if (node?.node_id === nodeId) return node;
+    }
+    for (const take of scene.clip_takes ?? []) {
+      if (take?.node_id === nodeId) return take;
+    }
+  }
+  return Object.values(board.aux).find((node) => node?.node_id === nodeId) ?? undefined;
+};
+
+/** A copy of `record` without `key` — the per-node failure/retry maps are
+ * cleared one node at a time, and mutating them in place would not re-render
+ * a subscriber. */
+const without = <T>(record: Record<string, T>, key: string): Record<string, T> => {
+  if (!(key in record)) return record;
+  const { [key]: _dropped, ...rest } = record;
+  return rest;
+};
 
 const messageOf = (err: unknown): string => {
   // fetch's network-level failure is a TypeError whose message ("Failed to
@@ -885,6 +972,49 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "job.failed") {
+          // Keep the advice with the node it is about. `suggestions` is
+          // absent on ordinary failures — only the exhausted OOM ladder
+          // offers choices — so an empty list here means "no advice", which
+          // the card reads as "show the error alone".
+          //
+          // Frozen means a rig posed these, and the engine's own traffic must
+          // not touch them — the same rule `refreshBoard` and the download
+          // bars already follow. It is not hypothetical: the rig's project
+          // renders an `s1.clip` of its own, and its `job.done` cleared the
+          // posed failure out from under the frame being photographed.
+          if (!seedFrozen) {
+            set({
+              nodeFailures: {
+                ...get().nodeFailures,
+                [event.node_id]: { error: event.error, suggestions: event.suggestions ?? [] },
+              },
+              nodeRetries: without(get().nodeRetries, event.node_id),
+            });
+          }
+          scheduleRefresh();
+        } else if (event.type === "job.retrying") {
+          if (!seedFrozen) {
+            set({
+              nodeRetries: {
+                ...get().nodeRetries,
+                [event.node_id]: { attempt: event.attempt, fallback: event.fallback ?? {} },
+              },
+            });
+          }
+          scheduleRefresh();
+        } else if (event.type === "job.started" || event.type === "job.done") {
+          // A fresh attempt makes the previous verdict stale in both
+          // directions: left in place, a node that has since succeeded still
+          // carries "out of memory" advice, and a chip would act on a job
+          // that no longer exists.
+          if (!seedFrozen) {
+            set({
+              nodeFailures: without(get().nodeFailures, event.node_id),
+              nodeRetries: without(get().nodeRetries, event.node_id),
+            });
+          }
+          scheduleRefresh();
         } else if (event.type === "project.error") {
           // The engine reports a failed expansion (a screenplay that would
           // not parse, a post-completion hook that threw). Nothing handled
@@ -898,7 +1028,18 @@ export const useApp = create<AppState>((set, get) => {
           event.type.startsWith("job.") ||
           event.type === "project.expanded" ||
           event.type === "project.edited" ||
-          event.type === "project.restored"
+          event.type === "project.restored" ||
+          // The three that used to reach the end of this chain and be
+          // dropped. Each moves something on screen, and none of them is
+          // reliably followed by a job event that would refresh anyway: a
+          // compile can enqueue nothing, an approval enqueues nothing by
+          // itself, and an upload is finished work the moment it lands.
+          // They matter most from ANOTHER client — the CLI and the MCP
+          // server drive this same engine — where no local call site exists
+          // to refresh on the way out.
+          event.type === "project.compiled" ||
+          event.type === "project.approved" ||
+          event.type === "project.asset"
         ) {
           scheduleRefresh();
         } else if (event.type === "project.deleted") {
@@ -958,6 +1099,17 @@ export const useApp = create<AppState>((set, get) => {
       /* system info is cosmetic at this stage */
     }
     try {
+      // This engine's own render-time medians. Guarded by the same
+      // generation check as the hardware above, and for a sharper reason:
+      // an estimate carried over from the previous engine would be a
+      // measurement of the wrong machine, which is exactly the bug the
+      // route exists to fix.
+      const { etas } = await client.systemEtas();
+      if (gen === establishGen) setEngineEtas(etas);
+    } catch {
+      /* no calibration — estimates fall back to what this session saw */
+    }
+    try {
       // Version handshake for Settings → About.
       const health = await client.health();
       if (gen === establishGen) {
@@ -993,6 +1145,10 @@ export const useApp = create<AppState>((set, get) => {
   // project list can't bleed into the new one, then reconnect.
   const switchEngine = async () => {
     resetEngineScopedState();
+    // Timings belong to the machine that measured them. Carrying a laptop's
+    // medians onto a GPU box (or the reverse) is worse than having none:
+    // the number looks authoritative and is about the wrong hardware.
+    setEngineEtas(null);
     set({
       currentProject: null,
       board: null,
@@ -1002,6 +1158,8 @@ export const useApp = create<AppState>((set, get) => {
       projects: [],
       models: [],
       downloadErrors: {},
+      nodeFailures: {},
+      nodeRetries: {},
       // The old engine's hardware/recommendations must not survive the switch
       // (establish repopulates it, or leaves it null if the new engine's
       // /system errors — better blank than another box's specs).
@@ -1037,6 +1195,8 @@ export const useApp = create<AppState>((set, get) => {
     selectedNode: null,
     models: [],
     downloadErrors: {},
+    nodeFailures: {},
+    nodeRetries: {},
     firstRunDone: readFlag(FIRST_RUN_KEY),
     firstRunReturning: false,
     libraryOpen: false,
@@ -1165,6 +1325,11 @@ export const useApp = create<AppState>((set, get) => {
         // Cleared then fetched: the previous project's undo depths must not
         // enable Ctrl+Z against this one for however long the fetch takes.
         history: null,
+        // Keyed by node id, which repeats across projects ("timeline",
+        // "s1.clip"), so carrying these over would hang the last project's
+        // OOM advice on this one's identically-named node.
+        nodeFailures: {},
+        nodeRetries: {},
       });
       void get().refreshHistory();
     },
@@ -1181,6 +1346,8 @@ export const useApp = create<AppState>((set, get) => {
         selectedNode: null,
         graph: null,
         graphError: null,
+        nodeFailures: {},
+        nodeRetries: {},
       });
     },
 
@@ -1305,16 +1472,24 @@ export const useApp = create<AppState>((set, get) => {
 
     enhance: async (notes) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      if (!client || !currentProject) return t("errors.engineUnavailable");
       set({ actionError: null });
       try {
+        // The composer's Script scope reaches this with unflushed inspector
+        // edits possibly still pending, and the rewrite amends the screenplay
+        // the graph holds NOW — a patch landing after it would be written
+        // against a script that had already moved.
+        await flushPatches();
         await client.enhanceScript(currentProject.id, notes);
         // The re-render is on the queue; the board flip arrives over WS, but
         // refresh now so the status ring never shows a stale "draft".
         await get().refreshBoard();
+        return null;
       } catch (err) {
         console.warn("enhance failed:", err);
-        set({ actionError: { scope: "enhance", message: messageOf(err) } });
+        const message = messageOf(err);
+        set({ actionError: { scope: "enhance", message } });
+        return message;
       }
     },
 
@@ -1517,6 +1692,23 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshBoard();
     },
 
+    rerollWithSeed: async (nodeId, seed) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // ONE call. `RegenerateBody.seed` exists for exactly this; doing it
+        // as set_seed-then-regenerate would leave the node carrying a
+        // borrowed seed if the second half failed, which is a silent edit
+        // the user never asked for.
+        await flushPatches();
+        await client.regenerate(currentProject.id, nodeId, seed);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
     applyNode: async (nodeId, changes) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return;
@@ -1542,16 +1734,34 @@ export const useApp = create<AppState>((set, get) => {
       await get().refreshBoard();
     },
 
-    edit: async (instruction, scope = "project") => {
+    proposeEdit: async (instruction, scope = "project") => {
       const { client, currentProject, editBusy } = get();
       if (!client || !currentProject || editBusy) return null;
-      // Claim the single-edit guard synchronously, before any await: otherwise
-      // two rapid calls both read editBusy=false and fire concurrent LLM edits.
+      // Same synchronous claim as `edit`: two rapid submits would otherwise
+      // both read editBusy=false and fire concurrent LLM calls.
       set({ editBusy: true });
       try {
-        // The LLM's view must include the user's latest manual tweaks.
+        // The model's view must include the user's latest manual tweaks, and
+        // the revision it reports is what apply is checked against — so a
+        // pending patch flushed AFTER this would make every plan stale.
         await flushPatches();
-        const result = await client.edit(currentProject.id, { instruction, scope });
+        return await client.proposeEdit(currentProject.id, { instruction, scope });
+      } finally {
+        set({ editBusy: false });
+      }
+    },
+
+    applyEditPlan: async (proposal, scope = "project") => {
+      const { client, currentProject, editBusy } = get();
+      if (!client || !currentProject || editBusy) return null;
+      set({ editBusy: true });
+      try {
+        await flushPatches();
+        const result = await client.editApply(currentProject.id, {
+          plan: proposal.plan,
+          scope,
+          revision: proposal.revision,
+        });
         await get().refreshBoard();
         return result;
       } finally {
@@ -1616,6 +1826,52 @@ export const useApp = create<AppState>((set, get) => {
       } catch (err) {
         return messageOf(err);
       }
+    },
+
+    applyOomSuggestion: async (nodeId, code) => {
+      const { client, currentProject, board, models, jobs } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      // Every arm below is an ordinary /patch. The failure card is a shortcut
+      // to edits the inspector could already make by hand — not a private
+      // path around the cycle check and the re-plan.
+      const node = nodeOf(board, nodeId);
+      try {
+        if (code === "lower_resolution") {
+          const next = nextResolutionScale(node?.params.resolution_scale);
+          if (next === null) return t("failure.alreadySmallest");
+          await flushPatches();
+          await client.patch(currentProject.id, [
+            { op: "set_params", node_id: nodeId, params: { resolution_scale: next } },
+          ]);
+          await get().refreshBoard();
+          return null;
+        }
+        if (code === "smaller_model") {
+          const smaller = smallerModelFor(
+            nodeId,
+            models,
+            modelThatFailed(nodeId, jobs, node),
+          );
+          if (smaller === null) return t("failure.noSmallerModel");
+          await flushPatches();
+          await client.patch(currentProject.id, [
+            { op: "set_model", node_id: nodeId, model: smaller.id },
+          ]);
+          await get().refreshBoard();
+          return null;
+        }
+      } catch (err) {
+        return messageOf(err);
+      }
+      // `cloud` is the one suggestion that is not a graph edit: it needs a
+      // provider key, which lives in Settings and is a spending decision.
+      // Sending the user there IS the next step — quietly wiring a cloud
+      // model would bill them for a click they read as "retry".
+      if (code === "cloud") {
+        get().openSettings("providers");
+        return null;
+      }
+      return t("failure.unknownSuggestion");
     },
 
     selectTake: async (nodeId, outputHash) => {
@@ -1746,6 +2002,36 @@ export const useApp = create<AppState>((set, get) => {
     applyTimeline: (params) => applyAuxParams("timeline", params),
 
     applyExport: (params) => applyAuxParams("export", params),
+
+    preparePublish: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        await client.package(currentProject.id);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        // The engine's 409 here is an answer, not a fault: "script has not
+        // rendered yet" means there is nothing to write a title from.
+        return messageOf(err);
+      }
+    },
+
+    resumeRender: async () => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // Same discipline as finalize: the engine must compile against the
+        // flushed params rather than race them.
+        await flushPatches();
+        await client.render(currentProject.id);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
 
     finalize: async () => {
       const { client, currentProject, defaults } = get();
@@ -1885,6 +2171,7 @@ export const useApp = create<AppState>((set, get) => {
       try {
         await client.deleteProject(id);
         forgetEditLog(id); // only once the engine agreed it is gone
+        forgetPublishDraft(id);
         return null;
       } catch (err) {
         console.warn("delete project failed:", err);
@@ -2149,6 +2436,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.jobs !== undefined) next.jobs = patch.jobs;
     if (patch.graph !== undefined) next.graph = patch.graph;
     if (patch.selectedNode !== undefined) next.selectedNode = patch.selectedNode;
+    if (patch.nodeFailures !== undefined) next.nodeFailures = patch.nodeFailures;
+    if (patch.nodeRetries !== undefined) next.nodeRetries = patch.nodeRetries;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

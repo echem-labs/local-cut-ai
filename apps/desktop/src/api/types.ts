@@ -252,6 +252,31 @@ export interface EditResult {
   warnings: string[];
 }
 
+/**
+ * A dry-run edit: what applying it WOULD do, and everything needed to apply
+ * it later without asking the model again.
+ *
+ * `plan` is deliberately opaque here. It is the engine's own `EditPlan`
+ * echoed back verbatim, and the desktop neither reads nor edits it — giving
+ * it a shape would invite exactly that. `/edit/apply` re-validates every op
+ * against the same whitelist the LLM's output goes through, so the round
+ * trip through this client grants the plan no authority it did not have.
+ *
+ * `revision` is the graph revision the plan was compiled against. Sending it
+ * back is what makes a stale plan refuse with a 409 rather than land on a
+ * project that has moved on.
+ */
+export interface EditProposal {
+  summary: string;
+  plan: unknown;
+  revision: string | null;
+  ops: number;
+  /** The compiled patch ops, for a caller that wants to show the specifics. */
+  planned: Record<string, unknown>[];
+  dirty: string[];
+  warnings: string[];
+}
+
 /** What the next undo/redo step would revert — mirrors SNAPSHOT_KINDS in
  * the engine's project/store.py (test_ui_contract compares the kinds
  * against the historyKinds catalog). */
@@ -295,7 +320,11 @@ export interface Job {
   /** The model the backend reported actually using (null when the backend
    * has no meaningful model name — assembly, mock). */
   model: string | null;
-  spec: { node_id: string; kind: string };
+  /** `quality` is what separates a finalize from a draft render — the
+   * engine has always sent it (JobSpec defaults it to "draft"); nothing
+   * here had asked. Optional so an engine older than the field reads as
+   * "not a finalize" rather than throwing. */
+  spec: { node_id: string; kind: string; quality?: string };
 }
 
 /** GET /llm/models — what the script tool's model picker can offer.
@@ -323,6 +352,33 @@ export interface StorageInfo {
   disk_total_bytes: number;
 }
 
+/** The `metadata` node's artifact — the text half of the publish kit, as
+ * `backends/llm.py::_parse_metadata` writes it. `hashtags` arrive WITHOUT
+ * the leading `#` (the engine strips it), so anything that displays them
+ * adds it back rather than assuming it is there. */
+export interface PublishKit {
+  title: string;
+  description: string;
+  hashtags: string[];
+}
+
+/** `/system/etas`: the engine's own render-time medians, keyed by node kind
+ * then quality ("draft" | "final"). `samples` is how many completed jobs the
+ * median was taken over — a one-sample median is a single observation, and
+ * the UI is entitled to say so. Empty until that machine has rendered
+ * something; an absent kind means "no data", never "instant". */
+export type EngineEtas = Record<string, Record<string, { seconds: number; samples: number }>>;
+
+/** One rung of the engine's OOM ladder (`scheduler.FALLBACK_LADDER`): the
+ * spec params a retry runs with after the previous attempt ran out of
+ * memory. `resolution_scale` is the part worth saying out loud — the retry
+ * that finally succeeds produces a SMALLER render than the one that failed,
+ * and without this nothing on screen says so. */
+export interface OomFallback {
+  resolution_scale?: number;
+  offload?: string;
+}
+
 export type EngineEvent =
   // job.* events carry project_id so a subscriber (the WS is a global stream)
   // can drop events for a project it isn't viewing — node ids like "timeline"
@@ -338,8 +394,22 @@ export type EngineEvent =
       suggestions?: string[];
       project_id: string;
     }
-  | { type: "job.retrying"; job_id: string; node_id: string; attempt: number; project_id: string }
+  | {
+      type: "job.retrying";
+      job_id: string;
+      node_id: string;
+      attempt: number;
+      fallback?: OomFallback;
+      project_id: string;
+    }
   | { type: "project.compiled"; project_id: string; enqueued: number }
+  // A checkpoint was approved — possibly from the CLI or MCP against the same
+  // engine, which is why the desktop cannot treat its own approve call as the
+  // only way this changes.
+  | { type: "project.approved"; project_id: string; checkpoint: string }
+  // An upload attached an artifact to a node: the board, the graph and the
+  // canvas all go stale together.
+  | { type: "project.asset"; project_id: string; node_id: string }
   | { type: "project.expanded"; project_id: string; scenes: string[] }
   | { type: "project.edited"; project_id: string; ops: number; summary: string }
   // An undo/redo or save point restore replaced the graph wholesale.
