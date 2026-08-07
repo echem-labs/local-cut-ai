@@ -437,6 +437,7 @@ export function Project() {
     client,
     actionError,
     dismissActionError,
+    system,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const setView = useWorkspace((state) => state.setView);
@@ -669,6 +670,10 @@ export function Project() {
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
   const eta = finalizeEta(board);
+  // `=== false` only: `null` is no ffmpeg at all (a louder failure the
+  // Settings row already names) and `undefined` is an engine too old to
+  // have looked, where guessing would be worse than staying quiet.
+  const titlesWontRender = system?.ffmpeg_drawtext === false && board.has_onscreen_text === true;
 
   const runFinalize = async () => {
     if (finalizing) return;
@@ -822,6 +827,19 @@ export function Project() {
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
       <StalledNotice />
+      {/* Said BEFORE the finalize, not after it fails.
+          This engine's ffmpeg cannot draw text, and this cut burns a title
+          on at least one scene — so the export will die on "No such filter:
+          'drawtext'" at the very end, after every scene has re-rendered at
+          final quality. That is the most expensive possible moment to find
+          out. Both halves are required: a machine without drawtext and a
+          project with no titles is unaffected, and warning it anyway would
+          teach people to ignore this. */}
+      {titlesWontRender && (
+        <div role="status" className="banner warning">
+          {t("project.noDrawtext")}
+        </div>
+      )}
       {publishOpen && <PublishKit onClose={() => setPublishOpen(false)} />}
       {historyKeyError && (
         <div role="status" className="banner error">

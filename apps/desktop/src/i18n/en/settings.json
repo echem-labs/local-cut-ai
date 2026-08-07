@@ -168,7 +168,8 @@
       "music": "Generates the background music bed",
       "timeline": "Cuts clips, narration, captions and music into one edit",
       "export": "Renders the final MP4 file"
-    }
+    },
+    "noDrawtext": "This machine's FFmpeg cannot draw text, so on-screen titles will not be burned into the video. Everything else renders normally. Installing an FFmpeg build with libharfbuzz (most distribution packages have it) restores titles."
   },
   "setup": {
     "heading": "Setup",

@@ -86,5 +86,6 @@
   "stalled": "This project is waiting on renders that are no longer queued - the engine was restarted or stopped mid-render.",
   "resume": "Resume rendering",
   "resuming": "Resuming...",
-  "stalledLabel": "Rendering stopped"
+  "stalledLabel": "Rendering stopped",
+  "noDrawtext": "Some scenes have on-screen titles, and this machine's FFmpeg cannot draw text — the final video would fail at the last step, after every scene has re-rendered. Remove the titles, or install an FFmpeg build with libharfbuzz, before creating the final video."
 }

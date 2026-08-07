@@ -150,6 +150,12 @@ export interface Board {
   /** Per-scene seconds from the assembled cut — absent until a timeline
    * exists (and on engines older than this field). */
   assembled_durations?: Record<string, number>;
+  /** Whether any scene burns an on-screen title. Overlays are timeline
+   * params and the board carries node status, so this is the only way the
+   * client can know — and it needs to, because an ffmpeg without drawtext
+   * fails the export only after a full-quality re-render. Absent on
+   * engines older than the field. */
+  has_onscreen_text?: boolean;
 }
 
 export interface HardwareGPU {
