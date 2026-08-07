@@ -430,6 +430,7 @@ export function Project() {
   const {
     currentProject,
     board,
+    jobs,
     refreshBoard,
     finalize,
     regenerate,
@@ -640,6 +641,24 @@ export function Project() {
   // there is nothing to enqueue, and the button would refresh the board and
   // change nothing — a primary action that silently does nothing at all.
   const allReady = scenes.length > 0 && scenes.every((scene) => isDone(scene.clip.status));
+  /**
+   * What the queue is doing for this project right now.
+   *
+   * `allReady` counts scene CLIPS, and finalize renders more than those: the
+   * timeline and the export always, plus the keyframes, music and thumbnail
+   * at final quality. So the moment the last clip landed the CTA re-armed
+   * itself and offered to create a final video that was at that moment being
+   * assembled — an enabled primary action beside a still-spinning tray.
+   *
+   * Jobs, not node status: a node reading `queued` with nothing behind it is
+   * the stalled case, and there the offer is exactly what is wanted.
+   */
+  const active = jobs.filter((job) => job.status === "queued" || job.status === "rendering");
+  // `job.spec?.` even though the type requires it: this runs on every render
+  // of the whole project screen, and a job row missing its spec would take
+  // that screen to the ErrorBoundary rather than degrade — the failure mode
+  // the palette's tool-kind cast already taught this app about.
+  const finalInFlight = active.some((job) => job.spec?.quality === "final");
   const exported = exportNode?.status === "final" && exportNode.artifact_hash;
   // The publish kit asks a weaker question than Download does. Its title,
   // description and hashtags are written from the SCRIPT — nothing in it
@@ -756,19 +775,32 @@ export function Project() {
               <Download size={14} strokeWidth={2} />
               {t("project.cta.download")}
             </a>
-          ) : allReady ? (
+          ) : finalizing || finalInFlight ? (
+            /* The render outlives the request that started it, so this holds
+               from the click until the last final-quality job lands — not
+               just while the HTTP call is open. */
+            <button className="btn-primary" disabled title={t("terms.tips.createFinal")}>
+              <Sparkles size={14} strokeWidth={2} />
+              {t("project.cta.creating")}
+            </button>
+          ) : allReady && active.length === 0 ? (
             <button
               className="btn-primary"
-              disabled={finalizing}
               onClick={() => void runFinalize()}
               title={t("terms.tips.createFinal")}
             >
               <Sparkles size={14} strokeWidth={2} />
-              {finalizing
-                ? t("project.cta.creating")
-                : eta
-                  ? t("project.cta.createWithEta", { eta })
-                  : t("project.cta.create")}
+              {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
+            </button>
+          ) : allReady ? (
+            /* Every clip is done and something else is not — a draft
+               timeline or export still assembling. Says what the button
+               does, and why it cannot do it yet: the count the branch below
+               shows would read "7/7" and explain nothing. No ETA either,
+               which on an unpressable button is noise. */
+            <button className="btn-primary" disabled title={t("project.cta.busyTitle")}>
+              <Sparkles size={14} strokeWidth={2} />
+              {t("project.cta.create")}
             </button>
           ) : scenes.length > 0 ? (
             /* Present but not pressable, rather than absent. The screen's
