@@ -34,6 +34,7 @@ import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
+import { SETTINGS_TABS, type SettingsTab } from "../lib/settingsTabs";
 import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
 import {
   type PairingPreview,
@@ -54,26 +55,21 @@ const THEME_OPTIONS: { value: ThemePref }[] = [
   { value: "light" },
 ];
 
-type SettingsTab =
-  | "general"
-  | "defaults"
-  | "providers"
-  | "models"
-  | "storage"
-  | "engine"
-  | "workflows"
-  | "about";
+/** Nav order comes from lib/settingsTabs, which the command palette reads
+ * too — a pane the rail shows and the palette cannot reach is the drift
+ * two hand-kept lists produce. Icons stay here, where the rail is. */
+const TAB_ICONS: Record<SettingsTab, typeof SunMoon> = {
+  general: SunMoon,
+  defaults: SlidersHorizontal,
+  providers: KeyRound,
+  models: Boxes,
+  storage: HardDrive,
+  engine: Server,
+  workflows: Workflow,
+  about: Info,
+};
 
-const NAV: { id: SettingsTab; icon: typeof SunMoon }[] = [
-  { id: "general", icon: SunMoon },
-  { id: "defaults", icon: SlidersHorizontal },
-  { id: "providers", icon: KeyRound },
-  { id: "models", icon: Boxes },
-  { id: "storage", icon: HardDrive },
-  { id: "engine", icon: Server },
-  { id: "workflows", icon: Workflow },
-  { id: "about", icon: Info },
-];
+const NAV = SETTINGS_TABS.map((id) => ({ id, icon: TAB_ICONS[id] }));
 
 /** Engine provider ids → shell key ids (google's key is a Gemini key). */
 const KEY_IDS: Record<string, ProviderKeyId> = {

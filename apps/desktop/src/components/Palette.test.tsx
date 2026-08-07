@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Project } from "../api/types";
 import { t } from "../i18n";
+import { SETTINGS_TABS } from "../lib/settingsTabs";
 import { useApp } from "../store";
 import { Palette } from "./Palette";
 
@@ -147,5 +148,32 @@ describe("reporting what a palette command was refused", () => {
 
     await userEvent.click(screen.getByText(t("palette.resumeRender")));
     expect(useApp.getState().actionError).toBeNull();
+  });
+});
+
+describe("reaching every Settings pane", () => {
+  it("offers a command for each pane the rail shows", async () => {
+    // The palette and the Settings rail were two hand-kept lists, which
+    // fails in exactly one direction: a new pane the rail shows and the
+    // palette cannot reach, with nothing to distinguish a missing command
+    // from a broken one. They read the same array now — this pins that
+    // they still do, since sharing a module is only a convention until
+    // something asserts it.
+    const openSettings = vi.fn();
+    await openPalette({ openSettings });
+
+    for (const tab of SETTINGS_TABS) {
+      const label = t("palette.settingsTab", { tab: t(`settings.tabs.${tab}`) });
+      expect(screen.getByText(label), `no palette command for ${tab}`).toBeInTheDocument();
+    }
+  });
+
+  it("opens the pane the command names", async () => {
+    const openSettings = vi.fn();
+    await openPalette({ openSettings });
+    await userEvent.click(
+      screen.getByText(t("palette.settingsTab", { tab: t("settings.tabs.workflows") })),
+    );
+    expect(openSettings).toHaveBeenCalledWith("workflows");
   });
 });
