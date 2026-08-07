@@ -117,7 +117,7 @@ function PackRow({
             </span>
           )}
         </div>
-        <div className="pack-repo">{pack.repo}</div>
+        <RepoLink url={pack.repo} />
         {pack.summary && <div className="sd">{pack.summary}</div>}
         <div className="sd">
           {plural("settings.workflows.packNodes", pack.nodes.length, { count: pack.nodes.length })}
@@ -133,6 +133,27 @@ function PackRow({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Where the pack came from, as somewhere you can actually go.
+ *
+ * It was text in both places it appears, and that is worst exactly where it
+ * matters most: the grant dialog asks the operator to vouch for third-party
+ * Python that will run with the models, the files and the network, and it
+ * printed the address of that code as something to retype into a browser.
+ *
+ * The click leaves for the system browser through the main process's window
+ * open handler, which opens http(s) and denies every other scheme. Nothing
+ * here re-checks that, and nothing here should — a second answer to the same
+ * question is how the two drift apart.
+ */
+function RepoLink({ url }: { url: string }) {
+  return (
+    <a className="pack-repo" href={url} target="_blank" rel="noreferrer">
+      {url}
+    </a>
   );
 }
 
@@ -178,7 +199,7 @@ function EnablePackDialog({
   return (
     <Modal
       title={t("settings.workflows.enableTitle", { name: pack.name })}
-      subtitle={pack.repo}
+      subtitle={<RepoLink url={pack.repo} />}
       size="m"
       onClose={onClose}
       footer={

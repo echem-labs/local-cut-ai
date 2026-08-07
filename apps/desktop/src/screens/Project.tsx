@@ -26,6 +26,7 @@ import { pendingCheckpoint } from "../lib/checkpoints";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
 import { finalizeEta, recordBoard } from "../lib/eta";
 import { isStalled } from "../lib/jobs";
+import { useMenuFit } from "../lib/useMenuFit";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { isDone, isSettled } from "../lib/status";
@@ -215,6 +216,7 @@ function BoardMenu() {
   // the action returns made that a no-op with nothing on screen.
   const [historyError, setHistoryError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const fit = useMenuFit();
 
   useEffect(() => {
     if (!open) return;
@@ -251,7 +253,7 @@ function BoardMenu() {
         <MoreHorizontal size={15} strokeWidth={1.8} />
       </button>
       {open && (
-        <div className="menu-pop" role="menu">
+        <div className="menu-pop" role="menu" ref={fit}>
           <div className="menu-label">{t("project.menu.history")}</div>
           <button
             role="menuitem"
