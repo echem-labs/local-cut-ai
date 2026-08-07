@@ -75,9 +75,16 @@ const MASKED_AS = {
 };
 
 /** A stand-in for the release feed, answering with THIS build's version so
- * the app lands on "Up to date" rather than offering an update to itself. */
+ * the app lands on "Up to date" rather than offering an update to itself.
+ * `.breaks()` makes it start refusing, so the frame can be shot against a
+ * healthy feed and the failure state checked afterwards. */
 function startFeed(version) {
+  let broken = false;
   const server = createServer((_req, response) => {
+    if (broken) {
+      response.writeHead(503, { "content-type": "text/plain" });
+      return response.end("no");
+    }
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ tag_name: `v${version}`, html_url: "https://example.invalid" }));
   });
@@ -85,6 +92,9 @@ function startFeed(version) {
     server.listen(0, "127.0.0.1", () =>
       resolve({
         url: `http://127.0.0.1:${server.address().port}/latest`,
+        breaks: () => {
+          broken = true;
+        },
         close: () =>
           new Promise((done) => {
             server.closeAllConnections();
@@ -264,6 +274,39 @@ try {
     { stdio: "inherit" },
   );
   check("the pane matches the mock within budget", compared.status === 0, `compare exited ${compared.status}`);
+
+  // After the frame is shot, so it cannot disturb it: the failure state the
+  // mock does not draw and no diff can reach. A check that cannot reach the
+  // feed renders a notice INSIDE the version card's grid, and as a plain
+  // grid item it lands in the first column, widens it to its own width and
+  // pushes the identity block clear of the mark. The card is the one place
+  // in the pane where an extra row is not free, so this is asserted rather
+  // than left to the eye.
+  const before = await evalInApp(`
+    return page.evaluate(() => {
+      const name = document.querySelector(".about-name").getBoundingClientRect();
+      return Math.round(name.x);
+    });
+  `);
+  feed.breaks();
+  const failed = await evalInApp(`
+    await page.evaluate(() => document.querySelector(".about-update-row button")?.click());
+    await page.waitForSelector(".about-version .alert", { timeout: 10000 });
+    return page.evaluate(() => {
+      const card = document.querySelector(".about-version").getBoundingClientRect();
+      const alert = document.querySelector(".about-version .alert").getBoundingClientRect();
+      const name = document.querySelector(".about-name").getBoundingClientRect();
+      return {
+        nameX: Math.round(name.x),
+        spans: Math.round(alert.width) >= Math.round(card.width) - 34,
+      };
+    });
+  `);
+  check(
+    "a check that cannot reach the feed does not move the card around it",
+    failed.nameX === before && failed.spans,
+    JSON.stringify({ before, ...failed }),
+  );
 } finally {
   await stopRig(rig);
   await feed.close();
