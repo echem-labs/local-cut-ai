@@ -5274,6 +5274,15 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* A check that could not reach the feed spans the card, like the row above
+   it. As a plain grid item the notice lands in the first column and widens
+   it to its own width, which shoves the name and version line clear of the
+   mark - the failure state re-laying-out the half of the card that has
+   nothing to do with it. */
+.about-version .alert {
+  grid-column: 1 / -1;
+}
+
 .about-kv {
   margin-top: var(--space-3);
 }
@@ -5315,8 +5324,14 @@ button.link:hover {
 }
 
 /* The one card that carries a promise rather than a fact — the brighter
-   border is the mock's way of saying read this one. */
-.about-privacy {
+   border is the mock's way of saying read this one, and the extra air above
+   it says the same thing in space.
+
+   Two classes deliberately: as a bare `.about-privacy` the margin lost to
+   `.about-card + .about-card` on specificity and this card sat in the stack
+   like any other, with nothing in the sheet to say the rule had been
+   dropped. */
+.about-card.about-privacy {
   margin-top: var(--space-6);
   border-color: var(--border-hi);
 }
@@ -5326,11 +5341,13 @@ button.link:hover {
   font-weight: 600;
 }
 
+/* Full card width, no reading measure: the card is already narrow, and a
+   68ch cap wrapped this to three lines where the design draws two - which
+   pushed the links and the copyright line below the pane's own fold. */
 .about-privacy p {
   margin-top: var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-secondary);
-  max-width: 68ch;
 }
 
 .about-links {
