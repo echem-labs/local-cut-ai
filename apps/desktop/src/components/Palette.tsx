@@ -15,20 +15,11 @@ import { fuzzyScore } from "../lib/fuzzy";
 import { relativeTime } from "../lib/time";
 import { isToolSession, TOOL_ICONS, TOOL_KINDS, toolKindOf } from "../lib/tools";
 import { applyTheme, resolvedTheme } from "../theme";
+import { SETTINGS_TABS } from "../lib/settingsTabs";
 import { useApp } from "../store";
 
 /** Home's prompt box listens for this and takes focus. */
 export const FOCUS_PROMPT_EVENT = "localcut:focus-prompt";
-
-const SETTINGS_TABS = [
-  "general",
-  "defaults",
-  "providers",
-  "models",
-  "storage",
-  "engine",
-  "about",
-] as const;
 
 interface Item {
   key: string;
