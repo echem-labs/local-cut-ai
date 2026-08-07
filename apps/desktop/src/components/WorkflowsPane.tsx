@@ -6,6 +6,7 @@ import { plural, t } from "../i18n";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Modal } from "./Modal";
 
 /**
  * Settings → Workflows: the ComfyUI half of the engine, which has had a
@@ -162,17 +163,6 @@ function EnablePackDialog({
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      closeRef.current();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
-
   const submit = () => {
     setBusy(true);
     setFailure(null);
@@ -186,48 +176,13 @@ function EnablePackDialog({
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={() => closeRef.current()} role="presentation">
-      <div
-        className="modal pack-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("settings.workflows.enableTitle", { name: pack.name })}
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <h2>{t("settings.workflows.enableTitle", { name: pack.name })}</h2>
-        <p className="sub">{pack.repo}</p>
-
-        {/* The engine's wording, not ours. role=alert so it is announced
-            rather than read only by whoever happens to look down. */}
-        <p className="banner warning" role="alert">
-          {warning}
-        </p>
-
-        <label className="field">
-          <span>{t("settings.workflows.versionLabel")}</span>
-          <input
-            value={version}
-            autoFocus
-            placeholder={t("settings.workflows.versionPlaceholder")}
-            aria-label={t("settings.workflows.versionLabel")}
-            onChange={(event) => setVersion(event.target.value)}
-          />
-        </label>
-        <p className="hint">{t("settings.workflows.versionHint")}</p>
-
-        <label className="ack-row">
-          <input
-            type="checkbox"
-            checked={acknowledged}
-            onChange={(event) => setAcknowledged(event.target.checked)}
-          />
-          <span>{t("settings.workflows.acknowledge")}</span>
-        </label>
-
-        {failure && <Alert message={failure} onDismiss={() => setFailure(null)} />}
-
-        <div className="modal-actions">
-          <div className="spacer" />
+    <Modal
+      title={t("settings.workflows.enableTitle", { name: pack.name })}
+      subtitle={pack.repo}
+      size="m"
+      onClose={onClose}
+      footer={
+        <>
           <button className="btn-ghost" onClick={() => closeRef.current()}>
             {t("common.cancel")}
           </button>
@@ -240,9 +195,37 @@ function EnablePackDialog({
           >
             {busy ? t("settings.workflows.enabling") : t("settings.workflows.enableConfirm")}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      {/* The engine's wording, not ours. role=alert so it is announced
+          rather than read only by whoever happens to look down. */}
+      <p className="banner warning" role="alert">
+        {warning}
+      </p>
+
+      <label className="field">
+        <span>{t("settings.workflows.versionLabel")}</span>
+        <input
+          value={version}
+          placeholder={t("settings.workflows.versionPlaceholder")}
+          aria-label={t("settings.workflows.versionLabel")}
+          onChange={(event) => setVersion(event.target.value)}
+        />
+      </label>
+      <p className="hint">{t("settings.workflows.versionHint")}</p>
+
+      <label className="ack-row">
+        <input
+          type="checkbox"
+          checked={acknowledged}
+          onChange={(event) => setAcknowledged(event.target.checked)}
+        />
+        <span>{t("settings.workflows.acknowledge")}</span>
+      </label>
+
+      {failure && <Alert message={failure} onDismiss={() => setFailure(null)} />}
+    </Modal>
   );
 }
 

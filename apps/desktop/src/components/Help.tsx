@@ -1,8 +1,9 @@
-import { BookOpen, HelpCircle, Keyboard, X } from "lucide-react";
+import { BookOpen, HelpCircle, Keyboard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
 import { useOutsideClick } from "../lib/useOutsideClick";
+import { Modal } from "./Modal";
 import { Tip } from "./Tooltip";
 
 type Panel = "shortcuts" | "glossary" | null;
@@ -150,50 +151,9 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
     return () => window.removeEventListener(OPEN_SHORTCUTS_EVENT, onOpen);
   }, []);
 
-  // Modal focus management: trap Tab, own Escape, and hand focus back where
-  // it came from on close. Without this, Escape only worked while focus
-  // happened to be inside the modal (the close button's autoFocus put it
-  // there, but one click anywhere else lost it), and Tab walked straight out
-  // into the page behind — so the "modal" was only visually modal.
-  const modalRef = useRef<HTMLDivElement>(null);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (panel === null) {
-      // Closing: restore focus to whatever opened us, so keyboard users are
-      // not dumped back at the top of the document.
-      returnFocusRef.current?.focus();
-      returnFocusRef.current = null;
-      return;
-    }
-    returnFocusRef.current = document.activeElement as HTMLElement | null;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        setPanel(null);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = modalRef.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusable || focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !modalRef.current?.contains(active))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [panel]);
+  // Escape, the Tab trap and handing focus back on close all live in
+  // `Modal` now — this overlay had its own copy of each, which is how the
+  // app ended up with two dialogs that trapped focus and three that did not.
 
   const glossary = m().terms.glossary.filter(
     (entry) =>
@@ -250,67 +210,43 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
       </div>
 
       {panel !== null && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setPanel(null);
-          }}
+        <Modal
+          title={
+            panel === "shortcuts" ? t("help.modal.shortcutsTitle") : t("help.modal.glossaryTitle")
+          }
+          size="m"
+          onClose={() => setPanel(null)}
         >
-          <div
-            className="modal help-modal"
-            ref={modalRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label={
-              panel === "shortcuts" ? t("help.modal.shortcutsTitle") : t("help.modal.glossaryTitle")
-            }
-          >
-            <div className="help-modal-head">
-              <h2>
-                {panel === "shortcuts"
-                  ? t("help.modal.shortcutsTitle")
-                  : t("help.modal.glossaryTitle")}
-              </h2>
-              <button
-                className="icon-btn-sm"
-                onClick={() => setPanel(null)}
-                aria-label={t("common.close")}
-                autoFocus
-              >
-                <X size={13} strokeWidth={2} />
-              </button>
+          {panel === "shortcuts" ? (
+            <div className="shortcut-list">
+              {m().help.shortcuts.map((entry) => (
+                <div key={entry.keys}>
+                  <kbd>{shortcutLabel(entry.keys)}</kbd>
+                  <span>{entry.what}</span>
+                </div>
+              ))}
             </div>
-            {panel === "shortcuts" ? (
-              <div className="shortcut-list">
-                {m().help.shortcuts.map((entry) => (
-                  <div key={entry.keys}>
-                    <kbd>{shortcutLabel(entry.keys)}</kbd>
-                    <span>{entry.what}</span>
+          ) : (
+            <>
+              <input
+                className="glossary-search"
+                placeholder={t("help.modal.searchPlaceholder")}
+                value={search}
+                aria-label={t("help.modal.searchAria")}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <div className="glossary-list">
+                {glossary.map((entry) => (
+                  <div key={entry.term}>
+                    <b>{entry.term}</b>
+                    <p>{entry.def}</p>
                   </div>
                 ))}
+                {glossary.length === 0 && <p className="hint">{t("help.modal.nothingMatches")}</p>}
               </div>
-            ) : (
-              <>
-                <input
-                  className="glossary-search"
-                  placeholder={t("help.modal.searchPlaceholder")}
-                  value={search}
-                  aria-label={t("help.modal.searchAria")}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                <div className="glossary-list">
-                  {glossary.map((entry) => (
-                    <div key={entry.term}>
-                      <b>{entry.term}</b>
-                      <p>{entry.def}</p>
-                    </div>
-                  ))}
-                  {glossary.length === 0 && <p className="hint">{t("help.modal.nothingMatches")}</p>}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+            </>
+          )}
+        </Modal>
       )}
     </>
   );

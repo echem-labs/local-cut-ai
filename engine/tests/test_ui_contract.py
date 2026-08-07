@@ -423,3 +423,71 @@ def test_the_code_execution_warning_has_no_second_copy_in_the_desktop():
         f"`warning` field the engine sends instead: {offenders}"
     )
     assert needle in CODE_EXECUTION_WARNING, "the fragment this test looks for moved"
+
+
+def _stylesheet() -> str:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "apps"
+        / "desktop"
+        / "src"
+        / "styles"
+        / "app.css"
+    ).read_text(encoding="utf-8")
+
+
+def _tokens() -> str:
+    return (
+        Path(__file__).resolve().parents[2]
+        / "apps"
+        / "desktop"
+        / "src"
+        / "styles"
+        / "tokens.css"
+    ).read_text(encoding="utf-8")
+
+
+def test_every_custom_property_the_stylesheet_reads_is_one_that_exists():
+    """A `var(--name)` naming a property that was never defined is not a
+    fallback - the whole DECLARATION is invalid at computed-value time and
+    the browser drops it. Nothing announces that: no build error, no console
+    warning, and the desktop suite cannot see it either (vitest stubs CSS
+    imports to an empty string, and jsdom loads no stylesheet). Three dialog
+    paddings were written against a `--space-5` the scale has never had, and
+    each one silently became no padding at all.
+
+    Lives here rather than in vitest for the same reason the code-execution
+    check does: this side can read the file.
+    """
+    css, tokens = _stylesheet(), _tokens()
+    defined = set(re.findall(r"^\s*(--[\w-]+)\s*:", tokens, re.MULTILINE))
+    # Properties app.css defines for itself and reads nearby - the tooltip's
+    # --tip-x, the dockview theme's --dv-*. They never reach tokens.css.
+    local = set(re.findall(r"^\s*(--[\w-]+)\s*:", css, re.MULTILINE))
+    used = set(re.findall(r"var\(\s*(--[\w-]+)", css))
+    missing = sorted(used - defined - local)
+    assert missing == [], (
+        f"app.css reads custom properties nothing defines, so those "
+        f"declarations are dropped: {missing}"
+    )
+
+
+def test_no_dialog_picks_its_own_width():
+    """Dialog width is `size="s|m|l"` on the shared shell (components/Modal),
+    which is what stops a set of dialogs from looking like a set of
+    one-offs. Before that there were four hand-picked max-widths - 400, 460,
+    520 and 560 - one per dialog, each arrived at on its own.
+    """
+    rogue = [
+        block.split("{")[0].strip()
+        for block in re.findall(
+            r"^\.[\w-]*modal[\w-]*\s*\{[^}]*max-width[^}]*\}",
+            _stylesheet(),
+            re.MULTILINE,
+        )
+        if not block.split("{")[0].strip().endswith(("modal-s", "modal-m", "modal-l"))
+    ]
+    assert rogue == [], (
+        f"these selectors size a dialog themselves; use the shell's size "
+        f"prop instead: {rogue}"
+    )
