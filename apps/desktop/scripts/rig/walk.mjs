@@ -393,13 +393,22 @@ try {
             // One line means one shared CENTRE, not one shared top: the bar
             // centres its children, so a 15px label and a 24px button sit at
             // different tops while being perfectly on the same row.
+            //
+            // Within a pixel, not identical to one. A centre is top + height/2
+            // over fractional layout boxes, so a control of odd height beside
+            // one of even height rounds a pixel apart while sitting on exactly
+            // the same row — and WHICH way it rounds depends on the bar's own
+            // y offset, so anything above the panel can flip it. A real wrap
+            // moves a control a whole row, which this still catches with room
+            // to spare.
             barWraps:
-              new Set(
-                controls.map((el) => {
+              (() => {
+                const centres = controls.map((el) => {
                   const r = el.getBoundingClientRect();
-                  return Math.round(r.top + r.height / 2);
-                }),
-              ).size > 1,
+                  return r.top + r.height / 2;
+                });
+                return Math.max(...centres) - Math.min(...centres) > 1;
+              })(),
             // The surface scrolls over the SCALED graph (the sizer), or over
             // itself when the panel is wider than the graph — never over the
             // raw layout box, which a transform leaves untouched.
@@ -458,6 +467,77 @@ try {
       wheel.zoom !== "100%" && wheel.dpr === dprBefore && wheel.inner === innerBefore,
       JSON.stringify({ ...wheel, dprBefore, innerBefore }),
     );
+
+    // U5: the audio lanes under the timeline. Their whole value is being
+    // ALIGNED with the blocks above them — a segment at the wrong width
+    // points at the wrong scene, which is worse than drawing nothing — and
+    // alignment is a layout property, so it belongs here rather than in a
+    // component test that has no real widths.
+    const lanes = await evalInApp(`
+      await page.evaluate(() => {
+        const trigger = [...document.querySelectorAll(".dropdown-trigger")].find((b) =>
+          /view/i.test(b.getAttribute("aria-label") || ""));
+        trigger?.click();
+      });
+      await page.waitForTimeout(120);
+      await page.evaluate(() => {
+        const option = [...document.querySelectorAll('[role="option"]')].find((b) =>
+          /storyboard/i.test(b.textContent || ""));
+        option?.click();
+      });
+      await page.waitForSelector(".tl-scroll", { timeout: 20000 });
+      return page.evaluate(() => {
+        const audio = document.querySelector(".tl-audio");
+        if (!audio) return { present: false };
+        const blocks = [...document.querySelectorAll(".tl-block")].map((el) =>
+          Math.round(el.getBoundingClientRect().width),
+        );
+        // The narration lane is the one with a segment per scene.
+        const lane = [...document.querySelectorAll(".tl-lane")].find(
+          (el) => el.querySelectorAll(".lane-seg").length === blocks.length,
+        );
+        const segments = lane
+          ? [...lane.querySelectorAll(".lane-seg")].map((el) =>
+              Math.round(el.getBoundingClientRect().width),
+            )
+          : [];
+        return {
+          present: true,
+          blocks,
+          segments,
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        };
+      });
+    `);
+    if (lanes.present) {
+      check(
+        "each audio segment is as wide as the scene block above it",
+        lanes.segments.length === lanes.blocks.length &&
+          lanes.segments.every((width, index) => Math.abs(width - lanes.blocks[index]) <= 1),
+        JSON.stringify(lanes),
+      );
+      check(
+        "the audio lanes add no horizontal scroll to the page",
+        lanes.scrollWidth <= lanes.innerWidth + 1,
+        `scrollWidth ${lanes.scrollWidth}`,
+      );
+      // What this run does NOT measure, said out loud: the mock backend
+      // writes narration and music as JSON placeholders named .wav, so the
+      // peaks route refuses them and every segment draws its empty variant.
+      // Alignment is checked; the waveform inside a segment is not, and
+      // cannot be until the mock writes decodable audio.
+      console.log("NOTE mock audio is a placeholder - lanes are checked for width, not waveform");
+      await shoot("timeline-audio-lanes.png");
+    } else {
+      // Said out loud rather than passed over: the lanes appear only once
+      // narration or music has actually rendered, so a profile with no
+      // audio leaves this alignment unmeasured — which is a gap in the run,
+      // not a green light.
+      console.log(
+        "NOTE no audio lanes in this profile (nothing rendered) - segment alignment unchecked",
+      );
+    }
   }
 
   const report = await health();
@@ -469,8 +549,18 @@ try {
   // itself produced. Everything before it, 4xx of any other kind, every 5xx
   // and every app-level error still fail the walk.
   const noise = /Failed to load resource[^|]*409 \(Conflict\)|engine 409:/;
+  // Same shape, same marker — the workspace first mounts inside the canvas
+  // stop, and mounting it is what fires these. The peaks route answers 422
+  // for an artifact that is not decodable audio, which is every narration
+  // and music file the MOCK backend writes: JSON placeholders with a .wav
+  // name. U5's audio lanes ask for peaks on every one of them. The lanes are
+  // built to degrade on exactly that — `useArtifactPeaks` returns null and
+  // the segment draws its empty variant — but Chromium logs the failed
+  // response whatever the app does with it. Everything before the first
+  // workspace, and every other status after it, still fails the walk.
+  const peaksNoise = /Failed to load resource[^|]*422 \(Unprocessable/;
   const consoleErrors = report.consoleErrors.filter(
-    (line, at) => !(at >= beforeCanvas && noise.test(line)),
+    (line, at) => !(at >= beforeCanvas && (noise.test(line) || peaksNoise.test(line))),
   );
   check(
     "no console errors during the walk",

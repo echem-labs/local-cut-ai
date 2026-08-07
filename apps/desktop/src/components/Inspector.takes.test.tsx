@@ -1,7 +1,13 @@
 /** The Inspector's takes row: alternate versions a regenerate displaced.
  * Chips appear only when there is more than one identity to choose from,
  * the current one is marked and inert, and clicking another sends the
- * select_take patch through the store. */
+ * select_take patch through the store.
+ *
+ * Each take now carries a second control beside its chip (reroll on this
+ * take's seed — see Inspector.reroll.test.tsx), so "every button in the
+ * group" is no longer "every take". These read `.chip` explicitly rather
+ * than indexing `querySelectorAll("button")`, which silently addressed the
+ * wrong element the moment a second control appeared. */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -43,6 +49,11 @@ const boardWith = (takes?: TakeInfo[]): Board => ({
   aux: {},
 });
 
+/** The take chips only — not the reroll control that now sits beside each
+ * one. */
+const chipsOf = (group: HTMLElement) =>
+  Array.from(group.querySelectorAll<HTMLButtonElement>("button.chip"));
+
 let selectTake: ReturnType<typeof vi.fn>;
 
 function mount(takes?: TakeInfo[]) {
@@ -63,7 +74,7 @@ describe("Inspector takes", () => {
   it("renders one chip per take with the current one pressed", () => {
     mount([take("a".repeat(64), false), take("b".repeat(64), true)]);
     const group = screen.getByRole("group", { name: /takes/i });
-    const chips = group.querySelectorAll("button");
+    const chips = chipsOf(group);
     expect(chips).toHaveLength(2);
     expect(chips[1]).toHaveAttribute("aria-pressed", "true");
     expect(chips[1]).toBeDisabled(); // the current take is not a destination
@@ -72,7 +83,7 @@ describe("Inspector takes", () => {
   it("clicking another take sends its recorded hash", () => {
     mount([take("a".repeat(64), false), take("b".repeat(64), true)]);
     const group = screen.getByRole("group", { name: /takes/i });
-    fireEvent.click(group.querySelectorAll("button")[0]!);
+    fireEvent.click(chipsOf(group)[0]!);
     expect(selectTake).toHaveBeenCalledWith("s1.clip", "a".repeat(64));
   });
 
@@ -90,7 +101,7 @@ describe("Inspector takes", () => {
       take("a".repeat(64), false, false, "cloud:kling-2.5"),
       take("b".repeat(64), true, true, null),
     ]);
-    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    const chip = chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!;
     expect(chip.title).toMatch(/cloud:kling-2\.5/);
     expect(chip.title).toMatch(/bills again/i);
     expect(chip.className).toContain("billed");
@@ -105,21 +116,21 @@ describe("Inspector takes", () => {
       take("a".repeat(64), false, true, "cloud:kling-2.5"),
       take("b".repeat(64), true, true, null),
     ]);
-    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    const chip = chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!;
     expect(chip.className).not.toContain("billed");
     expect(chip.title).not.toMatch(/bills again/i);
   });
 
   it("does not call a local take billed", () => {
     mount([take("a".repeat(64), false, false, "local:ltx"), take("b".repeat(64), true)]);
-    const chip = screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!;
+    const chip = chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!;
     expect(chip.className).not.toContain("billed");
   });
 
   it("shows the engine's refusal instead of a chip that does nothing", async () => {
     mount([take("a".repeat(64), false), take("b".repeat(64), true)]);
     selectTake.mockResolvedValue("engine 422: s1.clip has no recorded take");
-    fireEvent.click(screen.getByRole("group", { name: /takes/i }).querySelectorAll("button")[0]!);
+    fireEvent.click(chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!);
     expect(await screen.findByRole("status")).toHaveTextContent("no recorded take");
   });
 });

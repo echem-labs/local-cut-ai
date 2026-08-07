@@ -46,18 +46,45 @@
   "motionInfoAria": "About the camera motion field",
   "motionPresetsAria": "Motion presets",
   "motionPresets": {
-    "pushIn": { "label": "Push-in", "text": "slow push-in toward the subject" },
-    "orbit": { "label": "Orbit", "text": "smooth orbit around the subject" },
-    "handheld": { "label": "Handheld", "text": "subtle handheld drift" },
-    "static": { "label": "Static", "text": "locked-off static camera" }
+    "pushIn": {
+      "label": "Push-in",
+      "text": "slow push-in toward the subject"
+    },
+    "orbit": {
+      "label": "Orbit",
+      "text": "smooth orbit around the subject"
+    },
+    "handheld": {
+      "label": "Handheld",
+      "text": "subtle handheld drift"
+    },
+    "static": {
+      "label": "Static",
+      "text": "locked-off static camera"
+    }
   },
   "scriptPresetsAria": "Script presets",
   "scriptPresets": {
-    "youtube": { "label": "YouTube", "text": "For YouTube: a strong hook, clear sections, an outro that invites the next video." },
-    "shorts": { "label": "Shorts", "text": "For Shorts: hook in the first second, one idea, under 45 seconds, punchy pacing." },
-    "tiktok": { "label": "TikTok", "text": "For TikTok: conversational, fast cuts, on-screen-text moments, end on a question." },
-    "explainer": { "label": "Explainer", "text": "Explainer tone: patient, concrete examples, no jargon without a one-line definition." },
-    "casual": { "label": "Casual", "text": "Casual tone: first person, contractions, like telling a friend." }
+    "youtube": {
+      "label": "YouTube",
+      "text": "For YouTube: a strong hook, clear sections, an outro that invites the next video."
+    },
+    "shorts": {
+      "label": "Shorts",
+      "text": "For Shorts: hook in the first second, one idea, under 45 seconds, punchy pacing."
+    },
+    "tiktok": {
+      "label": "TikTok",
+      "text": "For TikTok: conversational, fast cuts, on-screen-text moments, end on a question."
+    },
+    "explainer": {
+      "label": "Explainer",
+      "text": "Explainer tone: patient, concrete examples, no jargon without a one-line definition."
+    },
+    "casual": {
+      "label": "Casual",
+      "text": "Casual tone: first person, contractions, like telling a friend."
+    }
   },
   "clipSecondsAria": "Clip length in seconds",
   "clipSecondsTipLabel": "How long the take runs",
@@ -120,6 +147,18 @@
   "deleteToolMessage": "Removes this quick tool output and the file it generated. If it is still generating, that stops. This can't be undone.",
   "deleteToolConfirm": "Delete output",
   "styleAria": "Visual style",
+  "aspectTip": "Frame shape",
+  "aspectTipHint": "9:16 for Shorts, Reels and TikTok; 16:9 for YouTube; 1:1 for feed posts.",
+  "durationTip": "Target length",
+  "durationTipHint": "How long the finished video should run. The script is written to fit it.",
+  "styleTip": "Visual style",
+  "styleTipHint": "The look the shot prompts are written for. Applies to every scene.",
+  "scriptModelTip": "Script model",
+  "scriptModelTipHint": "Which local LLM writes the screenplay. The default is whatever your engine is configured with.",
+  "toolDurationTip": "Target length",
+  "toolDurationTipHint": "How long the result should run. The script or music is written to fit it.",
+  "toolAspectTip": "Frame shape",
+  "toolAspectTipHint": "9:16 for Shorts, Reels and TikTok; 16:9 for YouTube; 1:1 for feed posts.",
   "styles": {
     "cinematic": "Cinematic",
     "documentary": "Documentary",

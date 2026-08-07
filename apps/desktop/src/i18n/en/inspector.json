@@ -61,5 +61,7 @@
   "takeCurrentTitle": "The take you're seeing now",
   "takeSwitchTitle": "Switch to this take — instant, it's still on disk",
   "takeMissingTitle": "This take's file is gone — switching re-renders it",
-  "takeCloudTitle": "Switch to this take — it was made with {model}, so it re-renders on your own API key and bills again"
+  "takeCloudTitle": "Switch to this take — it was made with {model}, so it re-renders on your own API key and bills again",
+  "rerollSeedAria": "Render again on take {n}'s seed",
+  "rerollSeedTitle": "Render again on this take's seed ({seed}) - keeps the composition, applies your current settings"
 }

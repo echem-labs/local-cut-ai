@@ -2521,9 +2521,19 @@ button.link:hover {
   color: var(--text-primary);
 }
 
-.composer-scope .dropdown-menu {
-  bottom: calc(100% + 8px);
+/* Fixed + JS-measured, like `panel-help-pop` and for the same reason: the
+   composer is inside a dockview panel, a panel's overflow clips anything
+   absolutely positioned within it, and the Prompt panel is about one control
+   tall. A seven-scene project lost the top of its own scope list — "Whole
+   video" and the first scenes were cut off with no way to reach them.
+
+   `position`, `left`, `bottom` and `max-height` are all set inline by the
+   component, which is the only thing that can measure them. What is left
+   here is the base rule's `top`, which would fight the measured `bottom`,
+   and the scroll that makes a list longer than the window usable at all. */
+.composer-scope .scope-menu {
   top: auto;
+  overflow-y: auto;
 }
 
 .composer-input {
@@ -2662,13 +2672,20 @@ button.link:hover {
   flex-wrap: wrap;
 }
 
-.edit-log-entry .chips {
+/* The proposed-edit card shows the same row, so it shares these rules — but
+   under its OWN class rather than by reusing `.chips` inside a second
+   ancestor. `.chips` is styled only as a descendant of `.edit-log-entry`, so
+   the borrowed markup rendered as bare browser buttons, and markup naming a
+   class that only works in one place is how that happens. */
+.edit-log-entry .chips,
+.plan-chips {
   display: inline-flex;
   gap: 4px;
   flex-wrap: wrap;
 }
 
-.edit-log-entry .chips button {
+.edit-log-entry .chips button,
+.plan-chips button {
   font-size: var(--text-2xs);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2676,7 +2693,8 @@ button.link:hover {
   color: var(--text-secondary);
 }
 
-.edit-log-entry .chips button:hover {
+.edit-log-entry .chips button:hover,
+.plan-chips button:hover {
   border-color: var(--accent);
   color: var(--text-primary);
 }
@@ -3409,6 +3427,31 @@ button.link:hover {
   margin-top: var(--space-4);
 }
 
+/* The script is as long as the video, and this banner sits ABOVE the
+   workspace on a screen that does not scroll: a seven-scene screenplay
+   pushed the board, the timeline and the composer off the bottom of the
+   window with no way to reach them. The table scrolls inside the banner
+   instead. The cap is a fraction of the window rather than a fixed height —
+   on a short window a fixed one is still most of the screen, and the point
+   is that what is below stays reachable. */
+.banner.checkpoint .script-view {
+  max-height: 42vh;
+  overflow-y: auto;
+  /* Room for the scrollbar so it never sits on the LENGTH column. */
+  padding-right: var(--space-2);
+}
+
+/* The header row stays put while the scenes move under it — a table you
+   scroll without one loses which column is which after two rows. */
+.banner.checkpoint .script-view thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* The banner's own surface, not surface-1: a header that does not match
+     what it sits on lets the scrolled rows show through as a tone change. */
+  background: var(--surface-2);
+}
+
 .banner.checkpoint .hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
@@ -3862,6 +3905,300 @@ button.link:hover {
   flex: 1;
   min-width: 0;
   margin: 0;
+}
+
+/* The audio lanes under the block track. Same scale, same scroll box, so
+   they travel with the pictures they describe. */
+.tl-audio {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+}
+
+.tl-lane {
+  position: relative;
+  height: 22px;
+}
+
+/* The label floats over the start of the lane rather than taking a column:
+   a label column would push the lanes out of alignment with the blocks
+   above them, which is the one thing these have to get right. */
+.lane-label {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-1);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.lane-track {
+  display: flex;
+  align-items: stretch;
+  gap: 15px; /* the diamond gutter, so segments sit under their blocks */
+  height: 100%;
+}
+
+.lane-seg {
+  flex-shrink: 0;
+  height: 100%;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+/* A scene whose narration never rendered. The gap IS the information, so it
+   keeps its width and simply holds nothing. */
+.lane-seg.empty {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--surface-2) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.lane-seg svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.lane-seg svg rect {
+  fill: var(--text-tertiary);
+}
+
+/* The proposed edit, above the box that proposed it. Sits in the composer's
+   own column and reads as an answer to what was typed, not as a dialog over
+   it - the composer stays usable, so rewording and re-proposing needs no
+   dismissal first. */
+.edit-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.plan-summary {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.plan-counts {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* Refused ops. Part of what Apply means rather than an aside, so they read
+   at body colour with only the marker muted. */
+.plan-warnings {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.plan-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* The publish kit, in the app's own dialog rather than a band above the
+   board. It shipped as a full-width panel between the header and the
+   storyboard, which put the LAST step of the work above all the earlier
+   ones and gave a text-copying task the visual weight of the project.
+
+   Everything inside it is the modal recipe already in this file — `.field`
+   for the labelled controls, `.modal-actions` for the footer. The first
+   version hand-rolled a grid instead and looked like a different app. */
+.publish-modal {
+  /* Wider than the 400px default, like `.template-modal`: three fields and
+     a 16:9 preview do not fit a confirmation's column. */
+  max-width: 560px;
+}
+
+/* The suggested thumbnail. Sized like a thumbnail rather than stretched to
+   the dialog: at full width a 16:9 preview is 315px of the window's height
+   before the first field, which pushed the footer off a short screen. */
+.publish-thumb {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  margin-top: var(--space-4);
+}
+
+/* Long enough for a description, short enough that the footer stays on a
+   1080p window with the browser chrome and the title bar taken off. */
+.publish-modal {
+  max-height: min(84vh, 720px);
+  overflow-y: auto;
+}
+
+/* Control and copy button on one row. The button is a SIBLING of the input,
+   never wrapping it: a control inside a control is unreachable to a screen
+   reader, and a field you cannot click into is not editable at all.
+
+   A `div`, and the markup says so too: `.modal .field span` is the LABEL
+   rule and matches every span in the field, so a span wrapper here was laid
+   out as a block with the button under the input, wearing 10px uppercase
+   type. */
+.publish-field .field-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.publish-field .field-row > .icon-btn-sm {
+  flex-shrink: 0;
+  /* Beside the control's first row, not centred against a tall textarea. */
+  margin-top: 3px;
+}
+
+/* Tighter than the modal recipe's default and the same as Settings'
+   `.setting-row .sc input`: three stacked fields at 32px with 8px/12px
+   padding read as a form to fill in, where these are text to skim and
+   copy. */
+.publish-field .field-row input,
+.publish-field .field-row textarea {
+  padding: var(--space-1) var(--space-2);
+  min-height: 30px;
+}
+
+/* The note under the last field. `.field` carries its spacing above itself,
+   so anything FOLLOWING one inherits none and sat against the hashtags
+   input as though it were that field's own error text. */
+.publish-modal .field + .hint {
+  display: block;
+  margin-top: var(--space-3);
+}
+
+/* The footer's two buttons are not a pair — "write them again" asks the
+   engine for new text, Close is done. Pushed apart rather than sat side by
+   side, which would read as a choice between equals. */
+.publish-modal .modal-actions .spacer {
+  flex: 1;
+}
+
+.publish-modal .modal-actions button {
+  /* Without this the ghost button is a flex item free to shrink, and
+     "Write them again" wrapped onto three lines inside a square. */
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A take and its reroll, kept together. The reroll is a sibling of the
+   chip rather than a child - ARIA makes a button's children presentational,
+   so nesting it would hide it from a screen reader entirely. */
+.take {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.take-reroll {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-tertiary);
+}
+
+.take-reroll:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.take-reroll:disabled {
+  opacity: 0.4;
+}
+
+/* The stalled-project offer: a sentence and the action that answers it, on
+   one line where there is room. Not `.banner.error` - nothing failed, and
+   red would make a recoverable stall read as a broken project. */
+.banner.stalled {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.banner.stalled > span {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* The out-of-memory failure card. Same restraint as `.alert` - the failed
+   colour lives on the mark and the left edge only - but this one is a group
+   of choices rather than a sentence, so it stacks: what happened, why, then
+   the chips that act on it. */
+.failure-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-failed);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+}
+
+.failure-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.failure-head > svg {
+  flex-shrink: 0;
+  color: var(--status-failed);
+}
+
+.failure-why {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* The chips wrap: three suggestions, one of which carries a model id, do not
+   fit the inspector's width on one line at any sensible font size. */
+.failure-card .chip-row {
+  flex-wrap: wrap;
+}
+
+/* A retry in flight, reported where the node's status already is. Muted:
+   it is a statement about work in progress, not a second failure. */
+.node-retry {
+  margin: var(--space-2) 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 
 .alert-close {
@@ -6231,8 +6568,13 @@ button.link:hover {
   margin-bottom: var(--space-2);
 }
 
-.modal .field input {
+/* `textarea` alongside `input`: a multi-line field in a modal is the same
+   control wearing a different tag, and the publish kit's description was
+   the first to need one. */
+.modal .field input,
+.modal .field textarea {
   width: 100%;
+  min-width: 0;
   background: var(--surface-2);
   color: var(--text-primary);
   border: 1px solid var(--border);
@@ -6241,7 +6583,14 @@ button.link:hover {
   min-height: var(--control-h);
 }
 
-.modal .field input:focus {
+.modal .field textarea {
+  resize: vertical;
+  line-height: 1.5;
+  font: inherit;
+}
+
+.modal .field input:focus,
+.modal .field textarea:focus {
   border-color: var(--accent);
   outline: none;
 }

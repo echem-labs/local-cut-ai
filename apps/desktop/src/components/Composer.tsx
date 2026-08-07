@@ -1,12 +1,19 @@
 import { ChevronDown, History, SendHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EditResult } from "../api/types";
+import { EngineError } from "../api/client";
+import type { EditProposal, EditResult } from "../api/types";
 import { plural, t } from "../i18n";
+import { pendingCheckpoint } from "../lib/checkpoints";
 import { type LogEntry, MAX_LOG_ENTRIES, loadLog, saveLog } from "../lib/editlog";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { ModelsPopover } from "./ModelsPopover";
+
+/** Floor for the scope menu's width — the `150px` half of the shared
+ * `.dropdown-menu` rule's `min-width: max(100%, 150px)`, which this menu
+ * cannot inherit once it is positioned against the viewport. */
+const SCOPE_MENU_MIN_W = 150;
 
 /** The one composer (review 3): a scope-aware natural-language edit box
  * that is ALSO the command palette — typed text fuzzy-matches quick
@@ -19,7 +26,9 @@ export function Composer() {
     currentProject,
     selectedNode,
     select,
-    edit,
+    proposeEdit,
+    applyEditPlan,
+    enhance,
     editBusy,
     regenerate,
     togglePin,
@@ -48,13 +57,56 @@ export function Composer() {
   const undoable = replyApplied && history?.undo_top?.kind === "edit";
   const [scopeOverride, setScopeOverride] = useState<string | null>(null);
   const [scopeOpen, setScopeOpen] = useState(false);
+  /** Where the open scope menu sits, in viewport coordinates.
+   *
+   * It has to be `position: fixed`, because the composer lives in a dockview
+   * panel and a panel's overflow clips anything absolutely positioned inside
+   * it. The Prompt panel is about one control tall, so a project with seven
+   * scenes lost the top of its own list — "Whole video" and the first
+   * scenes were cut off, and there was no way to reach them. Same treatment
+   * `panel-help-pop` already gets, for the same reason. */
+  const [scopeMenu, setScopeMenu] = useState<{
+    left: number;
+    bottom: number;
+    maxHeight: number;
+    minWidth: number;
+  } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  // The compiled plan waiting for a yes. Cleared on project change, on
+  // Discard, and whenever it turns out to be stale.
+  const [proposal, setProposal] = useState<EditProposal | null>(null);
+  /** The script rewrite waiting for a yes — the note it would be given. */
+  const [confirmScript, setConfirmScript] = useState<string | null>(null);
+  const [rewriting, setRewriting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const scopeChipRef = useRef<HTMLButtonElement>(null);
+
+  /** Open the scope menu above the chip, in viewport coordinates, no taller
+   * than the room above it. The composer sits at the foot of the window, so
+   * upward is the only direction with space — and the ceiling is the window,
+   * not the panel. */
+  const openScopeMenu = () => {
+    const rect = scopeChipRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setScopeMenu({
+      left: rect.left,
+      bottom: window.innerHeight - rect.top + 8,
+      maxHeight: Math.max(120, rect.top - 16),
+      // What the shared rule says as `min-width: max(100%, 150px)`, computed
+      // rather than inherited. A percentage resolves against the containing
+      // block, and going from `absolute` (the chip) to `fixed` (the viewport)
+      // silently changed which one that is — the menu stretched to the width
+      // of the window. The intent is unchanged: at least as wide as the chip
+      // it hangs off, never narrower than a readable menu.
+      minWidth: Math.max(rect.width, SCOPE_MENU_MIN_W),
+    });
+    setScopeOpen(true);
+  };
 
   const projectId = currentProject?.id ?? null;
   useEffect(() => {
@@ -63,6 +115,8 @@ export function Composer() {
     setFeedback(null);
     setReplyApplied(false);
     setError(null);
+    setProposal(null);
+    setConfirmScript(null);
   }, [projectId]);
 
   // Ctrl+K belongs to the global command palette now (review 4 §SH4);
@@ -78,11 +132,63 @@ export function Composer() {
     return () => document.removeEventListener("mousedown", onDown);
   }, [scopeOpen]);
 
+  // The coordinates were measured when the menu opened, so anything that
+  // moves the chip — a window resize, a panel being dragged, a scroll —
+  // would strand it. Close instead of trying to follow.
+  useEffect(() => {
+    if (!scopeOpen) return;
+    const close = () => setScopeOpen(false);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [scopeOpen]);
+
   const selectedScene = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
-  // Scope: explicit override wins; else it follows the selection.
-  const scope = scopeOverride ?? selectedScene ?? "project";
+  /** The screenplay is editable through this box too, but not by the same
+   * door. `EDITABLE_PARAMS` has no entry for the script node, so the LLM
+   * edit view never shows it — a plan can rewrite a scene's narration and
+   * can never rewrite the script it came from. `/script/enhance` is that
+   * verb, and until now it existed only on the quick-tool page: a project
+   * sitting at its script checkpoint had no way to say "rewrite this,
+   * shorter". Offered only once there IS a script to amend. */
+  const canEnhanceScript = !!board?.aux.script;
+  /** Sitting at the script gate, with nothing else picked, what the box is
+   * for IS the script. A selected scene still wins — that is a deliberate
+   * click, and this is only a default. */
+  const scriptStage = pendingCheckpoint(currentProject, board) === "script";
+  const scope =
+    scopeOverride ?? selectedScene ?? (scriptStage && canEnhanceScript ? "script" : "project");
+
+  /**
+   * Passing the gate hands the box back to the video.
+   *
+   * The default flips on its own — `scriptStage` goes false the moment the
+   * approval lands. An explicit pick does not, and that is the one worth
+   * undoing: it was made while the review was on screen, about the thing the
+   * review was about. Left pointing at the script, the next sentence typed
+   * rewrites the screenplay that was just approved and throws away the
+   * storyboard the approval started rendering.
+   *
+   * Only on the TRANSITION, never on `!scriptStage` alone: outside beginner
+   * mode there is no gate at all, and clearing on that condition would make
+   * the option unpickable everywhere else.
+   */
+  const wasScriptStage = useRef(scriptStage);
+  useEffect(() => {
+    const passed = wasScriptStage.current && !scriptStage;
+    wasScriptStage.current = scriptStage;
+    if (!passed) return;
+    setScopeOverride((current) => (current === "script" ? null : current));
+    // A rewrite waiting for a yes was asked for under the old context too.
+    setConfirmScript(null);
+  }, [scriptStage]);
   const scopeLabel =
-    scope === "project"
+    scope === "script"
+      ? t("composer.theScript")
+      : scope === "project"
       ? t("composer.wholeVideo")
       : t("composer.scene", { n: scope.replace(/^s/, "") });
 
@@ -137,39 +243,123 @@ export function Composer() {
     saveLog(projectId, next);
   };
 
+  /**
+   * Propose, don't apply.
+   *
+   * The instruction used to go straight to the graph: a sentence typed into
+   * a box silently rewrote the project, and the only way to find out what it
+   * had done was to read the reply afterwards and press Undo. The engine has
+   * always been able to compile a plan and report it without committing
+   * anything — `dry_run` saves nothing, enqueues nothing, records no history
+   * entry and fires no event — so the plan is shown first and lands only
+   * when the user says so.
+   */
   const submit = async () => {
     const instruction = text.trim();
     if (!instruction || editBusy) return;
     setError(null);
     setFeedback(null);
     setReplyApplied(false);
+    setProposal(null);
+    // The script has no dry run — the engine cannot say what a rewritten
+    // screenplay will contain without writing one. So the preview this scope
+    // CAN offer is what the rewrite costs: a new screenplay re-expands the
+    // graph, and every scene it produces is written fresh. Asked first,
+    // because the plan card next to it set the expectation that nothing in
+    // this box lands unannounced.
+    if (scope === "script") {
+      setConfirmScript(instruction);
+      return;
+    }
     try {
-      const before = historyMark();
-      const result: EditResult | null = await edit(instruction, scope);
-      if (result) {
-        const summary =
-          result.ops === 0
-            ? t("composer.noChanges") +
-              (result.summary ? t("composer.summarySuffix", { summary: result.summary }) : "")
-            : plural("composer.rerendering", result.dirty.length, {
-                summary: result.summary || t("composer.editApplied"),
-              });
-        const skipped =
-          result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : "";
-        setFeedback(summary + skipped);
-        setReplyApplied(historyMark() !== before);
+      const proposed = await proposeEdit(instruction, scope);
+      if (!proposed) return;
+      if (proposed.ops === 0) {
+        // Nothing to preview and nothing to apply. Reported as a reply
+        // rather than an empty card offering an Apply that would do nothing.
+        setFeedback(
+          t("composer.noChanges") +
+            (proposed.summary ? t("composer.summarySuffix", { summary: proposed.summary }) : ""),
+        );
         pushLog({
           at: Date.now(),
           instruction,
-          summary:
-            result.summary ||
-            (result.ops === 0 ? t("composer.noChangesLog") : t("composer.editApplied")),
-          dirty: result.dirty,
-          warnings: result.warnings,
+          summary: proposed.summary || t("composer.noChangesLog"),
+          dirty: [],
+          warnings: proposed.warnings,
         });
-        if (result.ops > 0) setText("");
+        return;
       }
+      setProposal(proposed);
     } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  /** Send the note to `/script/enhance`. Internally a `/patch` on the script
+   * node — feedback plus the screenplay it amends — so the re-render, the
+   * cycle check and the undo entry all come from the chokepoint rather than
+   * a private path. Undo is what makes saying yes here reversible. */
+  const rewriteScript = async () => {
+    if (!confirmScript || rewriting) return;
+    setError(null);
+    setRewriting(true);
+    const notes = confirmScript;
+    const message = await enhance(notes);
+    setRewriting(false);
+    if (message) {
+      setError(message);
+      return;
+    }
+    setConfirmScript(null);
+    setFeedback(t("composer.scriptRewriting"));
+    pushLog({
+      at: Date.now(),
+      instruction: notes,
+      summary: t("composer.scriptRewritten"),
+      dirty: ["script"],
+      warnings: [],
+    });
+    setText("");
+  };
+
+  /** Land the plan on screen. The revision it was compiled against travels
+   * with it, so an edit made in another window (or by the CLI) between the
+   * preview and this click refuses with a 409 rather than applying to a
+   * project the preview no longer describes. */
+  const applyProposal = async () => {
+    if (!proposal || editBusy) return;
+    const instruction = text.trim();
+    setError(null);
+    try {
+      const before = historyMark();
+      const result: EditResult | null = await applyEditPlan(proposal, scope);
+      if (!result) return;
+      setProposal(null);
+      setFeedback(
+        plural("composer.rerendering", result.dirty.length, {
+          summary: result.summary || t("composer.editApplied"),
+        }) + (result.warnings.length > 0 ? plural("composer.skipped", result.warnings.length) : ""),
+      );
+      setReplyApplied(historyMark() !== before);
+      pushLog({
+        at: Date.now(),
+        instruction,
+        summary: result.summary || t("composer.editApplied"),
+        dirty: result.dirty,
+        warnings: result.warnings,
+      });
+      setText("");
+    } catch (err) {
+      // A stale plan is its own outcome, not a generic failure: the preview
+      // describes a graph that no longer exists, so the plan is dropped and
+      // the instruction kept for a re-propose. Anything else leaves the
+      // proposal up — the user can try Apply again.
+      if (err instanceof EngineError && err.status === 409) {
+        setProposal(null);
+        setError(t("composer.planStale"));
+        return;
+      }
       setError(err instanceof Error ? err.message : String(err));
     }
   };
@@ -204,6 +394,84 @@ export function Composer() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* What a script rewrite costs, since what it will SAY cannot be
+          previewed. Same shape as the plan card beside it and the same
+          reason: nothing typed into this box lands unannounced. */}
+      {confirmScript && (
+        <div className="edit-plan" role="group" aria-label={t("composer.scriptConfirmAria")}>
+          <p className="plan-summary">{t("composer.scriptConfirm")}</p>
+          <p className="plan-counts">{t("composer.scriptConfirmCost")}</p>
+          <div className="plan-actions">
+            <button
+              className="btn-primary"
+              disabled={rewriting}
+              title={t("terms.tips.rewriteScript")}
+              onClick={() => void rewriteScript()}
+            >
+              {rewriting ? t("composer.scriptRewritingShort") : t("composer.scriptRewrite")}
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={rewriting}
+              onClick={() => setConfirmScript(null)}
+            >
+              {t("composer.discard")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* What the edit would do, before it does it. `group`, not `dialog`:
+          it does not trap focus and the composer stays usable behind it —
+          you can reword the instruction and propose again without
+          dismissing anything. */}
+      {proposal && (
+        <div className="edit-plan" role="group" aria-label={t("composer.planAria")}>
+          <p className="plan-summary">{proposal.summary || t("composer.editApplied")}</p>
+          <p className="plan-counts">
+            {plural("composer.planOps", proposal.ops)}
+            {proposal.dirty.length > 0 && plural("composer.planDirty", proposal.dirty.length)}
+          </p>
+          {/* `plan-chips`, not the log's `.chips`: that one is styled only as
+              a descendant of `.edit-log-entry`, so the same markup here drew
+              bare browser buttons. A class that works in one ancestor and
+              nowhere else should not be spelled as though it works anywhere. */}
+          {proposal.dirty.length > 0 && (
+            <div className="plan-chips">
+              {proposal.dirty.slice(0, 8).map((id) => (
+                <button key={id} onClick={() => select(id)} title={t("composer.showChanged")}>
+                  {id.includes(".")
+                    ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
+                    : id}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Warnings are ops the compiler REFUSED — the plan lands without
+              them, so they are part of what Apply means, not an aside. */}
+          {proposal.warnings.length > 0 && (
+            <ul className="plan-warnings">
+              {proposal.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+          <div className="plan-actions">
+            <button
+              className="btn-primary"
+              disabled={editBusy}
+              title={t("terms.tips.applyEdit")}
+              onClick={() => void applyProposal()}
+            >
+              {editBusy ? t("composer.applying") : t("composer.apply")}
+            </button>
+            <button className="btn-ghost" disabled={editBusy} onClick={() => setProposal(null)}>
+              {t("composer.discard")}
+            </button>
+          </div>
         </div>
       )}
 
@@ -268,17 +536,33 @@ export function Composer() {
         <div className="composer-controls">
         <div className="composer-scope">
           <button
+            ref={scopeChipRef}
             className="scope-chip"
             aria-haspopup="listbox"
             aria-expanded={scopeOpen}
-            onClick={() => setScopeOpen(!scopeOpen)}
+            onClick={() => (scopeOpen ? setScopeOpen(false) : openScopeMenu())}
             title={t("composer.scopeTitle")}
           >
             {scopeLabel}
             <ChevronDown size={11} strokeWidth={2} />
           </button>
-          {scopeOpen && (
-            <div className="dropdown-menu" role="listbox" aria-label={t("composer.scopeMenuAria")}>
+          {scopeOpen && scopeMenu && (
+            <div
+              className="dropdown-menu scope-menu"
+              role="listbox"
+              aria-label={t("composer.scopeMenuAria")}
+              // `position` rides with the coordinates rather than sitting in
+              // the stylesheet: viewport coordinates mean nothing under any
+              // other positioning scheme, so a CSS edit must not be able to
+              // decouple the two.
+              style={{
+                position: "fixed",
+                left: scopeMenu.left,
+                bottom: scopeMenu.bottom,
+                maxHeight: scopeMenu.maxHeight,
+                minWidth: scopeMenu.minWidth,
+              }}
+            >
               <button
                 role="option"
                 aria-selected={scope === "project"}
@@ -290,6 +574,21 @@ export function Composer() {
               >
                 <span className="grow">{t("composer.wholeVideo")}</span>
               </button>
+              {/* Above the scenes because it is upstream of them: a rewritten
+                  script is what the scenes are made FROM. */}
+              {canEnhanceScript && (
+                <button
+                  role="option"
+                  aria-selected={scope === "script"}
+                  className={scope === "script" ? "selected" : ""}
+                  onClick={() => {
+                    setScopeOverride("script");
+                    setScopeOpen(false);
+                  }}
+                >
+                  <span className="grow">{t("composer.theScript")}</span>
+                </button>
+              )}
               {sceneOptions.map((id) => (
                 <button
                   key={id}

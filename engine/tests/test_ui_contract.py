@@ -289,3 +289,106 @@ def test_voice_swatches_match_the_kokoro_voice_map():
         f"swatches and kokoro disagree: only in UI {sorted(offered - engine_voices)}, "
         f"only in engine {sorted(engine_voices - offered)}"
     )
+
+
+def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():
+    """lib/eta.ts asks /system/etas for specific kinds ("clip", "timeline",
+    "export") at specific qualities ("draft"/"final"). Those keys are
+    NodeKind values and the compiler's quality strings — mirrored across the
+    boundary with nothing on the TypeScript side able to check them.
+
+    Drift here fails SILENTLY and in the worst direction: an unknown key
+    reads as "no data", so the estimate simply disappears and the CTA goes
+    back to saying nothing. That is indistinguishable from a fresh install,
+    which is the one state the whole route exists to fix."""
+    from localcut_engine.graph.compiler import JobSpec
+    from localcut_engine.graph.model import NodeKind
+
+    eta = (_FORMATS.parent / "eta.ts").read_text(encoding="utf-8")
+    kinds = set(re.findall(r'engineMedian\("([a-z_]+)",', eta))
+    assert kinds, "lib/eta.ts no longer calls engineMedian — update this test with it"
+    known = {kind.value for kind in NodeKind}
+    assert kinds <= known, f"eta.ts reads kinds the engine has no NodeKind for: {kinds - known}"
+
+    qualities = set(re.findall(r'engineMedian\("[a-z_]+",\s*"([a-z]+)"\)', eta))
+    assert qualities, "eta.ts no longer names a quality — update this test with it"
+    # The default is one of the two the engine plans with; `final` is what
+    # service.finalize enqueues. Both are spelled here, so both are pinned.
+    assert qualities == {"draft", "final"}, f"eta.ts asks for unknown qualities: {qualities}"
+    assert JobSpec.model_fields["quality"].default == "draft"
+
+
+def test_the_smaller_model_chip_offers_tasks_the_engine_can_actually_serve():
+    """lib/oom.ts mirrors the engine's COMFY_TASKS to decide which models can
+    replace a node's after an out-of-memory failure. The desktop derives the
+    kind from the node id (NodeState carries no kind), so the mirror is a
+    table of id patterns -> manifest task ids.
+
+    Drift is silent in the direction that matters: a task string the manifest
+    no longer uses matches no model row, so the chip finds no candidate and
+    renders as "nothing smaller is installed" — advice that is wrong rather
+    than missing."""
+    from localcut_engine.graph.model import NodeKind
+    from localcut_engine.manifest.capability import COMFY_TASKS
+
+    oom = (_FORMATS.parent / "oom.ts").read_text(encoding="utf-8")
+    body = re.search(r"export function tasksForNode\(.*?\n}", oom, re.S)
+    assert body, "lib/oom.ts no longer declares tasksForNode — update this test with it"
+    returns = re.findall(r"if \((.+?)\) return \[(.*?)\];", body.group(0))
+    assert returns, "tasksForNode's branches no longer match — update this test with it"
+
+    # Which engine kind each UI guard is about. The guards are id patterns
+    # because that is the only kind signal the board gives the desktop.
+    kind_of_guard = {
+        r"/\.clip\d*$/.test(nodeId)": NodeKind.CLIP,
+        'nodeId.endsWith(".keyframe")': NodeKind.KEYFRAME,
+        'nodeId === "thumbnail"': NodeKind.THUMBNAIL,
+        'nodeId === "music"': NodeKind.MUSIC,
+    }
+    mirrored = {}
+    for guard, tasks in returns:
+        kind = kind_of_guard.get(guard.strip())
+        assert kind is not None, f"unrecognised tasksForNode guard {guard!r} — update this test"
+        mirrored[kind] = tuple(re.findall(r'"([^"]+)"', tasks))
+
+    assert mirrored == COMFY_TASKS, (
+        f"the UI's kind->task mirror drifted from the engine's COMFY_TASKS: "
+        f"UI {mirrored}, engine {COMFY_TASKS}"
+    )
+
+
+def test_every_oom_suggestion_the_scheduler_sends_has_a_chip_that_acts_on_it():
+    """The exhausted OOM ladder publishes suggestion CODES, under the
+    comment "the UI renders this as choices, not an error code". Each one is
+    an id the desktop turns into a chip that does the thing it names.
+
+    Drift here is mislabelling, not silence. The card has an arm per code and
+    a disabled "needs a newer app" chip for anything else, so a code the
+    engine renames or adds still renders — as the fallback, which is a way
+    out the user cannot take. The hint catalog is the tighter of the two
+    checks: it holds exactly the codes the app can ACT on, so a UI-only entry
+    cannot paper over a missing arm."""
+    import inspect
+    import json
+
+    from localcut_engine.jobs import scheduler
+
+    source = inspect.getsource(scheduler)
+    match = re.search(r"suggestions=\[(.*?)\]", source, re.S)
+    assert match, "scheduler.py no longer publishes `suggestions=[...]` — update this test with it"
+    codes = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert codes, "the scheduler's suggestion list is empty — update this test with it"
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "failure.json").read_text(encoding="utf-8")
+    )
+    assert codes <= set(catalog["suggestion"]), (
+        f"no chip label in failure.json for: {sorted(codes - set(catalog['suggestion']))}"
+    )
+    # Every code the engine sends must be one the card has an arm for, and
+    # `suggestionHint` holds exactly those — an unknown code gets the shared
+    # `unknownSuggestion` line instead, so it cannot satisfy this.
+    assert codes == set(catalog["suggestionHint"]), (
+        f"failure.json's actionable suggestions disagree with the scheduler's: "
+        f"engine {sorted(codes)}, UI {sorted(catalog['suggestionHint'])}"
+    )

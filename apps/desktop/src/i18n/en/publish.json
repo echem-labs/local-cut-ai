@@ -1,0 +1,14 @@
+{
+  "preparing": "Preparing...",
+  "title": "Publish kit",
+  "pending": "Writing the title, description and hashtags from your script...",
+  "thumbAlt": "Suggested thumbnail",
+  "fieldTitle": "Title",
+  "fieldDescription": "Description",
+  "fieldHashtags": "Hashtags",
+  "copyField": "Copy the {field}",
+  "open": "Publish kit",
+  "hint": "A title, description and hashtags written from your script, and a thumbnail to go with them. Nothing is uploaded anywhere - this is what you paste.",
+  "regenerate": "Write them again",
+  "editNote": "Edits are yours and stay on this machine."
+}
