@@ -8,6 +8,7 @@ import threading
 import wave
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1142,6 +1143,12 @@ async def test_storage_overview_and_cleanup(client):
     assert storage["disk_free_bytes"] > 0
     for key in ("models_bytes", "cache_bytes", "disk_total_bytes"):
         assert key in storage
+
+    # About -> This machine names the folder all of the above is measured
+    # from. Without it the panel can report "41 GB used" and leave the user
+    # no way to find out used WHERE - which for a remote engine is not even
+    # this machine.
+    assert Path(storage["data_dir"]).is_absolute()
 
     cleaned = await client.post("/storage/cleanup")
     assert cleaned.status_code == 200
