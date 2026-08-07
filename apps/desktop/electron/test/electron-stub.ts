@@ -52,6 +52,7 @@ export function resetElectron(): void {
   ipcHandlers.clear();
   appEvents.clear();
   openedPaths.length = 0;
+  openedExternally.length = 0;
   saveDialogs.length = 0;
   shell.openPathFailure = "";
   dialog.result = { canceled: false, filePath: "" };
@@ -169,7 +170,7 @@ export class BrowserWindow {
   minimized = false;
   focused = false;
   restored = false;
-  windowOpenHandler: (() => unknown) | null = null;
+  windowOpenHandler: ((details: { url: string }) => unknown) | null = null;
   private readonly navigationListeners: ((event: { preventDefault(): void }, url: string) => void)[] =
     [];
 
@@ -177,7 +178,7 @@ export class BrowserWindow {
     on: (event: string, listener: (e: { preventDefault(): void }, url: string) => void) => {
       if (event === "will-navigate") this.navigationListeners.push(listener);
     },
-    setWindowOpenHandler: (handler: () => unknown) => {
+    setWindowOpenHandler: (handler: (details: { url: string }) => unknown) => {
       this.windowOpenHandler = handler;
     },
     downloadURL: (url: string) => {
@@ -288,11 +289,19 @@ export const ipcRenderer = {
  * Electron reports failure here by RESOLVING with a message — "" is
  * success — so a test that only checks the call happened would miss it. */
 export const openedPaths: string[] = [];
+/** URLs handed to the OS. Kept separate from `openedPaths` because the two
+ * carry different risk: a folder is one this process chose, a URL can have
+ * come from a release feed. */
+export const openedExternally: string[] = [];
 export const shell = {
   openPathFailure: "" as string,
   openPath(target: string): Promise<string> {
     openedPaths.push(target);
     return Promise.resolve(shell.openPathFailure);
+  },
+  openExternal(url: string): Promise<void> {
+    openedExternally.push(url);
+    return Promise.resolve();
   },
 };
 
