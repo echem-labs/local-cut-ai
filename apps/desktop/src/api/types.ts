@@ -320,7 +320,11 @@ export interface Job {
   /** The model the backend reported actually using (null when the backend
    * has no meaningful model name — assembly, mock). */
   model: string | null;
-  spec: { node_id: string; kind: string };
+  /** `quality` is what separates a finalize from a draft render — the
+   * engine has always sent it (JobSpec defaults it to "draft"); nothing
+   * here had asked. Optional so an engine older than the field reads as
+   * "not a finalize" rather than throwing. */
+  spec: { node_id: string; kind: string; quality?: string };
 }
 
 /** GET /llm/models — what the script tool's model picker can offer.

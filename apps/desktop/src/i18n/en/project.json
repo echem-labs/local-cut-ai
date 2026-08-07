@@ -58,7 +58,8 @@
     "creating": "Creating final video…",
     "download": "Download MP4",
     "pending": "Create final video · {done}/{total}",
-    "pendingTitle": "Every scene's video has to finish first - {done} of {total} are done"
+    "pendingTitle": "Every scene's video has to finish first - {done} of {total} are done",
+    "busyTitle": "Something else is still rendering - this becomes available once the queue is clear"
   },
   "scriptFailed": "Script generation failed: {error}",
   "retryScript": "Try again",
