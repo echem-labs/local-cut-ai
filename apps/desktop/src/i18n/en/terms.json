@@ -158,6 +158,22 @@
     {
       "term": "Out of memory",
       "def": "The graphics card could not fit a render. The engine retries it smaller on its own; when even that fails it says so and offers the ways out - a smaller size, a lighter model, or cloud hardware."
+    },
+    {
+      "term": "Support bundle",
+      "def": "A zip holding this app's logs, its versions and the system report — what a bug report needs, in one file. Nothing is sent anywhere; you choose where to save it. Settings → About."
+    },
+    {
+      "term": "Node pack",
+      "def": "Third-party ComfyUI nodes: Python that runs unsandboxed with access to your models, files and network. Enabling one in Settings → Workflows records that you allow code you already installed yourself."
+    },
+    {
+      "term": "Workflow",
+      "def": "A ComfyUI graph exported with Save (API Format), imported so a custom model can render through it. Checked against the node packs you have enabled before it is stored."
+    },
+    {
+      "term": "Prompt slot",
+      "def": "A %%TOKEN%% placeholder in a workflow, filled per render. A workflow with none still renders — it just renders the same thing every time."
     }
   ]
 }
