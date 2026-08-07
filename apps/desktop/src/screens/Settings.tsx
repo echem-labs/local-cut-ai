@@ -1173,6 +1173,18 @@ export function Settings() {
                       {t("settings.backends.noFfmpeg")}
                     </p>
                   )}
+                  {/* An ffmpeg that cannot draw text. A warning rather than
+                      an error: everything works except burning a title, and
+                      a project with no titles is wholly unaffected — so the
+                      cost of being wrong here is a banner nobody needed.
+                      `false` only; `null` means no ffmpeg at all, which the
+                      row above already says louder, and `undefined` is an
+                      engine too old to have looked. */}
+                  {system.ffmpeg_drawtext === false && (
+                    <p className="banner warning" role="alert">
+                      {t("settings.backends.noDrawtext")}
+                    </p>
+                  )}
                   <dl className="kv">
                     {system.backends.tasks.map((row) => {
                       const label = TASK_KIND_LABELS[row.kind]

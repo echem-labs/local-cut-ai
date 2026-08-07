@@ -1614,3 +1614,32 @@ async def test_a_caller_that_may_not_spend_cannot_buy_a_cloud_edit(client):
     )
     assert allowed.status_code != 403
     assert "provider key" not in allowed.text
+
+
+async def test_the_board_says_whether_the_cut_burns_any_titles(client):
+    """The desktop cannot otherwise know: overlays live on the timeline
+    node's params, and the board sends node STATUS, not params. Without
+    this, a machine whose ffmpeg lacks drawtext gets no warning until the
+    export dies - after the whole ladder has re-rendered at final quality."""
+    pid = (await client.post("/projects", json={"prompt": "a tour"})).json()["id"]
+
+    async def board() -> dict:
+        return (await client.get(f"/projects/{pid}")).json()["board"]
+
+    # Overlays only exist once the screenplay has expanded into a graph.
+    async with asyncio.timeout(15):
+        while not (await board())["scenes"]:
+            await asyncio.sleep(0.05)
+
+    # The mock screenplay gives its first scene an on-screen title.
+    assert (await board())["has_onscreen_text"] is True
+
+    timeline = (await client.get(f"/projects/{pid}/graph")).json()["nodes"]["timeline"]
+    assert timeline["params"]["overlays"], "fixture no longer has an overlay to detect"
+
+    cleared = await client.post(
+        f"/projects/{pid}/patch",
+        json={"ops": [{"op": "set_params", "node_id": "timeline", "params": {"overlays": {}}}]},
+    )
+    assert cleared.status_code == 200
+    assert (await board())["has_onscreen_text"] is False
