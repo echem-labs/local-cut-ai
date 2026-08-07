@@ -76,16 +76,20 @@ describe("ConfirmDialog", () => {
   it("traps Tab inside the dialog", async () => {
     const user = userEvent.setup();
     render(<Harness />);
+    const close = screen.getByRole("button", { name: "Close" });
     const cancel = screen.getByRole("button", { name: "Keep it" });
     const confirm = screen.getByRole("button", { name: "Delete" });
 
+    // Focus opens on the SAFE action, not on the shell's close button and
+    // not on Delete — the whole point of a confirmation.
     expect(cancel).toHaveFocus();
     await user.tab();
     expect(confirm).toHaveFocus();
-    // Past the last control, focus cycles back rather than walking out into
+    // Past the last control, focus cycles back to the dialog's first —
+    // which is the header's close button — rather than walking out into
     // the page behind.
     await user.tab();
-    expect(cancel).toHaveFocus();
+    expect(close).toHaveFocus();
     await user.tab({ shift: true });
     expect(confirm).toHaveFocus();
   });

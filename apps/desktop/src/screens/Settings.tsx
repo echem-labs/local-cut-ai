@@ -26,6 +26,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendTask, Provider } from "../api/types";
 import { AboutPane } from "../components/AboutPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
 import { InfoDot } from "../components/Tooltip";
@@ -1286,43 +1287,34 @@ export function Settings() {
         />
       )}
       {showLicenses && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={() => setShowLicenses(false)}
-          role="presentation"
+        <Modal
+          title={t("settings.about.licensesTitle")}
+          subtitle={t("settings.about.licensesIntro")}
+          size="l"
+          onClose={() => setShowLicenses(false)}
+          footer={
+            <button
+              className="btn-primary"
+              ref={licensesCloseRef}
+              onClick={() => setShowLicenses(false)}
+            >
+              {t("settings.about.licensesClose")}
+            </button>
+          }
         >
-          <div
-            className="modal licenses-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t("settings.about.licensesTitle")}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2>{t("settings.about.licensesTitle")}</h2>
-            <p>{t("settings.about.licensesIntro")}</p>
-            <ul className="licenses-list">
-              {__OSS_LICENSES__.map((dep) => (
-                <li key={dep.name}>
-                  <div className="lic-head">
-                    <span className="lic-name">{dep.name}</span>
-                    <span className="lic-version mono-id">{dep.version}</span>
-                    <span className="badge">{dep.license}</span>
-                  </div>
-                  {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
-                </li>
-              ))}
-            </ul>
-            <div className="modal-actions">
-              <button
-                className="btn-primary"
-                ref={licensesCloseRef}
-                onClick={() => setShowLicenses(false)}
-              >
-                {t("settings.about.licensesClose")}
-              </button>
-            </div>
-          </div>
-        </div>
+          <ul className="licenses-list">
+            {__OSS_LICENSES__.map((dep) => (
+              <li key={dep.name}>
+                <div className="lic-head">
+                  <span className="lic-name">{dep.name}</span>
+                  <span className="lic-version mono-id">{dep.version}</span>
+                  <span className="badge">{dep.license}</span>
+                </div>
+                {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
+              </li>
+            ))}
+          </ul>
+        </Modal>
       )}
     </div>
   );

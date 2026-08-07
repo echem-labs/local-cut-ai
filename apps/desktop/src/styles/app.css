@@ -2782,40 +2782,35 @@ button.link:hover {
   right: auto;
 }
 
-.help-modal {
-  max-width: 460px;
-}
-
-.help-modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-3);
-}
-
-.help-modal-head h2 {
-  margin-bottom: 0;
-}
-
+/* Two real columns, not a flex row per line. As a flex row every key sized
+   itself and the descriptions started at a different x on every line — and
+   the widest key ("Ctrl wheel") broke onto two lines inside its own box,
+   which is what a shrinkable flex item does to a two-word label. The keys
+   column is as wide as the widest key and no wider; every description
+   starts in the same place. */
 .shortcut-list {
   display: grid;
-  gap: var(--space-2);
+  grid-template-columns: max-content 1fr;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
 }
 
 .shortcut-list > div {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
+  display: contents;
 }
 
 .shortcut-list kbd {
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 18px;
   border: 1px solid var(--border-hi);
   border-radius: var(--radius-xs);
-  padding: 1px 7px;
+  padding: 0 7px;
   min-width: 52px;
   text-align: center;
+  /* One line, always: the box is the key, and a key that wraps stops
+     reading as one. */
+  white-space: nowrap;
   color: var(--text-primary);
   background: var(--inset-bg);
 }
@@ -3266,30 +3261,108 @@ button.link:hover {
 }
 
 /* ---- confirm modal ---- */
+/* ---- the dialog (see components/Modal) ----
+   One surface for every dialog the app opens. Head and foot are pinned and
+   only the body scrolls, so the title and the way out are always on screen.
+   Nothing below is per-dialog: a dialog picks a WIDTH (.modal-s/m/l) and
+   supplies content, and that is the whole of its licence to differ. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(8, 9, 12, 0.6);
-  backdrop-filter: blur(2px);
+  background: rgba(8, 9, 12, 0.66);
+  backdrop-filter: blur(3px);
   display: grid;
   place-items: center;
+  padding: var(--space-6);
   z-index: var(--z-modal);
 }
 
 .modal {
-  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  /* The scrim is the separation, so the card reads as raised rather than
+     outlined: surface-2 over a dimmed page, one step up from the panels
+     behind it. */
+  background: var(--surface-2);
   border: 1px solid var(--border-hi);
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-l);
   box-shadow: var(--shadow-2);
-  padding: var(--space-6);
-  max-width: 400px;
-  width: calc(100% - var(--space-8));
+  width: 100%;
+  /* Never taller than the window it floats in — the body takes the
+     squeeze, which is why it is the only part that scrolls. */
+  max-height: min(84vh, 760px);
+}
+
+.modal-s {
+  max-width: 420px;
+}
+
+.modal-m {
+  max-width: 520px;
+}
+
+.modal-l {
+  max-width: 620px;
+}
+
+/* Head and foot are the frame; both hold their size while the body gives.
+   The rules under/over them are what make a scrolled body legible as
+   scrolled rather than as a dialog that ends mid-sentence. */
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: none;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-titles {
+  min-width: 0;
+  flex: 1;
 }
 
 .modal h2 {
   font-size: var(--text-m);
   font-weight: 650;
-  margin-bottom: var(--space-2);
+  /* Long names (a node pack, a project) shorten rather than push the close
+     button off the edge. */
+  overflow-wrap: anywhere;
+}
+
+.modal-sub {
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+/* Same corner, same size, in every dialog. --control-h square so it lines
+   up with the title's cap height rather than floating above it. */
+.modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  margin: -4px -8px -4px 0;
+  border-radius: var(--radius-s);
+  color: var(--text-tertiary);
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+
+.modal-close:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: var(--space-6);
+  /* min-height:0 lets this flex child shrink below its content, which is
+     what makes overflow-y engage instead of pushing the foot off-screen. */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal p {
@@ -3297,29 +3370,59 @@ button.link:hover {
   font-size: var(--text-s);
 }
 
+.modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-4) var(--space-6);
+  border-top: 1px solid var(--border);
+  /* One step back down from the card: the actions read as a bar rather
+     than as more content. */
+  background: var(--surface-1);
+  border-radius: 0 0 calc(var(--radius-l) - 1px) calc(var(--radius-l) - 1px);
+}
+
+/* Kept as the footer's own layout hook — a dialog whose left side carries
+   something (a delete, a hint) pushes the actions right with it. */
 .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2);
-  margin-top: var(--space-6);
+}
+
+/* A footer whose buttons are NOT a pair — "write them again" asks the
+   engine for new text, Close is done — pushes them apart rather than
+   sitting them side by side, which reads as a choice between equals. */
+.modal-foot .spacer {
+  flex: 1;
+}
+
+.modal-foot button {
+  /* Without this a ghost button is a flex item free to shrink, and "Write
+     them again" wrapped onto three lines inside a square. */
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A note under the last field. `.field` carries its spacing above itself,
+   so anything FOLLOWING one inherits none and sat against the input above
+   as though it were that field's own error text. Two dialogs need this —
+   the publish kit's edit note and the pack grant's version hint. */
+.modal .field + .hint {
+  display: block;
+  margin-top: var(--space-3);
+}
+
+/* The body's first child sits against the head's rule, not on top of a
+   margin of its own — every dialog opens with the same gap. */
+.modal-body > :first-child {
+  margin-top: 0;
 }
 
 /* Open-source licenses (Settings → About): a scrollable attribution list —
    name + version + SPDX badge, repository below (review 4 §S6). */
-.licenses-modal {
-  max-width: 560px;
-  display: flex;
-  flex-direction: column;
-  max-height: 78vh;
-}
-
-/* Title, intro and the Close row stay pinned; only the list scrolls. */
-.licenses-modal > h2,
-.licenses-modal > p,
-.licenses-modal > .modal-actions {
-  flex-shrink: 0;
-}
-
 .licenses-list {
   list-style: none;
   margin: var(--space-4) 0 0;
@@ -3405,7 +3508,10 @@ button.link:hover {
    than checkpoint: it asks for nothing, so no accent border. */
 .banner.notice-bar {
   margin-bottom: var(--space-4);
-  font-size: var(--text-sm);
+  /* --text-s, not --text-sm: the scale is 2xs/xs/s/m/l, and the name that
+     was here defined nothing, so this line has never applied. The notice
+     bar has been rendering at whatever `.banner` gives it. */
+  font-size: var(--text-s);
 }
 
 .banner.notice-bar .row + .row {
@@ -4026,12 +4132,6 @@ button.link:hover {
    Everything inside it is the modal recipe already in this file — `.field`
    for the labelled controls, `.modal-actions` for the footer. The first
    version hand-rolled a grid instead and looked like a different app. */
-.publish-modal {
-  /* Wider than the 400px default, like `.template-modal`: three fields and
-     a 16:9 preview do not fit a confirmation's column. */
-  max-width: 560px;
-}
-
 /* The suggested thumbnail. Sized like a thumbnail rather than stretched to
    the dialog: at full width a 16:9 preview is 315px of the window's height
    before the first field, which pushed the footer off a short screen. */
@@ -4045,13 +4145,6 @@ button.link:hover {
   border-radius: var(--radius-s);
   background: var(--surface-2);
   margin-top: var(--space-4);
-}
-
-/* Long enough for a description, short enough that the footer stays on a
-   1080p window with the browser chrome and the title bar taken off. */
-.publish-modal {
-  max-height: min(84vh, 720px);
-  overflow-y: auto;
 }
 
 /* Control and copy button on one row. The button is a SIBLING of the input,
@@ -4082,28 +4175,6 @@ button.link:hover {
 .publish-field .field-row textarea {
   padding: var(--space-1) var(--space-2);
   min-height: 30px;
-}
-
-/* The note under the last field. `.field` carries its spacing above itself,
-   so anything FOLLOWING one inherits none and sat against the hashtags
-   input as though it were that field's own error text. */
-.publish-modal .field + .hint {
-  display: block;
-  margin-top: var(--space-3);
-}
-
-/* The footer's two buttons are not a pair — "write them again" asks the
-   engine for new text, Close is done. Pushed apart rather than sat side by
-   side, which would read as a choice between equals. */
-.publish-modal .modal-actions .spacer {
-  flex: 1;
-}
-
-.publish-modal .modal-actions button {
-  /* Without this the ghost button is a flex item free to shrink, and
-     "Write them again" wrapped onto three lines inside a square. */
-  flex-shrink: 0;
-  white-space: nowrap;
 }
 
 /* A take and its reroll, kept together. The reroll is a sibling of the
@@ -5162,10 +5233,6 @@ button.link:hover {
 .pack-row .btn-ghost,
 .workflow-row .icon-btn {
   flex: none;
-}
-
-.pack-modal {
-  max-width: 520px;
 }
 
 /* The acknowledgement is a sentence, not a label — it wraps, and the box
@@ -6859,10 +6926,6 @@ button.link:hover {
 .modal .field textarea:focus {
   border-color: var(--accent);
   outline: none;
-}
-
-.template-modal {
-  max-width: 460px;
 }
 
 .template-list {
