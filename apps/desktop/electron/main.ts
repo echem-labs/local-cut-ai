@@ -118,6 +118,18 @@ const forgetStoredPairing = (): void => {
 /** Does this URL belong to the engine the renderer is actually talking to?
  * Origin-compared against the ACTIVE connection only: a paired remote makes
  * the idle local spawn (and any previously paired engine) a stranger. */
+/** A link the system browser can be trusted with. Deliberately a scheme
+ * allowlist rather than a denylist of the dangerous ones: the set of
+ * protocol handlers registered on a machine is not knowable from here. */
+const isWebUrl = (raw: string): boolean => {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+};
+
 const isActiveEngineUrl = (raw: string): boolean => {
   const connection = activeConnection();
   if (!connection) return false;
@@ -217,7 +229,20 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     if (isActiveEngineUrl(url)) window.webContents.downloadURL(url);
   });
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // Never a second window — that one would inherit this one's preload
+  // bridge, which is the whole point of the lockdown above. A web link goes
+  // to the system browser instead, which inherits nothing.
+  //
+  // http(s) and nothing else, because `openExternal` hands the string to the
+  // OS and the OS launches whatever is registered for the scheme: `file:` a
+  // local executable, `ms-msdt:` a Windows diagnostic host. One of these
+  // URLs arrives from the release feed, so the scheme check is what keeps a
+  // tampered feed from starting a program. Anything else is a denied open
+  // with nowhere to go, which is inert.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isWebUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
 
   try {
     if (devUrl) {
@@ -603,7 +628,10 @@ const MAX_REPORT_BYTES = 256 * 1024;
 
 const bounded = (value: unknown): unknown => {
   const text = JSON.stringify(value ?? null) ?? "null";
-  return text.length > MAX_REPORT_BYTES ? { truncated: text.length } : value ?? null;
+  // byteLength, not length: the cap is named in bytes, and a string of
+  // non-ASCII counts up to three of them per unit it reports.
+  const bytes = Buffer.byteLength(text, "utf8");
+  return bytes > MAX_REPORT_BYTES ? { truncated: bytes } : value ?? null;
 };
 
 ipcMain.handle("support:export-bundle", async (event, report: unknown) => {
