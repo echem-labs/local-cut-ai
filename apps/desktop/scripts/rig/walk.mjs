@@ -540,6 +540,100 @@ try {
     }
   }
 
+  // U6: Settings → About. A reading surface built from cards rather than
+  // the settings-row anatomy every other pane uses, which makes it the one
+  // pane whose width behavior nothing else in Settings vouches for. It also
+  // states facts — a version line, a hardware summary, a folder path — so
+  // the checks here are that each renders SOMETHING rather than the blank
+  // an unanswered engine or a renamed field would leave. A blank where a
+  // version belongs reads as a version of "".
+  for (const [width, height] of [
+    [1200, 800],
+    [1920, 1080],
+  ]) {
+    await setSize(width, height);
+    const about = await evalInApp(`
+      await page.evaluate(() => {
+        const rail = [...document.querySelectorAll("button")].find((b) =>
+          /settings/i.test(b.getAttribute("aria-label") || b.textContent || ""));
+        rail?.click();
+      });
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const tab = [...document.querySelectorAll(".settings-grid nav button")].find(
+          (b) => (b.textContent || "").trim() === "About");
+        tab?.click();
+      });
+      await page.waitForSelector(".about", { timeout: 10000 });
+      return page.evaluate(() => {
+        const text = (selector) => document.querySelector(selector)?.textContent?.trim() ?? "";
+        const values = [...document.querySelectorAll(".about-kv dd")].map((el) => el.textContent.trim());
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          cards: document.querySelectorAll(".about-card").length,
+          versions: text(".about-versions"),
+          chips: document.querySelectorAll(".about-card .spec-chip").length,
+          values,
+          actions: document.querySelectorAll(".about-actions button").length,
+          links: document.querySelectorAll(".about-links a, .about-links button").length,
+          // Every card inside its own column, and no control clipped by one.
+          escaped: [...document.querySelectorAll(".about-card")].filter((card) => {
+            const box = card.getBoundingClientRect();
+            return [...card.querySelectorAll("button, a, dd")].some((el) => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1);
+            });
+          }).length,
+        };
+      });
+    `);
+    const label = `${width}px About`;
+    check(
+      `${label}: the pane renders its four cards`,
+      about.cards === 4 && about.actions === 4 && about.links === 4,
+      JSON.stringify(about),
+    );
+    check(
+      `${label}: adds no horizontal scroll`,
+      about.scrollWidth <= about.innerWidth + 1,
+      `scrollWidth ${about.scrollWidth} > innerWidth ${about.innerWidth}`,
+    );
+    check(
+      `${label}: nothing overflows the card it is in`,
+      about.escaped === 0,
+      JSON.stringify(about),
+    );
+    // The facts, present rather than correct: what they SAY is pinned by
+    // AboutPane.test.tsx against fixtures. What no unit test can see is a
+    // real engine's answer arriving and landing nowhere.
+    check(
+      `${label}: the version line names this build`,
+      /app\s+\d+\.\d+\.\d+/.test(about.versions),
+      about.versions,
+    );
+    check(
+      `${label}: every machine row has a value`,
+      about.values.length === 4 && about.values.every((value) => value.length > 0),
+      JSON.stringify(about.values),
+    );
+    if (about.chips === 0) {
+      // Not a failure: the chips need /system, and a run against an engine
+      // that never answered has nothing to draw. Said out loud so a green
+      // walk cannot be read as "the hardware row was checked".
+      console.log("NOTE About: no spec chips (the engine reported no system) - hardware unchecked");
+    }
+    await shoot(`about-${width}.png`);
+  }
+  // Leave Settings so the walk's last screenshots show Home, as before.
+  await evalInApp(`
+    await page.evaluate(() => {
+      const close = document.querySelector(".settings-head .icon-btn");
+      close?.click();
+    });
+    return null;
+  `);
+
   const report = await health();
   // A 409 is a refusal the product is designed to make and to explain — the
   // canvas stop deliberately opens projects until one works, and a state

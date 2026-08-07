@@ -94,6 +94,21 @@ declare global {
       setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
       getSystemTextScale: () => Promise<number>;
       setUiZoom: (factor: number) => void;
+      /** About → Support. Neither takes a path or a URL: the shell owns
+       * which folder is opened and which feed is fetched. */
+      openLogsFolder: () => Promise<{ ok: boolean; error: string | null }>;
+      exportSupportBundle: (report: {
+        versions: unknown;
+        system: unknown;
+      }) => Promise<{ path: string | null; error: string | null }>;
+      checkForUpdates: () => Promise<{
+        latest: string | null;
+        url: string | null;
+        error: string | null;
+      }>;
+      /** False until a release feed is configured — About hides the check
+       * rather than offering one that can only ever fail. */
+      updatesConfigured?: boolean;
       /** Dev-only rig affordance; absent (undefined) in packaged builds. */
       seedHookEnabled?: boolean;
     };
