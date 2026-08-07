@@ -66,7 +66,15 @@ describe("a project waiting on a queue that is gone", () => {
 
   it("stays quiet while the queue still holds the work", () => {
     mount("rendering", [
-      { id: "j1", project_id: "p1", status: "rendering", created_at: 1 } as unknown as Job,
+      // A real job always carries its spec; a fixture that omits one is
+      // testing a row the engine cannot send.
+      {
+        id: "j1",
+        project_id: "p1",
+        status: "rendering",
+        created_at: 1,
+        spec: { node_id: "s1.clip", kind: "clip", quality: "draft" },
+      } as unknown as Job,
     ]);
     expect(screen.queryByRole("button", { name: /resume rendering/i })).toBeNull();
   });
