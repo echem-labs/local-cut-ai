@@ -365,8 +365,11 @@ try {
     checkMaskGeometry(name, boxes);
     // Convergence only: the frame's own text, measured the same way the
     // reference measured its own, so `converge.mjs` can say which element
-    // moved rather than how many pixels did.
-    await writeProbe(dir, name, evalInApp);
+    // moved rather than how many pixels did. In the crop's coordinates,
+    // like the mask boxes above it - this set shoots fullPage and bitblts
+    // its frame out of the middle, so raw viewport readings would report
+    // every string as moved by clip.x.
+    await writeProbe(dir, name, evalInApp, clip);
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
     scaleHeld &&= await layoutTrue();

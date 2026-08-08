@@ -293,9 +293,12 @@ const MASKED_AS = {
 };
 /** Design-owned sizes: matched rigidly. */
 const RIGID = /thumb|wave-plot|tool-preview|swatch-play|wave-toggle/;
-/** Content-sized boxes: matched on where they start, not how big they are
- * (a status row's width is a model name and a wall time; a time readout
- * and the composer's model line are whatever their text measures). */
+/** Content-sized boxes: matched on where they start HORIZONTALLY, not on
+ * how wide they are (a status row's width is a model name and a wall time;
+ * a time readout and the composer's model line are whatever their text
+ * measures). Loose is a statement about x only - the vertical band binds
+ * every box, loose or not, because without it a box could claim a mask
+ * several rows above it. */
 const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot|wave-time|models-pop|swatch-play/;
 const TOL = 2;
 
@@ -550,6 +553,27 @@ try {
       }, [${width}, ${height}]);
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
+      // ...and then until the layout stops moving. The resize above
+      // re-flows the whole page, so a fixed wait after it is the same
+      // gamble the panel-expand step used to take - and it is the one that
+      // actually decides the picture, since every settle done BEFORE the
+      // resize is re-laid-out by it. home-downloads-open shot its quick
+      // tools 84px high about one run in four this way.
+      //
+      // Never throws: a frame that will not settle is a frame worth
+      // diffing anyway, and compare.mjs reports it with a number.
+      await page
+        .waitForFunction(
+          () => {
+            const now = document.documentElement.scrollHeight;
+            const settled = window.__rigHeight === now;
+            window.__rigHeight = now;
+            return settled;
+          },
+          null,
+          { timeout: 4000, polling: 120 },
+        )
+        .catch(() => {});
       await page.screenshot({
         path: ${JSON.stringify(path.join(dir, `${name}.png`))},
         scale: "css",

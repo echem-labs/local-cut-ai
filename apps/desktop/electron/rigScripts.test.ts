@@ -37,7 +37,10 @@ describe("the rig's scripts", () => {
       execFileSync(process.execPath, ["--check", path.join(RIG, file)], { stdio: "pipe" });
     } catch (thrown) {
       const details = thrown as { stderr?: Buffer };
-      error = details.stderr?.toString() ?? String(thrown);
+      // `||`, not `??`: a child killed by a signal throws with an EMPTY
+      // stderr Buffer, and "" is not nullish - so `??` kept it and the case
+      // reported green for a script that was never checked.
+      error = details.stderr?.toString() || String(thrown);
     }
     expect(error).toBe("");
   });
@@ -56,12 +59,20 @@ describe("the rig's scripts", () => {
    * Read out of the source rather than out of the module: requiring it
    * needs Electron, and the whole point is to catch this without one.
    */
-  const BLOCK = /const (SNAP_[A-Z_]+) = `([\s\S]*?)`;/g;
+  const BLOCK = /const (SNAP_[A-Z0-9_]+) = `([\s\S]*?)`;/g;
+  // Every `const SNAP_… = ` in the file, however it is named, so the count
+  // below compares against the truth rather than against a floor. `SNAP_U5`
+  // is why: `[A-Z_]+` cannot match a digit, so the block was silently
+  // unchecked and 5 of 6 still cleared a `>= 4` floor.
+  const DECLARED = /const (SNAP_\w+) = /g;
 
   it("keeps the render's CSS blocks free of backticks", () => {
     const source = readFileSync(path.join(RIG, "render-mock.cjs"), "utf8");
     const blocks = [...source.matchAll(BLOCK)];
-    // A regex that matches nothing passes every assertion under it.
+    // A regex that matches nothing passes every assertion under it - and one
+    // that matches all but one passes just as quietly.
+    const declared = [...source.matchAll(DECLARED)].map(([, name]) => name);
+    expect(blocks.map(([, name]) => name)).toEqual(declared);
     expect(blocks.length).toBeGreaterThanOrEqual(4);
     const offenders = blocks
       .filter(([, , body]) => body.includes("`"))

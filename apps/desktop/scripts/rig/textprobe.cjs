@@ -27,6 +27,15 @@ const path = require("node:path");
 /** Collect every element that owns visible text, with the box it occupies.
  *  Returned as a string to be eval'd in either page. */
 const COLLECT = `(() => {
+  /* Page coordinates, not viewport ones. getBoundingClientRect is relative
+     to the scrollport, and parity-wiz shoots fullPage on a document that
+     scrolls - so a row below the fold would read as negative y, and the
+     whole frame would shift with wherever the page happened to be left.
+     The mask boxes beside these already add scroll for the same reason;
+     on the gates whose window IS the frame both terms are zero. */
+  const sx = window.scrollX;
+  const sy = window.scrollY;
+
   /* Direct text only: an ancestor repeats every descendant's words, so
      measuring both would match a label against the card that contains it. */
   const nodes = (el) => [...el.childNodes].filter((node) => node.nodeType === 3);
@@ -82,7 +91,7 @@ const COLLECT = `(() => {
       if (!bordered && !filled) continue;
       const r = node.getBoundingClientRect();
       if (r.height < 1) continue;
-      return { boxY: Math.round(r.top), boxH: Math.round(r.height), boxX: Math.round(r.left), boxW: Math.round(r.width) };
+      return { boxY: Math.round(r.top + sy), boxH: Math.round(r.height), boxX: Math.round(r.left + sx), boxW: Math.round(r.width) };
     }
     return null;
   };
@@ -97,8 +106,8 @@ const COLLECT = `(() => {
     if (!r || r.width < 1 || r.height < 1) continue;
     out.push({
       text,
-      x: Math.round(r.left),
-      y: Math.round(r.top),
+      x: Math.round(r.left + sx),
+      y: Math.round(r.top + sy),
       width: Math.round(r.width),
       height: Math.round(r.height),
       size: style.fontSize,
@@ -111,8 +120,17 @@ const COLLECT = `(() => {
   /* A placeholder is text the user sees and no text node holds — there is
      nothing to put a Range around. Inset by the padding instead, which is
      where the first glyph starts: the mocks draw their prompt as a DIV with
-     the same padding, so this compares ink against ink. Taking the element
-     box would report the app's 16px of padding as a 16px shift. */
+     the same padding, so the POSITION compares ink against ink. Taking the
+     element box would report the app's 16px of padding as a 16px shift.
+
+     The width and height cannot be made comparable the same way, and are
+     the FIELD's, not the ink's: there is no glyph box to measure, so they
+     are the control's content box. Every mock draws these strings as real
+     text and measures them with a Range, so the two sides mean different
+     things by those two numbers - on Home the mock's ink is 473px against
+     the app field's ~806. The placeholder flag is the marker that says so,
+     and converge.mjs drops the width term for any row carrying it rather
+     than reporting a 333px "resize" at the top of the list. */
   for (const el of document.querySelectorAll("input[placeholder], textarea[placeholder]")) {
     const r = el.getBoundingClientRect();
     if (r.width < 1) continue;
@@ -122,8 +140,8 @@ const COLLECT = `(() => {
     const padRight = parseFloat(style.paddingRight) || 0;
     out.push({
       text: el.placeholder.replace(/\\s+/g, " ").trim(),
-      x: Math.round(r.left + padLeft),
-      y: Math.round(r.top + padTop),
+      x: Math.round(r.left + sx + padLeft),
+      y: Math.round(r.top + sy + padTop),
       width: Math.round(r.width - padLeft - padRight),
       height: Math.round(r.height),
       size: style.fontSize,
@@ -145,15 +163,36 @@ const COLLECT = `(() => {
  * `converge.mjs` reads. Every gate calls this, so a frame that goes red is
  * one env var away from saying which element moved — the session set spent
  * a run failing five frames with no probe to read.
+ *
+ * `origin` is the frame's top-left in the page, and it is not optional
+ * decoration: a probe is only comparable to the reference's if both are in
+ * the REFERENCE FRAME's coordinates. Gates that size the window to the
+ * frame shoot at 0,0 and pass nothing; parity-wiz shoots fullPage and
+ * bitblts its frame out of the middle, so it passes the same clip it
+ * subtracts from the mask boxes. Without it every wizard string reads as
+ * moved by one constant - the offset of the crop - which is exactly the
+ * reading `converge.mjs` exists to make impossible.
  */
-async function writeProbe(dir, name, evalInApp) {
+async function writeProbe(dir, name, evalInApp, origin = { x: 0, y: 0 }) {
   if (!process.env.RIG_PROBE) return;
   const rows = await evalInApp(
     `return page.evaluate(${JSON.stringify(COLLECT)});`,
   );
+  const ox = origin?.x ?? 0;
+  const oy = origin?.y ?? 0;
+  const rebased =
+    ox || oy
+      ? rows.map((row) => ({
+          ...row,
+          x: row.x - ox,
+          y: row.y - oy,
+          ...(row.boxX === undefined ? {} : { boxX: row.boxX - ox }),
+          ...(row.boxY === undefined ? {} : { boxY: row.boxY - oy }),
+        }))
+      : rows;
   fs.writeFileSync(
     path.join(dir, `${name}.text.json`),
-    JSON.stringify(rows, null, 1),
+    JSON.stringify(rebased, null, 1),
   );
 }
 
