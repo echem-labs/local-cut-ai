@@ -21,6 +21,9 @@
  * can only come from the pages.
  */
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 /** Collect every element that owns visible text, with the box it occupies.
  *  Returned as a string to be eval'd in either page. */
 const COLLECT = `(() => {
@@ -134,4 +137,24 @@ const COLLECT = `(() => {
   return out;
 })()`;
 
-module.exports = { COLLECT };
+/**
+ * Write one frame's probe beside its screenshot, if RIG_PROBE asked for it.
+ *
+ * A no-op otherwise, and deliberately: the gate's own answer is the pixel
+ * count, and the probe costs a page evaluation per frame for a file only
+ * `converge.mjs` reads. Every gate calls this, so a frame that goes red is
+ * one env var away from saying which element moved — the session set spent
+ * a run failing five frames with no probe to read.
+ */
+async function writeProbe(dir, name, evalInApp) {
+  if (!process.env.RIG_PROBE) return;
+  const rows = await evalInApp(
+    `return page.evaluate(${JSON.stringify(COLLECT)});`,
+  );
+  fs.writeFileSync(
+    path.join(dir, `${name}.text.json`),
+    JSON.stringify(rows, null, 1),
+  );
+}
+
+module.exports = { COLLECT, writeProbe };
