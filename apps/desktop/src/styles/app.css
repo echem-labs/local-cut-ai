@@ -3961,7 +3961,15 @@ button.link:hover {
    adds only the docking. */
 .tool-composer {
   position: sticky;
-  bottom: var(--space-3);
+  /* Zero, not --space-3: the scroller's own 32px bottom padding is where
+     the composer rests, and an offset on top of it is one sticky spends
+     MOVING the box whenever the content ends closer to the scrollport's
+     edge than the offset asks for. It did — the composer was drawn 4px
+     above where the column put it, on a session that does not even scroll,
+     so the gap above it depended on how tall that session happened to be.
+     A resting offset must be smaller than the clearance the layout
+     guarantees, and the only value that always is, is none. */
+  bottom: 0;
   align-self: stretch;
   margin-top: var(--space-3);
 }
