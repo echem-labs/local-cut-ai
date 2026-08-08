@@ -17,27 +17,54 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
+/** Flags that take no value. A flag read as another flag's argument is the
+ *  quiet failure this list exists to stop: `--tol --chain` used to make TOL
+ *  `Number("--chain")` = NaN, and since every `> NaN` is false, a frame 40px
+ *  out reported "converged". */
+const SWITCHES = new Set(["--boxes", "--gaps", "--chain"]);
+
 const arg = (name, fallback = null) => {
   const index = process.argv.indexOf(`--${name}`);
-  return index >= 0 ? process.argv[index + 1] : fallback;
+  if (index < 0) return fallback;
+  const value = process.argv[index + 1];
+  if (value === undefined || SWITCHES.has(value)) {
+    console.error(`--${name} needs a value`);
+    process.exit(2);
+  }
+  return value;
 };
 
+const usage =
+  "usage: node converge.mjs --ref <refs-dir> --app <shots-dir> [--frame name] [--tol n]";
 const refDir = arg("ref");
 const appDir = arg("app");
 const only = arg("frame");
 const TOL = Number(arg("tol", "0"));
 if (!refDir || !appDir) {
-  console.error("usage: node converge.mjs --ref <refs-dir> --app <shots-dir> [--frame name] [--tol n]");
+  console.error(usage);
+  process.exit(2);
+}
+// Number("2px") is NaN, and NaN silently filters every row out rather than
+// letting any through - so it reads as convergence, not as a bad argument.
+if (!Number.isFinite(TOL)) {
+  console.error(`--tol must be a number\n${usage}`);
   process.exit(2);
 }
 
-const frames = readdirSync(refDir)
+const probes = readdirSync(refDir)
   .filter((file) => file.endsWith(".text.json"))
-  .map((file) => file.replace(/\.text\.json$/, ""))
-  .filter((name) => !only || name === only);
+  .map((file) => file.replace(/\.text\.json$/, ""));
 
-if (frames.length === 0) {
+if (probes.length === 0) {
   console.error(`no text probes in ${refDir} — re-render the references`);
+  process.exit(2);
+}
+
+// The `--frame` filter is applied AFTER the emptiness check, so a mistyped
+// name says so instead of sending you to re-render references that are fine.
+const frames = probes.filter((name) => !only || name === only);
+if (frames.length === 0) {
+  console.error(`no frame named ${only} in ${refDir}; it has: ${probes.join(", ")}`);
   process.exit(2);
 }
 
@@ -67,20 +94,27 @@ const key = (text) =>
  *  in document order, which is the only correspondence available and the
  *  right one whenever both sides list them the same way. */
 const pair = (refRows, appRows) => {
+  // A row whose text is only punctuation or a lone icon glyph carries no
+  // label to match on; it is the pixel diff's business, not this. Dropped
+  // from BOTH sides up front, which is the only place it can be done once:
+  // every such row folds to the same empty key, so leaving them in gave one
+  // bucket that paired the mock's rail glyph against the app's close button
+  // and printed the result -- dx=1160 -- at the top of the list, since the
+  // sort is by distance. The mocks draw every icon as a character, so this
+  // is a dozen rows a frame, not an edge case.
+  const labelled = (rows) => rows.filter((row) => key(row.text));
   const byText = new Map();
-  for (const row of appRows) {
+  for (const row of labelled(appRows)) {
     const k = key(row.text);
     if (!byText.has(k)) byText.set(k, []);
     byText.get(k).push(row);
   }
   const pairs = [];
   const orphans = [];
-  for (const row of refRows) {
+  for (const row of labelled(refRows)) {
     const bucket = byText.get(key(row.text));
     if (!bucket || bucket.length === 0) {
-      // A row whose text is only punctuation or a lone icon glyph carries
-      // no label to match on; it is the pixel diff's business, not this.
-      if (key(row.text)) orphans.push(row);
+      orphans.push(row);
       continue;
     }
     pairs.push([row, bucket.shift()]);
@@ -91,7 +125,18 @@ const pair = (refRows, appRows) => {
 
 const short = (text) => (text.length > 42 ? `${text.slice(0, 39)}...` : text);
 
+// Resolved once rather than re-scanned per frame, so that two modes at once
+// is an error instead of a silent win for whichever `if` came first.
+const MODES = ["boxes", "gaps", "chain"];
+const asked = MODES.filter((flag) => process.argv.includes(`--${flag}`));
+if (asked.length > 1) {
+  console.error(`--${asked.join(" and --")} are alternatives; pick one`);
+  process.exit(2);
+}
+const mode = asked[0] ?? "moved";
+
 let framesWithDrift = 0;
+let framesCompared = 0;
 for (const name of frames) {
   const refPath = path.join(refDir, `${name}.text.json`);
   const appPath = path.join(appDir, `${name}.text.json`);
@@ -99,6 +144,7 @@ for (const name of frames) {
     console.log(`\n### ${name}\n  no app probe — run the gate with RIG_PROBE=1`);
     continue;
   }
+  framesCompared += 1;
   const refRows = JSON.parse(readFileSync(refPath, "utf8"));
   const appRows = JSON.parse(readFileSync(appPath, "utf8"));
   const { pairs, orphans, extra } = pair(refRows, appRows);
@@ -108,7 +154,12 @@ for (const name of frames) {
       text: ref.text,
       dx: app.x - ref.x,
       dy: app.y - ref.y,
-      dw: app.width - ref.width,
+      // Width only where both sides measured the same thing. A placeholder
+      // has no text node to put a Range around, so textprobe reports the
+      // FIELD's box for it, where the mock - which draws the string as real
+      // text - reports the ink. Comparing the two called Home's prompt 333px
+      // wider and, since the sort is by distance, printed it first.
+      dw: ref.placeholder || app.placeholder ? 0 : app.width - ref.width,
       ref,
       app,
     }))
@@ -134,30 +185,21 @@ for (const name of frames) {
   framesWithDrift += 1;
   console.log(`\n### ${name}  (${pairs.length} strings paired)`);
 
-  /**
-   * The gap between one row of text and the next, on each side.
-   *
-   * `--chain` shows that everything below some point is 3px high, which
-   * localises the cause to "above here" and no further. What actually has to
-   * change is one box's height or margin, and that shows up as the single
-   * gap where the two sides disagree — every gap after it is back to zero,
-   * because the drift is inherited rather than re-earned.
-   *
-   * Rows are collapsed by y first: six chips on one line are one row, and
-   * pairing them individually would report five gaps of zero between them.
-   */
   /** The boxes the text sits in, where the two sides size them differently.
    *  This is the cause layer: a row moves because the box above it is a
    *  different height, and that is the line to edit. */
-  if (process.argv.includes("--boxes")) {
+  if (mode === "boxes") {
     const seen = new Set();
     const rows = pairs
       .filter(([ref, app]) => ref.boxH !== undefined && app.boxH !== undefined)
-      .map(([ref, app]) => ({ text: ref.text, refH: ref.boxH, appH: app.boxH, refW: ref.boxW, appW: app.boxW, y: ref.boxY }))
+      .map(([ref, app]) => ({ text: ref.text, refH: ref.boxH, appH: app.boxH, refW: ref.boxW, appW: app.boxW, y: ref.boxY, x: ref.boxX }))
       .filter((row) => row.refH !== row.appH || row.refW !== row.appW)
-      // One line per distinct box, not per label inside it.
+      // One line per distinct box, not per label inside it. Keyed on x too:
+      // the prompt row draws three chips at one y with one height, and a key
+      // without x collapsed them into a single line - so a real divergence
+      // on the second chip was dropped and the count under-reported.
       .filter((row) => {
-        const k = `${row.y}:${row.refH}:${row.refW}`;
+        const k = `${row.x}:${row.y}:${row.refH}:${row.refW}`;
         if (seen.has(k)) return false;
         seen.add(k);
         return true;
@@ -175,16 +217,32 @@ for (const name of frames) {
     continue;
   }
 
-  if (process.argv.includes("--gaps")) {
-    const lines = new Map();
-    for (const [ref, app] of pairs) {
-      // Round to a line: text on the same visual row differs by a pixel or
-      // two of ink depending on ascenders.
-      const band = Math.round(ref.y / 4) * 4;
-      const seen = lines.get(band);
-      if (!seen || ref.y < seen.refY) lines.set(band, { refY: ref.y, appY: app.y, text: ref.text });
+  /**
+   * The gap between one row of text and the next, on each side.
+   *
+   * `--chain` shows that everything below some point is 3px high, which
+   * localises the cause to "above here" and no further. What actually has to
+   * change is one box's height or margin, and that shows up as the single
+   * gap where the two sides disagree — every gap after it is back to zero,
+   * because the drift is inherited rather than re-earned.
+   *
+   * Rows are collapsed by y first: six chips on one line are one row, and
+   * pairing them individually would report five gaps of zero between them.
+   */
+  if (mode === "gaps") {
+    // Cluster into lines, don't round into buckets. Text on one visual row
+    // differs by a pixel or two of ink depending on ascenders, and rounding
+    // splits exactly that case whenever the pair straddles a boundary
+    // (y=5 and y=6 round to 4 and 8) while merging rows 3px apart that are
+    // genuinely distinct. Walk them in order instead and start a new line
+    // only where the step exceeds the ink jitter.
+    const LINE = 3;
+    const ordered = [];
+    for (const [ref, app] of [...pairs].sort((a, b) => a[0].y - b[0].y)) {
+      const line = ordered[ordered.length - 1];
+      if (line && ref.y - line.refY <= LINE) continue;
+      ordered.push({ refY: ref.y, appY: app.y, text: ref.text });
     }
-    const ordered = [...lines.values()].sort((a, b) => a.refY - b.refY);
     console.log(`  gaps (ref -> app, the row where they disagree is the one to fix):`);
     for (let at = 1; at < ordered.length; at++) {
       const previous = ordered[at - 1];
@@ -204,7 +262,7 @@ for (const name of frames) {
   // Down the page in order, which is how vertical drift is actually read:
   // a block that starts 4px high carries everything under it, so the row
   // where dy first changes is the one to fix, not the forty below it.
-  if (process.argv.includes("--chain")) {
+  if (mode === "chain") {
     console.log(`  chain (ref y order):`);
     for (const row of [...moved].sort((a, b) => a.ref.y - b.ref.y)) {
       console.log(
@@ -254,4 +312,15 @@ for (const name of frames) {
   }
 }
 
-console.log(`\n${framesWithDrift} of ${frames.length} frames carry drift`);
+// Frames COMPARED, not frames found. A run where every probe was missing
+// used to end "0 of 5 frames carry drift" and exit 0, which reads as the
+// all-clear it is the opposite of - and is reachable without any mistake,
+// since only the home, session and wiz gates write an app-side probe.
+console.log(`\n${framesWithDrift} of ${framesCompared} compared frames carry drift`);
+if (framesCompared === 0) {
+  console.error(
+    `no app probes in ${appDir} — nothing was compared. Re-run the gate with RIG_PROBE=1` +
+      ` (only the home, session and wiz gates write one).`,
+  );
+  process.exit(2);
+}

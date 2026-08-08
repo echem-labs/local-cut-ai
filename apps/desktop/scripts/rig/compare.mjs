@@ -82,26 +82,27 @@ for (const name of readdirSync(refsDir).filter((file) => file.endsWith(".png")))
   const outside = differing - masked;
   // Impossible by construction, and it happened: a count of pixels cannot be
   // negative, and the day it is, the number beside every other frame is
-  // wrong too. Loud, not clamped.
-  if (outside < 0) {
+  // wrong too. Loud, not clamped. Unreachable while `masked` is counted off
+  // a bitmap - it is then a subset of what pixelmatch counted - which is
+  // what makes it worth keeping: it is the assertion that says so, and the
+  // per-region summing it caught is the shape a future edit reintroduces.
+  const broken = outside < 0;
+  if (broken) {
     console.error(
       `FAIL ${name} - masked (${masked}) exceeds differing (${differing}); the mask counter is broken`,
     );
-    failures += 1;
-    // Still emit the evidence. This is the one failure whose cause is in
-    // the arithmetic rather than the frame, and a run that reports it with
-    // no diff image and no row in the contact sheet is the worst moment to
-    // have thrown the picture away.
-    writeFileSync(path.join(outDir, name), PNG.sync.write(diff));
-    rows.push({ name, ok: false, outside });
-    continue;
   }
   const budget = ref.width * ref.height * 0.01;
-  const ok = outside <= budget;
+  const ok = !broken && outside <= budget;
   if (!ok) failures += 1;
-  console.log(
-    `${ok ? "PASS" : "FAIL"} ${name} - ${outside} differing px outside masks (budget ${Math.round(budget)})`,
-  );
+  if (!broken) {
+    console.log(
+      `${ok ? "PASS" : "FAIL"} ${name} - ${outside} differing px outside masks (budget ${Math.round(budget)})`,
+    );
+  }
+  // One write, both paths. The arithmetic failure is the LAST one that
+  // should throw the picture away, and a second copy of these two lines is
+  // a second thing to update when the contact sheet's row shape changes.
   writeFileSync(path.join(outDir, name), PNG.sync.write(diff));
   rows.push({ name, ok, outside });
 }

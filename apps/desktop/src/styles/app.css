@@ -242,8 +242,13 @@ textarea {
   white-space: nowrap;
 }
 
-/* Expanded rail: the dot IS the leading mark — centered in the same 15px
- * column the other rows' icons occupy, so labels line up. */
+/* Expanded rail: the dot IS the leading mark, in a 15px column of its own
+ * (6px of dot, centered) — NOT the 18px column the icon rows above use, so
+ * a tab's title starts 3px left of a destination's label. That is what the
+ * design draws: the reference puts destination labels at x=47 and tab
+ * titles at x=35, because a tab is a list item under the row above it and
+ * not another destination. Widening this to 18 to "line them up" moves the
+ * tabs away from the mocks. */
 .rail-tab .dot {
   width: 6px;
   height: 6px;
