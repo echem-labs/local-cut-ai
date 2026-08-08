@@ -423,6 +423,11 @@ const SNAP_HOME = `
 .models { width: 32px !important; height: 32px !important; }
 /* the 4px grid where the mock sits off it */
 .fromtpl { margin-top: 12px !important; }
+/* ...and the app's stated 16px line box. Both sides drew this row at
+   whatever Inter's metrics made of a 12px line, and the fraction rounded
+   differently on each - one pixel, inherited by the downloads panel under
+   it, which then drew all fourteen of its borders on the wrong row. */
+.fromtpl { line-height: 16px !important; }
 .toolhead { margin: 24px 0 12px !important; }
 .shelfhead { margin: 32px 0 12px !important; }
 /* a seg-toggle's cells sit inside its border, so 30 + 2 is the app's 32 */
@@ -473,6 +478,14 @@ body { padding-top: 38px !important; }
 .grid { gap: 12px !important; }
 /* the shelf head is an eyebrow at the app's letter-spacing */
 .eyebrow { letter-spacing: .1em !important; }
+/* ...and at the app's stated line box. SNAP_COMMON forces line-height to
+   normal, which is right wherever the app inherits the UA's and wrong on
+   every row where the app states one - including the two the mock itself
+   already writes as 16px, which that blanket rule stomps. The app's own
+   .eyebrow rule says why it states them: an 11px line left to Inter's
+   metrics rounds one way in the app and the other here, and the fraction
+   is inherited by everything below the row. */
+.eyebrow, .toolhead .hint { line-height: 16px !important; }
 `;
 
 /* ---- the session set's snaps: authored ON the token scale, so what it
