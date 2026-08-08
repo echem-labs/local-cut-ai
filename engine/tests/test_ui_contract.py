@@ -427,23 +427,13 @@ def test_the_code_execution_warning_has_no_second_copy_in_the_desktop():
 
 def _stylesheet() -> str:
     return (
-        Path(__file__).resolve().parents[2]
-        / "apps"
-        / "desktop"
-        / "src"
-        / "styles"
-        / "app.css"
+        Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "styles" / "app.css"
     ).read_text(encoding="utf-8")
 
 
 def _tokens() -> str:
     return (
-        Path(__file__).resolve().parents[2]
-        / "apps"
-        / "desktop"
-        / "src"
-        / "styles"
-        / "tokens.css"
+        Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "styles" / "tokens.css"
     ).read_text(encoding="utf-8")
 
 
@@ -488,6 +478,5 @@ def test_no_dialog_picks_its_own_width():
         if not block.split("{")[0].strip().endswith(("modal-s", "modal-m", "modal-l"))
     ]
     assert rogue == [], (
-        f"these selectors size a dialog themselves; use the shell's size "
-        f"prop instead: {rogue}"
+        f"these selectors size a dialog themselves; use the shell's size prop instead: {rogue}"
     )
