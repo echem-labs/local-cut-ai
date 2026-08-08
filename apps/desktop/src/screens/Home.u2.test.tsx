@@ -168,6 +168,19 @@ describe("the style preset", () => {
       "anime",
     );
   });
+
+  // The design draws a mark on every chip in the prompt row; aspect and
+  // duration shipped with one and style did not, which reads as a rendering
+  // fault rather than a choice. Asserted across all three, so the next chip
+  // added to this row cannot quietly arrive bare either.
+  it("gives every chip in the prompt row its mark", () => {
+    seed();
+    render(<Home />);
+    const bare = [t("home.aspectAria"), t("home.durationAria"), t("home.styleAria")].filter(
+      (label) => !screen.getByLabelText(label).querySelector("svg"),
+    );
+    expect(bare).toEqual([]);
+  });
 });
 
 describe("the download bridge", () => {

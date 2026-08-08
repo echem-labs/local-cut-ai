@@ -353,8 +353,9 @@ export function Home() {
               tipHint={t("home.styleTipHint")}
               tipSide="bottom"
               options={STYLE_PRESETS.map((preset) => ({
-                value: preset,
-                label: (m().home.styles as Record<string, string>)[preset] ?? preset,
+                value: preset.id,
+                label: (m().home.styles as Record<string, string>)[preset.id] ?? preset.id,
+                icon: preset.icon,
               }))}
             />
             {/* The app's bubble, not the browser's `title`: the same rule the
