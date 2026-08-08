@@ -55,17 +55,41 @@ for (const name of readdirSync(refsDir).filter((file) => file.endsWith(".png")))
     threshold: 0.1,
   });
   // Count masked pixels out of the failure budget.
-  let masked = 0;
+  //
+  // Marked once, not summed per region: masks overlap (a tile's thumb and
+  // its body share an edge, the rail's icon sits inside its row), and adding
+  // each region's tally counted every shared pixel as many times as regions
+  // covered it. The subtraction then over-ran the total — `library` reported
+  // -813 differing px, which is not a number a pixel count can take, and in
+  // the other direction it is a frame passing on pixels it never masked.
+  const maskedPixels = new Uint8Array(ref.width * ref.height);
   for (const region of masks[name] ?? []) {
-    for (let y = region.y; y < region.y + region.height; y++) {
-      for (let x = region.x; x < region.x + region.width; x++) {
-        const index = (y * ref.width + x) * 4;
-        // pixelmatch paints differing pixels red-ish; detect by alpha+color
-        if (diff.data[index] === 255 && diff.data[index + 1] === 0) masked += 1;
-      }
+    const x0 = Math.max(0, region.x);
+    const y0 = Math.max(0, region.y);
+    const x1 = Math.min(ref.width, region.x + region.width);
+    const y1 = Math.min(ref.height, region.y + region.height);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) maskedPixels[y * ref.width + x] = 1;
     }
   }
+  let masked = 0;
+  for (let at = 0; at < maskedPixels.length; at++) {
+    if (!maskedPixels[at]) continue;
+    const index = at * 4;
+    // pixelmatch paints differing pixels red-ish; detect by alpha+color
+    if (diff.data[index] === 255 && diff.data[index + 1] === 0) masked += 1;
+  }
   const outside = differing - masked;
+  // Impossible by construction, and it happened: a count of pixels cannot be
+  // negative, and the day it is, the number beside every other frame is
+  // wrong too. Loud, not clamped.
+  if (outside < 0) {
+    console.error(
+      `FAIL ${name} - masked (${masked}) exceeds differing (${differing}); the mask counter is broken`,
+    );
+    failures += 1;
+    continue;
+  }
   const budget = ref.width * ref.height * 0.01;
   const ok = outside <= budget;
   if (!ok) failures += 1;
