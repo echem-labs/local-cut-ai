@@ -88,6 +88,12 @@ for (const name of readdirSync(refsDir).filter((file) => file.endsWith(".png")))
       `FAIL ${name} - masked (${masked}) exceeds differing (${differing}); the mask counter is broken`,
     );
     failures += 1;
+    // Still emit the evidence. This is the one failure whose cause is in
+    // the arithmetic rather than the frame, and a run that reports it with
+    // no diff image and no row in the contact sheet is the worst moment to
+    // have thrown the picture away.
+    writeFileSync(path.join(outDir, name), PNG.sync.write(diff));
+    rows.push({ name, ok: false, outside });
     continue;
   }
   const budget = ref.width * ref.height * 0.01;

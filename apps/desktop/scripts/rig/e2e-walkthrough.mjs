@@ -271,6 +271,16 @@ try {
     // The graph is re-read from the engine after the patch; wait for the
     // node to appear there rather than for a timeout to expire.
     await page.waitForSelector('[data-node^="music-"]', { timeout: 20000 });
+    // ...and then for it to be SELECTED, which is the other half of what
+    // this step checks and lands later: the store selects on patchGraph
+    // RESOLVING, while the node itself is painted by the graph refresh the
+    // patch triggers - which can arrive first. Waiting only for the node
+    // read the selection before it existed and failed roughly one run in
+    // three. Swallowed on timeout so a real regression is still reported
+    // by the check below, with its numbers, rather than as a hang here.
+    await page
+      .waitForSelector('.canvas-node.selected[data-node^="music-"]', { timeout: 5000 })
+      .catch(() => {});
 
     // \`before\` is a Node-side value; page.evaluate runs in the renderer,
     // so it has to travel as an argument rather than a closure.

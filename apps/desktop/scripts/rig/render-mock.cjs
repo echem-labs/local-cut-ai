@@ -461,9 +461,16 @@ body { padding-top: 38px !important; }
 
 /* ---- the home set's snaps (same rule: each one is a token the app owns) */
 const SNAP_HOME = `
-/* 12.5px is not on the scale: --text-xs everywhere it appears */
+/* 12.5px is not on the scale: --text-xs everywhere it appears.
+   NOT .rail .item, which is --text-s and is SNAP_SHELL's to say. It used
+   to be in this list and be overridden by a 14px rule two lines below it;
+   moving that rule to the shared block moved it EARLIER in the sheet, which
+   at equal specificity means it lost. The rail would have rendered a step
+   small in the next reference anyone re-rendered - so state it once, in the
+   block that owns the rail, rather than relying on which string is
+   concatenated last. */
 .tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
-.rail .item, .sortmenu div, .menu div { font-size: 12px !important; }
+.sortmenu div, .menu div { font-size: 12px !important; }
 /* the 4px grid where the mock sits off it */
 .fromtpl { margin-top: 12px !important; }
 /* ...and the app's stated 16px line box. Both sides drew this row at
