@@ -82,7 +82,10 @@ const SETS = {
       ["session-voiceover", "session-mock.html?view=session-voiceover"],
       ["session-music", "session-mock.html?view=session-music"],
       ["session-image", "session-mock.html?view=session-image"],
-      ["session-clip-rendering", "session-mock.html?view=session-clip-rendering"],
+      [
+        "session-clip-rendering",
+        "session-mock.html?view=session-clip-rendering",
+      ],
     ],
   },
   /* The flowchart panel (U4). Not a window: the canvas is one panel of the
@@ -115,7 +118,9 @@ const SETS = {
 const setName = arg("set", "wizard");
 const SET = SETS[setName];
 if (!SET) {
-  console.error(`unknown --set ${setName}; expected one of ${Object.keys(SETS).join(", ")}`);
+  console.error(
+    `unknown --set ${setName}; expected one of ${Object.keys(SETS).join(", ")}`,
+  );
   app.exit(2);
   return;
 }
@@ -144,20 +149,76 @@ const MASKABLE = {
      frame gates the LAYOUT of the shelf and the chrome around it; what a
      tile says is the seed's business, and the geometry of these regions is
      checked against the reference boxes (parity-home.mjs). */
-  home: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
-  "home-downloads": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".dlsum", ".tool .well", ".models"],
-  "home-downloads-open": [".rail .item .count", ".rail .item .glyph", ".dlsum", ".srow .st", ".srow .model", ".tool .well", ".models"],
-  "home-empty": [".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
-  library: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
-  "library-tools": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
-  "library-menu": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
+  home: [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+  ],
+  "home-downloads": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".dlsum",
+    ".tool .well",
+    ".models",
+  ],
+  "home-downloads-open": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".dlsum",
+    ".srow .st",
+    ".srow .model",
+    ".tool .well",
+    ".models",
+  ],
+  "home-empty": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+  ],
+  library: [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
+  "library-tools": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
+  "library-menu": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
   /* The card masks only its warning mark: a 14px lucide triangle in the
      app, a text glyph here. Everything else in the frame IS the design. */
   "inspector-failure": [".head .mark"],
   "wiz-1": [".mark"],
   "wiz-2": [],
   "wiz-3": [".row .meta", ".row .check", ".primary", ".hintline"],
-  "wiz-3lib": [".mrow .meta", ".mrow .check", ".mrow .badge", ".libfilter", ".primary", ".hintline"],
+  "wiz-3lib": [
+    ".mrow .meta",
+    ".mrow .check",
+    ".mrow .badge",
+    ".libfilter",
+    ".primary",
+    ".hintline",
+  ],
   "wiz-4": [".srow .st", ".overall", ".sub"],
   /* session set (U3). Same doctrine: tiles, rail glyphs and counts as the
      home set; plus — the status row (model name and wall time are live),
@@ -166,14 +227,78 @@ const MASKABLE = {
      slate), and the small lucide-vs-unicode glyphs inside controls (the
      tool-head icon and close button, the swatch play cells, the models
      readiness dot). Geometry is checked for every one of them. */
-  "panel-script": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x"],
-  "panel-voiceover": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".swatch .play"],
-  "panel-clip": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".ghost.sf"],
-  "session-script": [".rail .item .count", ".rail .item .glyph", ".status", ".composer .models"],
-  "session-voiceover": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".clone .box", ".composer .models"],
-  "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .models"],
-  "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .models"],
-  "session-clip-rendering": [".rail .item .count", ".rail .item .glyph", ".status"],
+  "panel-script": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+  ],
+  "panel-voiceover": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+    ".swatch .play",
+  ],
+  "panel-clip": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+    ".ghost.sf",
+  ],
+  "session-script": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".composer .models",
+  ],
+  "session-voiceover": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".waveplot",
+    ".wtoggle",
+    ".wtime",
+    ".actions .ghost",
+    ".clone .box",
+    ".composer .models",
+  ],
+  "session-music": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".waveplot",
+    ".wtoggle",
+    ".wtime",
+    ".actions .ghost",
+    ".composer .models",
+  ],
+  "session-image": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".preview",
+    ".actions .ghost",
+    ".composer .models",
+  ],
+  "session-clip-rendering": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+  ],
   /* canvas set (U4). The graph's GEOMETRY is the whole point of this frame,
      so almost nothing is masked — the layout is derived and the pose is
      fixed, which is exactly what makes the node grid diffable. What is
@@ -207,7 +332,15 @@ const MASKABLE = {
 const MASK_PAD = 6;
 
 const FONT = pathToFileURL(
-  path.resolve(__dirname, "..", "..", "src", "assets", "fonts", "InterVariable.woff2"),
+  path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "src",
+    "assets",
+    "fonts",
+    "InterVariable.woff2",
+  ),
 ).href;
 
 /* Every rule below either injects the app's real font or snaps one mock
@@ -296,6 +429,14 @@ const SNAP_HOME = `
 .seg span, .sortwrap .chip { min-height: 30px !important; align-items: center !important; }
 /* Generate carries the app's min-width so the row's right edge matches */
 .primary { min-width: 128px !important; justify-content: center !important; }
+/* ...and its HEIGHT, which nothing else was pinning. The mock writes the
+   CTA's icon as a "✦" character, and that glyph falls back to a font whose
+   line box is 35px - taller than the button, so it won over the mock's own
+   min-height of 32px. A fallback glyph was therefore deciding the height of
+   the CTA, and with it the prompt box's control row, and with that every
+   row below the prompt: the whole main column sat 3px high. --control-h is
+   32 and the mock already says 32; this stops a font from disagreeing. */
+.primary { height: 32px !important; }
 .hero .row { padding: 12px !important; }
 /* the shipped page gutter (main.content) is 32px, not the mock's 24, and
    the title bar is --titlebar-h 38 */
@@ -433,7 +574,9 @@ async function render(win, name, file) {
   const url = `${pathToFileURL(path.join(mocksDir, base)).href}${query ? `?${query}` : ""}`;
   await win.loadURL(url);
   await win.webContents.insertCSS(SNAP, { cssOrigin: "author" });
-  await win.webContents.executeJavaScript("document.fonts.ready.then(() => null)");
+  await win.webContents.executeJavaScript(
+    "document.fonts.ready.then(() => null)",
+  );
   // Two frames so the font swap has painted before measuring.
   await win.webContents.executeJavaScript(
     "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
@@ -441,22 +584,26 @@ async function render(win, name, file) {
   // body is min-height:100vh, so its box reports the viewport, not the
   // content; the card is the content — its bottom edge (padding included)
   // is the true page height.
-  const height = SET.height ?? await win.webContents.executeJavaScript(
-    setName === "home"
-      ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
-      : setName === "session"
-        ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
-        : setName === "about"
-          ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
-          : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
-  );
+  const height =
+    SET.height ??
+    (await win.webContents.executeJavaScript(
+      setName === "home"
+        ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
+        : setName === "session"
+          ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
+          : setName === "about"
+            ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
+            : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
+    ));
   // Resize, then paint the frame fresh: an offscreen window that grows after
   // painting composites the old frame under the new one, which ghosts
   // anything positioned against a moved edge.
   win.setContentSize(SET.width, height);
   await win.loadURL(url);
   await win.webContents.insertCSS(SNAP, { cssOrigin: "author" });
-  await win.webContents.executeJavaScript("document.fonts.ready.then(() => null)");
+  await win.webContents.executeJavaScript(
+    "document.fonts.ready.then(() => null)",
+  );
   await win.webContents.executeJavaScript(
     "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
   );
@@ -469,7 +616,10 @@ async function render(win, name, file) {
   // meaningful for the reference it was measured from, and a probe you have
   // to remember to enable is one that is stale when you finally look.
   const text = await win.webContents.executeJavaScript(COLLECT);
-  fs.writeFileSync(path.join(outDir, `${name}.text.json`), JSON.stringify(text, null, 1));
+  fs.writeFileSync(
+    path.join(outDir, `${name}.text.json`),
+    JSON.stringify(text, null, 1),
+  );
 
   const rects = await win.webContents.executeJavaScript(`
     (${JSON.stringify(MASKABLE[name] ?? [])}).flatMap((selector) =>
@@ -503,7 +653,10 @@ app.whenReady().then(async () => {
     for (const [name, file] of STATES) {
       masks[`${name}.png`] = await render(win, name, file);
     }
-    fs.writeFileSync(path.join(outDir, "masks.json"), JSON.stringify(masks, null, 1));
+    fs.writeFileSync(
+      path.join(outDir, "masks.json"),
+      JSON.stringify(masks, null, 1),
+    );
     console.log("masks.json written");
     app.exit(0);
   } catch (error) {

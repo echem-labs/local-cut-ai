@@ -60,6 +60,30 @@ const COLLECT = `(() => {
     return box && { left: box.left, top: box.top, width: box.right - box.left, height: box.bottom - box.top };
   };
 
+  /* The box the text sits IN, found without a selector map.
+     Ink positions say a row moved; they cannot say which box changed height
+     to move it. Walk up to the nearest ancestor that is drawn — one with a
+     border or a background of its own — and report that too. It is the
+     button, chip or card the label belongs to, on both sides, without
+     either having to name it. */
+  const controlBox = (el) => {
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      const bordered = parseFloat(style.borderTopWidth) > 0 || parseFloat(style.borderBottomWidth) > 0;
+      /* backgroundImage too: the CTA on both sides is a gradient, and a
+         gradient leaves backgroundColor transparent — so a colour-only test
+         walks straight past the button and reports the row around it. */
+      const filled =
+        (style.backgroundColor !== "rgba(0, 0, 0, 0)" && style.backgroundColor !== "transparent") ||
+        (style.backgroundImage && style.backgroundImage !== "none");
+      if (!bordered && !filled) continue;
+      const r = node.getBoundingClientRect();
+      if (r.height < 1) continue;
+      return { boxY: Math.round(r.top), boxH: Math.round(r.height), boxX: Math.round(r.left), boxW: Math.round(r.width) };
+    }
+    return null;
+  };
+
   const out = [];
   for (const el of document.querySelectorAll("body *")) {
     const text = own(el);
@@ -78,6 +102,7 @@ const COLLECT = `(() => {
       weight: style.fontWeight,
       spacing: style.letterSpacing,
       family: style.fontFamily.split(",")[0].replace(/['"]/g, ""),
+      ...(controlBox(el) ?? {}),
     });
   }
   /* A placeholder is text the user sees and no text node holds — there is
@@ -102,6 +127,7 @@ const COLLECT = `(() => {
       weight: style.fontWeight,
       spacing: style.letterSpacing,
       family: style.fontFamily.split(",")[0].replace(/['"]/g, ""),
+      ...(controlBox(el) ?? {}),
       placeholder: true,
     });
   }
