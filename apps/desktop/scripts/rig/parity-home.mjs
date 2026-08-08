@@ -320,21 +320,22 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        box.y >= ref.y - TOL &&
         // Content-sized boxes (a status row is a model name and a wall
         // time; a right-aligned cell grows leftward) are matched on
         // vertical position plus horizontal overlap; design-owned boxes
-        // must sit wholly inside the mask that was drawn for them.
+        // must sit wholly inside the mask that was drawn for them. The
+        // vertical band binds both: "loose" is a statement about x, and
+        // left unbounded below it lets a box claim a mask far above it.
+        box.y >= ref.y - TOL &&
+        box.y + box.height <= ref.y + ref.height + TOL &&
         box.x < ref.x + ref.width &&
         box.x + box.width > ref.x &&
         (LOOSE.test(box.sel) ||
-          (box.y + box.height <= ref.y + ref.height + TOL &&
-            // Inside the mask, or pinned to the edge the control is
-            // anchored on (a right-aligned control grows leftward past
-            // the box the mask was drawn around).
-            (box.x >= ref.x - TOL ||
-              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <=
-                TOL))),
+          // Inside the mask, or pinned to the edge the control is
+          // anchored on (a right-aligned control grows leftward past
+          // the box the mask was drawn around).
+          box.x >= ref.x - TOL ||
+          Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL),
     );
     if (!hit) {
       problems.push(
