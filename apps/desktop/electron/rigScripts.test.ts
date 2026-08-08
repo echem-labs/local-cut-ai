@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -40,5 +40,32 @@ describe("the rig's scripts", () => {
       error = details.stderr?.toString() ?? String(thrown);
     }
     expect(error).toBe("");
+  });
+
+  /**
+   * ...and the CSS blocks hold no backtick, which parsing cannot tell you.
+   *
+   * This is the failure `--check` is blind to, and the one that actually
+   * happens. A backtick inside a SNAP block closes the template literal and
+   * what follows becomes a TAGGED template — `SNAP_HOME` applied to the
+   * rest of the CSS. That is valid JavaScript, so the file parses; it
+   * throws at load instead, which under Electron is the modal error box and
+   * the ten-minute hang. It has cost four runs now, the last one behind a
+   * comment reading "NOT `.rail .item`".
+   *
+   * Read out of the source rather than out of the module: requiring it
+   * needs Electron, and the whole point is to catch this without one.
+   */
+  const BLOCK = /const (SNAP_[A-Z_]+) = `([\s\S]*?)`;/g;
+
+  it("keeps the render's CSS blocks free of backticks", () => {
+    const source = readFileSync(path.join(RIG, "render-mock.cjs"), "utf8");
+    const blocks = [...source.matchAll(BLOCK)];
+    // A regex that matches nothing passes every assertion under it.
+    expect(blocks.length).toBeGreaterThanOrEqual(4);
+    const offenders = blocks
+      .filter(([, , body]) => body.includes("`"))
+      .map(([, name]) => name);
+    expect(offenders).toEqual([]);
   });
 });

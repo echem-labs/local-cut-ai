@@ -222,7 +222,7 @@ const refSize = (name) => {
 const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
 const MASK_PAD = 6;
 
-const RAIL_ICONS = ".rail button:not(.rail-tab-close) > svg";
+const RAIL_ICONS = ".rail button:not(.rail-tab-close):not(.menu-pop button) > svg";
 
 /** What each masked region of the reference is, in the app — a mask hides
  * pixels, never geometry (U1's lesson, now doctrine). */

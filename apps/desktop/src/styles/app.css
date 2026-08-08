@@ -171,8 +171,15 @@ textarea {
    Width and height differ on purpose. A lucide icon is a 24-unit viewBox
    with the default `preserveAspectRatio`, so it scales to the SMALLER of the
    two and centres in the rest: 15px of drawing, centred in 18px of column.
-   Setting width alone would scale the icon up to 18px instead. */
-.rail button:not(.rail-tab-close) > svg {
+   Setting width alone would scale the icon up to 18px instead.
+
+   Rail ROWS, not every button the rail contains. The Help popover renders
+   inside the rail, so "any button in .rail" reached its menu items too and
+   drew their 13px marks in an 18x15 box. `walk.mjs` measures both halves —
+   the column, and what it must not reach — because nothing in the unit
+   suite can see either: vitest stubs CSS imports away and jsdom loads no
+   stylesheet. */
+.rail button:not(.rail-tab-close):not(.menu-pop button) > svg {
   width: 18px;
   height: 15px;
   flex: none;
