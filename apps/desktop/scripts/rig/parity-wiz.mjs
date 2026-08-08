@@ -164,11 +164,12 @@ const TOL = 2;
 /* The two masks with nothing under them by design: the mock poses ltx and
    ace as installed AND still downloading, and the fixture had to pick one
    (recorded deviation), so the "installed" badge it draws on those rows
-   has no counterpart. Listed by position, so a THIRD hole still fails. */
+   has no counterpart. Listed by position - as the MASK is drawn, pad
+   included, which is what `want` holds - so a THIRD hole still fails. */
 const UNPOSED = {
   "wiz-3lib": [
-    { x: 734, y: 609 },
-    { x: 734, y: 941 },
+    { x: 728, y: 609 },
+    { x: 728, y: 945 },
   ],
 };
 
@@ -192,13 +193,19 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
+        // The vertical band binds every box, loose or not: "loose" means
+        // the row rhythm is the design's and the width is the content's,
+        // which is a statement about x. Left unbounded below, a badge on
+        // the last row could claim the first row's mask 800px above it -
+        // and did, which is how ten rows of correctly-placed badges
+        // reported one region with nothing under it.
         box.y >= ref.y - TOL &&
+        box.y + box.height <= ref.y + ref.height + TOL &&
         box.x < ref.x + ref.width &&
         box.x + box.width > ref.x &&
         (loose ||
-          (box.y + box.height <= ref.y + ref.height + TOL &&
-            (box.x >= ref.x - TOL ||
-              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
+          box.x >= ref.x - TOL ||
+          Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL),
     );
     if (!hit) {
       if (!loose) {
