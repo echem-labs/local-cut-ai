@@ -134,6 +134,73 @@ for (const name of frames) {
   framesWithDrift += 1;
   console.log(`\n### ${name}  (${pairs.length} strings paired)`);
 
+  /**
+   * The gap between one row of text and the next, on each side.
+   *
+   * `--chain` shows that everything below some point is 3px high, which
+   * localises the cause to "above here" and no further. What actually has to
+   * change is one box's height or margin, and that shows up as the single
+   * gap where the two sides disagree — every gap after it is back to zero,
+   * because the drift is inherited rather than re-earned.
+   *
+   * Rows are collapsed by y first: six chips on one line are one row, and
+   * pairing them individually would report five gaps of zero between them.
+   */
+  /** The boxes the text sits in, where the two sides size them differently.
+   *  This is the cause layer: a row moves because the box above it is a
+   *  different height, and that is the line to edit. */
+  if (process.argv.includes("--boxes")) {
+    const seen = new Set();
+    const rows = pairs
+      .filter(([ref, app]) => ref.boxH !== undefined && app.boxH !== undefined)
+      .map(([ref, app]) => ({ text: ref.text, refH: ref.boxH, appH: app.boxH, refW: ref.boxW, appW: app.boxW, y: ref.boxY }))
+      .filter((row) => row.refH !== row.appH || row.refW !== row.appW)
+      // One line per distinct box, not per label inside it.
+      .filter((row) => {
+        const k = `${row.y}:${row.refH}:${row.refW}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .sort((a, b) => a.y - b.y);
+    console.log(`  boxes sized differently (${rows.length}):`);
+    for (const row of rows) {
+      const dh = row.appH - row.refH;
+      const dw = row.appW - row.refW;
+      console.log(
+        `    y=${String(row.y).padStart(4)}  h ${String(row.refH).padStart(3)}->${String(row.appH).padEnd(3)} (${dh > 0 ? "+" : ""}${dh})  ` +
+          `w ${String(row.refW).padStart(4)}->${String(row.appW).padEnd(4)} (${dw > 0 ? "+" : ""}${dw})  ${short(row.text)}`,
+      );
+    }
+    continue;
+  }
+
+  if (process.argv.includes("--gaps")) {
+    const lines = new Map();
+    for (const [ref, app] of pairs) {
+      // Round to a line: text on the same visual row differs by a pixel or
+      // two of ink depending on ascenders.
+      const band = Math.round(ref.y / 4) * 4;
+      const seen = lines.get(band);
+      if (!seen || ref.y < seen.refY) lines.set(band, { refY: ref.y, appY: app.y, text: ref.text });
+    }
+    const ordered = [...lines.values()].sort((a, b) => a.refY - b.refY);
+    console.log(`  gaps (ref -> app, the row where they disagree is the one to fix):`);
+    for (let at = 1; at < ordered.length; at++) {
+      const previous = ordered[at - 1];
+      const row = ordered[at];
+      const refGap = row.refY - previous.refY;
+      const appGap = row.appY - previous.appY;
+      const delta = appGap - refGap;
+      if (delta === 0) continue;
+      console.log(
+        `    ${String(refGap).padStart(4)} -> ${String(appGap).padStart(4)}  (${delta > 0 ? "+" : ""}${delta})  ` +
+          `under "${short(previous.text)}"  before "${short(row.text)}"`,
+      );
+    }
+    continue;
+  }
+
   // Down the page in order, which is how vertical drift is actually read:
   // a block that starts 4px high carries everything under it, so the row
   // where dy first changes is the one to fix, not the forty below it.
