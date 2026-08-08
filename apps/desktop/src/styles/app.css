@@ -6728,6 +6728,12 @@ button.link:hover {
   gap: var(--space-2);
   margin-top: var(--space-3);
   font-size: var(--text-xs);
+  /* Stated, not inherited from the font. Left to `normal`, the row is as
+     tall as Inter's metrics make a 12px line — a fraction that rounds one
+     way here and the other way in the reference, and the downloads panel
+     directly beneath it then draws every border a pixel off. --text-xs
+     rides the 16px rhythm anchor everywhere else it appears. */
+  line-height: 16px;
 }
 
 /* The download bridge: one line, the wizard's rows behind it (v5, Q1). */
