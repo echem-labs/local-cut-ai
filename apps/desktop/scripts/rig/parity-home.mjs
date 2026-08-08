@@ -60,18 +60,35 @@ const project = (id, mode, title, days, extra = {}) => ({
  * would leave the shelf's order up to the sort's stability. */
 const PROJECTS = [
   project("p-bee", "prompt", "How Honeybees Make Honey", 0, { duration_s: 57 }),
-  project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, { duration_s: 46 }),
-  project("p-cloud", "prompt", "Puff the Little Cloud - a kids poem", 2, { duration_s: 63 }),
-  project("p-solar", "prompt", "A tour of the solar system", 14, { duration_s: 65 }),
+  project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, {
+    duration_s: 46,
+  }),
+  project("p-cloud", "prompt", "Puff the Little Cloud - a kids poem", 2, {
+    duration_s: 63,
+  }),
+  project("p-solar", "prompt", "A tour of the solar system", 14, {
+    duration_s: 65,
+  }),
   project("t-ocean", "tool:clip", "Ocean waves rolling onto a beach", 4, {
     duration_s: 5,
     tool_artifact_hash: "h1",
   }),
   project("t-uke", "tool:music", "Upbeat ukulele and glockenspiel", 4),
-  project("t-thumb", "tool:thumbnail", "Shocked scientist, glowing honeycomb", 4, {
-    tool_artifact_hash: "h2",
-  }),
-  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0.5),
+  project(
+    "t-thumb",
+    "tool:thumbnail",
+    "Shocked scientist, glowing honeycomb",
+    4,
+    {
+      tool_artifact_hash: "h2",
+    },
+  ),
+  project(
+    "t-script",
+    "tool:script",
+    "A 60s script on how Istanbul was captured",
+    0.5,
+  ),
   project("t-voice", "tool:voiceover", "Calm narrator, 40 seconds", 13, {
     tool_artifact_hash: "h3",
   }),
@@ -114,8 +131,17 @@ const gpu = {
   vram_gb: 8,
   backend: "cuda",
 };
-const license = { id: "apache-2.0", commercial: true, verdict: "commercial", notes: "" };
-const model = (id, task, { external = false, family = "", version = "", size = GB, ...rest } = {}) => ({
+const license = {
+  id: "apache-2.0",
+  commercial: true,
+  verdict: "commercial",
+  notes: "",
+};
+const model = (
+  id,
+  task,
+  { external = false, family = "", version = "", size = GB, ...rest } = {},
+) => ({
   id,
   task,
   family,
@@ -125,7 +151,9 @@ const model = (id, task, { external = false, family = "", version = "", size = G
   quality_score: 1,
   speed_score: 1,
   license,
-  files: external ? [] : [{ url: "https://example.test/w", dest: "w", sha256: "0", size }],
+  files: external
+    ? []
+    : [{ url: "https://example.test/w", dest: "w", sha256: "0", size }],
   comfy_graph_template: "",
   custom: false,
   size_bytes: external ? 0 : size,
@@ -139,8 +167,17 @@ const model = (id, task, { external = false, family = "", version = "", size = G
 /** The mock's download strip: script external, keyframes installed, clips
  * at 51%, music queued — 2 of 4 ready, 6.9 of 18 GB. */
 const MODELS = [
-  model("qwen3-8b-q4", "text.llm", { external: true, family: "qwen 3", version: "· 8B" }),
-  model("sdxl-base-1.0", "image.gen", { family: "sdxl", version: "1.0", size: 6.5 * GB, downloaded: true }),
+  model("qwen3-8b-q4", "text.llm", {
+    external: true,
+    family: "qwen 3",
+    version: "· 8B",
+  }),
+  model("sdxl-base-1.0", "image.gen", {
+    family: "sdxl",
+    version: "1.0",
+    size: 6.5 * GB,
+    downloaded: true,
+  }),
   model("ltx-video-0.9-i2v", "video.i2v", {
     family: "ltx",
     version: "0.9",
@@ -148,9 +185,17 @@ const MODELS = [
     downloading: true,
     progress: { done: 0.51 * 11 * GB, total: 11 * GB },
   }),
-  model("ace-step-v1-3.5b", "music.gen", { family: "ACE-Step", version: "3.5B", size: 7.2 * GB }),
+  model("ace-step-v1-3.5b", "music.gen", {
+    family: "ACE-Step",
+    version: "3.5B",
+    size: 7.2 * GB,
+  }),
 ];
-const SETTLED = MODELS.map((row) => ({ ...row, downloading: false, progress: null }));
+const SETTLED = MODELS.map((row) => ({
+  ...row,
+  downloading: false,
+  progress: null,
+}));
 
 const SYSTEM = {
   hardware: {
@@ -162,7 +207,11 @@ const SYSTEM = {
     primary_gpu: gpu,
     tier: "A",
   },
-  recommendations: MODELS.map((row) => ({ task: row.task, model: row, reason: "" })),
+  recommendations: MODELS.map((row) => ({
+    task: row.task,
+    model: row,
+    reason: "",
+  })),
   backend_mode: "local",
 };
 
@@ -171,7 +220,9 @@ const refSize = (name) => {
   return { width: png.width, height: png.height };
 };
 
-const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
+const masks = JSON.parse(
+  readFileSync(path.join(refsDir, "masks.json"), "utf8"),
+);
 const MASK_PAD = 6;
 
 /** The rail's icon column: six lucide glyphs the mock writes as unicode
@@ -209,7 +260,12 @@ const MASKED_AS = {
     ".quick-tools .tool-well",
     ".models-pop-wrap",
   ],
-  "home-empty": [".rail-count", RAIL_ICONS, ".quick-tools .tool-well", ".models-pop-wrap"],
+  "home-empty": [
+    ".rail-count",
+    RAIL_ICONS,
+    ".quick-tools .tool-well",
+    ".models-pop-wrap",
+  ],
   library: [
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
@@ -248,11 +304,17 @@ const checkMaskGeometry = (name, boxes) => {
   // the mock's text engine and the app's round line boxes identically.
   // Anything that drifts beyond the pad leaks unmasked pixels, and the
   // pixel diff still owns that.
-  const want = (masks[`${name}.png`] ?? []).map((mask) => ({ ...mask, taken: false }));
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
+    ...mask,
+    taken: false,
+  }));
   const problems = [];
   if (process.env.RIG_DUMP_MASKS) {
     console.log(`--- ${name} app:`, JSON.stringify(boxes));
-    console.log(`--- ${name} ref:`, JSON.stringify(want.map(({ taken, ...rest }) => rest)));
+    console.log(
+      `--- ${name} ref:`,
+      JSON.stringify(want.map(({ taken, ...rest }) => rest)),
+    );
   }
   for (const box of boxes) {
     const hit = want.find(
@@ -271,16 +333,21 @@ const checkMaskGeometry = (name, boxes) => {
             // anchored on (a right-aligned control grows leftward past
             // the box the mask was drawn around).
             (box.x >= ref.x - TOL ||
-              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
+              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <=
+                TOL))),
     );
     if (!hit) {
-      problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
+      problems.push(
+        `${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`,
+      );
       continue;
     }
     hit.taken = true;
     const drawnWidth = hit.width - MASK_PAD * 2; // the control the mask was drawn around
     if (RIGID.test(box.sel) && Math.abs(drawnWidth - box.width) > TOL) {
-      problems.push(`${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`);
+      problems.push(
+        `${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`,
+      );
     }
   }
   const orphans = want.filter((ref) => !ref.taken);
@@ -297,7 +364,9 @@ const checkMaskGeometry = (name, boxes) => {
 };
 
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-"));
-const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-engine-"));
+const engineData = mkdtempSync(
+  path.join(tmpdir(), "localcut-parity-home-engine-"),
+);
 const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
@@ -413,8 +482,13 @@ try {
       // Convergence only. The frame's own text, measured the same way the
       // reference measured its own, so `converge.mjs` can say which element
       // moved rather than how many pixels did.
-      const text = await evalInApp(`return page.evaluate(${JSON.stringify(COLLECT)});`);
-      writeFileSync(path.join(dir, `${name}.text.json`), JSON.stringify(text, null, 1));
+      const text = await evalInApp(
+        `return page.evaluate(${JSON.stringify(COLLECT)});`,
+      );
+      writeFileSync(
+        path.join(dir, `${name}.text.json`),
+        JSON.stringify(text, null, 1),
+      );
     }
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
@@ -479,7 +553,12 @@ try {
   scaleHeld = await layoutTrue();
 } finally {
   await stopRig(rig);
-  const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
+  const scrub = {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  };
   rmSync(profile, scrub);
   rmSync(engineData, scrub);
 }
