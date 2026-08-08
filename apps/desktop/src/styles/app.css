@@ -3983,6 +3983,12 @@ button.link:hover {
   margin-bottom: var(--space-3);
 }
 
+/* The spoken-time line sits under the table, not against it: with no
+   margin it printed directly on the last row's border (design v6). */
+.script-view > .hint {
+  margin-top: var(--space-2);
+}
+
 .script-table {
   width: 100%;
   border-collapse: collapse;

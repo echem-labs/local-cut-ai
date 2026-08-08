@@ -25,6 +25,7 @@ import {
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
+import { writeProbe } from "./textprobe.cjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -362,6 +363,10 @@ try {
       console.log(`--- ${name} dims:`, JSON.stringify(dims));
     }
     checkMaskGeometry(name, boxes);
+    // Convergence only: the frame's own text, measured the same way the
+    // reference measured its own, so `converge.mjs` can say which element
+    // moved rather than how many pixels did.
+    await writeProbe(dir, name, evalInApp);
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
     scaleHeld &&= await layoutTrue();
