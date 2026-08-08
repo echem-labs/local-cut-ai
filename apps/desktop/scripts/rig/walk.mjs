@@ -538,7 +538,284 @@ try {
         "NOTE no audio lanes in this profile (nothing rendered) - segment alignment unchecked",
       );
     }
+
+    // The board's overflow menu, at the smallest window the walk uses.
+    //
+    // It carries about twenty rows — history, audio, captions, frame rate,
+    // resolution, the pro-editor handoff, workspace — and was drawn at its
+    // full height wherever it happened to land, so the last sections were
+    // simply off the bottom of the screen with no scrollbar to say so. This
+    // is a layout fact and needs real widths and a real window, which is
+    // why it is here rather than in a component test.
+    await setSize(1200, 800);
+    const menu = await evalInApp(`
+      await page.evaluate(() => {
+        const trigger = [...document.querySelectorAll(".board-menu .icon-btn")][0];
+        trigger?.click();
+      });
+      await page.waitForSelector(".menu-pop", { timeout: 5000 });
+      return page.evaluate(() => {
+        const pop = document.querySelector(".menu-pop");
+        const box = pop.getBoundingClientRect();
+        const rows = [...pop.querySelectorAll('[role^="menuitem"], a[role="menuitem"]')];
+        const last = rows[rows.length - 1]?.getBoundingClientRect() ?? null;
+        return {
+          bottom: Math.round(box.bottom),
+          innerHeight: window.innerHeight,
+          rows: rows.length,
+          // Capped and scrolled, not capped and clipped: the content is
+          // taller than the box, and the box can be scrolled to reach it.
+          scrollable: pop.scrollHeight > pop.clientHeight + 1,
+          scrolls: getComputedStyle(pop).overflowY,
+          // The last row is inside the scroll container's own content, so
+          // scrolling to the end must actually bring it into the window.
+          lastReachable: last ? last.height > 0 : false,
+        };
+      });
+    `);
+    check(
+      "the board menu stays inside the window instead of running off the bottom",
+      menu.bottom <= menu.innerHeight + 1,
+      JSON.stringify(menu),
+    );
+    check(
+      "a board menu too tall for the window scrolls rather than clipping",
+      !menu.scrollable || menu.scrolls === "auto" || menu.scrolls === "scroll",
+      JSON.stringify(menu),
+    );
+    await shoot("board-menu-1200.png");
+
+    // Save points, opened from that menu: the dialog the field recipe used
+    // to miss. Its name box sits in a form row rather than under a label,
+    // so every rule that dressed a dialog control was scoped past it and it
+    // rendered as the platform's own text box — a light fill and a white
+    // ring in the middle of a dark dialog. Nothing in the unit suite can see
+    // that: vitest stubs CSS imports away and jsdom loads no stylesheet.
+    const fields = await evalInApp(`
+      await page.evaluate(() => {
+        const row = [...document.querySelectorAll('.menu-pop [role="menuitem"]')].find(
+          (b) => /save points/i.test(b.textContent || ""));
+        row?.click();
+      });
+      await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+      return page.evaluate(() => {
+        const modal = document.querySelector('[role="dialog"]');
+        // Resolve the token the same way the stylesheet does rather than
+        // hardcoding an rgb() here, which would be a third copy of it.
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = "var(--surface-2)";
+        modal.appendChild(probe);
+        const want = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const controls = [...modal.querySelectorAll("input, textarea")].filter(
+          (el) => !["checkbox", "radio", "file", "range"].includes(el.type),
+        );
+        const box = modal.getBoundingClientRect();
+        return {
+          want,
+          controls: controls.length,
+          backgrounds: controls.map((el) => getComputedStyle(el).backgroundColor),
+          insideViewport: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+        };
+      });
+    `);
+    check(
+      "every text control in a dialog wears the app's field, not the platform's",
+      fields.controls > 0 && fields.backgrounds.every((background) => background === fields.want),
+      JSON.stringify(fields),
+    );
+    check(
+      "the save points dialog fits the window",
+      fields.insideViewport,
+      JSON.stringify(fields),
+    );
+    await shoot("save-points-1200.png");
+    await evalInApp(`await page.keyboard.press("Escape"); return null;`);
   }
+
+  // U6: Settings → About. A reading surface built from cards rather than
+  // the settings-row anatomy every other pane uses, which makes it the one
+  // pane whose width behavior nothing else in Settings vouches for. It also
+  // states facts — a version line, a hardware summary, a folder path — so
+  // the checks here are that each renders SOMETHING rather than the blank
+  // an unanswered engine or a renamed field would leave. A blank where a
+  // version belongs reads as a version of "".
+  for (const [width, height] of [
+    [1200, 800],
+    [1920, 1080],
+  ]) {
+    await setSize(width, height);
+    const about = await evalInApp(`
+      await page.evaluate(() => {
+        const rail = [...document.querySelectorAll("button")].find((b) =>
+          /settings/i.test(b.getAttribute("aria-label") || b.textContent || ""));
+        rail?.click();
+      });
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        const tab = [...document.querySelectorAll(".settings-grid nav button")].find(
+          (b) => (b.textContent || "").trim() === "About");
+        tab?.click();
+      });
+      await page.waitForSelector(".about", { timeout: 10000 });
+      return page.evaluate(() => {
+        const text = (selector) => document.querySelector(selector)?.textContent?.trim() ?? "";
+        const values = [...document.querySelectorAll(".about-kv dd")].map((el) => el.textContent.trim());
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          cards: document.querySelectorAll(".about-card").length,
+          versions: text(".about-versions"),
+          chips: document.querySelectorAll(".about-card .spec-chip").length,
+          values,
+          actions: document.querySelectorAll(".about-actions button").length,
+          links: document.querySelectorAll(".about-links a, .about-links button").length,
+          // Every card inside its own column, and no control clipped by one.
+          escaped: [...document.querySelectorAll(".about-card")].filter((card) => {
+            const box = card.getBoundingClientRect();
+            return [...card.querySelectorAll("button, a, dd")].some((el) => {
+              const r = el.getBoundingClientRect();
+              return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1);
+            });
+          }).length,
+        };
+      });
+    `);
+    const label = `${width}px About`;
+    check(
+      `${label}: the pane renders its four cards`,
+      about.cards === 4 && about.actions === 4 && about.links === 4,
+      JSON.stringify(about),
+    );
+    check(
+      `${label}: adds no horizontal scroll`,
+      about.scrollWidth <= about.innerWidth + 1,
+      `scrollWidth ${about.scrollWidth} > innerWidth ${about.innerWidth}`,
+    );
+    check(
+      `${label}: nothing overflows the card it is in`,
+      about.escaped === 0,
+      JSON.stringify(about),
+    );
+    // The facts, present rather than correct: what they SAY is pinned by
+    // AboutPane.test.tsx against fixtures. What no unit test can see is a
+    // real engine's answer arriving and landing nowhere.
+    check(
+      `${label}: the version line names this build`,
+      /app\s+\d+\.\d+\.\d+/.test(about.versions),
+      about.versions,
+    );
+    check(
+      `${label}: every machine row has a value`,
+      about.values.length === 4 && about.values.every((value) => value.length > 0),
+      JSON.stringify(about.values),
+    );
+    if (about.chips === 0) {
+      // Not a failure: the chips need /system, and a run against an engine
+      // that never answered has nothing to draw. Said out loud so a green
+      // walk cannot be read as "the hardware row was checked".
+      console.log("NOTE About: no spec chips (the engine reported no system) - hardware unchecked");
+    }
+    await shoot(`about-${width}.png`);
+  }
+  // U6: Settings → Workflows. Two list shapes the rest of Settings has no
+  // equivalent of — a pack row with a repo URL (long, unbreakable, and the
+  // widest thing on the pane) beside a right-aligned button, and the grant
+  // dialog, which carries the engine's code-execution warning as a
+  // paragraph inside a modal that also holds a field and a checkbox.
+  await setSize(1200, 800);
+  const packs = await evalInApp(`
+    await page.evaluate(() => {
+      const tab = [...document.querySelectorAll(".settings-grid nav button")].find(
+        (b) => (b.textContent || "").trim() === "Workflows");
+      tab?.click();
+    });
+    await page.waitForTimeout(600);
+    return page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".pack-row")];
+      return {
+        scrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+        packs: rows.length,
+        // The repo URL must wrap inside its row rather than push the row
+        // wider than the pane that holds it.
+        escaped: rows.filter((row) => {
+          const box = row.getBoundingClientRect();
+          return [...row.querySelectorAll("button, .pack-repo")].some((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1);
+          });
+        }).length,
+      };
+    });
+  `);
+  // Zero packs is a legitimate catalog, and an engine that never answered
+  // looks identical from here — so this reports rather than fails, and the
+  // dialog check below is skipped rather than silently passed.
+  if (packs.packs === 0) {
+    console.log("NOTE Workflows: no node packs listed - the grant dialog went unchecked");
+  }
+  check(
+    "1200px Workflows: adds no horizontal scroll",
+    packs.scrollWidth <= packs.innerWidth + 1,
+    JSON.stringify(packs),
+  );
+  check(
+    "1200px Workflows: nothing overflows its pack row",
+    packs.escaped === 0,
+    JSON.stringify(packs),
+  );
+  await shoot("workflows-1200.png");
+
+  if (packs.packs > 0) {
+    const grant = await evalInApp(`
+      await page.evaluate(() => {
+        const enable = [...document.querySelectorAll(".pack-row button")].find(
+          (b) => (b.textContent || "").trim() === "Enable");
+        enable?.click();
+      });
+      await page.waitForSelector('[role="dialog"]', { timeout: 5000 });
+      return page.evaluate(() => {
+        // Addressed by its role rather than a class: every dialog in the
+        // app is the one shell now, and only one is ever open at a time.
+        // A per-dialog class would exist only to be selected here.
+        const modal = document.querySelector('[role="dialog"]');
+        const box = modal.getBoundingClientRect();
+        const confirm = [...modal.querySelectorAll(".modal-foot button")].pop();
+        return {
+          warned: !!modal.querySelector(".banner.warning")?.textContent?.trim(),
+          // The dangerous button starts unpressable, and stays that way
+          // until a version is typed AND the box is ticked.
+          confirmDisabled: confirm.disabled,
+          checkbox: !!modal.querySelector('input[type="checkbox"]'),
+          insideViewport: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+        };
+      });
+    `);
+    check(
+      "1200px Workflows: the grant dialog warns, and cannot be confirmed unread",
+      grant.warned && grant.confirmDisabled && grant.checkbox,
+      JSON.stringify(grant),
+    );
+    check(
+      "1200px Workflows: the grant dialog fits the window",
+      grant.insideViewport && grant.scrollWidth <= grant.innerWidth + 1,
+      JSON.stringify(grant),
+    );
+    await shoot("workflows-grant.png");
+    await evalInApp(`await page.keyboard.press("Escape"); return null;`);
+  }
+
+  // Leave Settings so the walk's last screenshots show Home, as before.
+  await evalInApp(`
+    await page.evaluate(() => {
+      const close = document.querySelector(".settings-head .icon-btn");
+      close?.click();
+    });
+    return null;
+  `);
 
   const report = await health();
   // A 409 is a refusal the product is designed to make and to explain — the

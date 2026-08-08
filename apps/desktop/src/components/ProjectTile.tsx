@@ -5,6 +5,7 @@ import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
 import type { TileStatus } from "../lib/tiles";
 import { relativeTime, shortDuration } from "../lib/time";
+import { useMenuFit } from "../lib/useMenuFit";
 import { isToolSession, TOOL_ICONS, TOOL_MEDIUM, toolKindOf, toolLabel } from "../lib/tools";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -46,6 +47,7 @@ export function ProjectTile({
   actions: TileActions;
 }) {
   const toolKind = toolKindOf(project);
+  const fit = useMenuFit();
   const client = useApp((state) => state.client);
   const thumbUrl =
     project.thumb_hash && client ? client.artifactUrl(project.id, project.thumb_hash) : null;
@@ -141,7 +143,7 @@ export function ProjectTile({
         <MoreHorizontal {...ICON_CONTROL} />
       </button>
       {actions.menuOpen && (
-        <div className="menu-pop" role="menu">
+        <div className="menu-pop" role="menu" ref={fit}>
           <button role="menuitem" onClick={actions.onOpen}>
             {t("common.open")}
           </button>

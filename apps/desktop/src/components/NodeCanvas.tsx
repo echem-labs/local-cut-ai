@@ -33,6 +33,7 @@ import type { GraphNode, NodeState } from "../api/types";
 import { m, plural, t } from "../i18n";
 import { chainOf, searchMatches } from "../lib/canvasFocus";
 import { anchoredScroll, clampZoom, fitZoom, stepZoom, wheelZoom } from "../lib/canvasView";
+import { useMenuFit } from "../lib/useMenuFit";
 import {
   NODE_HEIGHT,
   NODE_WIDTH,
@@ -159,6 +160,7 @@ export function NodeCanvas() {
   // Which match Enter goes to next; reset whenever the query changes.
   const [matchAt, setMatchAt] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
+  const fit = useMenuFit();
   const addRef = useRef<HTMLDivElement>(null);
   // Drag-to-pan: the grab point and the scroll it started from. A ref, not
   // state — it is read on every pointermove and re-rendering per frame to
@@ -578,7 +580,7 @@ export function NodeCanvas() {
             {t("canvas.addNode")}
           </button>
           {addOpen && (
-            <div className="menu-pop" role="menu">
+            <div className="menu-pop" role="menu" ref={fit}>
               {ADDABLE_KINDS.map((kind) => (
                 <button key={kind} type="button" role="menuitem" onClick={() => void add(kind)}>
                   <span className="grow">{kindLabel(kind)}</span>

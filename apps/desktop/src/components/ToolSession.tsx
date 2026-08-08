@@ -6,6 +6,7 @@ import { useApp } from "../store";
 import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { isDone, isSettled } from "../lib/status";
+import { useMenuFit } from "../lib/useMenuFit";
 import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
 import { ModelsPopover } from "./ModelsPopover";
@@ -194,6 +195,7 @@ export function ToolSession() {
   // Menus/dialogs local to this page. `null` string states double as
   // "closed"; a message is the store convention for a refusal.
   const [addOpen, setAddOpen] = useState(false);
+  const fit = useMenuFit();
   const [addResult, setAddResult] = useState<string | null>(null);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneConsent, setCloneConsent] = useState(false);
@@ -640,7 +642,7 @@ export function ToolSession() {
                   </button>
                 </Tip>
                 {addOpen && (
-                  <div className="menu-pop" role="menu" aria-label={t("toolSession.addToProjectTitle")}>
+                  <div className="menu-pop" role="menu" ref={fit} aria-label={t("toolSession.addToProjectTitle")}>
                     <span className="hint">{t("toolSession.addToProjectHint")}</span>
                     {targets.length === 0 && (
                       <span className="hint">{t("toolSession.addToProjectEmpty")}</span>

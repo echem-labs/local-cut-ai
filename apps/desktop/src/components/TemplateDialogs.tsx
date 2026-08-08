@@ -36,9 +36,26 @@ export function SaveTemplateDialog({
   };
 
   return (
-    <Modal label={t("library.saveTemplateTitle", { title: project.title })} onClose={onClose} initialFocus={nameRef}>
-      <h2>{t("library.saveTemplateTitle", { title: project.title })}</h2>
-      <p className="sub">{t("library.saveTemplateMessage")}</p>
+    <Modal
+      title={t("library.saveTemplateTitle", { title: project.title })}
+      subtitle={t("library.saveTemplateMessage")}
+      onClose={onClose}
+      initialFocus={nameRef}
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button
+            className="btn-primary"
+            disabled={!name.trim() || busy}
+            onClick={() => void submit()}
+          >
+            {t("library.saveTemplateConfirm")}
+          </button>
+        </>
+      }
+    >
       <label className="field">
         <span>{t("library.saveTemplateName")}</span>
         <input
@@ -57,14 +74,6 @@ export function SaveTemplateDialog({
           {error}
         </p>
       )}
-      <div className="modal-actions">
-        <button className="btn-ghost" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-        <button className="btn-primary" disabled={!name.trim() || busy} onClick={() => void submit()}>
-          {t("library.saveTemplateConfirm")}
-        </button>
-      </div>
     </Modal>
   );
 }
@@ -85,8 +94,21 @@ export function StartFromTemplateDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal label={t("library.startTemplateTitle")} onClose={onClose} className="template-modal">
-      <h2>{t("library.startTemplateTitle")}</h2>
+    <Modal
+      title={t("library.startTemplateTitle")}
+      size="m"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn-ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </button>
+          <button className="btn-primary" disabled={!picked || busy} onClick={() => void create()}>
+            {t("library.startTemplateConfirm")}
+          </button>
+        </>
+      }
+    >
       {templates.length === 0 ? (
         <p className="sub">{t("library.startTemplateEmpty")}</p>
       ) : (
@@ -127,14 +149,6 @@ export function StartFromTemplateDialog({ onClose }: { onClose: () => void }) {
           {error}
         </p>
       )}
-      <div className="modal-actions">
-        <button className="btn-ghost" onClick={onClose}>
-          {t("common.cancel")}
-        </button>
-        <button className="btn-primary" disabled={!picked || busy} onClick={() => void create()}>
-          {t("library.startTemplateConfirm")}
-        </button>
-      </div>
     </Modal>
   );
 }

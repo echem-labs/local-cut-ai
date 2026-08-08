@@ -24,6 +24,16 @@ const { pathToFileURL } = require("url");
 // deterministic on every box.
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
 
+// Electron's default handler for an uncaught main-process throw is a modal
+// error box that waits for OK — which on a headless run is not a failure
+// but a hang, with no output to say why. Print and exit instead. (Earned:
+// one stray backtick inside a SNAP block turns the CSS into a tagged
+// template call, and the run wedged with an empty stdout.)
+process.on("uncaughtException", (error) => {
+  console.error(error);
+  app.exit(1);
+});
+
 const arg = (name, fallback = null) => {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? process.argv[index + 1] : fallback;
@@ -79,8 +89,8 @@ const SETS = {
      Fixed size — the mock's own `.panel` box IS the frame, drawn to what
      the panel measures in a 1440x900 window (see parity-canvas.mjs). */
   canvas: {
-    width: 630,
-    height: 145,
+    width: 629,
+    height: 143,
     states: [["canvas", "canvas-mock.html"]],
   },
   /* The out-of-memory failure card (U5). Same doctrine as the canvas set:
@@ -91,6 +101,14 @@ const SETS = {
     width: 388,
     height: 142,
     states: [["inspector-failure", "u5-mock.html"]],
+  },
+  /* About (U6). The mock is a 640px reading column on a padded body, and
+     the app's About pane is the same column inside the Settings layer —
+     so the frame is `main`, not a window, and the gate clips the app to
+     the pane's own box (see parity-u6.mjs). */
+  about: {
+    width: 640,
+    states: [["about", "about-mock.html"]],
   },
 };
 const setName = arg("set", "wizard");
@@ -163,6 +181,27 @@ const MASKABLE = {
      paths in the app), and the one node thumbnail (a JPEG here, a generated
      artifact there). */
   canvas: [".search .gl", ".help", ".thumb"],
+  /* About (U6). Each region is a decision or a machine fact, never a
+     difference waived to get green:
+     - `.mark` — the app draws the Cut-Play mark as an SVG, the mock as a
+       CSS box with a clip-path triangle.
+     - `.uptodate` — the update controls do not render until a release feed
+       is configured (plan U6: "the button hides behind a config flag"), so
+       the gate poses a feed and the check runs "just now" against the
+       mock's "2 hours ago".
+     - `.whatsnew` — the same row, the same reason.
+     - `.chips` — this machine's GPU, RAM and free disk. The mock names an
+       RTX 3080; the reference would otherwise gate whatever the runner has.
+     - `.kv dd` — the same, one step down: tier, backend chain, engine URL
+       and data folder are all facts about the box the gate runs on. The
+       `dt` labels beside them are NOT masked; those are the design.
+     - `.privacy p` — the app names itself "LocalCut AI" where the mock
+       wrote "LocalCut", so the sentence wraps at a different word.
+     What stays diffed and costs a little: the pane title, where the app
+     draws a lucide mark and the mock a unicode glyph. It is under a tenth
+     of a percent, and a mask big enough to hide it would take the word
+     "About" out of the frame with it. */
+  about: [".mark", ".uptodate", ".whatsnew", ".chips", ".kv dd", ".privacy p"],
 };
 const MASK_PAD = 6;
 
@@ -188,6 +227,14 @@ const SNAP_COMMON = `
   font-style: normal;
   font-display: block;
 }
+/* Form controls do not inherit font-family. No mock says otherwise, so
+   every button in every reference was drawn in the UA default (Arial on
+   this box) while the app draws Inter — "Copy diagnostics" measured 99px
+   in the reference and 106px in the app, and every row a button sat in was
+   off by the difference. The app's reset gives controls the body face; the
+   reference has to as well, or the font injected above reaches only half
+   the frame. */
+button, input, select, textarea { font-family: inherit !important; }
 * { animation: none !important; transition: none !important; }
 /* The app's captures hide the scrollbar; the mock must too. Otherwise a
    frame whose content lands within a pixel of the window reserves 15px,
@@ -290,11 +337,82 @@ const SNAP_U5 = `
 .chip { line-height: 18px !important; }
 `;
 
+/* ---- the about set's snaps. The mock's card geometry already IS the
+   token scale (surface-1 on border at radius-m, 16px padding), so what is
+   left is type: a 12.5/13px reading size that predates --text-xs, a name
+   one step above --text-s, and a key column the app's own .kv fixes at
+   140px. Snapping these is what makes the remaining pixels mean
+   something. */
+const SNAP_ABOUT = `
+/* The mock centres its column inside a 36px-padded body. Drop the padding
+   so the frame IS the 640px reading column and nothing else — the app's
+   pane is clipped to the same column, and a frame carrying the mock's page
+   margins would be diffing the margin against the Settings layer. */
+body { padding: 0 !important; }
+/* The title and the line under it belong to the SETTINGS pane, not to
+   About: every pane draws the same .settings section h2 (--text-s at 650,
+   --space-2 under it) over the same .hint (--text-xs on a 16px rhythm
+   anchor, --space-3 to what follows). The mock's 16px/1.5 title is a pixel
+   taller than every other pane's, and that pixel shifts the whole column. */
+h1 { font-size: 14px !important; font-weight: 650 !important; }
+.sub { margin: 8px 0 12px !important; line-height: 16px !important; }
+/* The one colour this file snaps, and it is deliberate. Everywhere else
+   colour stays the mock's, because a gate that recolours the reference to
+   match the app gates nothing. Here the mock drew About's subtitle one
+   step brighter (--text-secondary) than the .hint every other Settings
+   pane uses, and About is not a special pane: the alternative is one
+   subtitle in Settings that does not match its seven siblings. */
+.sub { color: #767b88 !important; }
+.sub, h2, .whatsnew, .links { font-size: 12px !important; }
+/* SNAP_COMMON's .chips rule is the WIZARD's - there the chip row follows a
+   paragraph and needs the gap. Here it is the card's first child, as the
+   app's .spec-chips is, so the rule has to be taken back or the whole card
+   below it sits 12px low. (The split-by-set comment above this block is
+   about exactly this hazard; the about mock shares three class names with
+   the wizard's.) */
+.chips { margin-top: 0 !important; }
+.vrow .name { font-size: 14px !important; }
+.vrow .ver, .ok, .kv dd, .whatsnew a, .privacy p { font-size: 12px !important; }
+/* The app's .btn-ghost is 13px on an 18px rhythm anchor inside 8/12 padding
+   and a border - 36px, not the 32px floor SNAP_COMMON states. Left at 32
+   the whole Support card, and everything under it, sat 4px high. */
+.ghost { min-height: 32px !important; line-height: 18px !important; }
+/* the app's .kv, which About shares with the pairing review: a 140px key
+   column on --space-2/--space-3 gaps, keys at --text-s over mono values at
+   --text-xs */
+.kv { grid-template-columns: 140px 1fr !important; gap: 8px 12px !important; font-size: 14px !important; }
+.privacy b { font-size: 14px !important; }
+/* the version card is a grid in the app: one --space-4 gap serves both the
+   mark-to-name column and the row above the checked-at line */
+.vrow { gap: 16px !important; }
+.whatsnew { margin-top: 16px !important; }
+/* the mock's 22/14px vertical rhythm is hand-tuned off the scale; the
+   app's --space-6 / --space-3 win */
+h2 { margin-top: 24px !important; margin-bottom: 8px !important; }
+/* the mock's own .card + h2 (14px) would out-specify the rule above, so
+   it is restated: the app's section heading keeps --space-6 above it
+   whatever precedes it. No backticks in here - this block IS a template
+   literal, and one would close it. */
+.card + h2 { margin-top: 24px !important; }
+/* and the card under a heading rides the heading's --space-2, not a
+   margin of its own */
+h2 + .card { margin-top: 0 !important; }
+.card + .card { margin-top: 12px !important; }
+/* The privacy card is set apart from the stack above it. Two classes, not
+   one: a bare .privacy loses to .card + .card on specificity and the extra
+   air silently disappears - which is the bug this snap found in the app's
+   own sheet, where .about-privacy lost to .about-card + .about-card the
+   same way. */
+.card.privacy { margin-top: 24px !important; }
+.links { gap: 16px !important; margin-top: 16px !important; }
+`;
+
 const SNAP =
   SNAP_COMMON +
   (setName === "home" ? SNAP_HOME : "") +
   (setName === "session" ? SNAP_SESSION : "") +
-  (setName === "u5" ? SNAP_U5 : "");
+  (setName === "u5" ? SNAP_U5 : "") +
+  (setName === "about" ? SNAP_ABOUT : "");
 
 async function render(win, name, file) {
   const [base, query] = file.split("?");
@@ -314,7 +432,9 @@ async function render(win, name, file) {
       ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
       : setName === "session"
         ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
-        : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
+        : setName === "about"
+          ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
+          : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
   );
   // Resize, then paint the frame fresh: an offscreen window that grows after
   // painting composites the old frame under the new one, which ghosts

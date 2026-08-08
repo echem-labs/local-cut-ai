@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { dependencies, version } from "./package.json";
+import { dependencies, homepage, version } from "./package.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -61,5 +61,12 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __OSS_LICENSES__: JSON.stringify(collectLicenses()),
+    // About's links row, from the one field npm already has for this — so
+    // moving the repo is a package.json edit, not a hunt through catalog
+    // strings for retyped URLs.
+    __HOMEPAGE__: JSON.stringify(homepage),
+    // The BUILD's year, not the reader's clock: a machine with a wrong
+    // date should not be able to restate this app's copyright.
+    __BUILD_YEAR__: JSON.stringify(new Date().getFullYear()),
   },
 });

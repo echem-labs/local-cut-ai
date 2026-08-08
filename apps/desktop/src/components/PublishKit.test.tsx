@@ -243,11 +243,15 @@ describe("the dialog itself", () => {
 
   it("wears the app's modal field recipe, not one of its own", async () => {
     // The first version hand-rolled a grid and looked like a different app.
-    // `.field` is what every other modal here labels a control with.
+    // `.field` is what every other modal here labels a control with, and
+    // the head/body/foot below are the shell every dialog shares — this
+    // one used to build its own backdrop and scroll its whole self.
     mount(done);
     await screen.findByLabelText(/^title$/i);
     const dialog = screen.getByRole("dialog");
     expect(dialog.querySelectorAll("label.field")).toHaveLength(3);
-    expect(dialog.querySelector(".modal-actions")).not.toBeNull();
+    expect(dialog.querySelector(".modal-head h2")).toHaveTextContent(/publish/i);
+    expect(dialog.querySelector(".modal-body")).not.toBeNull();
+    expect(dialog.querySelector(".modal-foot")).not.toBeNull();
   });
 });
