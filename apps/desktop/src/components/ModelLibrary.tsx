@@ -104,6 +104,10 @@ const CUSTOM_TASKS = [
  * self-acknowledgment (review 4 "Add custom model"). */
 function AddCustomModel({ onDone }: { onDone: () => void }) {
   const addCustomModel = useApp((state) => state.addCustomModel);
+  // Read, never fetched here: Settings → Workflows owns the list, and a
+  // form that refetched it would be a second caller of /comfy/* whose
+  // failure mode is an empty picker with no explanation.
+  const importedWorkflows = useApp((state) => state.workflows);
   const [name, setName] = useState("");
   const [task, setTask] = useState<string>("video.i2v");
   const [source, setSource] = useState<"url" | "file">("url");
@@ -211,6 +215,26 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
           placeholder={t("models.custom.workflowPlaceholder")}
           onChange={(event) => setWorkflow(event.target.value)}
         />
+        {/* The workflows imported in Settings → Workflows, offered rather
+            than imposed: the field also accepts a template packaged with
+            the engine, which is not in this list, so a picker that
+            REPLACED the input would remove a working option. Typing the
+            name of a workflow you imported ten minutes ago from memory is
+            the case this fixes. */}
+        {importedWorkflows.length > 0 && (
+          <div className="chip-row" role="group" aria-label={t("models.custom.workflowPickAria")}>
+            {importedWorkflows.map((row) => (
+              <button
+                type="button"
+                key={row.name}
+                className={`chip${workflow === row.name ? " active" : ""}`}
+                onClick={() => setWorkflow(workflow === row.name ? "" : row.name)}
+              >
+                {row.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="hint" style={{ marginTop: 4 }}>
           {t("models.custom.workflowHint")}
         </div>

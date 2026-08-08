@@ -2,6 +2,7 @@ import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
+import { useMenuFit } from "../lib/useMenuFit";
 import { Tip } from "./Tooltip";
 
 export interface DropdownOption<V extends string | number> {
@@ -40,6 +41,7 @@ export function Dropdown<V extends string | number>({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const fit = useMenuFit();
   const selected = options.find((option) => option.value === value) ?? options[0];
 
   useEffect(() => {
@@ -114,7 +116,7 @@ export function Dropdown<V extends string | number>({
       </button>,
       )}
       {open && (
-        <div className="dropdown-menu" role="listbox" aria-label={ariaLabel}>
+        <div className="dropdown-menu" role="listbox" aria-label={ariaLabel} ref={fit}>
           {options.map((option, index) => {
             const Icon = option.icon;
             const isSelected = option.value === value;

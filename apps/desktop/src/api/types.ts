@@ -150,6 +150,12 @@ export interface Board {
   /** Per-scene seconds from the assembled cut — absent until a timeline
    * exists (and on engines older than this field). */
   assembled_durations?: Record<string, number>;
+  /** Whether any scene burns an on-screen title. Overlays are timeline
+   * params and the board carries node status, so this is the only way the
+   * client can know — and it needs to, because an ffmpeg without drawtext
+   * fails the export only after a full-quality re-render. Absent on
+   * engines older than the field. */
+  has_onscreen_text?: boolean;
 }
 
 export interface HardwareGPU {
@@ -175,6 +181,12 @@ export interface SystemInfo {
     reason: string;
   }[];
   backend_mode: string;
+  /** Whether this engine's ffmpeg can draw text. FFmpeg 7 static builds
+   * without libharfbuzz cannot, and burned-in captions or any on-screen
+   * text dies at export — so the setup surface has to say so first.
+   * `null` means ffmpeg was not found at all, which fails louder on its
+   * own; `undefined` means an engine older than the field. */
+  ffmpeg_drawtext?: boolean | null;
   /** Resolved per-task routing — absent on engines older than this field. */
   backends?: {
     chain: string[];
@@ -187,6 +199,53 @@ export interface BackendTask {
   kind: string;
   backend: string | null;
   installed_models: string[];
+}
+
+/* ---- ComfyUI node packs and workflows (Settings → Workflows) ---- */
+
+/** A catalog entry: third-party ComfyUI nodes, inert until granted. */
+export interface NodePack {
+  id: string;
+  name: string;
+  repo: string;
+  summary: string;
+  nodes: string[];
+  enabled: boolean;
+  /** The version the grant pinned, present only while enabled. */
+  version: string | null;
+}
+
+export interface NodePacks {
+  /** The engine's own wording for what enabling a pack permits. Shipped
+   * with every response so no client can present the action without the
+   * sentence — it is displayed verbatim, never paraphrased. */
+  warning: string;
+  builtin_nodes: string[];
+  packs: NodePack[];
+}
+
+/** What importing a workflow would do, before it does it. */
+export interface WorkflowReview {
+  class_types: string[];
+  packs_required: string[];
+  /** Packs this document needs that are not enabled. Non-empty means the
+   * engine refuses the import (409) until they are. */
+  packs_missing: string[];
+  /** Node types matching nothing at all — not builtin, not in any pack. */
+  unknown_nodes: string[];
+  /** `%%TOKEN%%` slots the engine fills per render. A workflow with none
+   * still renders; it just renders the same thing every time. */
+  placeholders: string[];
+  warnings: string[];
+}
+
+export interface InstalledWorkflow {
+  name: string;
+  nodes: number;
+  placeholders: string[];
+  /** False for a file on disk that cannot be parsed. Listed anyway: it
+   * still shadows a packaged template of the same name. */
+  readable: boolean;
 }
 
 export type LicenseVerdict = "commercial" | "conditions" | "personal-only";
@@ -345,6 +404,10 @@ export interface AudioPeaks {
 
 /** GET /storage — Settings → Storage. */
 export interface StorageInfo {
+  /** The directory every figure below is measured from — About names it,
+   * since on a remote engine it is not this machine's disk. Absent on
+   * engines older than the field. */
+  data_dir?: string;
   projects: { id: string; title: string; bytes: number }[];
   models_bytes: number;
   cache_bytes: number;

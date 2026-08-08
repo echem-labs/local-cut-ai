@@ -1,5 +1,4 @@
 import {
-  Activity,
   Boxes,
   Cpu,
   Database,
@@ -17,22 +16,26 @@ import {
   SlidersHorizontal,
   Sparkles,
   SunMoon,
-  Tag,
   Trash2,
   Waypoints,
+  Workflow,
   X,
   ZoomIn,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendTask, Provider } from "../api/types";
+import { AboutPane } from "../components/AboutPane";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { Modal } from "../components/Modal";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
 import { InfoDot } from "../components/Tooltip";
+import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
+import { SETTINGS_TABS, type SettingsTab } from "../lib/settingsTabs";
 import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
 import {
   type PairingPreview,
@@ -53,24 +56,21 @@ const THEME_OPTIONS: { value: ThemePref }[] = [
   { value: "light" },
 ];
 
-type SettingsTab =
-  | "general"
-  | "defaults"
-  | "providers"
-  | "models"
-  | "storage"
-  | "engine"
-  | "about";
+/** Nav order comes from lib/settingsTabs, which the command palette reads
+ * too — a pane the rail shows and the palette cannot reach is the drift
+ * two hand-kept lists produce. Icons stay here, where the rail is. */
+const TAB_ICONS: Record<SettingsTab, typeof SunMoon> = {
+  general: SunMoon,
+  defaults: SlidersHorizontal,
+  providers: KeyRound,
+  models: Boxes,
+  storage: HardDrive,
+  engine: Server,
+  workflows: Workflow,
+  about: Info,
+};
 
-const NAV: { id: SettingsTab; icon: typeof SunMoon }[] = [
-  { id: "general", icon: SunMoon },
-  { id: "defaults", icon: SlidersHorizontal },
-  { id: "providers", icon: KeyRound },
-  { id: "models", icon: Boxes },
-  { id: "storage", icon: HardDrive },
-  { id: "engine", icon: Server },
-  { id: "about", icon: Info },
-];
+const NAV = SETTINGS_TABS.map((id) => ({ id, icon: TAB_ICONS[id] }));
 
 /** Engine provider ids → shell key ids (google's key is a Gemini key). */
 const KEY_IDS: Record<string, ProviderKeyId> = {
@@ -271,7 +271,6 @@ export function Settings() {
   // A failed delete or cache purge — shown in the storage pane rather than
   // discarded, which is what used to happen to both.
   const [storageError, setStorageError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [showLicenses, setShowLicenses] = useState(false);
   const locale = useLocale((state) => state.locale);
   const setLocale = useLocale((state) => state.setLocale);
@@ -390,7 +389,6 @@ export function Settings() {
     }
   };
 
-  const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
 
   // The provider keys a pairing would hand over, by name. "3 keys" is not
   // something anyone can weigh; "Anthropic, OpenAI" is.
@@ -412,6 +410,7 @@ export function Settings() {
   // a finished export is worse than a clear failure — so this is the one
   // place that failure is explained rather than just showing "unrouted"
   // against two rows the user has no reason to connect to a missing binary.
+  const gpu = system?.hardware.primary_gpu ?? system?.hardware.gpus[0] ?? null;
   const assemblyUnrouted = (system?.backends?.tasks ?? []).some(
     (row) => (row.kind === "timeline" || row.kind === "export") && !row.backend,
   );
@@ -474,31 +473,6 @@ export function Settings() {
       .finally(() => setPairBusy(false));
   };
 
-  const copyDiagnostics = () => {
-    const unknown = t("settings.about.diagUnknown");
-    const lines = [
-      t("settings.about.diagApp", { version: __APP_VERSION__ }),
-      t("settings.about.diagEngine", {
-        engine: engineVersions?.engine_version ?? unknown,
-        api: engineVersions?.api_version ?? unknown,
-      }),
-      t("settings.about.diagBackend", { backend: system?.backend_mode ?? unknown }),
-      t("settings.about.diagUrl", { url: client?.baseUrl ?? unknown }),
-      system
-        ? t("settings.about.diagHardware", {
-            tier: system.hardware.tier,
-            gpu: gpu
-              ? t("settings.about.diagGpu", { name: gpu.name, vram: gpu.vram_gb })
-              : t("settings.about.diagNoGpu"),
-            ram: system.hardware.ram_gb,
-          })
-        : t("settings.about.diagHardwareUnknown"),
-    ];
-    void navigator.clipboard.writeText(lines.join("\n")).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
 
   const videoModelOptions = [
     { value: "", label: t("settings.defaults.autoModel") },
@@ -1200,6 +1174,18 @@ export function Settings() {
                       {t("settings.backends.noFfmpeg")}
                     </p>
                   )}
+                  {/* An ffmpeg that cannot draw text. A warning rather than
+                      an error: everything works except burning a title, and
+                      a project with no titles is wholly unaffected — so the
+                      cost of being wrong here is a banner nobody needed.
+                      `false` only; `null` means no ffmpeg at all, which the
+                      row above already says louder, and `undefined` is an
+                      engine too old to have looked. */}
+                  {system.ffmpeg_drawtext === false && (
+                    <p className="banner warning" role="alert">
+                      {t("settings.backends.noDrawtext")}
+                    </p>
+                  )}
                   <dl className="kv">
                     {system.backends.tasks.map((row) => {
                       const label = TASK_KIND_LABELS[row.kind]
@@ -1223,48 +1209,9 @@ export function Settings() {
             </>
           )}
 
-          {tab === "about" && (
-            <section>
-              <h2>
-                <Info {...ICON_CONTROL} />
-                {t("settings.tabs.about")}
-              </h2>
-              <p className="hint">{t("settings.about.hint")}</p>
-              <div className="setting-row">
-                <div className="st">
-                  <Tag {...ICON_SUBHEAD} />
-                  {t("settings.about.versionHeading")}
-                </div>
-                <dl className="kv" style={{ marginTop: 8 }}>
-                  <dt>{t("settings.about.app")}</dt>
-                  <dd>{__APP_VERSION__}</dd>
-                  <dt>{t("settings.about.engine")}</dt>
-                  <dd>{engineVersions?.engine_version ?? t("settings.engine.dash")}</dd>
-                  <dt>{t("settings.about.api")}</dt>
-                  <dd>
-                    {engineVersions ? `v${engineVersions.api_version}` : t("settings.engine.dash")}
-                  </dd>
-                  <dt>{t("settings.engine.backend")}</dt>
-                  <dd>{system?.backend_mode ?? t("settings.engine.dash")}</dd>
-                </dl>
-              </div>
-              <div className="setting-row">
-                <div className="st">
-                  <Activity {...ICON_SUBHEAD} />
-                  {t("settings.about.diagnosticsHeading")}
-                </div>
-                <div className="sd">{t("settings.about.diagnosticsHint")}</div>
-                <div className="sc" style={{ display: "flex", gap: 8 }}>
-                  <button className="btn-ghost" onClick={copyDiagnostics}>
-                    {copied ? t("settings.about.copied") : t("settings.about.copy")}
-                  </button>
-                  <button className="btn-ghost" onClick={() => setShowLicenses(true)}>
-                    {t("settings.about.licenses")}
-                  </button>
-                </div>
-              </div>
-            </section>
-          )}
+          {tab === "workflows" && <WorkflowsPane />}
+
+          {tab === "about" && <AboutPane onShowLicenses={() => setShowLicenses(true)} />}
         </div>
       </div>
 
@@ -1340,43 +1287,34 @@ export function Settings() {
         />
       )}
       {showLicenses && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={() => setShowLicenses(false)}
-          role="presentation"
+        <Modal
+          title={t("settings.about.licensesTitle")}
+          subtitle={t("settings.about.licensesIntro")}
+          size="l"
+          onClose={() => setShowLicenses(false)}
+          footer={
+            <button
+              className="btn-primary"
+              ref={licensesCloseRef}
+              onClick={() => setShowLicenses(false)}
+            >
+              {t("settings.about.licensesClose")}
+            </button>
+          }
         >
-          <div
-            className="modal licenses-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t("settings.about.licensesTitle")}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <h2>{t("settings.about.licensesTitle")}</h2>
-            <p>{t("settings.about.licensesIntro")}</p>
-            <ul className="licenses-list">
-              {__OSS_LICENSES__.map((dep) => (
-                <li key={dep.name}>
-                  <div className="lic-head">
-                    <span className="lic-name">{dep.name}</span>
-                    <span className="lic-version mono-id">{dep.version}</span>
-                    <span className="badge">{dep.license}</span>
-                  </div>
-                  {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
-                </li>
-              ))}
-            </ul>
-            <div className="modal-actions">
-              <button
-                className="btn-primary"
-                ref={licensesCloseRef}
-                onClick={() => setShowLicenses(false)}
-              >
-                {t("settings.about.licensesClose")}
-              </button>
-            </div>
-          </div>
-        </div>
+          <ul className="licenses-list">
+            {__OSS_LICENSES__.map((dep) => (
+              <li key={dep.name}>
+                <div className="lic-head">
+                  <span className="lic-name">{dep.name}</span>
+                  <span className="lic-version mono-id">{dep.version}</span>
+                  <span className="badge">{dep.license}</span>
+                </div>
+                {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
+              </li>
+            ))}
+          </ul>
+        </Modal>
       )}
     </div>
   );

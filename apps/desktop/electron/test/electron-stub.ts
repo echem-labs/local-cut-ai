@@ -51,6 +51,11 @@ export function resetElectron(): void {
   state.shouldUseDarkColors = false;
   ipcHandlers.clear();
   appEvents.clear();
+  openedPaths.length = 0;
+  openedExternally.length = 0;
+  saveDialogs.length = 0;
+  shell.openPathFailure = "";
+  dialog.result = { canceled: false, filePath: "" };
   windows.length = 0;
   certificateVerifyProc = null;
   quitCalls = 0;
@@ -165,7 +170,7 @@ export class BrowserWindow {
   minimized = false;
   focused = false;
   restored = false;
-  windowOpenHandler: (() => unknown) | null = null;
+  windowOpenHandler: ((details: { url: string }) => unknown) | null = null;
   private readonly navigationListeners: ((event: { preventDefault(): void }, url: string) => void)[] =
     [];
 
@@ -173,7 +178,7 @@ export class BrowserWindow {
     on: (event: string, listener: (e: { preventDefault(): void }, url: string) => void) => {
       if (event === "will-navigate") this.navigationListeners.push(listener);
     },
-    setWindowOpenHandler: (handler: () => unknown) => {
+    setWindowOpenHandler: (handler: (details: { url: string }) => unknown) => {
       this.windowOpenHandler = handler;
     },
     downloadURL: (url: string) => {
@@ -278,6 +283,42 @@ export const ipcRenderer = {
   },
 };
 
+/* ----------------------------------------------------- shell and dialog -- */
+
+/** Paths handed to shell.openPath, and the reason the next call returns.
+ * Electron reports failure here by RESOLVING with a message — "" is
+ * success — so a test that only checks the call happened would miss it. */
+export const openedPaths: string[] = [];
+/** URLs handed to the OS. Kept separate from `openedPaths` because the two
+ * carry different risk: a folder is one this process chose, a URL can have
+ * come from a release feed. */
+export const openedExternally: string[] = [];
+export const shell = {
+  openPathFailure: "" as string,
+  openPath(target: string): Promise<string> {
+    openedPaths.push(target);
+    return Promise.resolve(shell.openPathFailure);
+  },
+  openExternal(url: string): Promise<void> {
+    openedExternally.push(url);
+    return Promise.resolve();
+  },
+};
+
+/** What the next save dialog answers, and what it was asked. */
+export const saveDialogs: unknown[] = [];
+interface SaveResult {
+  canceled: boolean;
+  filePath: string;
+}
+export const dialog = {
+  result: { canceled: false, filePath: "" } as SaveResult,
+  showSaveDialog(_window: unknown, options: unknown): Promise<SaveResult> {
+    saveDialogs.push(options);
+    return Promise.resolve(dialog.result);
+  },
+};
+
 export const zoomFactors: number[] = [];
 export const webFrame = {
   /** The stub's live zoom — read by the redundant-set guard. */
@@ -295,11 +336,13 @@ export default {
   app,
   BrowserWindow,
   contextBridge,
+  dialog,
   ipcMain,
   ipcRenderer,
   Menu,
   nativeTheme,
   safeStorage,
   session,
+  shell,
   webFrame,
 };
