@@ -1,13 +1,16 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   type IpcMainInvokeEvent,
   Menu,
   nativeTheme,
   session,
+  shell,
 } from "electron";
 import { execFile } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { EngineManager } from "./engine";
@@ -17,8 +20,10 @@ import {
   type ProviderKeyId,
   ProviderKeyStore,
 } from "./keys";
+import { installLogSink, readLogFiles } from "./logfile";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
 import { capturePinnedCert, engineRequest } from "./request";
+import { bundleEntries, zipEntries } from "./support";
 
 // Dev-only: the test rig points userData at a temp dir so a run starts from
 // a fresh profile (first-run state, empty layout store) without touching the
@@ -33,6 +38,31 @@ if (!app.isPackaged && process.env.LOCALCUT_USERDATA) {
 if (app.isPackaged) {
   delete process.env.LOCALCUT_SEED_HOOK;
 }
+
+/**
+ * Under userData rather than Electron's own `logs` path, which is
+ * `~/Library/Logs/<app>` on macOS and userData/logs everywhere else. One
+ * location on all three platforms is what lets "Open logs folder" and the
+ * support bundle agree about where the logs are, and it follows the rig's
+ * LOCALCUT_USERDATA override for free — so a rig run writes its logs into
+ * its own temp profile instead of the developer's real one.
+ *
+ * Installed here, at module scope, because the lines most worth having are
+ * the ones from startup: a failed engine spawn is logged before the window
+ * that would ask for a bundle exists.
+ */
+const LOGS_DIR = path.join(app.getPath("userData"), "logs");
+installLogSink(LOGS_DIR);
+
+/**
+ * The release feed, absent until the repo goes public (plan doc 11, U6).
+ *
+ * It lives in the main process and never crosses the bridge: the renderer
+ * asks *whether* to offer the check and asks for one to run, but never
+ * says what URL to fetch. Otherwise anything running in the renderer could
+ * point the shell's own network stack at a host of its choosing.
+ */
+const UPDATE_FEED = process.env.LOCALCUT_UPDATE_FEED?.trim() ?? "";
 
 const engine = new EngineManager();
 const keyStore = new ProviderKeyStore();
@@ -88,6 +118,18 @@ const forgetStoredPairing = (): void => {
 /** Does this URL belong to the engine the renderer is actually talking to?
  * Origin-compared against the ACTIVE connection only: a paired remote makes
  * the idle local spawn (and any previously paired engine) a stranger. */
+/** A link the system browser can be trusted with. Deliberately a scheme
+ * allowlist rather than a denylist of the dangerous ones: the set of
+ * protocol handlers registered on a machine is not knowable from here. */
+const isWebUrl = (raw: string): boolean => {
+  try {
+    const { protocol } = new URL(raw);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+};
+
 const isActiveEngineUrl = (raw: string): boolean => {
   const connection = activeConnection();
   if (!connection) return false;
@@ -187,7 +229,20 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     if (isActiveEngineUrl(url)) window.webContents.downloadURL(url);
   });
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // Never a second window — that one would inherit this one's preload
+  // bridge, which is the whole point of the lockdown above. A web link goes
+  // to the system browser instead, which inherits nothing.
+  //
+  // http(s) and nothing else, because `openExternal` hands the string to the
+  // OS and the OS launches whatever is registered for the scheme: `file:` a
+  // local executable, `ms-msdt:` a Windows diagnostic host. One of these
+  // URLs arrives from the release feed, so the scheme check is what keeps a
+  // tampered feed from starting a program. Anything else is a denied open
+  // with nowhere to go, which is inert.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (isWebUrl(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
 
   try {
     if (devUrl) {
@@ -550,6 +605,101 @@ ipcMain.handle("window:set-titlebar-theme", (event, theme: unknown) => {
   if (theme !== "dark" && theme !== "light") return;
   if (!canRetintOverlay) return;
   BrowserWindow.fromWebContents(event.sender)?.setTitleBarOverlay(TITLEBAR[theme]);
+});
+
+/* ------------------------------------------------- About → Support -- */
+
+// Gated like the mutators. None of these hands out a secret, but each has a
+// side effect a page has no business causing on its own: a file manager
+// window, a native save dialog over the app, and an outbound request.
+ipcMain.handle("support:open-logs", async (event) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  // openPath returns a REASON string on failure and "" on success — the
+  // one Electron API that reports trouble by resolving rather than
+  // rejecting, so an unchecked `await` here reads as always working.
+  const failure = await shell.openPath(LOGS_DIR);
+  return { ok: !failure, error: failure || null };
+});
+
+/** A bundle is a handful of JSON objects and two capped log files. This
+ * bounds the half that comes from the renderer, so nothing running there
+ * can turn "export my diagnostics" into a multi-gigabyte write. */
+const MAX_REPORT_BYTES = 256 * 1024;
+
+const bounded = (value: unknown): unknown => {
+  const text = JSON.stringify(value ?? null) ?? "null";
+  // byteLength, not length: the cap is named in bytes, and a string of
+  // non-ASCII counts up to three of them per unit it reports.
+  const bytes = Buffer.byteLength(text, "utf8");
+  return bytes > MAX_REPORT_BYTES ? { truncated: bytes } : value ?? null;
+};
+
+ipcMain.handle("support:export-bundle", async (event, report: unknown) => {
+  if (!trustedSender(event)) return { path: null, error: "untrusted sender" };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { path: null, error: "no window" };
+  const input = (report ?? {}) as { versions?: unknown; system?: unknown };
+
+  const { canceled, filePath } = await dialog.showSaveDialog(window, {
+    defaultPath: `localcut-support-${new Date().toISOString().slice(0, 10)}.zip`,
+    filters: [{ name: "Zip", extensions: ["zip"] }],
+  });
+  // Cancelling is an outcome, not a failure: the caller shows an error for
+  // every non-null reason it gets back, and "you changed your mind" is not
+  // something to apologize for.
+  if (canceled || !filePath) return { path: null, error: null };
+
+  try {
+    const zip = zipEntries(
+      bundleEntries({
+        versions: bounded(input.versions),
+        system: bounded(input.system),
+        logs: readLogFiles(LOGS_DIR),
+      }),
+    );
+    writeFileSync(filePath, zip);
+    return { path: filePath, error: null };
+  } catch (error) {
+    return { path: null, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+/* --------------------------------------------------- About → Updates -- */
+
+/** Whatever the feed calls it, reduced to the two things About shows. Both
+ * shapes are accepted so the feed decision (GitHub releases vs a static
+ * JSON file) does not have to be made before this ships. */
+function readFeed(body: unknown): { version: string; url: string } | null {
+  if (!body || typeof body !== "object") return null;
+  const row = body as Record<string, unknown>;
+  const version = typeof row.tag_name === "string" ? row.tag_name : row.version;
+  const url = typeof row.html_url === "string" ? row.html_url : row.url;
+  if (typeof version !== "string" || !version.trim()) return null;
+  return { version: version.trim().replace(/^v/i, ""), url: typeof url === "string" ? url : "" };
+}
+
+ipcMain.handle("update:check", async (event) => {
+  if (!trustedSender(event)) return { latest: null, url: null, error: "untrusted sender" };
+  if (!UPDATE_FEED) return { latest: null, url: null, error: "updates are not configured" };
+  try {
+    // No credentials, no cookies: this is an anonymous read of a public
+    // file, and the check is the only network call the app makes that the
+    // user did not start by downloading a model.
+    const response = await fetch(UPDATE_FEED, {
+      credentials: "omit",
+      headers: { accept: "application/json" },
+    });
+    if (!response.ok) return { latest: null, url: null, error: `HTTP ${response.status}` };
+    const release = readFeed(await response.json());
+    if (!release) return { latest: null, url: null, error: "the release feed made no sense" };
+    return { latest: release.version, url: release.url, error: null };
+  } catch (error) {
+    return {
+      latest: null,
+      url: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 });
 
 app.whenReady().then(async () => {

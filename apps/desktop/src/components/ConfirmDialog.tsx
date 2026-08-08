@@ -22,17 +22,23 @@ export function ConfirmDialog({
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
   return (
-    <Modal label={title} role="alertdialog" onClose={onCancel} initialFocus={cancelRef}>
-      <h2>{title}</h2>
+    <Modal
+      title={title}
+      role="alertdialog"
+      onClose={onCancel}
+      initialFocus={cancelRef}
+      footer={
+        <>
+          <button className="btn-ghost" ref={cancelRef} onClick={onCancel}>
+            {t("common.keepIt")}
+          </button>
+          <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </>
+      }
+    >
       <p>{message}</p>
-      <div className="modal-actions">
-        <button className="btn-ghost" ref={cancelRef} onClick={onCancel}>
-          {t("common.keepIt")}
-        </button>
-        <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </div>
     </Modal>
   );
 }

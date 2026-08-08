@@ -355,6 +355,59 @@ try {
   check("escape closes settings", settings.closed);
   await shoot("03-after-settings.png");
 
+  // 3b. The two U6 panes, each against the live engine rather than a
+  // fixture — About reads /system and /storage, Workflows reads
+  // /comfy/node-packs. Both render something without either call, which is
+  // exactly why a component test cannot stand in for this stop: the
+  // failure being looked for is a real response landing nowhere.
+  const panes = await evalInApp(`
+    const buttons = await page.$$("nav button");
+    for (const b of buttons) { if ((await b.textContent()).includes("Settings")) { await b.click(); break; } }
+    await page.waitForSelector(".settings-layer", { timeout: 5000 });
+    const open = async (label) => {
+      await page.evaluate((name) => {
+        const tab = [...document.querySelectorAll(".settings-grid nav button")].find(
+          (b) => (b.textContent || "").trim() === name);
+        tab?.click();
+      }, label);
+      await page.waitForTimeout(500);
+    };
+    await open("Workflows");
+    const workflows = await page.evaluate(() => ({
+      packs: document.querySelectorAll(".pack-row").length,
+      importable: !!document.querySelector('input[type="file"]'),
+    }));
+    await open("About");
+    await page.waitForSelector(".about", { timeout: 5000 });
+    const about = await page.evaluate(() => ({
+      versions: document.querySelector(".about-versions")?.textContent?.trim() ?? "",
+      // The chips come from /system and the folder from /storage — two
+      // different calls, so they fail independently.
+      chips: document.querySelectorAll(".about-card .spec-chip").length,
+      dataFolder: [...document.querySelectorAll(".about-kv dd")].pop()?.textContent?.trim() ?? "",
+    }));
+    await page.keyboard.press("Escape");
+    return { workflows, about };
+  `);
+  check(
+    "About names this build and the machine the engine reported",
+    /app\s+\d+\.\d+\.\d+/.test(panes.about.versions) && panes.about.chips > 0,
+    JSON.stringify(panes.about),
+  );
+  check(
+    "About names the folder the engine measures its storage from",
+    panes.about.dataFolder.length > 0 &&
+      panes.about.dataFolder !== "-" &&
+      !/does not report/.test(panes.about.dataFolder),
+    panes.about.dataFolder,
+  );
+  check(
+    "Workflows lists the engine's node-pack catalog and offers an import",
+    panes.workflows.packs > 0 && panes.workflows.importable,
+    JSON.stringify(panes.workflows),
+  );
+  await shoot("03b-settings-panes.png");
+
   const report = await health();
   // The peaks route answers 422 for an artifact that is not decodable audio,
   // which is every narration and music file the MOCK backend writes: JSON

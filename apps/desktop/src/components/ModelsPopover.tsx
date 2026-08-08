@@ -1,6 +1,7 @@
 import { Boxes } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
+import { useMenuFit } from "../lib/useMenuFit";
 import { useApp } from "../store";
 import { displayModelName } from "./ModelLibrary";
 import { Tip } from "./Tooltip";
@@ -13,6 +14,7 @@ export function ModelsPopover({ opens = "down" }: { opens?: "up" | "down" }) {
   const { system, models, openSettings } = useApp();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const fit = useMenuFit();
 
   useEffect(() => {
     if (!open) return;
@@ -36,7 +38,7 @@ export function ModelsPopover({ opens = "down" }: { opens?: "up" | "down" }) {
         </button>
       </Tip>
       {open && (
-        <div className="menu-pop" role="menu">
+        <div className="menu-pop" role="menu" ref={fit}>
           <div className="menu-label">{t("home.modelsPopTitle")}</div>
           {(system?.recommendations ?? []).map((rec) => {
             const row = rec.model ? models.find((entry) => entry.id === rec.model?.id) : null;
