@@ -227,8 +227,11 @@ const MASK_PAD = 6;
 
 /** The rail's icon column: six lucide glyphs the mock writes as unicode
  * characters. Not the open-project rows — those carry a status dot, which
- * the mock draws the same way the app does. */
-const RAIL_ICONS = ".rail button:not(.rail-tab-close) > svg";
+ * the mock draws the same way the app does, and not the Help popover's
+ * menu items, which render inside the rail and are not rail rows. Kept
+ * character-for-character the same as the stylesheet's own rule: if the two
+ * drift, the gate measures a set of boxes the design never sized. */
+const RAIL_ICONS = ".rail button:not(.rail-tab-close):not(.menu-pop button) > svg";
 
 /** What each masked region of the reference is, in the app — a mask hides
  * pixels, never geometry (plan doc 11, U1's lesson). */
@@ -495,7 +498,28 @@ try {
 
   await evalInApp(`
     await page.click(".dl-summary-head");
-    await page.waitForTimeout(250);
+    // Wait for the panel to BE open, not for 250ms to pass. The click
+    // lands right after the previous frame's resize, and one that arrives
+    // mid-relayout hits where the head used to be - leaving the panel shut
+    // and the frame shot collapsed, which reads downstream as four
+    // tool-well masks with nothing under them and 17303 differing px. A
+    // missed click is now a legible failure here rather than a wrong
+    // picture measured later.
+    await page.waitForSelector(".dl-summary.open .srow", { timeout: 5000 });
+    // ...and then for its height to stop moving: the rows arrive with a
+    // React re-render, so "open" precedes "finished growing".
+    await page.waitForFunction(
+      () => {
+        const panel = document.querySelector(".dl-summary");
+        if (!panel) return false;
+        const height = Math.round(panel.getBoundingClientRect().height);
+        const settled = window.__dlHeight === height;
+        window.__dlHeight = height;
+        return settled;
+      },
+      null,
+      { timeout: 5000, polling: 100 },
+    );
     return null;
   `);
   await shoot("home-downloads-open");

@@ -223,6 +223,47 @@ try {
   );
   check("1440px: the rail toggle works again", wide.dom.railToggleDisabled === false);
 
+  // The rail's icon COLUMN, and what it must not reach. Every rail row gets
+  // an 18px column so the labels start on one x whatever glyph the row uses
+  // - but the Help popover renders INSIDE the rail, and a rule written as
+  // "every button in the rail" stretches its menu items' 13px icons to the
+  // column width too. Nothing in the unit suite can see either half: vitest
+  // stubs CSS imports away and jsdom loads no stylesheet.
+  const railIcons = await evalInApp(`
+    await page.evaluate(() => {
+      const help = [...document.querySelectorAll(".rail .help-menu button")][0];
+      help?.click();
+    });
+    await page.waitForSelector(".help-pop", { timeout: 5000 });
+    return page.evaluate(() => {
+      const box = (el) => {
+        const r = el.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) };
+      };
+      const rows = [...document.querySelectorAll(".rail button:not(.rail-tab-close) > svg")]
+        .filter((svg) => !svg.closest(".menu-pop"))
+        .map(box);
+      const items = [...document.querySelectorAll(".help-pop [role=menuitem] > svg")].map(box);
+      return { rows, items };
+    });
+  `);
+  check(
+    "the rail's rows share one 18px icon column",
+    railIcons.rows.length >= 4 && railIcons.rows.every((icon) => icon.w === 18),
+    JSON.stringify(railIcons.rows),
+  );
+  check(
+    "the Help popover's menu items keep their own icon size",
+    railIcons.items.length >= 2 && railIcons.items.every((icon) => icon.w === 13 && icon.h === 13),
+    JSON.stringify(railIcons.items),
+  );
+  await evalInApp(`
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => document.body.click());
+    await page.waitForTimeout(150);
+    return null;
+  `);
+
   // U3: the clip panel carries the widest controls row Home has (motion
   // field, seconds, start frame, aspect, generate) plus a preset chip row.
   // Opened as a stop of its own because a flex row that wraps politely at
