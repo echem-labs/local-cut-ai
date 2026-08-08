@@ -11,7 +11,7 @@
  * Usage: node parity-home.mjs --refs <dir>   (dir must hold *.png + masks.json)
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,7 @@ import {
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
+import { COLLECT } from "./textprobe.cjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -408,6 +409,13 @@ try {
       ${JSON.stringify(MASKED_AS[name] ?? [])});
     `);
     checkMaskGeometry(name, boxes);
+    if (process.env.RIG_PROBE) {
+      // Convergence only. The frame's own text, measured the same way the
+      // reference measured its own, so `converge.mjs` can say which element
+      // moved rather than how many pixels did.
+      const text = await evalInApp(`return page.evaluate(${JSON.stringify(COLLECT)});`);
+      writeFileSync(path.join(dir, `${name}.text.json`), JSON.stringify(text, null, 1));
+    }
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
     scaleHeld &&= await layoutTrue();

@@ -16,6 +16,7 @@ const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { COLLECT } = require("./textprobe.cjs");
 
 // The offscreen frame inherits the PRIMARY display's scale at launch, and
 // capturePage returns physical pixels — on a 125% display the "960-wide"
@@ -300,6 +301,10 @@ const SNAP_HOME = `
    the title bar is --titlebar-h 38 */
 .page { padding: 32px 32px 40px !important; }
 .titlebar { height: 38px !important; }
+/* the brand is the app's own type: --text-xs at the brand weight, where the
+   mock hand-set 12.5px/400. 12.5 is not on the scale, and 650 is the same
+   weight About's heading was snapped to in U6 */
+.titlebar { font-size: 12px !important; font-weight: 650 !important; letter-spacing: -0.01em !important; }
 body { padding-top: 38px !important; }
 .frame { min-height: calc(100vh - 38px) !important; }
 .sub { margin: 8px 0 16px !important; }
@@ -307,7 +312,16 @@ body { padding-top: 38px !important; }
 .empty { margin-top: 16px !important; padding: 24px !important; }
 .empty h2 { font-size: 16px !important; }
 .empty p { font-size: 12px !important; margin: 8px 0 12px !important; }
-.empty .tpl span { font-size: 12px !important; padding: 8px 12px !important; }
+/* The starter rows are the app's ghost BUTTON, which is what they are - one
+   click each, and they set the prompt. So they carry its box: 13/18 type on
+   a 32px floor, not the mock's 12.5px span. The old snap took them to 12px,
+   which was neither the mock's value nor the app's, and left every row 3px
+   short - the three rows drifted 2, 1 and 4px apart down the card. */
+.empty .tpl span {
+  font-size: 13px !important;
+  line-height: 18px !important;
+  padding: 8px 12px !important;
+}
 /* quick-tool cards are the app's --space-3 box with a 76px floor */
 .tool { padding: 12px !important; min-height: 76px !important; }
 .tools { gap: 8px !important; }
@@ -449,6 +463,13 @@ async function render(win, name, file) {
   const image = await win.webContents.capturePage();
   fs.writeFileSync(path.join(outDir, `${name}.png`), image.toPNG());
   console.log(`${name}.png ${SET.width}x${height}`);
+
+  // Where the mock puts its text, for the convergence probe. Written beside
+  // the frame rather than gated behind a flag: it is a few KB, it is only
+  // meaningful for the reference it was measured from, and a probe you have
+  // to remember to enable is one that is stale when you finally look.
+  const text = await win.webContents.executeJavaScript(COLLECT);
+  fs.writeFileSync(path.join(outDir, `${name}.text.json`), JSON.stringify(text, null, 1));
 
   const rects = await win.webContents.executeJavaScript(`
     (${JSON.stringify(MASKABLE[name] ?? [])}).flatMap((selector) =>
