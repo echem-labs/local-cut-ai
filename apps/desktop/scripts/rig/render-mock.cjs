@@ -376,10 +376,24 @@ button, input, select, textarea { font-family: inherit !important; }
 ::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
 /* app body has no line-height override — UA normal, not the mock's 1.5.
    !important: the mock sets it via the font shorthand and insertCSS does
-   not reliably out-cascade the document sheet. */
-body, body * { line-height: normal !important; }
+   not reliably out-cascade the document sheet.
+
+   The bare body selector, NOT the descendant form: line-height inherits,
+   so this already reaches every element that does not state one - which
+   is the whole intent - while leaving alone the ones that do. The
+   descendant form reached those too, and a mock stating a height is a
+   mock agreeing with the app: the session's script table says 18px, as
+   the app's .script-table does, and stomping it to normal made every row
+   6px short and the last one 45px out of place. Where the mock states a
+   height the app does not share, the snap blocks below say so by name. */
+body { line-height: normal !important; }
 /* one control height (--control-h 32) and the app button type sizes */
 .primary { min-height: 32px !important; font-size: 14px !important; padding: 8px 16px !important; }
+/* The app's .btn-primary states line-height:1 and says why: at 18px the
+   14px label makes 8+18+8 = 34, one taller than every control beside it
+   in the composer row, and --control-h stops deciding the height. The
+   mocks that state a line box here say 18. */
+.primary { line-height: 1 !important; }
 .ghost { min-height: 32px !important; font-size: 13px !important; padding: 8px 12px !important; }
 .link { font-size: 14px !important; }
 /* the app's one eyebrow letter-spacing */
@@ -415,11 +429,13 @@ body, body * { line-height: normal !important; }
 .st .bar { margin-top: 4px !important; }
 `;
 
-/* ---- the home set's snaps (same rule: each one is a token the app owns) */
-const SNAP_HOME = `
-/* 12.5px is not on the scale: --text-xs everywhere it appears */
-.tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
-.rail .item, .sortmenu div, .menu div { font-size: 12px !important; }
+/* ---- the window's own chrome, shared by every mock that draws it.
+   The rail and the title bar are ONE shipped component pair; the home and
+   session mocks each hand-drew them, so a snap that lived in the home
+   block left the session's rail 3px tall in places and its brand in the
+   wrong weight - the same difference, gated on one screen and waived on
+   the other. */
+const SNAP_SHELL = `
 /* rail rows are --text-s, and the readiness button is an --control-h icon */
 .rail .item { font-size: 14px !important; }
 /* the rail's group label sits on the rail's own rhythm, not the wizard's */
@@ -429,6 +445,25 @@ const SNAP_HOME = `
 .rail .engine b { font-size: 11px !important; }
 .rail .engine small { font-size: 10px !important; }
 .models { width: 32px !important; height: 32px !important; }
+.titlebar { height: 38px !important; }
+/* the brand is the app's own type: --text-xs at the brand weight, where the
+   mock hand-set 12.5px/400. 12.5 is not on the scale, and 650 is the same
+   weight About's heading was snapped to in U6 */
+.titlebar { font-size: 12px !important; font-weight: 650 !important; letter-spacing: -0.01em !important; }
+/* ...but only the brand. The project name beside it is the app's
+   .tb-project - same size, normal weight, no tracking - and the mock
+   writes the brand as a bare text node, so the weight has to be set on
+   the bar and taken back here. */
+.titlebar .proj { font-weight: 400 !important; letter-spacing: normal !important; }
+body { padding-top: 38px !important; }
+.frame { min-height: calc(100vh - 38px) !important; }
+`;
+
+/* ---- the home set's snaps (same rule: each one is a token the app owns) */
+const SNAP_HOME = `
+/* 12.5px is not on the scale: --text-xs everywhere it appears */
+.tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
+.rail .item, .sortmenu div, .menu div { font-size: 12px !important; }
 /* the 4px grid where the mock sits off it */
 .fromtpl { margin-top: 12px !important; }
 /* ...and the app's stated 16px line box. Both sides drew this row at
@@ -451,16 +486,8 @@ const SNAP_HOME = `
    32 and the mock already says 32; this stops a font from disagreeing. */
 .primary { height: 32px !important; }
 .hero .row { padding: 12px !important; }
-/* the shipped page gutter (main.content) is 32px, not the mock's 24, and
-   the title bar is --titlebar-h 38 */
+/* the shipped page gutter (main.content) is 32px, not the mock's 24 */
 .page { padding: 32px 32px 40px !important; }
-.titlebar { height: 38px !important; }
-/* the brand is the app's own type: --text-xs at the brand weight, where the
-   mock hand-set 12.5px/400. 12.5 is not on the scale, and 650 is the same
-   weight About's heading was snapped to in U6 */
-.titlebar { font-size: 12px !important; font-weight: 650 !important; letter-spacing: -0.01em !important; }
-body { padding-top: 38px !important; }
-.frame { min-height: calc(100vh - 38px) !important; }
 .sub { margin: 8px 0 16px !important; }
 /* the empty card's box on the 4px grid, and its buttons at --text-xs */
 .empty { margin-top: 16px !important; padding: 24px !important; }
@@ -487,9 +514,6 @@ body { padding-top: 38px !important; }
 /* the shelf head is an eyebrow at the app's letter-spacing (its line box
    is snapped in SNAP_COMMON, where every set needs it) */
 .eyebrow { letter-spacing: .1em !important; }
-/* the quick-tools hint is 16px in the app AND in this mock; SNAP_COMMON's
-   blanket line-height:normal stomps what the mock itself already says */
-.toolhead .hint { line-height: 16px !important; }
 `;
 
 /* ---- the session set's snaps: authored ON the token scale, so what it
@@ -497,8 +521,12 @@ body { padding-top: 38px !important; }
    .actions sit 24px under a form; the session's ride the column's 16px flex
    gap. */
 const SNAP_SESSION = `
-.rail .group { margin-top: 0 !important; }
 .actions { margin-top: 0 !important; }
+/* The script table's header row is the only cell in it that forgets to
+   state a line box; the app gives th and td the same 18px, and left to
+   Inter's metrics at 11px the reference's header was 4px short - which
+   the whole table inherited. */
+.stable th { line-height: 18px !important; }
 `;
 
 /* ---- the u5 set's snap. The app's `.chip` pins an 18px line box (it is
@@ -581,6 +609,8 @@ h2 + .card { margin-top: 0 !important; }
 
 const SNAP =
   SNAP_COMMON +
+  /* the two sets whose mocks draw the whole window */
+  (setName === "home" || setName === "session" ? SNAP_SHELL : "") +
   (setName === "home" ? SNAP_HOME : "") +
   (setName === "session" ? SNAP_SESSION : "") +
   (setName === "u5" ? SNAP_U5 : "") +
