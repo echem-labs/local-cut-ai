@@ -384,6 +384,14 @@ body, body * { line-height: normal !important; }
 .link { font-size: 14px !important; }
 /* the app's one eyebrow letter-spacing */
 .steps, .srow .stage { letter-spacing: .1em !important; }
+/* ...and its one eyebrow line box. The blanket line-height:normal above is
+   right wherever the app inherits the UA's and wrong on every row where
+   the app states a height instead - and the app's .eyebrow rule states 16
+   for exactly this reason: an 11px line left to Inter's metrics rounds one
+   way in the app and the other here. It is 2-3px per heading, and it
+   accumulates: the wizard's library draws five group headings above its
+   last model row, which sat 12px low. */
+.eyebrow { line-height: 16px !important; }
 /* type scale: 13.5 -> --text-s, 12.5 -> --text-xs, 11.5 -> --text-xs */
 .row .name, .mrow .name, .srow .model, .verdict { font-size: 14px !important; }
 .st, .overall { font-size: 12px !important; }
@@ -476,16 +484,12 @@ body { padding-top: 38px !important; }
 .tbody { padding: 8px 10px !important; }
 .tbody .m { margin-top: 4px !important; }
 .grid { gap: 12px !important; }
-/* the shelf head is an eyebrow at the app's letter-spacing */
+/* the shelf head is an eyebrow at the app's letter-spacing (its line box
+   is snapped in SNAP_COMMON, where every set needs it) */
 .eyebrow { letter-spacing: .1em !important; }
-/* ...and at the app's stated line box. SNAP_COMMON forces line-height to
-   normal, which is right wherever the app inherits the UA's and wrong on
-   every row where the app states one - including the two the mock itself
-   already writes as 16px, which that blanket rule stomps. The app's own
-   .eyebrow rule says why it states them: an 11px line left to Inter's
-   metrics rounds one way in the app and the other here, and the fraction
-   is inherited by everything below the row. */
-.eyebrow, .toolhead .hint { line-height: 16px !important; }
+/* the quick-tools hint is 16px in the app AND in this mock; SNAP_COMMON's
+   blanket line-height:normal stomps what the mock itself already says */
+.toolhead .hint { line-height: 16px !important; }
 `;
 
 /* ---- the session set's snaps: authored ON the token scale, so what it
