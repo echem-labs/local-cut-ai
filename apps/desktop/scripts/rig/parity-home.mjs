@@ -164,8 +164,18 @@ const model = (
   ...rest,
 });
 
-/** The mock's download strip: script external, keyframes installed, clips
- * at 51%, music queued — 2 of 4 ready, 6.9 of 18 GB. */
+/** The mock's download strip, in the mock's own row order: script
+ * external, keyframes installed, clips at 51%, narration external, music
+ * queued, captions external — "4 of 6 stages ready", 12 GB of 25 GB.
+ *
+ * All SIX, because `stageRows` renders one row per recommendation and the
+ * mock draws six. Seeded with four, the expanded frame rendered four rows
+ * and everything under the panel sat 84px high — but only on the runs
+ * where the fixture actually won. On the others a live refresh replaced it
+ * with the engine's own six-stage slate and the frame passed, so this
+ * failed about one run in three and passed for the wrong reason the rest
+ * of the time. Narration and captions joined the recommendations in U3
+ * (the mock says so in its own comment); this list did not follow. */
 const MODELS = [
   model("qwen3-8b-q4", "text.llm", {
     external: true,
@@ -185,10 +195,19 @@ const MODELS = [
     downloading: true,
     progress: { done: 0.51 * 11 * GB, total: 11 * GB },
   }),
+  model("chatterbox-tts", "speech.tts", {
+    external: true,
+    family: "chatterbox",
+  }),
   model("ace-step-v1-3.5b", "music.gen", {
     family: "ACE-Step",
     version: "3.5B",
     size: 7.2 * GB,
+  }),
+  model("faster-whisper-large-v3", "transcribe", {
+    external: true,
+    family: "whisper large",
+    version: "v3",
   }),
 ];
 const SETTLED = MODELS.map((row) => ({
@@ -295,8 +314,11 @@ const MASKED_AS = {
   ],
 };
 const RIGID = /thumb|filter-tabs/;
-/** Content-sized boxes: matched on where they start, not how tall they are
- * (a tile's body is a title that may wrap and a status line). */
+/** Content-sized boxes: matched on where they start HORIZONTALLY, not on
+ * how wide they are (a tile's body is a title and a status line; a
+ * right-aligned count grows leftward). Loose is a statement about x only -
+ * the vertical band binds every box, loose or not, because without it a
+ * box could claim a mask several rows above it. */
 const LOOSE = /tile-body|rail-count/;
 const TOL = 2;
 
@@ -458,6 +480,27 @@ try {
       // moved the geometry of a masked region. Park it on the title bar.
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
+      // ...and then until the layout stops moving. The resize above
+      // re-flows the whole page, so a fixed wait after it is the same
+      // gamble the panel-expand step used to take - and it is the one that
+      // actually decides the picture, since every settle done BEFORE the
+      // resize is re-laid-out by it. home-downloads-open shot its quick
+      // tools 84px high about one run in four this way.
+      //
+      // Never throws: a frame that will not settle is a frame worth
+      // diffing anyway, and compare.mjs reports it with a number.
+      await page
+        .waitForFunction(
+          () => {
+            const now = document.documentElement.scrollHeight;
+            const settled = window.__rigHeight === now;
+            window.__rigHeight = now;
+            return settled;
+          },
+          null,
+          { timeout: 4000, polling: 120 },
+        )
+        .catch(() => {});
       await page.screenshot({
         path: ${JSON.stringify(path.join(dir, `${name}.png`))},
         scale: "css",
@@ -496,32 +539,43 @@ try {
   await seed({ models: MODELS });
   await shoot("home-downloads");
 
-  await evalInApp(`
+  // Wait for the panel to BE open, not for 250ms to pass. The click lands
+  // right after the previous frame's resize, and one that arrives
+  // mid-relayout hits where the head used to be - leaving the panel shut
+  // and the frame shot collapsed, which reads downstream as four tool-well
+  // masks with nothing under them and 17303 differing px.
+  //
+  // Reported, not thrown. `compare.mjs` is spawned AFTER this file's
+  // try/finally, so a rejection here unwinds straight past it: no contact
+  // sheet, no per-frame numbers, not even the frames already captured, and
+  // retry.mjs does not re-run an exit 1. A missed click has to fail as a
+  // named check that still lets the run finish and say so.
+  const dlOpen = await evalInApp(`
     await page.click(".dl-summary-head");
-    // Wait for the panel to BE open, not for 250ms to pass. The click
-    // lands right after the previous frame's resize, and one that arrives
-    // mid-relayout hits where the head used to be - leaving the panel shut
-    // and the frame shot collapsed, which reads downstream as four
-    // tool-well masks with nothing under them and 17303 differing px. A
-    // missed click is now a legible failure here rather than a wrong
-    // picture measured later.
-    await page.waitForSelector(".dl-summary.open .srow", { timeout: 5000 });
+    const opened = await page
+      .waitForSelector(".dl-summary.open .srow", { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!opened) return false;
     // ...and then for its height to stop moving: the rows arrive with a
     // React re-render, so "open" precedes "finished growing".
-    await page.waitForFunction(
-      () => {
-        const panel = document.querySelector(".dl-summary");
-        if (!panel) return false;
-        const height = Math.round(panel.getBoundingClientRect().height);
-        const settled = window.__dlHeight === height;
-        window.__dlHeight = height;
-        return settled;
-      },
-      null,
-      { timeout: 5000, polling: 100 },
-    );
-    return null;
+    return page
+      .waitForFunction(
+        () => {
+          const panel = document.querySelector(".dl-summary");
+          if (!panel) return false;
+          const height = Math.round(panel.getBoundingClientRect().height);
+          const settled = window.__dlHeight === height;
+          window.__dlHeight = height;
+          return settled;
+        },
+        null,
+        { timeout: 5000, polling: 100 },
+      )
+      .then(() => true)
+      .catch(() => false);
   `);
+  check("the downloads panel opens and settles before it is shot", dlOpen === true);
   await shoot("home-downloads-open");
 
   await evalInApp(`

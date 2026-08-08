@@ -394,7 +394,14 @@ body { line-height: normal !important; }
    in the composer row, and --control-h stops deciding the height. The
    mocks that state a line box here say 18. */
 .primary { line-height: 1 !important; }
-.ghost { min-height: 32px !important; font-size: 13px !important; padding: 8px 12px !important; }
+/* ...and .btn-ghost's, for the same reason and in the same place. 13px on
+   an 18px anchor inside 8/12 padding and a border is 36, not the 32px floor
+   the line below states, and a mock that declares no line box at all - the
+   wizard's declares none - leaves its ghosts at whatever the UA's normal
+   makes of 13px Inter, which measures 34. It was stated only for the about
+   set, where it was found; the wizard draws Back, Skip setup and Open full
+   library the same way and was carrying 2px on each. */
+.ghost { min-height: 32px !important; font-size: 13px !important; padding: 8px 12px !important; line-height: 18px !important; }
 .link { font-size: 14px !important; }
 /* the app's one eyebrow letter-spacing */
 .steps, .srow .stage { letter-spacing: .1em !important; }
@@ -482,16 +489,17 @@ const SNAP_HOME = `
 .shelfhead { margin: 32px 0 12px !important; }
 /* a seg-toggle's cells sit inside its border, so 30 + 2 is the app's 32 */
 .seg span, .sortwrap .chip { min-height: 30px !important; align-items: center !important; }
-/* Generate carries the app's min-width so the row's right edge matches */
+/* Generate carries the app's min-width so the row's right edge matches.
+   Its HEIGHT needs nothing here: the mock writes the CTA's icon as a "✦"
+   character, which falls back to a font whose metrics made the line box
+   taller than the button - 34px measured - and a fallback glyph was
+   therefore deciding the height of the CTA, the prompt box's control row
+   and every row below it. The cure is SNAP_COMMON's .primary line box,
+   which takes the font's metrics out of the line entirely; with it stated,
+   the mock's own min-height of 32 decides, and pinning an explicit height
+   on top of it measured identically. State the line box, don't pin the
+   box. */
 .primary { min-width: 128px !important; justify-content: center !important; }
-/* ...and its HEIGHT, which nothing else was pinning. The mock writes the
-   CTA's icon as a "✦" character, and that glyph falls back to a font whose
-   line box is 35px - taller than the button, so it won over the mock's own
-   min-height of 32px. A fallback glyph was therefore deciding the height of
-   the CTA, and with it the prompt box's control row, and with that every
-   row below the prompt: the whole main column sat 3px high. --control-h is
-   32 and the mock already says 32; this stops a font from disagreeing. */
-.primary { height: 32px !important; }
 .hero .row { padding: 12px !important; }
 /* the shipped page gutter (main.content) is 32px, not the mock's 24 */
 .page { padding: 32px 32px 40px !important; }
@@ -580,10 +588,8 @@ h1 { font-size: 14px !important; font-weight: 650 !important; }
 .chips { margin-top: 0 !important; }
 .vrow .name { font-size: 14px !important; }
 .vrow .ver, .ok, .kv dd, .whatsnew a, .privacy p { font-size: 12px !important; }
-/* The app's .btn-ghost is 13px on an 18px rhythm anchor inside 8/12 padding
-   and a border - 36px, not the 32px floor SNAP_COMMON states. Left at 32
-   the whole Support card, and everything under it, sat 4px high. */
-.ghost { min-height: 32px !important; line-height: 18px !important; }
+/* (.ghost's 18px line box is SNAP_COMMON's now - every set needs it, and
+   the wizard's was the set still going without.) */
 /* the app's .kv, which About shares with the pairing review: a 140px key
    column on --space-2/--space-3 gaps, keys at --text-s over mono values at
    --text-xs */
