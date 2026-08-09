@@ -219,9 +219,15 @@ export function SceneCard({
           </span>
         )}
         {clip.pinned && (
-          <span className="pin-badge" title={t("scene.pinnedTitle")}>
-            <Pin size={11} strokeWidth={1.8} />
-          </span>
+          /* The wrapper takes the badge's place in the corner of the thumb:
+             an absolutely-positioned child inside a static wrapper still
+             draws in the right spot, but the bubble is placed off the
+             WRAPPER's box, which would be back in the flow. */
+          <Tip label={t("scene.pinnedTitle")} className="pin-badge-slot">
+            <span className="pin-badge">
+              <Pin size={11} strokeWidth={1.8} />
+            </span>
+          </Tip>
         )}
         {!rendering && Number.isFinite(duration) && (
           <span className="dur-badge">{t("scene.durValue", { d: displaySeconds(duration) })}</span>
@@ -385,45 +391,61 @@ export function SceneCard({
             }}
           />
         ) : (
-          <div
-            className={`narration${canEditWords ? " editable" : ""}`}
-            title={canEditWords ? t("scene.narrationEditTitle") : undefined}
-            onClick={
-              canEditWords
-                ? (event) => {
-                    event.stopPropagation();
-                    // a narration click still selects the scene, exactly as
-                    // it did when the click bubbled to the card root
-                    select(primary.node_id);
-                    setWordsDraft(narrationText);
-                    editorLiveRef.current = true;
-                    editorOpenedAtRef.current = Date.now();
-                    setEditingWords(true);
-                  }
-                : undefined
-            }
-          >
-            {rendering
-              ? `${t("scene.rendering")}${clip.progress > 0 ? t("scene.renderingPct", { pct: Math.round(clip.progress * 100) }) : t("scene.ellipsis")}${timeLeft ? t("scene.renderingTime", { timeLeft }) : ""}`
-              : failed
-                ? t("scene.notRendered")
-                : narrationText || t("scene.ellipsis")}
-          </div>
+          (() => {
+            const words = (
+              <div
+                className={`narration${canEditWords ? " editable" : ""}`}
+                onClick={
+                  canEditWords
+                    ? (event) => {
+                        event.stopPropagation();
+                        // a narration click still selects the scene, exactly as
+                        // it did when the click bubbled to the card root
+                        select(primary.node_id);
+                        setWordsDraft(narrationText);
+                        editorLiveRef.current = true;
+                        editorOpenedAtRef.current = Date.now();
+                        setEditingWords(true);
+                      }
+                    : undefined
+                }
+              >
+                {rendering
+                  ? `${t("scene.rendering")}${clip.progress > 0 ? t("scene.renderingPct", { pct: Math.round(clip.progress * 100) }) : t("scene.ellipsis")}${timeLeft ? t("scene.renderingTime", { timeLeft }) : ""}`
+                  : failed
+                    ? t("scene.notRendered")
+                    : narrationText || t("scene.ellipsis")}
+              </div>
+            );
+            // Only the editable state says anything, so only it is wrapped —
+            // a bubble on a read-only line would fire over every card in the
+            // storyboard on the way to anything else. The wrapper has to be a
+            // block: the line inside it is a two-line `-webkit-box` clamp,
+            // and an inline-flex parent takes its width away.
+            return canEditWords ? (
+              <Tip label={t("scene.narrationEditTitle")} className="narration-slot">
+                {words}
+              </Tip>
+            ) : (
+              words
+            );
+          })()
         )}
       </div>
       {teachDraft && (
         <div className="draft-teach" role="note">
           <span>{t("scene.draftTeach")}</span>
-          <button
-            aria-label={t("common.gotIt")}
-            title={t("common.gotIt")}
-            onClick={(event) => {
-              event.stopPropagation();
-              onTeachDismiss?.();
-            }}
-          >
-            ✕
-          </button>
+          <Tip label={t("common.gotIt")}>
+            <button
+              aria-label={t("common.gotIt")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTeachDismiss?.();
+              }}
+            >
+              ✕
+            </button>
+          </Tip>
         </div>
       )}
     </div>

@@ -5,6 +5,7 @@ import { plural, t } from "../i18n";
 import { relativeTime } from "../lib/time";
 import { useApp } from "../store";
 import { Modal } from "./Modal";
+import { Tip } from "./Tooltip";
 
 /**
  * The two ends of a template: naming one from a finished project, and
@@ -129,17 +130,18 @@ export function StartFromTemplateDialog({ onClose }: { onClose: () => void }) {
                   </span>
                 </span>
               </label>
-              <button
-                className="icon-btn-sm"
-                aria-label={t("library.deleteTemplateAria", { name: entry.name })}
-                title={t("library.deleteTemplate")}
-                onClick={() => {
-                  deleteTemplate(entry.id);
-                  if (picked === entry.id) setPicked(null);
-                }}
-              >
-                <Trash2 size={13} strokeWidth={1.8} />
-              </button>
+              <Tip label={t("library.deleteTemplate")}>
+                <button
+                  className="icon-btn-sm"
+                  aria-label={t("library.deleteTemplateAria", { name: entry.name })}
+                  onClick={() => {
+                    deleteTemplate(entry.id);
+                    if (picked === entry.id) setPicked(null);
+                  }}
+                >
+                  <Trash2 size={13} strokeWidth={1.8} />
+                </button>
+              </Tip>
             </div>
           ))}
         </div>

@@ -564,9 +564,12 @@ export function Home() {
           <div className="row">
             {activeTool.kind === "voiceover" && (
               <>
+                {/* No tooltip: it repeated the field's own placeholder, so it
+                    said nothing the empty field had not already said and
+                    nothing at all once the field was filled. The ⓘ beside it
+                    carries the explanation. */}
                 <input
                   placeholder={defaults.voice.trim() || t("home.voicePlaceholder")}
-                  title={defaults.voice.trim() || t("home.voicePlaceholder")}
                   value={voice}
                   onChange={(event) => setHomeDraft({ voice: event.target.value })}
                   aria-label={t("home.voiceAria")}

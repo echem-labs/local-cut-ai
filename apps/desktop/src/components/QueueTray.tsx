@@ -116,33 +116,35 @@ export function QueueTray() {
       )}
       {hasJobs && (downloads.length > 0 || paused.length > 0) && <span className="divider" />}
       {downloads.length > 0 && (
-        <button
-          className="tray-downloads"
-          onClick={() => openSettings("models")}
-          title={t("queue.downloadsTitle")}
-        >
-          <Download size={12} strokeWidth={2} />
-          {plural("queue.downloads", downloads.length, {
-            pct,
-            size: formatSize(Math.max(0, total - done)),
-          })}
-        </button>
+        <Tip label={t("queue.downloadsTitle")}>
+          <button className="tray-downloads" onClick={() => openSettings("models")}>
+            <Download size={12} strokeWidth={2} />
+            {plural("queue.downloads", downloads.length, {
+              pct,
+              size: formatSize(Math.max(0, total - done)),
+            })}
+          </button>
+        </Tip>
       )}
       {paused.length > 0 && (
-        <button
-          className="tray-downloads"
-          onClick={() => {
-            for (const row of paused) void startDownload(row.id);
-          }}
-          title={t("queue.pausedTitle")}
-        >
-          <Pause size={12} strokeWidth={2} />
-          {plural("queue.paused", paused.length, {
-            size: formatSize(
-              paused.reduce((sum, row) => sum + Math.max(0, row.size_bytes - row.partial_bytes), 0),
-            ),
-          })}
-        </button>
+        <Tip label={t("queue.pausedTitle")}>
+          <button
+            className="tray-downloads"
+            onClick={() => {
+              for (const row of paused) void startDownload(row.id);
+            }}
+          >
+            <Pause size={12} strokeWidth={2} />
+            {plural("queue.paused", paused.length, {
+              size: formatSize(
+                paused.reduce(
+                  (sum, row) => sum + Math.max(0, row.size_bytes - row.partial_bytes),
+                  0,
+                ),
+              ),
+            })}
+          </button>
+        </Tip>
       )}
     </div>
   );

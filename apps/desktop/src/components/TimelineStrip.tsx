@@ -8,6 +8,7 @@ import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
 import { AudioLanes } from "./AudioLanes";
 import { PanelHelp } from "./Help";
+import { Tip } from "./Tooltip";
 
 // Stable transition ids only — engine wire contract. Display label/hint
 // live in timeline.json and resolve when the popover renders.
@@ -189,31 +190,43 @@ export function TimelineStrip() {
     <div className="timeline-dock" ref={rootRef} aria-label={t("workspace.panels.timeline")}>
       <div className="tl-bar">
         <div className="tl-transport">
-          <button aria-label={t("timeline.goToStart")} title={t("timeline.goToStart")} onClick={() => seekGlobal(0)}>
-            <ChevronFirst size={14} strokeWidth={2} />
-          </button>
-          <button aria-label={t("timeline.prevScene")} onClick={() => step(-1)}>
-            <SkipBack size={13} strokeWidth={2} />
-          </button>
-          <button
-            className="tl-play"
-            aria-label={playing ? t("timeline.pause") : t("timeline.play")}
-            title={playing ? t("timeline.pauseTitle") : t("timeline.playTitle")}
-            onClick={toggle}
+          <Tip label={t("timeline.goToStart")}>
+            <button aria-label={t("timeline.goToStart")} onClick={() => seekGlobal(0)}>
+              <ChevronFirst size={14} strokeWidth={2} />
+            </button>
+          </Tip>
+          <Tip label={t("timeline.prevScene")}>
+            <button aria-label={t("timeline.prevScene")} onClick={() => step(-1)}>
+              <SkipBack size={13} strokeWidth={2} />
+            </button>
+          </Tip>
+          <Tip
+            label={playing ? t("timeline.pause") : t("timeline.play")}
+            hint={playing ? t("timeline.pauseTitle") : t("timeline.playTitle")}
           >
-            {playing ? <Pause size={15} strokeWidth={2} /> : <Play size={15} strokeWidth={2} />}
-          </button>
-          <button aria-label={t("timeline.nextScene")} onClick={() => step(1)}>
-            <SkipForward size={13} strokeWidth={2} />
-          </button>
-          <button
-            aria-label={t("timeline.goToEnd")}
-            title={t("timeline.goToEnd")}
-            onClick={() => seekGlobal(totalDuration)}
-          >
-            <ChevronLast size={14} strokeWidth={2} />
-          </button>
+            <button
+              className="tl-play"
+              aria-label={playing ? t("timeline.pause") : t("timeline.play")}
+              onClick={toggle}
+            >
+              {playing ? <Pause size={15} strokeWidth={2} /> : <Play size={15} strokeWidth={2} />}
+            </button>
+          </Tip>
+          <Tip label={t("timeline.nextScene")}>
+            <button aria-label={t("timeline.nextScene")} onClick={() => step(1)}>
+              <SkipForward size={13} strokeWidth={2} />
+            </button>
+          </Tip>
+          <Tip label={t("timeline.goToEnd")}>
+            <button aria-label={t("timeline.goToEnd")} onClick={() => seekGlobal(totalDuration)}>
+              <ChevronLast size={14} strokeWidth={2} />
+            </button>
+          </Tip>
           <span className="tl-time">
+            {/* Stays on the browser tooltip. `Tip` shows on `:focus-visible`,
+                which Chromium matches for a TEXT input however it was
+                focused — so a bubble would park over the timeline for as long
+                as a timecode is being typed into the field it describes. */}
             <input
               value={timeDraft ?? formatTime(elapsed)}
               aria-label={t("timeline.timeAria")}
@@ -308,36 +321,40 @@ export function TimelineStrip() {
               <Fragment key={scene.scene_id}>
                 {boundary && (
                   <span className="tl-joint">
-                    <button
-                      className={`tl-diamond${boundaryKind !== "cut" ? " on" : ""}`}
-                      title={t("timeline.diamondTitle", {
+                    <Tip
+                      label={t("timeline.diamondAria", { n: sceneNo, kind: kindLabel })}
+                      hint={t("timeline.diamondTitle", {
                         a: boundary.replace(/^s/, ""),
                         b: sceneNo,
                         kind: kindLabel,
                       })}
-                      aria-label={t("timeline.diamondAria", { n: sceneNo, kind: kindLabel })}
-                      onClick={(event) => {
-                        if (openTransition?.boundary === boundary) {
-                          setOpenTransition(null);
-                          return;
-                        }
-                        // Fixed-position above the diamond — the timeline
-                        // panel's overflow can never cut it off.
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        const left = Math.max(
-                          8,
-                          Math.min(
-                            rect.left + rect.width / 2 - 90,
-                            window.innerWidth - 188,
-                          ),
-                        );
-                        setOpenTransition({
-                          boundary,
-                          left,
-                          bottom: window.innerHeight - rect.top + 8,
-                        });
-                      }}
-                    />
+                    >
+                      <button
+                        className={`tl-diamond${boundaryKind !== "cut" ? " on" : ""}`}
+                        aria-label={t("timeline.diamondAria", { n: sceneNo, kind: kindLabel })}
+                        onClick={(event) => {
+                          if (openTransition?.boundary === boundary) {
+                            setOpenTransition(null);
+                            return;
+                          }
+                          // Fixed-position above the diamond — the timeline
+                          // panel's overflow can never cut it off.
+                          const rect = event.currentTarget.getBoundingClientRect();
+                          const left = Math.max(
+                            8,
+                            Math.min(
+                              rect.left + rect.width / 2 - 90,
+                              window.innerWidth - 188,
+                            ),
+                          );
+                          setOpenTransition({
+                            boundary,
+                            left,
+                            bottom: window.innerHeight - rect.top + 8,
+                          });
+                        }}
+                      />
+                    </Tip>
                     {openTransition?.boundary === boundary && (
                       <div
                         className="transition-pop"
