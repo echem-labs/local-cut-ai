@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { t } from "../i18n";
+import { Tip } from "./Tooltip";
 
 /** Three widths, named. Every dialog in the app is one of these: a
  * confirmation's column, a form's, or a list's. Four ad-hoc `max-width`
@@ -152,9 +153,15 @@ export function Modal({
               it. What it is NOT is where focus LANDS — that goes to the
               body's first field below, or the first Enter would dismiss
               the dialog instead of submitting it. */}
-          <button className="modal-close" aria-label={t("common.close")} onClick={() => close.current()}>
-            <X size={15} strokeWidth={2} aria-hidden="true" />
-          </button>
+          <Tip label={t("common.close")} shortcut={t("common.escapeKey")}>
+            <button
+              className="modal-close"
+              aria-label={t("common.close")}
+              onClick={() => close.current()}
+            >
+              <X size={15} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </Tip>
         </div>
         <div className="modal-body" ref={bodyRef}>
           {children}
