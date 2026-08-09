@@ -16,6 +16,7 @@ import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
+import { DropTarget } from "./components/DropTarget";
 import { EngineCrashBanner } from "./components/EngineCrashBanner";
 import { useDoneNotice } from "./lib/useDoneNotice";
 import { useShellProgress } from "./lib/useShellProgress";
@@ -236,6 +237,9 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Window-level: a file dropped anywhere, including on chrome that is
+          not a drop target, would otherwise navigate the window to it. */}
+      <DropTarget />
       {/* Frameless window: this slim bar is the drag region; the native
           min/max/close buttons overlay its right edge (same background). */}
       <header className="titlebar">
