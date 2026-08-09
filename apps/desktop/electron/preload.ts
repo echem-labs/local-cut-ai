@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld("localcut", {
     ipcRenderer.invoke("engine:pair", code, options ?? {}),
   unpairEngine: () => ipcRenderer.invoke("engine:unpair"),
   restartEngine: () => ipcRenderer.invoke("engine:restart"),
+  // The renderer supplies the words: every user-facing string in this app
+  // comes from its i18n catalog, and main having its own copy is how the
+  // two come to disagree.
+  setShellProgress: (progress: { fraction: number; title: string }) =>
+    ipcRenderer.invoke("window:set-progress", progress),
   /**
    * The only channel that pushes rather than answers.
    *

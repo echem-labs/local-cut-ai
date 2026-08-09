@@ -1,3 +1,4 @@
 {
-  "appName": "LocalCut AI"
+  "appName": "LocalCut AI",
+  "windowRendering": "Rendering {done}/{total} — {project}"
 }

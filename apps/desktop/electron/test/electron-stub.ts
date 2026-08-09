@@ -176,6 +176,18 @@ export class BrowserWindow {
 
   /** Everything main pushed at this window's renderer. */
   readonly sent: { channel: string; args: unknown[] }[] = [];
+  /** Taskbar/dock progress, in the order it was set. -1 means "no bar". */
+  readonly progressBars: number[] = [];
+  /** Window titles, in the order they were set. */
+  readonly titles: string[] = [];
+
+  setProgressBar(fraction: number): void {
+    this.progressBars.push(fraction);
+  }
+
+  setTitle(title: string): void {
+    this.titles.push(title);
+  }
 
   readonly webContents = {
     on: (event: string, listener: (e: { preventDefault(): void }, url: string) => void) => {
