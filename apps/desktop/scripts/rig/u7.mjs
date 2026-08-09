@@ -25,18 +25,25 @@ const ENGINE_PORT = Number(process.env.LOCALCUT_ENGINE_PORT || 7830);
 function listenersOn(port) {
   try {
     if (process.platform === "win32") {
-      const out = execFileSync("netstat", ["-ano", "-p", "TCP"], { encoding: "utf8" });
+      const out = execFileSync("netstat", ["-ano", "-p", "TCP"], {
+        encoding: "utf8",
+      });
       return [
         ...new Set(
           out
             .split("\n")
-            .filter((line) => line.includes(`:${port} `) && line.includes("LISTENING"))
+            .filter(
+              (line) =>
+                line.includes(`:${port} `) && line.includes("LISTENING"),
+            )
             .map((line) => line.trim().split(/\s+/).at(-1))
             .filter((pid) => pid && pid !== "0"),
         ),
       ];
     }
-    const out = execFileSync("lsof", ["-ti", `tcp:${port}`], { encoding: "utf8" });
+    const out = execFileSync("lsof", ["-ti", `tcp:${port}`], {
+      encoding: "utf8",
+    });
     return out.split("\n").filter(Boolean);
   } catch {
     return [];
@@ -49,7 +56,9 @@ function killEngine(port) {
   for (const pid of pids) {
     try {
       if (process.platform === "win32") {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          stdio: "ignore",
+        });
       } else {
         process.kill(Number(pid), "SIGKILL");
       }
@@ -82,20 +91,30 @@ const dispatchDrop = (name, files) => `
 // Gated at preload time, so it has to be in the environment at launch.
 const rig = await startRig({ LOCALCUT_SEED_HOOK: "1" });
 try {
-  await evalInApp("await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;");
+  await evalInApp(
+    "await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;",
+  );
 
   /* ---------------------------------------------------------- drop -- */
 
-  await evalInApp(dispatchDrop("dragenter", [{ name: "shot.png", type: "image/png" }]));
+  await evalInApp(
+    dispatchDrop("dragenter", [{ name: "shot.png", type: "image/png" }]),
+  );
   const overlay = await evalInApp(`
     return page.evaluate(() => {
       const el = document.querySelector(".drop-overlay");
       return el ? el.textContent.trim() : null;
     });
   `);
-  check("a dragged image raises the drop overlay", overlay !== null, { overlay });
+  check(
+    "a dragged image raises the drop overlay",
+    overlay !== null,
+    JSON.stringify({ overlay }),
+  );
 
-  await evalInApp(dispatchDrop("dragleave", [{ name: "shot.png", type: "image/png" }]));
+  await evalInApp(
+    dispatchDrop("dragleave", [{ name: "shot.png", type: "image/png" }]),
+  );
   const cleared = await evalInApp(
     `return page.evaluate(() => document.querySelector(".drop-overlay") === null);`,
   );
@@ -103,7 +122,9 @@ try {
 
   // A voice sample must not be uploadable by dropping it: the dialog is the
   // consent, and `graph/patch.py` refuses a voice_ref without one.
-  await evalInApp(dispatchDrop("drop", [{ name: "me.wav", type: "audio/wav" }]));
+  await evalInApp(
+    dispatchDrop("drop", [{ name: "me.wav", type: "audio/wav" }]),
+  );
   const consent = await evalInApp(`
     return page.evaluate(() => {
       const dialog = document.querySelector('[role="dialog"]');
@@ -114,8 +135,16 @@ try {
       return { open: true, confirmDisabled: confirm ? confirm.disabled : null };
     });
   `);
-  check("a dropped audio file asks for consent first", consent?.open === true, { consent });
-  check("and cannot be confirmed unticked", consent?.confirmDisabled === true, { consent });
+  check(
+    "a dropped audio file asks for consent first",
+    consent?.open === true,
+    JSON.stringify({ consent }),
+  );
+  check(
+    "and cannot be confirmed unticked",
+    consent?.confirmDisabled === true,
+    JSON.stringify({ consent }),
+  );
 
   await evalInApp(`
     await page.evaluate(() => {
@@ -126,6 +155,46 @@ try {
     await page.waitForTimeout(150);
     return null;
   `);
+
+  // What the drop SAYS afterwards has to stay out of the flow. `.app` is a
+  // flex row whose children are the rail and the content, and this surface
+  // is mounted alongside them — so a static banner became a third column
+  // the full height of the window and shoved the whole app sideways. jsdom
+  // cannot see this: the unit suite renders the component with no `.app`
+  // around it and therefore no layout to disturb.
+  const railBefore = await evalInApp(
+    `return page.evaluate(() => Math.round(document.querySelector(".rail").getBoundingClientRect().x));`,
+  );
+  await evalInApp(
+    dispatchDrop("drop", [{ name: "notes.pdf", type: "application/pdf" }]),
+  );
+  const afterNotice = await evalInApp(`
+    return page.evaluate(() => {
+      const notice = document.querySelector(".drop-notice");
+      return {
+        shown: notice !== null,
+        position: notice ? getComputedStyle(notice).position : null,
+        railX: Math.round(document.querySelector(".rail").getBoundingClientRect().x),
+        docScrollWidth: document.documentElement.scrollWidth,
+        innerWidth: window.innerWidth,
+      };
+    });
+  `);
+  check(
+    "a refused file says so",
+    afterNotice?.shown === true,
+    JSON.stringify({ afterNotice }),
+  );
+  check(
+    "and says it without moving the app",
+    afterNotice?.railX === railBefore,
+    JSON.stringify({ railBefore, railX: afterNotice?.railX }),
+  );
+  check(
+    "nor pushing the document wider than the window",
+    (afterNotice?.docScrollWidth ?? 0) <= (afterNotice?.innerWidth ?? 0),
+    JSON.stringify({ afterNotice }),
+  );
 
   /* ------------------------------------------------ shell progress -- */
 
@@ -155,7 +224,7 @@ try {
   check(
     "a running render reaches the window title",
     /Rendering\s+1\/2/.test(rendering?.title ?? ""),
-    { title: rendering?.title },
+    JSON.stringify({ title: rendering?.title }),
   );
 
   // And an idle app gets its name back rather than keeping a stale claim.
@@ -169,12 +238,20 @@ try {
   const idle = await evalInApp(`
     return app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getTitle());
   `);
-  check("and an idle app goes back to its own name", idle === "LocalCut AI", { idle });
+  check(
+    "and an idle app goes back to its own name",
+    idle === "LocalCut AI",
+    JSON.stringify({ idle }),
+  );
 
   /* ------------------------------------------------- engine crash -- */
 
   const killed = killEngine(ENGINE_PORT);
-  check(`the engine was found and killed on ${ENGINE_PORT}`, killed > 0, { killed });
+  check(
+    `the engine was found and killed on ${ENGINE_PORT}`,
+    killed > 0,
+    JSON.stringify({ killed }),
+  );
 
   const banner = await evalInApp(`
     const found = await page
@@ -191,12 +268,20 @@ try {
       };
     }, found);
   `);
-  check("a killed engine raises the crash banner", banner?.found === true, { banner });
-  check("announced as an alert, not quietly", banner?.role === "alert", { banner });
+  check(
+    "a killed engine raises the crash banner",
+    banner?.found === true,
+    JSON.stringify({ banner }),
+  );
+  check(
+    "announced as an alert, not quietly",
+    banner?.role === "alert",
+    JSON.stringify({ banner }),
+  );
   check(
     "carrying both a way back and a report",
     (banner?.buttons ?? []).length >= 2,
-    { buttons: banner?.buttons },
+    JSON.stringify({ buttons: banner?.buttons }),
   );
 
   // And the way back actually works — the whole claim of "crash-safe".
@@ -210,7 +295,10 @@ try {
       .then(() => true)
       .catch(() => false);
   `);
-  check("and restarting from the banner brings the engine back", recovered === true);
+  check(
+    "and restarting from the banner brings the engine back",
+    recovered === true,
+  );
 } finally {
   await stopRig(rig);
 }
