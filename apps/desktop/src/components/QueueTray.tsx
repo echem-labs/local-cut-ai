@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { nodeLabel } from "../help/terms";
 import { plural, t } from "../i18n";
 import { useApp } from "../store";
+import { Tip } from "./Tooltip";
 import { formatSize } from "./ModelLibrary";
 
 // Safety net when the WS is down or a terminal event was missed; WS
@@ -96,14 +97,15 @@ export function QueueTray() {
               <span>
                 <b>{nodeLabel(active.spec.node_id)}</b> · {Math.round(active.progress * 100)}%
               </span>
-              <button
-                className="tray-cancel"
-                aria-label={t("queue.stopRender")}
-                title={t("queue.stopRender")}
-                onClick={() => void cancelJob(active.id)}
-              >
-                <X size={11} strokeWidth={2} />
-              </button>
+              <Tip label={t("queue.stopRender")}>
+                <button
+                  className="tray-cancel"
+                  aria-label={t("queue.stopRender")}
+                  onClick={() => void cancelJob(active.id)}
+                >
+                  <X size={11} strokeWidth={2} />
+                </button>
+              </Tip>
             </>
           ) : (
             <span>{t("queue.idle")}</span>
