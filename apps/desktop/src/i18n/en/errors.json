@@ -16,7 +16,7 @@
   "engineRestarting": "Starting…",
   "engineRestartFailed": "Could not start the engine: {detail}",
   "engineCopyReport": "Copy report",
-  "engineCopyReportHint": "Versions, this machine, and the engine's last output. Copied to your clipboard - nothing is sent anywhere.",
+  "engineCopyReportHint": "Versions, this machine, and the engine's last output. Copied to your clipboard — nothing is sent anywhere.",
   "engineReportCopied": "Copied",
   "crashReportApp": "app: LocalCut AI {version}",
   "crashReportOs": "machine: {os} {arch}",

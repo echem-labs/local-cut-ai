@@ -17,6 +17,7 @@ import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { EngineCrashBanner } from "./components/EngineCrashBanner";
+import { useShellProgress } from "./lib/useShellProgress";
 import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -148,6 +149,9 @@ export default function App() {
   // banner so the unsubscribe is tied to the app's lifetime, and so a
   // StrictMode double mount cannot leave two listeners behind.
   useEffect(() => window.localcut?.onEngineCrash?.(noteEngineCrash), [noteEngineCrash]);
+
+  // Taskbar bar and window title, for the window nobody is looking at.
+  useShellProgress();
 
   // The tab list scrolls; keep the active tab visible in it (the removed
   // overflow cap used to guarantee this by swapping it into the window).

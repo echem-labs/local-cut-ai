@@ -1230,3 +1230,65 @@ describe("when the engine stops on its own", () => {
     expect(engineMock.instance!.connection).toEqual(before);
   });
 });
+
+describe("the taskbar bar and the window title", () => {
+  it("shows the renderer's own words, and does not invent its own", async () => {
+    // The catalog is the renderer's; a second copy of "Rendering {done}/
+    // {total}" in main is how the two come to disagree. Main places it.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    await electron.invokeIpc("window:set-progress", senderStub(electron), {
+      fraction: 0.44,
+      title: "Rendering 4/9 - A film about bees",
+    });
+
+    expect(window.progressBars.at(-1)).toBe(0.44);
+    expect(window.titles.at(-1)).toBe("Rendering 4/9 - A film about bees");
+  });
+
+  it("takes the bar away rather than drawing an empty one", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    await electron.invokeIpc("window:set-progress", senderStub(electron), {
+      fraction: -1,
+      title: "",
+    });
+
+    // -1 is Electron's own sentinel for "no bar", and the title goes back to
+    // the app's rather than to nothing at all.
+    expect(window.progressBars.at(-1)).toBe(-1);
+    expect(window.titles.at(-1)).toBe("LocalCut AI");
+  });
+
+  it("clamps what it is given instead of painting a bar stuck at the edge", async () => {
+    // NaN is the one that matters: Electron draws it as a bar at 0 rather
+    // than removing it, so a single bad tick would leave the taskbar
+    // claiming a render forever.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    for (const fraction of [4, -9, Number.NaN, "half"]) {
+      await electron.invokeIpc("window:set-progress", senderStub(electron), { fraction, title: "" });
+    }
+
+    // Every negative reads as "clear", not as "clamp up to an empty bar".
+    expect(window.progressBars.slice(-4)).toEqual([1, -1, -1, -1]);
+  });
+
+  it("refuses an untrusted sender", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+    const before = window.titles.length;
+
+    const result = await electron.invokeIpc(
+      "window:set-progress",
+      trusted("https://evil.example/"),
+      { fraction: 1, title: "Rendering 9/9 - anything at all" },
+    );
+
+    expect(result).toEqual({ ok: false, error: "untrusted sender" });
+    expect(window.titles).toHaveLength(before);
+  });
+});

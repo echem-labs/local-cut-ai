@@ -427,6 +427,43 @@ function trustedSender(event: IpcMainInvokeEvent): boolean {
   }
 }
 
+/** The window title with nothing rendering. Mirrors `createWindow`'s. */
+const IDLE_TITLE = "LocalCut AI";
+/** Long enough for any project title, short enough that a hostile string
+ * cannot be used to grow the taskbar tooltip without bound. */
+const TITLE_MAX = 200;
+
+/**
+ * The taskbar bar and the window title, which report to someone who is not
+ * looking at the app.
+ *
+ * The renderer decides *what it says* — every user-facing string in this app
+ * lives in its i18n catalog, and a second copy of "Rendering {done}/{total}"
+ * over here is the drift that guarantees they disagree. Main decides only
+ * which window it lands on.
+ */
+ipcMain.handle("window:set-progress", (event, payload: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { ok: false, error: "no window" };
+  const value = (payload ?? {}) as { fraction?: unknown; title?: unknown };
+  // -1 is Electron's own sentinel for "remove the bar", so negatives pass
+  // through as -1 rather than being clamped up to 0 — clamping them is how
+  // "clear the bar" becomes "draw an empty one", which then never goes away.
+  // Anything that is not a usable number becomes -1 for the same reason: NaN
+  // paints a bar stuck at the left edge rather than no bar at all.
+  const fraction =
+    typeof value.fraction === "number" && Number.isFinite(value.fraction)
+      ? value.fraction < 0
+        ? -1
+        : Math.min(1, value.fraction)
+      : -1;
+  window.setProgressBar(fraction);
+  const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX).trim() : "";
+  window.setTitle(title || IDLE_TITLE);
+  return { ok: true, error: null };
+});
+
 /**
  * Bring the engine back after it stopped without being asked to.
  *
