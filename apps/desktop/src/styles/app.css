@@ -6180,12 +6180,25 @@ button.link:hover {
   font-weight: 600;
 }
 
-/* What happened after the drop, in the flow rather than over it. */
+/* What happened after the drop.
+ *
+ * Fixed, not in the flow. `.app` is a flex ROW, and its children are the
+ * rail and the content — so a static banner rendered alongside them became
+ * a third column 618px wide and the full height of the window, shoving the
+ * whole app sideways on a single unsupported drop. The drop surface is
+ * mounted at app level (the target is the window), so anything it draws has
+ * to be out of flow, exactly like the overlay above it. */
 .drop-notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-5);
+  transform: translateX(-50%);
+  z-index: 1001;
+  max-width: min(560px, calc(100vw - 2 * var(--space-5)));
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
+  box-shadow: var(--shadow-2);
 }
 
 /* The engine crash bar. Same treatment as the error boundary above — it is
