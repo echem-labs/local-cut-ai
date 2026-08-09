@@ -34,7 +34,8 @@
     "rig:parity:session": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-session.mjs",
     "rig:parity:canvas": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-canvas.mjs",
     "rig:parity:u5": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-u5.mjs",
-    "rig:parity:u6": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-u6.mjs"
+    "rig:parity:u6": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-u6.mjs",
+    "rig:u7": "node scripts/rig/u7.mjs"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",
