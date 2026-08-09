@@ -85,6 +85,46 @@ describe("the notification a finished render raises", () => {
     expect(notifyDone).not.toHaveBeenCalled();
   });
 
+  it("stays quiet on a failure even with older successes still in /jobs", async () => {
+    // `allJobs` is the ENGINE-WIDE list: /jobs carries the newest 200 rows
+    // across every project, including previous sessions. Asking "did
+    // anything succeed?" of that list answers yes on any established
+    // machine — so a render that failed would announce a video is ready,
+    // and name whichever project happened to own the newest old success.
+    const older = { ...job("j0", "done", 10), project_id: "p2" };
+    const other = { id: "p2", title: "An older film" } as Project;
+    useApp.setState({
+      projects: [PROJECT, other],
+      allJobs: [older, job("j1", "rendering", 50)],
+    } as never);
+    render(<Probe />);
+
+    await pose({ allJobs: [older, job("j1", "failed", 50)] });
+
+    expect(notifyDone).not.toHaveBeenCalled();
+  });
+
+  it("credits the render that just ran, not an older one in the window", async () => {
+    // Same list, the succeeding case: the batch that drained is what the
+    // notice is about, so the older row must not win `newestJob` by being
+    // the only thing marked done.
+    const older = { ...job("j0", "done", 999), project_id: "p2" };
+    const other = { id: "p2", title: "An older film" } as Project;
+    useApp.setState({
+      projects: [PROJECT, other],
+      allJobs: [older, job("j1", "rendering", 50)],
+    } as never);
+    render(<Probe />);
+
+    await pose({ allJobs: [older, job("j1", "done", 50)] });
+
+    expect(notifyDone).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: t("notify.renderDoneBody", { project: "A film about bees" }),
+      }),
+    );
+  });
+
   it("says nothing when the preference is off", async () => {
     useApp.setState({ allJobs: [job("j1", "rendering")], notifyOnDone: false } as never);
     render(<Probe />);

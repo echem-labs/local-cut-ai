@@ -89,3 +89,35 @@ describe("restarting the engine from the crash banner", () => {
     await expect(useApp.getState().restartEngine()).resolves.toBe(t("errors.engineUnavailable"));
   });
 });
+
+/**
+ * Dropping a voice sample where there is nothing to attach it to.
+ *
+ * `DropTarget` is mounted at app level, so a `.wav` can be dropped on Home
+ * where no project is open. Before the drop surface existed,
+ * `applySessionVoiceClone` was only reachable from a tool session — which
+ * always has a project — so collapsing "no client" and "no project" into one
+ * message cost nothing. Reachable from Home, that message blames the engine
+ * for a state the engine is not in, next to a banner where those same words
+ * mean something real.
+ */
+describe("a voice sample with no project to attach it to", () => {
+  it("says to open one rather than blaming the engine", async () => {
+    useApp.setState({
+      client: { uploadAsset: vi.fn() } as never,
+      currentProject: null,
+    } as never);
+
+    const message = await useApp.getState().applySessionVoiceClone(new File(["x"], "me.wav"));
+
+    expect(message).toBe(t("drop.needsProject"));
+  });
+
+  it("still blames the engine when there is genuinely no client", async () => {
+    useApp.setState({ client: null, currentProject: null } as never);
+
+    const message = await useApp.getState().applySessionVoiceClone(new File(["x"], "me.wav"));
+
+    expect(message).toBe(t("errors.engineUnavailable"));
+  });
+});

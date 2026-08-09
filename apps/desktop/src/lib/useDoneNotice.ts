@@ -22,17 +22,40 @@ import { useApp } from "../store";
 export function useDoneNotice(): void {
   const { allJobs, projects, notifyOnDone } = useApp();
   const wasBusy = useRef(false);
+  /**
+   * Ids of the jobs this run of the queue actually contained.
+   *
+   * `allJobs` is the ENGINE-WIDE list — `/jobs` carries the newest 200 rows
+   * across every project, including previous sessions — so asking it "did
+   * anything succeed?" answers yes on any machine that has ever finished a
+   * render. A failed render would then announce a video was ready and name
+   * whichever project owned the newest old success. Accumulated rather than
+   * snapshotted once, because the engine enqueues the next node as the
+   * previous one leaves `running`.
+   */
+  const batch = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    const busy = allJobs.some((job) => job.status === "queued" || job.status === "rendering");
+    const running = allJobs.filter(
+      (job) => job.status === "queued" || job.status === "rendering",
+    );
+    for (const job of running) batch.current.add(job.id);
+
+    const busy = running.length > 0;
     const finished = wasBusy.current && !busy;
     wasBusy.current = busy;
-    if (!finished || !notifyOnDone) return;
+    if (!finished) return;
 
-    const done = allJobs.filter((job) => job.status === "done");
-    // Nothing succeeded, so there is nothing to celebrate: a batch that
-    // failed or was cancelled is reported where the user can act on it, not
-    // by an OS notification saying a video is ready.
+    // Cleared whatever happens next, including when the preference is off:
+    // a batch left behind would be the pool the NEXT render is judged from.
+    const ran = batch.current;
+    batch.current = new Set();
+    if (!notifyOnDone) return;
+
+    // Nothing in this batch succeeded, so there is nothing to celebrate: a
+    // render that failed or was cancelled is reported where the user can act
+    // on it, not by an OS notification saying a video is ready.
+    const done = allJobs.filter((job) => job.status === "done" && ran.has(job.id));
     if (done.length === 0) return;
 
     // `newestJob`, not `done.at(-1)`: store merges reorder the list, so

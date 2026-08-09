@@ -1219,6 +1219,22 @@ describe("when the engine stops on its own", () => {
     expect(window.sent).toEqual([{ channel: "engine:crashed", args: [crash] }]);
   });
 
+  it("re-arms the stored provider keys against the engine it just started", async () => {
+    // The engine holds BYOK keys in memory only, so a fresh child inherits
+    // none of them. Every other path that (re)establishes a connection —
+    // whenReady, unpair, pair — re-arms after it; without the same follow-up
+    // here, a crash-restart leaves every cloud provider dead for the rest of
+    // the session while Settings still reports the keys as configured.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN, keys: { anthropic: "sk-ant" } });
+    const before = keyPuts().length;
+
+    await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+
+    const puts = keyPuts().slice(before);
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toMatchObject({ anthropic_key: "sk-ant" });
+  });
+
   it("lets a trusted renderer start it again", async () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
     const before = engineMock.instance!.connection;
