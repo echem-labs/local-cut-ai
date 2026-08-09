@@ -7,7 +7,7 @@
  * memory after 2 fallback attempts" and had no move except pressing the same
  * button again, which would fail the same way.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -50,6 +50,27 @@ const seed = (state: Record<string, unknown>) =>
   } as never);
 
 beforeEach(() => seed({}));
+
+/**
+ * The chip whose bubble says `pattern`, and the chip itself rather than its
+ * wrapper.
+ *
+ * These reasons used to be `title` attributes, which `getByTitle` could read
+ * straight out of the markup. They are `Tip` bubbles now — the app's own,
+ * reachable by keyboard — and a bubble only exists while it is shown, so the
+ * chip has to be hovered first. Hovered on the WRAPPER: every chip here is
+ * disabled, and Chromium delivers no pointer events to a disabled control,
+ * which is the whole reason the reason moved off `title` in the first place.
+ */
+const chipExplaining = (pattern: RegExp): HTMLButtonElement => {
+  for (const wrap of document.querySelectorAll(".chip-row .tip-wrap")) {
+    fireEvent.mouseEnter(wrap);
+    const said = document.querySelector(".tip")?.textContent ?? "";
+    fireEvent.mouseLeave(wrap);
+    if (pattern.test(said)) return wrap.querySelector("button") as HTMLButtonElement;
+  }
+  throw new Error(`no chip explains itself with ${pattern}`);
+};
 
 describe("a failure with no advice", () => {
   it("shows the engine's message and nothing else", () => {
@@ -113,8 +134,7 @@ describe("a failure the engine had suggestions for", () => {
     seed({ ...withSuggestions, models: [] });
     render(<FailureCard node={node()} />);
 
-    const chip = screen.getByTitle(/no smaller model for this step is installed/i);
-    expect(chip).toBeDisabled();
+    expect(chipExplaining(/no smaller model for this step is installed/i)).toBeDisabled();
   });
 
   it("stops offering to shrink a node already at the floor", () => {
@@ -122,7 +142,7 @@ describe("a failure the engine had suggestions for", () => {
     render(<FailureCard node={node({ params: { resolution_scale: 0.25 } })} />);
 
     expect(screen.getByRole("button", { name: /render it smaller/i })).toBeDisabled();
-    expect(screen.getByTitle(/already at the smallest/i)).toBeInTheDocument();
+    expect(chipExplaining(/already at the smallest/i)).toBeInTheDocument();
   });
 
   it("does not dress an unrecognised code up as one it knows", async () => {
@@ -140,8 +160,7 @@ describe("a failure the engine had suggestions for", () => {
     render(<FailureCard node={node()} />);
 
     expect(screen.queryByRole("button", { name: /cloud provider/i })).toBeNull();
-    const chip = screen.getByTitle(/does not know how to act/i);
-    expect(chip).toBeDisabled();
+    expect(chipExplaining(/does not know how to act/i)).toBeDisabled();
   });
 
   it("applies the suggestion it was asked to", async () => {

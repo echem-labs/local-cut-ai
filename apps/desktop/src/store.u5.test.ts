@@ -21,6 +21,9 @@ type Subscriber = (event: EngineEvent) => void;
 
 const captured = vi.hoisted(() => ({ subscriber: null as Subscriber | null }));
 const calls = vi.hoisted(() => ({ getProject: 0 }));
+/** Lets a test hold `/system` open so the rig's pose can land while the
+ *  answer is still in flight — which is the order that produced the bug. */
+const systemGate = vi.hoisted(() => ({ hold: null as Promise<void> | null }));
 
 /** The store's `scheduleRefresh` debounce (REFRESH_DEBOUNCE_MS), mirrored
  * because it is not exported. It fires on the LEADING edge and arms a
@@ -49,6 +52,23 @@ vi.mock("./api/client", () => ({
     listJobs = vi.fn().mockResolvedValue([]);
     history = vi.fn().mockResolvedValue({ undo: 0, redo: 0, undo_label: null, redo_label: null });
     artifactUrl = () => "";
+    // The REAL machine's answer, as `establish` fetches it. Its free-disk and
+    // RAM figures are what move between runs on one box.
+    system = vi.fn(async () => {
+      if (systemGate.hold) await systemGate.hold;
+      return {
+        hardware: {
+          os: "linux",
+          arch: "x86_64",
+          ram_gb: 63.9,
+          disk_free_gb: 43.2,
+          gpus: [],
+          tier: "B",
+        },
+        recommendations: [],
+        backend_mode: "local",
+      };
+    });
   },
 }));
 
@@ -233,6 +253,67 @@ describe("events that change the project from outside this window", () => {
 
     expect(useApp.getState().nodeFailures["s1.clip"]?.error).toBe("posed");
     expect(useApp.getState().nodeRetries["s1.clip"]?.attempt).toBe(2);
+    window.__localcutSeed?.({ freeze: false });
+  });
+
+  /**
+   * The fourth branch that did not bail on the freeze, found by a flake.
+   *
+   * `establish` fetches `/system` and writes the answer whenever its
+   * generation still matches. Nothing there consulted the freeze, so a
+   * reconnect landing after the rig posed its hardware replaced the fixture
+   * with the real box's — and two of those figures, free RAM and free disk,
+   * move between runs on one machine.
+   *
+   * That is what the wizard parity set was doing: wiz-2 came out at 72
+   * differing pixels or at 836, and wiz-4 at 288 or 649, on identical code.
+   * Both inside budget, so five runs looked green while two of the frames
+   * were photographing a different machine each time.
+   */
+  it("leaves posed hardware alone while the seed hook holds the app still", async () => {
+    await connected();
+    // Hold `/system` open, then pose while its answer is still in flight.
+    // Seeding BEFORE the fetch is started proves nothing: `connect` reuses an
+    // in-flight establish, so nothing refetches and the fixture survives for
+    // the wrong reason. The order here is the one a rig run produces.
+    let release!: () => void;
+    systemGate.hold = new Promise<void>((resolve) => (release = resolve));
+    window.localcut.getEngineConnection = vi.fn().mockResolvedValue({
+      connection: { url: "http://127.0.0.1:7830", token: "t" },
+      error: null,
+      remote: false,
+      remotePaired: false,
+      keysArmed: true,
+    });
+    // `reconnect`, not `connect`: connect returns early once a client exists
+    // (it is idempotent under StrictMode's double mount), so it re-fetches
+    // nothing and the assertion below would hold without any fix at all.
+    const reconnecting = useApp.getState().reconnect();
+    await Promise.resolve();
+
+    window.__localcutSeed?.({
+      system: {
+        hardware: {
+          os: "linux",
+          arch: "x86_64",
+          ram_gb: 61.7,
+          disk_free_gb: 87.6,
+          gpus: [],
+          tier: "A",
+        },
+        recommendations: [],
+        backend_mode: "local,mock",
+      },
+      freeze: true,
+    } as never);
+
+    release();
+    await reconnecting;
+    await settle();
+    systemGate.hold = null;
+
+    expect(useApp.getState().system?.hardware.disk_free_gb).toBe(87.6);
+    expect(useApp.getState().system?.hardware.ram_gb).toBe(61.7);
     window.__localcutSeed?.({ freeze: false });
   });
 

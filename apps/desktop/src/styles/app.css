@@ -224,7 +224,68 @@ textarea {
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
+  overflow-x: hidden;
+  /* The bar belongs against the rail's edge, and the column it scrolls has
+     to keep its width. Both come from the same trick: the list reaches out
+     through the rail's horizontal padding (negative margin) and puts back
+     just enough of it (padding) to leave the bar exactly the space that
+     padding used to occupy. Left inside the padding instead, the bar sat
+     7px short of the edge with dead space beside it AND took its width out
+     of the glyph column, which is what clipped the rows.
+     Expanded rail: 12px of padding, 6px bar, 6px put back. */
+  margin-right: calc(-1 * var(--space-3));
+  /* 7, not 6, and measured rather than nudged. The scroller is pulled out to
+     the rail's edge so its bar sits against it, then given back the width
+     the bar takes so its rows land where the rest of the rail draws them.
+     The bar measures 5px, not the 6 its own rule asks for, so 6 here left
+     every tab row 176px wide against a 175px destination — one pixel wider
+     than everything above it, and ending one pixel further right.
+
+     This is NOT the +27px every framed rail carries against the reference:
+     that number is identical before and after. It is its own small
+     disagreement, and the walk now asserts the two row kinds share a width
+     so neither can drift again. */
+  padding-right: 7px;
+}
+
+/* 6px, not the app-wide 10px: this is the one scroller inside a 48px strip,
+   and 10px of it is a fifth of the rail. Same thumb, same token colour, same
+   radius — the border shrinks with it, because the shared rule insets a 3px
+   transparent border that would leave a 6px bar with nothing drawn in it. */
+.rail-tabs::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rail-tabs::-webkit-scrollbar-thumb,
+.rail-tabs::-webkit-scrollbar-thumb:hover {
+  border-width: 1px;
+}
+
+/* Compact rail: 7px of padding rather than 12, so 1px goes back. */
+.rail.compact .rail-tabs {
+  margin-right: -7px;
+  padding-right: 1px;
+}
+
+/* `scrollbar-width` used to sit on the rule above, and it is the one
+   property that opts an element OUT of the ::-webkit-scrollbar styling at
+   the top of this file: Chromium draws either the standard scrollbar or the
+   webkit-customised one, never both, and naming `scrollbar-width` picks the
+   standard. So the one list in the app that asked for a thin bar was the
+   one list that got the stock OS bar, beside ten scrollers wearing the
+   app's. Nothing replaces it — the shared rule is already 10px and
+   token-coloured.
+
+   The heading stays put instead of scrolling away with the rows it names.
+   It lives inside the scroller (it is part of the group, and the pinned
+   bottom cluster must not move for it), so with any list long enough to
+   scroll — which is the only time the label earns its place — "OPEN"
+   was the first thing to leave. */
+.rail-tabs .group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-1);
 }
 
 .rail-tab {
@@ -358,6 +419,13 @@ textarea {
 
 /* activity bar: inside a project the rail collapses to 48px icons —
  * VS Code's answer to "where does the navbar go" */
+/* 48, and widening it is the wrong fix for a scrollbar — tried, reverted.
+   The destinations above the open list are centred in the RAIL; the glyphs
+   in the list are centred in the SCROLLER, which is narrower by the bar. Any
+   width that gives the bar its own room therefore splits the rail into two
+   columns that do not line up, and leaves the bar floating short of the
+   edge instead of against it. The horizontal bar this was meant to prevent
+   is prevented on `.rail-tabs` itself, which costs no geometry at all. */
 .rail.compact {
   width: 48px;
   padding: var(--space-3) 7px;
@@ -370,7 +438,22 @@ textarea {
   display: none;
 }
 
-.rail.compact button {
+/* Rail ROWS, not every button the rail contains — the same distinction the
+   icon-column rule near the top of this file draws, and for the same reason:
+   the Help popover renders INSIDE the rail, so "any button in .rail" reaches
+   its menu items too.
+
+   Here it beat the popover's own rule rather than merely joining it. This
+   selector is (0,2,1); `.menu-pop button` is (0,1,1). So a compact rail took
+   away every menu row's 12px of horizontal padding AND the 12px between its
+   icon and its label: the glyphs sat against the popover's border and a hint
+   as long as "what's a scene?" finished hard against the opposite one.
+
+   Only while compact — which is why this survived three rounds of being
+   reported. Every measurement of the popover, by hand and in `walk.mjs`, was
+   taken with the rail expanded, where the rule does not apply and the
+   spacing is correct. The walk now measures both states. */
+.rail.compact button:not(.menu-pop button) {
   justify-content: center;
   padding: var(--space-2) 0;
   gap: 0;
@@ -905,6 +988,21 @@ textarea {
   transition: color var(--motion-fast);
 }
 
+/* The settings-row variant. A chip sits in a row of chips and the row is
+   what reads as pickable; a field stands alone against a label with the
+   width of the pane between them, so "Auto" on its own read as a value
+   someone had typed. The caret says it opens, and the minimum width lines a
+   column of them up with each other. */
+.dropdown-trigger.field {
+  min-width: 148px;
+  justify-content: space-between;
+}
+
+.dropdown-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .dropdown-trigger:hover,
 .dropdown-trigger[aria-expanded="true"] {
   border-color: var(--border-hi);
@@ -947,6 +1045,18 @@ textarea {
   color: var(--text-secondary);
   white-space: nowrap;
   text-align: left;
+}
+
+/* Each option is wrapped in its bubble, and `.tip-wrap` is inline-flex — so
+   without this the option shrinks to its label and the hover highlight is a
+   capsule the width of the text instead of the row you are pointing at. The
+   rail carries the same two lines for the same reason. */
+.dropdown-menu .tip-wrap {
+  display: flex;
+}
+
+.dropdown-menu .tip-wrap > button {
+  width: 100%;
 }
 
 .dropdown-menu button svg {
@@ -1596,6 +1706,18 @@ button.link:hover {
   grid-template-columns: repeat(auto-fill, minmax(250px, 310px));
 }
 
+/* The add card's tooltip wrapper is the grid item now, so the card inside
+   it has to fill the track the wrapper was given — otherwise the dashed
+   "+ Add scene" box shrinks to its two words and stops matching the cards
+   beside it. */
+.scene-grid > .tip-wrap {
+  display: flex;
+}
+
+.scene-grid > .tip-wrap > .scene-card {
+  width: 100%;
+}
+
 .scene-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
@@ -1786,10 +1908,15 @@ button.link:hover {
   color: var(--text-secondary);
 }
 
-.scene-card .pin-badge {
+/* The corner slot the pin sits in. Held by the tooltip wrapper so the
+   bubble is measured from where the badge is actually drawn. */
+.scene-card .pin-badge-slot {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
+}
+
+.scene-card .pin-badge {
   display: grid;
   place-items: center;
   padding: 3px;
@@ -1837,6 +1964,13 @@ button.link:hover {
 
 .scene-card .body {
   padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+/* The narration line is a two-line `-webkit-box` clamp, which needs the full
+   column width. Its tooltip wrapper is inline-flex by default and would hand
+   it the width of the text instead. */
+.scene-card .narration-slot {
+  display: block;
 }
 
 .scene-card .narration {
@@ -2439,6 +2573,19 @@ button.link:hover {
   flex-shrink: 0;
 }
 
+/* `.tip-wrap` is inline-flex, so a tooltip around a full-width menu row
+   shrinks it to its text and the hover target stops covering the row. The
+   board menu wraps its audio and caption rows for the same reason the
+   dropdown wraps its options, so it needs the same two lines (see
+   `.dropdown-menu .tip-wrap` above). */
+.menu-pop .tip-wrap {
+  display: flex;
+}
+
+.menu-pop .tip-wrap > button {
+  width: 100%;
+}
+
 .menu-pop .menu-label {
   font-size: var(--text-2xs);
   font-weight: 600;
@@ -2448,18 +2595,30 @@ button.link:hover {
   padding: var(--space-2) var(--space-2) var(--space-1);
 }
 
+/* A menu row is icon · label · trailing hint, and all three were 8px from
+   whatever was beside them — including the popover's own border, so the
+   icons sat against the left edge and a hint as long as "what's a scene?"
+   finished hard against the right one. 12px inside the row, and the hint
+   keeps its own 12px so it can never close up against the label either. */
 .menu-pop button,
 .menu-pop a {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
   min-height: 28px;
   border-radius: var(--radius-xs);
   font-size: var(--text-xs);
   color: var(--text-secondary);
   text-align: left;
   text-decoration: none;
+  /* A menu row is one line. Every `min-width` in this file is a floor on how
+     narrow a menu may be, never a promise its rows fit — the library's sort
+     menu asks for 172px and its active row is a label AND a direction, so
+     "Last modified · newest first" broke across two lines and the row grew to
+     twice its height. These menus have no max-width, so the honest answer is
+     to let the box follow its content. */
+  white-space: nowrap;
 }
 
 .menu-pop button:hover,
@@ -2492,6 +2651,7 @@ button.link:hover {
 
 .menu-pop small {
   margin-left: auto;
+  padding-left: var(--space-3);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
@@ -2531,6 +2691,13 @@ button.link:hover {
 
 .composer-controls .spacer {
   flex: 1;
+}
+
+/* Both the history and send buttons are fixed-size circles that must not be
+   squeezed, and a Tip wrapper is what this row lays out now — so the rule
+   belongs on the wrapper rather than on the button inside it. */
+.composer-controls > .tip-wrap {
+  flex-shrink: 0;
 }
 
 /* In the bottom-docked composer the readiness menu unfolds upward. */
@@ -3015,7 +3182,12 @@ button.link:hover {
     color var(--motion-fast);
 }
 
-.seg-toggle button + button {
+/* The divider sits between SEGMENTS, and a segment is a button or a tooltip
+   wrapper around one. Written as `button + button` it stopped matching the
+   day Home's mode toggle was wrapped in <Tip> — the children became spans,
+   and Auto|Review has been drawn with no rule between them since. Written
+   against the children, both spellings work and neither can drift again. */
+.seg-toggle > * + * {
   border-left: 1px solid var(--border);
 }
 
@@ -3048,6 +3220,12 @@ button.link:hover {
   width: 14px;
   height: 14px;
   border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* The ring's tooltip wrapper is what the parent row now lays out, so the
+   no-shrink rule has to travel with it. */
+.tip-wrap.ring-tip {
   flex-shrink: 0;
 }
 
@@ -6394,10 +6572,17 @@ button.link:hover {
 /* Quiet until the node is wanted: a delete on every box at once would read
    as the canvas's main offer, which it is not. Focus counts as hover so the
    control is reachable by keyboard alone. */
-.canvas-node-del {
+/* The corner the delete button sits in, held by its tooltip wrapper so the
+   bubble is measured from where the button is drawn rather than from the
+   wrapper's place in the flow. The opacity rules below still address the
+   button itself, so hover and focus reveal it exactly as before. */
+.canvas-node-del-slot {
   position: absolute;
   top: 4px;
   right: 4px;
+}
+
+.canvas-node-del {
   display: grid;
   place-items: center;
   width: 18px;
@@ -6502,6 +6687,20 @@ button.link:hover {
   left: -7px;
 }
 
+/* Each port is wrapped in its tooltip, so the WRAPPER is what the port
+   column lays out. A flex item with no width of its own stretches to the
+   cross axis, which would have pulled every dot off-centre and left-aligned
+   it in a stretched box — so the wrapper carries the dot's width, at both
+   sizes, and the dot inside keeps its own. */
+.canvas-ports .tip-wrap {
+  width: 12px;
+  flex-shrink: 0;
+}
+
+.canvas-ports.crowded .tip-wrap {
+  width: 8px;
+}
+
 .canvas-port {
   width: 12px;
   height: 12px;
@@ -6595,6 +6794,17 @@ button.link:hover {
 .scene-card.scene-add:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* "Render another take" is a full-width commit in the inspector's column,
+   and `.tip-wrap` is inline-flex — so without this the button shrinks to its
+   own label and stops lining up with the commit above it. */
+.tip-wrap.take-tip {
+  display: flex;
+}
+
+.tip-wrap.take-tip > button {
+  width: 100%;
 }
 
 /* ---------- takes (alternate versions) ---------- */
@@ -6711,12 +6921,23 @@ button.link:hover {
   margin-bottom: 18px;
 }
 
+/* Label then control, not label then the whole pane then control. These rows
+   were `space-between`, which put a settings-wide gulf between a two-word
+   label and the picker it belongs to — at 900px the two stopped reading as
+   one row at all. A fixed label column instead: the gap is constant, and
+   every picker in the group starts on the same x. */
 .model-default-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
   padding: 5px 0;
+}
+
+.model-default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 152px;
 }
 
 /* A take that would re-render on a cloud model. Not a status colour (those

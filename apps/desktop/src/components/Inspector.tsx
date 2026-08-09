@@ -9,7 +9,7 @@ import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
-import { InfoDot } from "./Tooltip";
+import { InfoDot, Tip } from "./Tooltip";
 import { useApp } from "../store";
 
 type SceneTab = "image" | "motion" | "voice";
@@ -267,24 +267,29 @@ export function Inspector() {
         </h2>
         <PanelHelp panel="inspector" />
         {activeNode && (
-          <button
-            className={`icon-btn-sm${pinned ? " active" : ""}`}
-            onClick={() => void togglePin(activeNode.node_id, !pinned)}
-            aria-label={pinned ? t("inspector.unpin") : t("inspector.pin")}
-            aria-pressed={pinned}
-            title={pinned ? t("inspector.unpinTitle") : t("terms.tips.pin")}
+          <Tip
+            label={pinned ? t("inspector.unpin") : t("inspector.pin")}
+            hint={pinned ? t("inspector.unpinTitle") : t("terms.tips.pin")}
           >
-            <Pin size={13} strokeWidth={1.8} />
-          </button>
+            <button
+              className={`icon-btn-sm${pinned ? " active" : ""}`}
+              onClick={() => void togglePin(activeNode.node_id, !pinned)}
+              aria-label={pinned ? t("inspector.unpin") : t("inspector.pin")}
+              aria-pressed={pinned}
+            >
+              <Pin size={13} strokeWidth={1.8} />
+            </button>
+          </Tip>
         )}
-        <button
-          className="icon-btn-sm"
-          onClick={() => select(null)}
-          aria-label={t("inspector.closeAria")}
-          title={t("inspector.closeTitle")}
-        >
-          <X size={13} strokeWidth={2} />
-        </button>
+        <Tip label={t("inspector.closeTitle")}>
+          <button
+            className="icon-btn-sm"
+            onClick={() => select(null)}
+            aria-label={t("inspector.closeAria")}
+          >
+            <X size={13} strokeWidth={2} />
+          </button>
+        </Tip>
       </div>
 
       {scene && (
@@ -372,12 +377,15 @@ export function Inspector() {
                 {t("inspector.voiceLabel")}
                 <InfoDot label={t("inspector.voiceInfoLabel")} hint={t("terms.tips.voice")} />
               </label>
+              {/* No tooltip: it carried the same words as its own
+                  placeholder, so it repeated what the empty field already
+                  says and said nothing once the field was filled. The ⓘ
+                  beside the label is where the explanation lives. */}
               <input
                 id="inspector-voice"
                 value={voice}
                 disabled={pinned}
                 placeholder={t("inspector.voicePlaceholder")}
-                title={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
             </div>
@@ -563,21 +571,22 @@ export function Inspector() {
           <button className="btn-outline" onClick={apply} disabled={pinned}>
             {t("inspector.applyRegenerate")}
           </button>
-          <button
-            className="btn-ghost"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 6,
-            }}
-            onClick={() => void regenerate(activeNode.node_id)}
-            disabled={pinned}
-            title={t("terms.tips.newTake")}
-          >
-            <RotateCw size={12} strokeWidth={1.8} />
-            {t("inspector.newTake")}
-          </button>
+          <Tip label={t("inspector.newTake")} hint={t("terms.tips.newTake")} className="take-tip">
+            <button
+              className="btn-ghost"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+              onClick={() => void regenerate(activeNode.node_id)}
+              disabled={pinned}
+            >
+              <RotateCw size={12} strokeWidth={1.8} />
+              {t("inspector.newTake")}
+            </button>
+          </Tip>
 
           {(activeNode.takes?.length ?? 0) > 1 && (
             <div className="take-row" role="group" aria-label={t("inspector.takesAria")}>
@@ -599,11 +608,14 @@ export function Inspector() {
                   // presentational, so a nested control is unreachable to a
                   // screen reader however reachable it stays by Tab.
                   <span className="take" key={take.output_hash}>
-                    <button
-                      className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
-                      disabled={pinned || take.current}
-                      aria-pressed={take.current}
-                      title={
+                    {/* The current take's chip and an unavailable one are both
+                        disabled, and Chromium sends a disabled control no
+                        pointer events — so the `title` that explained WHY
+                        never appeared on either. The wrapper takes the hover
+                        instead. */}
+                    <Tip
+                      label={t("inspector.takeChip", { n: index + 1 })}
+                      hint={
                         take.current
                           ? t("inspector.takeCurrentTitle")
                           : take.available
@@ -612,14 +624,20 @@ export function Inspector() {
                               ? t("inspector.takeCloudTitle", { model: take.model ?? "" })
                               : t("inspector.takeMissingTitle")
                       }
-                      onClick={() => {
-                        setTakeError(null);
-                        void selectTake(activeNode.node_id, take.output_hash).then(setTakeError);
-                      }}
                     >
-                      {t("inspector.takeChip", { n: index + 1 })}
-                      {billed && <span aria-hidden="true"> ☁</span>}
-                    </button>
+                      <button
+                        className={`chip${take.current ? " selected" : ""}${billed ? " billed" : ""}`}
+                        disabled={pinned || take.current}
+                        aria-pressed={take.current}
+                        onClick={() => {
+                          setTakeError(null);
+                          void selectTake(activeNode.node_id, take.output_hash).then(setTakeError);
+                        }}
+                      >
+                        {t("inspector.takeChip", { n: index + 1 })}
+                        {billed && <span aria-hidden="true"> ☁</span>}
+                      </button>
+                    </Tip>
                     {/* Render again on THIS take's seed. The point is not to
                         reproduce the take — a seed with unchanged params is
                         already on disk — but to re-roll the CURRENT prompt,
@@ -631,19 +649,23 @@ export function Inspector() {
                         for this, and doing it as set_seed-then-regenerate
                         would leave the node carrying the borrowed seed if the
                         second half failed. */}
-                    <button
-                      type="button"
-                      className="take-reroll"
-                      disabled={pinned}
-                      aria-label={t("inspector.rerollSeedAria", { n: String(index + 1) })}
-                      title={t("inspector.rerollSeedTitle", { seed: String(take.seed) })}
-                      onClick={() => {
-                        setTakeError(null);
-                        void rerollWithSeed(activeNode.node_id, take.seed).then(setTakeError);
-                      }}
+                    <Tip
+                      label={t("inspector.rerollSeedAria", { n: String(index + 1) })}
+                      hint={t("inspector.rerollSeedTitle", { seed: String(take.seed) })}
                     >
-                      <RotateCw size={11} strokeWidth={2.2} aria-hidden="true" />
-                    </button>
+                      <button
+                        type="button"
+                        className="take-reroll"
+                        disabled={pinned}
+                        aria-label={t("inspector.rerollSeedAria", { n: String(index + 1) })}
+                        onClick={() => {
+                          setTakeError(null);
+                          void rerollWithSeed(activeNode.node_id, take.seed).then(setTakeError);
+                        }}
+                      >
+                        <RotateCw size={11} strokeWidth={2.2} aria-hidden="true" />
+                      </button>
+                    </Tip>
                   </span>
                 );
               })}

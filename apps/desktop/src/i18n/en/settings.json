@@ -1,6 +1,7 @@
 {
   "title": "Settings",
   "closeAria": "Close settings",
+  "closeTipHint": "Everything here applies as you change it — there is nothing to save.",
   "tablistAria": "Settings sections",
   "generalHint": "Appearance and app behavior.",
   "tabs": {
@@ -21,26 +22,38 @@
   "appearance": {
     "heading": "Theme",
     "hint": "Dark is the design target for video work; light is fully supported.",
-    "aria": "Theme"
+    "aria": "Theme",
+    "tipSystem": "Follows your operating system, and changes with it.",
+    "tipDark": "The design target — panels recede so footage reads true.",
+    "tipLight": "Fully supported; easier in a bright room."
   },
   "zoom": {
     "heading": "Interface zoom",
     "hint": "Scales the whole interface on top of your system text size. Ctrl + and Ctrl − work anywhere; Ctrl 0 resets.",
-    "aria": "Interface zoom"
+    "aria": "Interface zoom",
+    "tipHint": "{pct} of normal size. Ctrl + and Ctrl − do this from anywhere."
   },
   "language": {
     "heading": "Language",
-    "hint": "The language of the app's interface."
+    "hint": "The language of the app's interface.",
+    "tipHint": "Changes the interface only — it does not translate your projects."
   },
   "defaults": {
     "hint": "Starting values for new videos — every field can still be changed per video.",
     "formatHeading": "New video defaults",
-    "formatHint": "The same controls as Home's prompt row; live changes on Home overwrite this baseline.",
+    "formatHint": "The same controls as Home's prompt row. What you set here is where every new video starts; changing them on Home applies to that video only.",
     "voiceHeading": "Default voice",
     "voiceHint": "Narrator used when a video doesn't specify one.",
     "modelHeading": "Final video model",
     "modelHint": "Used when you create the final video. \"Auto\" follows the hardware recommendation; custom models appear here once added.",
-    "autoModel": "Auto (recommended)"
+    "autoModel": "Auto (recommended)",
+    "aspectTip": "Default frame shape",
+    "aspectTipHint": "What new videos start as. Home's row still decides each video.",
+    "durationTip": "Default length",
+    "durationTipHint": "What new videos start as. Home's row still decides each video.",
+    "voiceTip": "Default voice",
+    "modelTip": "Final video model",
+    "modelTipHint": "Renders the finished video when a scene names no model of its own."
   },
   "providers": {
     "heading": "Cloud providers",
@@ -50,14 +63,21 @@
     "configured": "configured",
     "noKey": "no key",
     "keyPlaceholder": "Paste API key…",
-    "keyAria": "{provider} API key"
+    "keyAria": "{provider} API key",
+    "saveTip": "Save this key",
+    "saveTipHint": "Goes to your OS keychain and to your own engine. Never to us.",
+    "clearTip": "Remove this key",
+    "clearTipHint": "Deletes it from the keychain here. Nothing changes at the provider."
   },
   "models": {
     "heading": "Model library",
     "hint": "Download more local models any time — jobs pick them up immediately.",
     "defaultsHeading": "Default models",
     "defaultsHint": "What renders each kind of work when a scene doesn't name a model.",
-    "defaultsAuto": "Auto"
+    "defaultsAuto": "Auto",
+    "defaultsPickTip": "Model for {task}",
+    "defaultsPickTipHint": "\"Auto\" follows the hardware recommendation",
+    "defaultsTaskFallback": "One stage of the pipeline."
   },
   "storage": {
     "hint": "Everything LocalCut AI keeps on this machine. Projects and models can be removed here.",
@@ -69,6 +89,11 @@
     "bySize": "Projects by size",
     "noProjects": "No projects yet.",
     "deleteAria": "Delete {title}",
+    "deleteTipHint": "Deletes this project and every file in it. Asks first.",
+    "clearCacheTipHint": "Intermediate render files only — nothing you made is removed.",
+    "clearToolsTipHint": "One-off outputs made without a project. Your videos are untouched.",
+    "manageModelsTip": "Model library",
+    "manageModelsTipHint": "Opens the Models section, where weights are downloaded and removed.",
     "cacheHeading": "Cache",
     "cacheHint": "Safe to clear — anything needed is regenerated on demand.",
     "clearCache": "Clear cache ({size})",
@@ -98,6 +123,11 @@
     "allRemote": "All generation runs on the remote engine.",
     "disconnectHint": "Disconnect to fall back to the local engine.",
     "disconnect": "Disconnect",
+    "disconnectTipHint": "Falls back to the engine on this machine. Nothing on the remote is deleted.",
+    "armTipHint": "Sends the stored keys over the pinned connection, held in memory only.",
+    "cancelTipHint": "Nothing has been sent to this host yet.",
+    "confirmTipHint": "Trusts this host and pins the certificate shown above.",
+    "pairTipHint": "Decodes the code and shows you the host before anything is sent.",
     "armHeading": "Provider keys are not shared with this engine",
     "armHint": "Cloud generation runs on the engine, so it needs your keys ({keys}) to reach those providers. They are sent over the pinned connection and held in memory only.",
     "arm": "Send keys",
@@ -175,13 +205,16 @@
   "setup": {
     "heading": "Setup",
     "hint": "Run the first-launch hardware check and recommended model picks again.",
-    "action": "Show setup screen again"
+    "action": "Show setup screen again",
+    "tipHint": "Re-runs the hardware check. Nothing you have made is changed."
   },
   "about": {
     "hint": "Version, updates, diagnostics — and what this app does (and doesn't) send anywhere.",
     "copy": "Copy diagnostics",
+    "copyTipHint": "App and engine versions, backend and hardware — as text on your clipboard.",
     "copied": "Copied",
     "licenses": "Open-source licenses",
+    "licensesTipHint": "Every bundled package, its version and its license.",
     "licensesTitle": "Open-source licenses",
     "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors.",
     "licensesClose": "Close",
@@ -206,6 +239,7 @@
     "dataFolderUnknown": "this engine does not report its folder",
     "used": "{size} used",
     "checkUpdates": "Check for updates",
+    "checkUpdatesTipHint": "Asks GitHub for the latest release. Nothing downloads on its own.",
     "checking": "Checking…",
     "upToDate": "Up to date",
     "updateAvailable": "Version {version} is available →",
@@ -217,7 +251,9 @@
     "bundling": "Packaging…",
     "bundleSaved": "Saved to {path}",
     "openLogs": "Open logs folder",
+    "openLogsTipHint": "Opens the folder holding this app's and the engine's logs.",
     "shortcuts": "Keyboard shortcuts",
+    "shortcutsTipHint": "The full keyboard map, over whatever you are looking at.",
     "privacyHeading": "Private by design",
     "privacyBody": "LocalCut AI reaches the network for exactly two things: model downloads, and the update check you trigger. No telemetry, no accounts, no usage data — your prompts and media never leave this machine.",
     "linkWebsite": "Website",
@@ -235,10 +271,17 @@
     "packNodes_one": "{count} node type",
     "packNodes_other": "{count} node types",
     "enable": "Enable",
+    "enableTip": "Allow {name} to run here",
+    "enableTipHint": "asks you to confirm the version first — nothing runs yet",
     "disable": "Disable",
+    "disableTip": "Withdraw permission for {name}",
+    "disableTipHint": "the code stays installed; the engine stops loading it",
     "enabledAt": "enabled · {version}",
     "enableTitle": "Enable {name}?",
     "enableConfirm": "Enable this pack",
+    "enableConfirmTip": "Grant this pack permission to run",
+    "enableConfirmTipHint": "pinned to the version above; updating it asks again",
+    "enableCancelTip": "Leave this pack disabled",
     "enabling": "Enabling…",
     "versionLabel": "Installed version",
     "versionPlaceholder": "e.g. 1.4.2",
@@ -247,12 +290,16 @@
     "filesHeading": "Imported workflows",
     "filesHint": "Exported ComfyUI graphs (Save (API Format)). Each is checked against the packs you have enabled before it is stored.",
     "import": "Import a workflow…",
+    "importTip": "Import a ComfyUI graph",
+    "importTipHint": "checked against your enabled packs before it is stored",
     "importing": "Checking…",
     "nodeCount_one": "{count} node",
     "nodeCount_other": "{count} nodes",
     "slots": "slots: {slots}",
     "noSlots": "no prompt slots — renders the same output every time",
     "unreadable": "unreadable",
+    "removeTip": "Remove this workflow",
+    "removeTipHint": "deletes the file from the engine's workflow folder",
     "removeAria": "Remove {name}",
     "removeTitle": "Remove {name}?",
     "removeMessage": "The file is deleted from this engine's workflow folder. Any custom model pointing at it will stop rendering until you import it again."

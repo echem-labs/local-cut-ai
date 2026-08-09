@@ -250,7 +250,45 @@ try {
         .filter((svg) => !svg.closest(".menu-pop"))
         .map(box);
       const items = [...document.querySelectorAll(".help-pop [role=menuitem] > svg")].map(box);
-      return { rows, items, opened: wasOpened };
+      // The row's own spacing, measured rather than argued about. Every menu
+      // row is icon · label · trailing hint, and all three were 8px from
+      // whatever was beside them - including the popover's own border, so
+      // the icons sat against the left edge and a hint as long as "what's a
+      // scene?" finished hard against the right one. Read from the drawn
+      // boxes, not from the stylesheet: this went round three times on the
+      // stylesheet being correct while the screen disagreed, and only a
+      // measurement settled it.
+      const pop = document.querySelector(".help-pop");
+      const popBox = pop ? pop.getBoundingClientRect() : null;
+      const spacing = !popBox
+        ? []
+        : [...pop.querySelectorAll("[role=menuitem]")].map((row) => {
+            const svg = row.querySelector("svg");
+            const hint = row.querySelector("small");
+            const label = [...row.childNodes].find(
+              (n) => n.nodeType === 3 && n.textContent.trim(),
+            );
+            let labelLeft = null;
+            if (label) {
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              labelLeft = range.getBoundingClientRect().left;
+            }
+            return {
+              text: row.textContent.trim().slice(0, 24),
+              iconToEdge: svg
+                ? Math.round(svg.getBoundingClientRect().left - popBox.left)
+                : null,
+              iconToText:
+                svg && labelLeft !== null
+                  ? Math.round(labelLeft - svg.getBoundingClientRect().right)
+                  : null,
+              hintToEdge: hint
+                ? Math.round(popBox.right - hint.getBoundingClientRect().right)
+                : null,
+            };
+          });
+      return { rows, items, opened: wasOpened, spacing };
     }, opened);
   `);
   check("the Help popover opens from the rail", railIcons.opened === true);
@@ -263,6 +301,20 @@ try {
     "the Help popover's menu items keep their own icon size",
     railIcons.items.length >= 2 && railIcons.items.every((icon) => icon.w === 13 && icon.h === 13),
     JSON.stringify(railIcons.items),
+  );
+  // 12px inside the row plus the popover's own 4px of padding and 1px border
+  // = 17 from either edge, and 12 between the icon and its label. Asserted
+  // per ROW, because the row that misbehaves is the one whose trailing hint
+  // is long enough to fight the label for the space - "what's a scene?" is
+  // on the second row, and a check that read only the first would have
+  // called this fixed while it was not.
+  check(
+    "every Help popover row keeps 12px inside it and 17px from both edges",
+    railIcons.spacing.length >= 2 &&
+      railIcons.spacing.every(
+        (row) => row.iconToEdge === 17 && row.iconToText === 12 && row.hintToEdge === 17,
+      ),
+    JSON.stringify(railIcons.spacing),
   );
   // Close it by toggling the trigger, and CHECK that it closed. Neither
   // Escape nor a synthetic `body.click()` can do it: HelpMenu has no
@@ -278,6 +330,125 @@ try {
       .catch(() => false);
   `);
   check("the Help popover closes again", helpClosed === true);
+
+  /**
+   * The same rows again, with the rail COMPACT.
+   *
+   * This is the state the spacing was actually broken in, and the reason it
+   * survived three rounds of being reported: `.rail.compact button` is
+   * (0,2,1) against `.menu-pop button`'s (0,1,1), so a compact rail took the
+   * popover's horizontal padding and its icon gap away — and every
+   * measurement anyone took, including the check above, was made with the
+   * rail expanded, where the rule does not apply.
+   *
+   * Driven by width rather than by the toggle: below 1000px the rail
+   * auto-compacts, which the stop above this one already relies on.
+   */
+  const popSpacingAt = async (label) => {
+    const measured = await evalInApp(`
+      const trigger = await page.$(".rail .help-menu button");
+      if (trigger) await trigger.click();
+      const opened = await page
+        .waitForSelector(".help-pop", { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+      return page.evaluate((wasOpened) => {
+        const pop = document.querySelector(".help-pop");
+        if (!pop) return { opened: wasOpened, compact: null, rows: [] };
+        const popBox = pop.getBoundingClientRect();
+        return {
+          opened: wasOpened,
+          compact: !!document.querySelector(".rail.compact"),
+          rows: [...pop.querySelectorAll("[role=menuitem]")].map((row) => {
+            const svg = row.querySelector("svg");
+            const hint = row.querySelector("small");
+            const label = [...row.childNodes].find(
+              (n) => n.nodeType === 3 && n.textContent.trim(),
+            );
+            let labelLeft = null;
+            if (label) {
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              labelLeft = range.getBoundingClientRect().left;
+            }
+            return {
+              iconToEdge: svg
+                ? Math.round(svg.getBoundingClientRect().left - popBox.left)
+                : null,
+              iconToText:
+                svg && labelLeft !== null
+                  ? Math.round(labelLeft - svg.getBoundingClientRect().right)
+                  : null,
+              hintToEdge: hint
+                ? Math.round(popBox.right - hint.getBoundingClientRect().right)
+                : null,
+            };
+          }),
+        };
+      }, opened);
+    `);
+    check(
+      `${label}: every Help popover row keeps 12px inside it and 17px from both edges`,
+      measured.rows.length >= 2 &&
+        measured.rows.every(
+          (row) => row.iconToEdge === 17 && row.iconToText === 12 && row.hintToEdge === 17,
+        ),
+      JSON.stringify(measured),
+    );
+    // Close it again the only way that works (see the note above): the
+    // trigger. Left open, it paints over the rail for every later frame.
+    await evalInApp(`
+      const trigger = await page.$(".rail .help-menu button");
+      if (trigger) await trigger.click();
+      await page.waitForSelector(".help-pop", { state: "detached", timeout: 5000 }).catch(() => {});
+      return null;
+    `);
+    return measured;
+  };
+
+  await setSize(980, 800);
+  const compactPop = await popSpacingAt("compact rail");
+  check(
+    "the compact-rail popover check actually ran against a compact rail",
+    compactPop.compact === true,
+    JSON.stringify({ compact: compactPop.compact }),
+  );
+  await setSize(1440, 900);
+
+  // The rail draws two kinds of row — destinations, and the open-project
+  // tabs under them — and the tabs live in their own scroller, which is
+  // pulled out to the rail's edge so its bar sits against it and then given
+  // back the bar's width. That arithmetic assumed a 6px bar; it measures 5,
+  // and every tab row came out a pixel wider than the destinations above it.
+  //
+  // A pixel, and invisible until you look for it: a resting tab has no
+  // background, so nothing draws at the edge that moved. Only the labels'
+  // x differs on purpose here (47 vs 35 in the reference — a tab is a list
+  // item under the row above it, not another destination); the row BOX is
+  // the rail's own width in both cases. Nothing in the unit suite can see
+  // this: vitest stubs CSS imports away and jsdom loads no stylesheet.
+  const railRows = await evalInApp(`
+    return page.evaluate(() => {
+      const rail = document.querySelector(".rail");
+      if (!rail) return null;
+      const width = (el) => Math.round(el.getBoundingClientRect().width);
+      const tabs = [...rail.querySelectorAll(".rail-tab")].map(width);
+      const dest = [...rail.querySelectorAll(":scope > button")].map(width);
+      return { tabs, dest };
+    });
+  `);
+  if (railRows && railRows.tabs.length > 0) {
+    const want = railRows.dest[0];
+    check(
+      "an open-project tab is the same width as a destination above it",
+      want > 0 && railRows.tabs.every((row) => row === want),
+      JSON.stringify(railRows),
+    );
+  } else {
+    // Said out loud rather than passed over: with no project open there are
+    // no tabs, and the check above measured nothing.
+    console.log("NOTE no open-project tabs in this profile - rail row width unchecked");
+  }
 
   // U3: the clip panel carries the widest controls row Home has (motion
   // field, seconds, start frame, aspect, generate) plus a preset chip row.
