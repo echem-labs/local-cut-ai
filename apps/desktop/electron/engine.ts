@@ -251,10 +251,19 @@ export class EngineManager {
     this.child = child;
     // Both streams are already token-redacted by the time they reach here,
     // which is what makes the tail safe to hand to a user to paste.
-    this.tail = [];
+    //
+    // The array is bound as a local, not read off `this` at call time: a
+    // force-killed child's pipe is destroyed rather than ended, and
+    // `mirrorEngineOutput` flushes its last unterminated line on `close` —
+    // which can land after a replacement engine has already reassigned
+    // `this.tail`. Reading `this.tail` there would file a dead engine's
+    // dying words under the next one's crash, in the report whose whole
+    // value is belonging to the engine that just died.
+    const tail: string[] = [];
+    this.tail = tail;
     const remember = (line: string): void => {
-      this.tail.push(line);
-      if (this.tail.length > CRASH_TAIL_LINES) this.tail.shift();
+      tail.push(line);
+      if (tail.length > CRASH_TAIL_LINES) tail.shift();
     };
     mirrorEngineOutput(child.stdout, connection.token, (line) => {
       remember(line);

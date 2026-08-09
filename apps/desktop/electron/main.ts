@@ -511,6 +511,12 @@ ipcMain.handle("engine:restart", async (event) => {
   if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
   try {
     await connectEngine();
+    // The engine holds BYOK keys in memory only, so the child just spawned
+    // has none of them. Without this, a crash-restart leaves every cloud
+    // provider failing for the rest of the session while Settings still
+    // reports the keys as configured — and the banner's promise that you
+    // can carry on would be false for anyone using one.
+    await armStoredKeys();
     engineError = null;
     return { ok: true, error: null };
   } catch (error) {
