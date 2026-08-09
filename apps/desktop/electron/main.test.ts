@@ -1292,3 +1292,86 @@ describe("the taskbar bar and the window title", () => {
     expect(window.titles).toHaveLength(before);
   });
 });
+
+describe("telling the user a render finished", () => {
+  /** The window main created, focused or not. */
+  const windowOf = (electron: { BrowserWindow: { instances: { focused: boolean }[] } }) =>
+    electron.BrowserWindow.instances[0]!;
+
+  it("says so when the app is in the background", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "A film about bees has finished rendering.",
+    });
+
+    expect(result).toEqual({ ok: true, shown: true, error: null });
+    expect(electron.notifications).toMatchObject([
+      {
+        title: "Your video is ready",
+        body: "A film about bees has finished rendering.",
+        shown: true,
+      },
+    ]);
+  });
+
+  it("stays quiet when the user is already watching it", async () => {
+    // A notification for something on screen is the app interrupting to
+    // report what is already in front of you.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = true;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: true, shown: false, error: null });
+    expect(electron.notifications).toEqual([]);
+  });
+
+  it("does nothing at all where the OS has them switched off", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+    electron.notificationSupport.supported = false;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: true, shown: false, error: null });
+    expect(electron.notifications).toEqual([]);
+  });
+
+  it("brings the window back when the notification is clicked", async () => {
+    // The notice is about work the user asked for, so clicking it is a
+    // request to return to that work. A minimised window has to be restored
+    // first: focusing one that is minimised does nothing at all.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = windowOf(electron);
+    window.focused = false;
+    window.minimized = true;
+    await electron.invokeIpc("shell:notify", senderStub(electron), { title: "Ready", body: "" });
+
+    electron.notifications.at(-1)!.click();
+
+    expect(window.restored).toBe(true);
+    expect(window.focused).toBe(true);
+  });
+
+  it("refuses an untrusted sender", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+
+    const result = await electron.invokeIpc("shell:notify", trusted("https://evil.example/"), {
+      title: "Click here",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: false, error: "untrusted sender" });
+    expect(electron.notifications).toEqual([]);
+  });
+});

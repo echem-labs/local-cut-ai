@@ -41,6 +41,7 @@ describe("the exposed surface", () => {
       "getProviderKeyPresence",
       "getSystemTextScale",
       "inspectPairing",
+      "notifyDone",
       "onEngineCrash",
       "openLogsFolder",
       "pairEngine",

@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld("localcut", {
   // two come to disagree.
   setShellProgress: (progress: { fraction: number; title: string }) =>
     ipcRenderer.invoke("window:set-progress", progress),
+  // Whether it is actually shown is main's call: only it can tell a window
+  // in front from a page that merely still holds focus.
+  notifyDone: (notice: { title: string; body: string }) =>
+    ipcRenderer.invoke("shell:notify", notice),
   /**
    * The only channel that pushes rather than answers.
    *
