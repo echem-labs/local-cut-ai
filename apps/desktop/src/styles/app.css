@@ -162,6 +162,29 @@ textarea {
   position: relative;
 }
 
+/* The icon COLUMN is 18px wide; the icon inside it stays 15px.
+   The design gives every rail row a fixed 18px column so the labels all
+   start on the same x whatever glyph the row uses. Sizing the glyph's own
+   box instead left every label 3px early — measured, against the reference:
+   Home, Library, Help, Light mode, Settings and Collapse were each dx=-3.
+
+   Width and height differ on purpose. A lucide icon is a 24-unit viewBox
+   with the default `preserveAspectRatio`, so it scales to the SMALLER of the
+   two and centres in the rest: 15px of drawing, centred in 18px of column.
+   Setting width alone would scale the icon up to 18px instead.
+
+   Rail ROWS, not every button the rail contains. The Help popover renders
+   inside the rail, so "any button in .rail" reached its menu items too and
+   drew their 13px marks in an 18x15 box. `walk.mjs` measures both halves —
+   the column, and what it must not reach — because nothing in the unit
+   suite can see either: vitest stubs CSS imports away and jsdom loads no
+   stylesheet. */
+.rail button:not(.rail-tab-close):not(.menu-pop button) > svg {
+  width: 18px;
+  height: 15px;
+  flex: none;
+}
+
 .rail button:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--text-primary);
@@ -219,8 +242,13 @@ textarea {
   white-space: nowrap;
 }
 
-/* Expanded rail: the dot IS the leading mark — centered in the same 15px
- * column the other rows' icons occupy, so labels line up. */
+/* Expanded rail: the dot IS the leading mark, in a 15px column of its own
+ * (6px of dot, centered) — NOT the 18px column the icon rows above use, so
+ * a tab's title starts 3px left of a destination's label. That is what the
+ * design draws: the reference puts destination labels at x=47 and tab
+ * titles at x=35, because a tab is a list item under the row above it and
+ * not another destination. Widening this to 18 to "line them up" moves the
+ * tabs away from the mocks. */
 .rail-tab .dot {
   width: 6px;
   height: 6px;
@@ -3945,7 +3973,15 @@ button.link:hover {
    adds only the docking. */
 .tool-composer {
   position: sticky;
-  bottom: var(--space-3);
+  /* Zero, not --space-3: the scroller's own 32px bottom padding is where
+     the composer rests, and an offset on top of it is one sticky spends
+     MOVING the box whenever the content ends closer to the scrollport's
+     edge than the offset asks for. It did — the composer was drawn 4px
+     above where the column put it, on a session that does not even scroll,
+     so the gap above it depended on how tall that session happened to be.
+     A resting offset must be smaller than the clearance the layout
+     guarantees, and the only value that always is, is none. */
+  bottom: 0;
   align-self: stretch;
   margin-top: var(--space-3);
 }
@@ -3965,6 +4001,12 @@ button.link:hover {
   color: var(--text-secondary);
   line-height: 21px; /* rhythm anchor */
   margin-bottom: var(--space-3);
+}
+
+/* The spoken-time line sits under the table, not against it: with no
+   margin it printed directly on the last row's border (design v6). */
+.script-view > .hint {
+  margin-top: var(--space-2);
 }
 
 .script-table {
@@ -6712,6 +6754,12 @@ button.link:hover {
   gap: var(--space-2);
   margin-top: var(--space-3);
   font-size: var(--text-xs);
+  /* Stated, not inherited from the font. Left to `normal`, the row is as
+     tall as Inter's metrics make a 12px line — a fraction that rounds one
+     way here and the other way in the reference, and the downloads panel
+     directly beneath it then draws every border a pixel off. --text-xs
+     rides the 16px rhythm anchor everywhere else it appears. */
+  line-height: 16px;
 }
 
 /* The download bridge: one line, the wizard's rows behind it (v5, Q1). */

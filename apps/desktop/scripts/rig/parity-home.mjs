@@ -25,6 +25,7 @@ import {
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
+import { writeProbe } from "./textprobe.cjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -59,18 +60,35 @@ const project = (id, mode, title, days, extra = {}) => ({
  * would leave the shelf's order up to the sort's stability. */
 const PROJECTS = [
   project("p-bee", "prompt", "How Honeybees Make Honey", 0, { duration_s: 57 }),
-  project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, { duration_s: 46 }),
-  project("p-cloud", "prompt", "Puff the Little Cloud - a kids poem", 2, { duration_s: 63 }),
-  project("p-solar", "prompt", "A tour of the solar system", 14, { duration_s: 65 }),
+  project("p-cat", "prompt", "Why cats purr - a cozy explainer", 1, {
+    duration_s: 46,
+  }),
+  project("p-cloud", "prompt", "Puff the Little Cloud - a kids poem", 2, {
+    duration_s: 63,
+  }),
+  project("p-solar", "prompt", "A tour of the solar system", 14, {
+    duration_s: 65,
+  }),
   project("t-ocean", "tool:clip", "Ocean waves rolling onto a beach", 4, {
     duration_s: 5,
     tool_artifact_hash: "h1",
   }),
   project("t-uke", "tool:music", "Upbeat ukulele and glockenspiel", 4),
-  project("t-thumb", "tool:thumbnail", "Shocked scientist, glowing honeycomb", 4, {
-    tool_artifact_hash: "h2",
-  }),
-  project("t-script", "tool:script", "A 60s script on how Istanbul was captured", 0.5),
+  project(
+    "t-thumb",
+    "tool:thumbnail",
+    "Shocked scientist, glowing honeycomb",
+    4,
+    {
+      tool_artifact_hash: "h2",
+    },
+  ),
+  project(
+    "t-script",
+    "tool:script",
+    "A 60s script on how Istanbul was captured",
+    0.5,
+  ),
   project("t-voice", "tool:voiceover", "Calm narrator, 40 seconds", 13, {
     tool_artifact_hash: "h3",
   }),
@@ -113,8 +131,17 @@ const gpu = {
   vram_gb: 8,
   backend: "cuda",
 };
-const license = { id: "apache-2.0", commercial: true, verdict: "commercial", notes: "" };
-const model = (id, task, { external = false, family = "", version = "", size = GB, ...rest } = {}) => ({
+const license = {
+  id: "apache-2.0",
+  commercial: true,
+  verdict: "commercial",
+  notes: "",
+};
+const model = (
+  id,
+  task,
+  { external = false, family = "", version = "", size = GB, ...rest } = {},
+) => ({
   id,
   task,
   family,
@@ -124,7 +151,9 @@ const model = (id, task, { external = false, family = "", version = "", size = G
   quality_score: 1,
   speed_score: 1,
   license,
-  files: external ? [] : [{ url: "https://example.test/w", dest: "w", sha256: "0", size }],
+  files: external
+    ? []
+    : [{ url: "https://example.test/w", dest: "w", sha256: "0", size }],
   comfy_graph_template: "",
   custom: false,
   size_bytes: external ? 0 : size,
@@ -135,11 +164,30 @@ const model = (id, task, { external = false, family = "", version = "", size = G
   ...rest,
 });
 
-/** The mock's download strip: script external, keyframes installed, clips
- * at 51%, music queued — 2 of 4 ready, 6.9 of 18 GB. */
+/** The mock's download strip, in the mock's own row order: script
+ * external, keyframes installed, clips at 51%, narration external, music
+ * queued, captions external — "4 of 6 stages ready", 12 GB of 25 GB.
+ *
+ * All SIX, because `stageRows` renders one row per recommendation and the
+ * mock draws six. Seeded with four, the expanded frame rendered four rows
+ * and everything under the panel sat 84px high — but only on the runs
+ * where the fixture actually won. On the others a live refresh replaced it
+ * with the engine's own six-stage slate and the frame passed, so this
+ * failed about one run in three and passed for the wrong reason the rest
+ * of the time. Narration and captions joined the recommendations in U3
+ * (the mock says so in its own comment); this list did not follow. */
 const MODELS = [
-  model("qwen3-8b-q4", "text.llm", { external: true, family: "qwen 3", version: "· 8B" }),
-  model("sdxl-base-1.0", "image.gen", { family: "sdxl", version: "1.0", size: 6.5 * GB, downloaded: true }),
+  model("qwen3-8b-q4", "text.llm", {
+    external: true,
+    family: "qwen 3",
+    version: "· 8B",
+  }),
+  model("sdxl-base-1.0", "image.gen", {
+    family: "sdxl",
+    version: "1.0",
+    size: 6.5 * GB,
+    downloaded: true,
+  }),
   model("ltx-video-0.9-i2v", "video.i2v", {
     family: "ltx",
     version: "0.9",
@@ -147,9 +195,26 @@ const MODELS = [
     downloading: true,
     progress: { done: 0.51 * 11 * GB, total: 11 * GB },
   }),
-  model("ace-step-v1-3.5b", "music.gen", { family: "ACE-Step", version: "3.5B", size: 7.2 * GB }),
+  model("chatterbox-tts", "speech.tts", {
+    external: true,
+    family: "chatterbox",
+  }),
+  model("ace-step-v1-3.5b", "music.gen", {
+    family: "ACE-Step",
+    version: "3.5B",
+    size: 7.2 * GB,
+  }),
+  model("faster-whisper-large-v3", "transcribe", {
+    external: true,
+    family: "whisper large",
+    version: "v3",
+  }),
 ];
-const SETTLED = MODELS.map((row) => ({ ...row, downloading: false, progress: null }));
+const SETTLED = MODELS.map((row) => ({
+  ...row,
+  downloading: false,
+  progress: null,
+}));
 
 const SYSTEM = {
   hardware: {
@@ -161,7 +226,11 @@ const SYSTEM = {
     primary_gpu: gpu,
     tier: "A",
   },
-  recommendations: MODELS.map((row) => ({ task: row.task, model: row, reason: "" })),
+  recommendations: MODELS.map((row) => ({
+    task: row.task,
+    model: row,
+    reason: "",
+  })),
   backend_mode: "local",
 };
 
@@ -170,13 +239,18 @@ const refSize = (name) => {
   return { width: png.width, height: png.height };
 };
 
-const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
+const masks = JSON.parse(
+  readFileSync(path.join(refsDir, "masks.json"), "utf8"),
+);
 const MASK_PAD = 6;
 
 /** The rail's icon column: six lucide glyphs the mock writes as unicode
  * characters. Not the open-project rows — those carry a status dot, which
- * the mock draws the same way the app does. */
-const RAIL_ICONS = ".rail button:not(.rail-tab-close) > svg";
+ * the mock draws the same way the app does, and not the Help popover's
+ * menu items, which render inside the rail and are not rail rows. Kept
+ * character-for-character the same as the stylesheet's own rule: if the two
+ * drift, the gate measures a set of boxes the design never sized. */
+const RAIL_ICONS = ".rail button:not(.rail-tab-close):not(.menu-pop button) > svg";
 
 /** What each masked region of the reference is, in the app — a mask hides
  * pixels, never geometry (plan doc 11, U1's lesson). */
@@ -208,7 +282,12 @@ const MASKED_AS = {
     ".quick-tools .tool-well",
     ".models-pop-wrap",
   ],
-  "home-empty": [".rail-count", RAIL_ICONS, ".quick-tools .tool-well", ".models-pop-wrap"],
+  "home-empty": [
+    ".rail-count",
+    RAIL_ICONS,
+    ".quick-tools .tool-well",
+    ".models-pop-wrap",
+  ],
   library: [
     ".project-tile .tile-thumb",
     ".project-tile .tile-body",
@@ -235,8 +314,11 @@ const MASKED_AS = {
   ],
 };
 const RIGID = /thumb|filter-tabs/;
-/** Content-sized boxes: matched on where they start, not how tall they are
- * (a tile's body is a title that may wrap and a status line). */
+/** Content-sized boxes: matched on where they start HORIZONTALLY, not on
+ * how wide they are (a tile's body is a title and a status line; a
+ * right-aligned count grows leftward). Loose is a statement about x only -
+ * the vertical band binds every box, loose or not, because without it a
+ * box could claim a mask several rows above it. */
 const LOOSE = /tile-body|rail-count/;
 const TOL = 2;
 
@@ -247,39 +329,51 @@ const checkMaskGeometry = (name, boxes) => {
   // the mock's text engine and the app's round line boxes identically.
   // Anything that drifts beyond the pad leaks unmasked pixels, and the
   // pixel diff still owns that.
-  const want = (masks[`${name}.png`] ?? []).map((mask) => ({ ...mask, taken: false }));
+  const want = (masks[`${name}.png`] ?? []).map((mask) => ({
+    ...mask,
+    taken: false,
+  }));
   const problems = [];
   if (process.env.RIG_DUMP_MASKS) {
     console.log(`--- ${name} app:`, JSON.stringify(boxes));
-    console.log(`--- ${name} ref:`, JSON.stringify(want.map(({ taken, ...rest }) => rest)));
+    console.log(
+      `--- ${name} ref:`,
+      JSON.stringify(want.map(({ taken, ...rest }) => rest)),
+    );
   }
   for (const box of boxes) {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        box.y >= ref.y - TOL &&
         // Content-sized boxes (a status row is a model name and a wall
         // time; a right-aligned cell grows leftward) are matched on
         // vertical position plus horizontal overlap; design-owned boxes
-        // must sit wholly inside the mask that was drawn for them.
+        // must sit wholly inside the mask that was drawn for them. The
+        // vertical band binds both: "loose" is a statement about x, and
+        // left unbounded below it lets a box claim a mask far above it.
+        box.y >= ref.y - TOL &&
+        box.y + box.height <= ref.y + ref.height + TOL &&
         box.x < ref.x + ref.width &&
         box.x + box.width > ref.x &&
         (LOOSE.test(box.sel) ||
-          (box.y + box.height <= ref.y + ref.height + TOL &&
-            // Inside the mask, or pinned to the edge the control is
-            // anchored on (a right-aligned control grows leftward past
-            // the box the mask was drawn around).
-            (box.x >= ref.x - TOL ||
-              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
+          // Inside the mask, or pinned to the edge the control is
+          // anchored on (a right-aligned control grows leftward past
+          // the box the mask was drawn around).
+          box.x >= ref.x - TOL ||
+          Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL),
     );
     if (!hit) {
-      problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
+      problems.push(
+        `${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`,
+      );
       continue;
     }
     hit.taken = true;
     const drawnWidth = hit.width - MASK_PAD * 2; // the control the mask was drawn around
     if (RIGID.test(box.sel) && Math.abs(drawnWidth - box.width) > TOL) {
-      problems.push(`${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`);
+      problems.push(
+        `${box.sel} is ${box.width}px wide, reference ${drawnWidth}px`,
+      );
     }
   }
   const orphans = want.filter((ref) => !ref.taken);
@@ -296,7 +390,9 @@ const checkMaskGeometry = (name, boxes) => {
 };
 
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-"));
-const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-home-engine-"));
+const engineData = mkdtempSync(
+  path.join(tmpdir(), "localcut-parity-home-engine-"),
+);
 const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
@@ -384,6 +480,27 @@ try {
       // moved the geometry of a masked region. Park it on the title bar.
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
+      // ...and then until the layout stops moving. The resize above
+      // re-flows the whole page, so a fixed wait after it is the same
+      // gamble the panel-expand step used to take - and it is the one that
+      // actually decides the picture, since every settle done BEFORE the
+      // resize is re-laid-out by it. home-downloads-open shot its quick
+      // tools 84px high about one run in four this way.
+      //
+      // Never throws: a frame that will not settle is a frame worth
+      // diffing anyway, and compare.mjs reports it with a number.
+      await page
+        .waitForFunction(
+          () => {
+            const now = document.documentElement.scrollHeight;
+            const settled = window.__rigHeight === now;
+            window.__rigHeight = now;
+            return settled;
+          },
+          null,
+          { timeout: 4000, polling: 120 },
+        )
+        .catch(() => {});
       await page.screenshot({
         path: ${JSON.stringify(path.join(dir, `${name}.png`))},
         scale: "css",
@@ -408,6 +525,10 @@ try {
       ${JSON.stringify(MASKED_AS[name] ?? [])});
     `);
     checkMaskGeometry(name, boxes);
+    // Convergence only: the frame's own text, measured the same way the
+    // reference measured its own, so `converge.mjs` can say which element
+    // moved rather than how many pixels did.
+    await writeProbe(dir, name, evalInApp);
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
     scaleHeld &&= await layoutTrue();
@@ -418,11 +539,43 @@ try {
   await seed({ models: MODELS });
   await shoot("home-downloads");
 
-  await evalInApp(`
+  // Wait for the panel to BE open, not for 250ms to pass. The click lands
+  // right after the previous frame's resize, and one that arrives
+  // mid-relayout hits where the head used to be - leaving the panel shut
+  // and the frame shot collapsed, which reads downstream as four tool-well
+  // masks with nothing under them and 17303 differing px.
+  //
+  // Reported, not thrown. `compare.mjs` is spawned AFTER this file's
+  // try/finally, so a rejection here unwinds straight past it: no contact
+  // sheet, no per-frame numbers, not even the frames already captured, and
+  // retry.mjs does not re-run an exit 1. A missed click has to fail as a
+  // named check that still lets the run finish and say so.
+  const dlOpen = await evalInApp(`
     await page.click(".dl-summary-head");
-    await page.waitForTimeout(250);
-    return null;
+    const opened = await page
+      .waitForSelector(".dl-summary.open .srow", { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!opened) return false;
+    // ...and then for its height to stop moving: the rows arrive with a
+    // React re-render, so "open" precedes "finished growing".
+    return page
+      .waitForFunction(
+        () => {
+          const panel = document.querySelector(".dl-summary");
+          if (!panel) return false;
+          const height = Math.round(panel.getBoundingClientRect().height);
+          const settled = window.__dlHeight === height;
+          window.__dlHeight = height;
+          return settled;
+        },
+        null,
+        { timeout: 5000, polling: 100 },
+      )
+      .then(() => true)
+      .catch(() => false);
   `);
+  check("the downloads panel opens and settles before it is shot", dlOpen === true);
   await shoot("home-downloads-open");
 
   await evalInApp(`
@@ -471,7 +624,12 @@ try {
   scaleHeld = await layoutTrue();
 } finally {
   await stopRig(rig);
-  const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
+  const scrub = {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 200,
+  };
   rmSync(profile, scrub);
   rmSync(engineData, scrub);
 }
