@@ -438,7 +438,22 @@ textarea {
   display: none;
 }
 
-.rail.compact button {
+/* Rail ROWS, not every button the rail contains — the same distinction the
+   icon-column rule near the top of this file draws, and for the same reason:
+   the Help popover renders INSIDE the rail, so "any button in .rail" reaches
+   its menu items too.
+
+   Here it beat the popover's own rule rather than merely joining it. This
+   selector is (0,2,1); `.menu-pop button` is (0,1,1). So a compact rail took
+   away every menu row's 12px of horizontal padding AND the 12px between its
+   icon and its label: the glyphs sat against the popover's border and a hint
+   as long as "what's a scene?" finished hard against the opposite one.
+
+   Only while compact — which is why this survived three rounds of being
+   reported. Every measurement of the popover, by hand and in `walk.mjs`, was
+   taken with the rail expanded, where the rule does not apply and the
+   spacing is correct. The walk now measures both states. */
+.rail.compact button:not(.menu-pop button) {
   justify-content: center;
   padding: var(--space-2) 0;
   gap: 0;
@@ -971,6 +986,21 @@ textarea {
 .dropdown-trigger svg {
   color: var(--text-tertiary);
   transition: color var(--motion-fast);
+}
+
+/* The settings-row variant. A chip sits in a row of chips and the row is
+   what reads as pickable; a field stands alone against a label with the
+   width of the pane between them, so "Auto" on its own read as a value
+   someone had typed. The caret says it opens, and the minimum width lines a
+   column of them up with each other. */
+.dropdown-trigger.field {
+  min-width: 148px;
+  justify-content: space-between;
+}
+
+.dropdown-caret {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .dropdown-trigger:hover,
@@ -6877,12 +6907,23 @@ button.link:hover {
   margin-bottom: 18px;
 }
 
+/* Label then control, not label then the whole pane then control. These rows
+   were `space-between`, which put a settings-wide gulf between a two-word
+   label and the picker it belongs to — at 900px the two stopped reading as
+   one row at all. A fixed label column instead: the gap is constant, and
+   every picker in the group starts on the same x. */
 .model-default-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
   padding: 5px 0;
+}
+
+.model-default-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 152px;
 }
 
 /* A take that would re-render on a cloud model. Not a status colour (those
