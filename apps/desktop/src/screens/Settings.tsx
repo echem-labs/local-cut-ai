@@ -29,7 +29,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
-import { InfoDot } from "../components/Tooltip";
+import { InfoDot, Tip } from "../components/Tooltip";
 import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { DurationPicker } from "../components/DurationPicker";
@@ -489,9 +489,19 @@ export function Settings() {
       <div className="settings-head">
         <h1>{t("settings.title")}</h1>
         <kbd>{shortcutLabel(t("common.keys.escape"))}</kbd>
-        <button className="icon-btn" onClick={closeSettings} aria-label={t("settings.closeAria")}>
-          <X size={16} strokeWidth={2} />
-        </button>
+        {/* The app's bubble, not the browser's `title` — the rule Home's
+            prompt row follows, applied to a dialog that is almost entirely
+            one-word verbs. An icon-only control needs it most: this one is
+            an X and nothing else. */}
+        <Tip label={t("settings.closeAria")} hint={t("settings.closeTipHint")} side="bottom">
+          <button
+            className="icon-btn"
+            onClick={closeSettings}
+            aria-label={t("settings.closeAria")}
+          >
+            <X size={16} strokeWidth={2} />
+          </button>
+        </Tip>
       </div>
 
       <div className="settings-grid">
@@ -553,16 +563,23 @@ export function Settings() {
                     aria-label={t("settings.appearance.aria")}
                   >
                     {THEME_OPTIONS.map((option) => (
-                      <button
+                      <Tip
                         key={option.value}
-                        className={theme === option.value ? "active" : ""}
-                        onClick={() => {
-                          setTheme(option.value);
-                          applyTheme(option.value);
-                        }}
+                        label={t(`settings.theme.${option.value}`)}
+                        hint={t(
+                          `settings.appearance.tip${option.value[0].toUpperCase()}${option.value.slice(1)}` as MessageKey,
+                        )}
                       >
-                        {t(`settings.theme.${option.value}`)}
-                      </button>
+                        <button
+                          className={theme === option.value ? "active" : ""}
+                          onClick={() => {
+                            setTheme(option.value);
+                            applyTheme(option.value);
+                          }}
+                        >
+                          {t(`settings.theme.${option.value}`)}
+                        </button>
+                      </Tip>
                     ))}
                   </div>
                 </div>
@@ -576,13 +593,20 @@ export function Settings() {
                 <div className="sc">
                   <div className="seg-toggle" role="group" aria-label={t("settings.zoom.aria")}>
                     {ZOOM_STEPS.map((step) => (
-                      <button
+                      <Tip
                         key={step}
-                        className={zoom === step ? "active" : ""}
-                        onClick={() => setUserZoom(step)}
+                        label={t("settings.zoom.heading")}
+                        hint={shortcutLabel(
+                          t("settings.zoom.tipHint", { pct: `${Math.round(step * 100)}%` }),
+                        )}
                       >
-                        {Math.round(step * 100)}%
-                      </button>
+                        <button
+                          className={zoom === step ? "active" : ""}
+                          onClick={() => setUserZoom(step)}
+                        >
+                          {Math.round(step * 100)}%
+                        </button>
+                      </Tip>
                     ))}
                   </div>
                 </div>
@@ -598,6 +622,8 @@ export function Settings() {
                     <Dropdown
                       value={locale}
                       ariaLabel={t("settings.language.heading")}
+                      tip={t("settings.language.heading")}
+                      tipHint={t("settings.language.tipHint")}
                       options={SUPPORTED_LOCALES.map((entry) => ({
                         value: entry.id,
                         label: entry.label,
@@ -614,9 +640,11 @@ export function Settings() {
                 </div>
                 <div className="sd">{t("settings.setup.hint")}</div>
                 <div className="sc">
-                  <button className="btn-ghost" onClick={resetFirstRun}>
-                    {t("settings.setup.action")}
-                  </button>
+                  <Tip label={t("settings.setup.heading")} hint={t("settings.setup.tipHint")}>
+                    <button className="btn-ghost" onClick={resetFirstRun}>
+                      {t("settings.setup.action")}
+                    </button>
+                  </Tip>
                 </div>
               </div>
             </section>
@@ -636,10 +664,16 @@ export function Settings() {
                 </div>
                 <div className="sd">{t("settings.defaults.formatHint")}</div>
                 <div className="sc">
+                  {/* The same controls as Home's prompt row, so the same
+                      bubbles — but what they set here is the STARTING value,
+                      not this video's, and that distinction is the whole
+                      difference between the two rows. */}
                   <Dropdown
                     value={defaults.aspect}
                     onChange={(value) => setDefaults({ aspect: value })}
                     ariaLabel={t("home.aspectAria")}
+                    tip={t("settings.defaults.aspectTip")}
+                    tipHint={t("settings.defaults.aspectTipHint")}
                     options={ASPECTS.map((entry) => ({
                       value: entry.value,
                       label: `${entry.value} · ${m().aspects[entry.key]}`,
@@ -650,22 +684,26 @@ export function Settings() {
                     value={defaults.duration}
                     onChange={(value) => setDefaults({ duration: value })}
                     ariaLabel={t("home.durationAria")}
+                    tip={t("settings.defaults.durationTip")}
+                    tipHint={t("settings.defaults.durationTipHint")}
                   />
                   <div className="seg-toggle" role="group" aria-label={t("home.modeAria")}>
-                    <button
-                      className={defaults.mode === "prompt" ? "active" : ""}
-                      onClick={() => setDefaults({ mode: "prompt" })}
-                      title={t("home.modeAutoTitle")}
-                    >
-                      {t("home.modeAuto")}
-                    </button>
-                    <button
-                      className={defaults.mode === "beginner" ? "active" : ""}
-                      onClick={() => setDefaults({ mode: "beginner" })}
-                      title={t("home.modeReviewTitle")}
-                    >
-                      {t("home.modeReview")}
-                    </button>
+                    <Tip label={t("home.modeAuto")} hint={t("home.modeAutoTitle")}>
+                      <button
+                        className={defaults.mode === "prompt" ? "active" : ""}
+                        onClick={() => setDefaults({ mode: "prompt" })}
+                      >
+                        {t("home.modeAuto")}
+                      </button>
+                    </Tip>
+                    <Tip label={t("home.modeReview")} hint={t("home.modeReviewTitle")}>
+                      <button
+                        className={defaults.mode === "beginner" ? "active" : ""}
+                        onClick={() => setDefaults({ mode: "beginner" })}
+                      >
+                        {t("home.modeReview")}
+                      </button>
+                    </Tip>
                   </div>
                 </div>
               </div>
@@ -676,14 +714,19 @@ export function Settings() {
                 </div>
                 <div className="sd">{t("settings.defaults.voiceHint")}</div>
                 <div className="sc">
-                  <input
-                    style={{ minWidth: 240 }}
-                    value={defaults.voice}
-                    placeholder={t("home.voicePlaceholder")}
-                    title={t("home.voicePlaceholder")}
-                    aria-label={t("settings.defaults.voiceHeading")}
-                    onChange={(event) => setDefaults({ voice: event.target.value })}
-                  />
+                  {/* The `title` here repeated the field's own placeholder,
+                      so the browser waited a second to show you the words
+                      already in front of you. The bubble says what the field
+                      accepts instead, as Home's voice field does. */}
+                  <Tip label={t("settings.defaults.voiceTip")} hint={t("home.voiceTipHint")}>
+                    <input
+                      style={{ minWidth: 240 }}
+                      value={defaults.voice}
+                      placeholder={t("home.voicePlaceholder")}
+                      aria-label={t("settings.defaults.voiceHeading")}
+                      onChange={(event) => setDefaults({ voice: event.target.value })}
+                    />
+                  </Tip>
                 </div>
               </div>
               <div className="setting-row">
@@ -697,6 +740,8 @@ export function Settings() {
                     value={defaults.videoModel ?? ""}
                     onChange={(value) => setDefaults({ videoModel: value || null })}
                     ariaLabel={t("settings.defaults.modelHeading")}
+                    tip={t("settings.defaults.modelTip")}
+                    tipHint={t("settings.defaults.modelTipHint")}
                     options={videoModelOptions}
                   />
                 </div>
@@ -745,22 +790,35 @@ export function Settings() {
                     />
                     {/* Save earns its place only once a key is typed */}
                     {draft && (
-                      <button
-                        className="btn-primary"
-                        onClick={() => void saveKey(provider.id)}
-                        disabled={busy !== null}
+                      <Tip
+                        label={t("settings.providers.saveTip")}
+                        hint={t("settings.providers.saveTipHint")}
                       >
-                        {busy === provider.id ? t("common.saving") : t("common.save")}
-                      </button>
+                        <button
+                          className="btn-primary"
+                          onClick={() => void saveKey(provider.id)}
+                          disabled={busy !== null}
+                        >
+                          {busy === provider.id ? t("common.saving") : t("common.save")}
+                        </button>
+                      </Tip>
                     )}
                     {(provider.configured || presence?.[KEY_IDS[provider.id]]) && (
-                      <button
-                        className="btn-ghost"
-                        onClick={() => void clearKey(provider.id)}
-                        disabled={busy !== null}
+                      /* "Clear" is one word of verb, and the same word under
+                         Storage means something else entirely. Which one is
+                         about to happen belongs on the control. */
+                      <Tip
+                        label={t("settings.providers.clearTip")}
+                        hint={t("settings.providers.clearTipHint")}
                       >
-                        {t("common.clear")}
-                      </button>
+                        <button
+                          className="btn-ghost"
+                          onClick={() => void clearKey(provider.id)}
+                          disabled={busy !== null}
+                        >
+                          {t("common.clear")}
+                        </button>
+                      </Tip>
                     )}
                   </div>
                 );
@@ -865,13 +923,20 @@ export function Settings() {
                         <div className="storage-row" key={row.id}>
                           <span className="grow">{row.title}</span>
                           <span className="size">{formatSize(row.bytes)}</span>
-                          <button
-                            className="icon-btn-sm"
-                            aria-label={t("settings.storage.deleteAria", { title: row.title })}
-                            onClick={() => setConfirmProject(row)}
+                          <Tip
+                            label={t("settings.storage.deleteAria", { title: row.title })}
+                            hint={t("settings.storage.deleteTipHint")}
                           >
-                            <Trash2 size={13} strokeWidth={1.8} />
-                          </button>
+                            <button
+                              className="icon-btn-sm"
+                              aria-label={t("settings.storage.deleteAria", {
+                                title: row.title,
+                              })}
+                              onClick={() => setConfirmProject(row)}
+                            >
+                              <Trash2 size={13} strokeWidth={1.8} />
+                            </button>
+                          </Tip>
                         </div>
                       ))}
                       {storage.projects.length === 0 && (
@@ -886,11 +951,16 @@ export function Settings() {
                     </div>
                     <div className="sd">{t("settings.storage.cacheHint")}</div>
                     <div className="sc">
-                      <button className="btn-ghost" onClick={() => setConfirmCache(true)}>
-                        {t("settings.storage.clearCache", {
-                          size: formatSize(storage.cache_bytes),
-                        })}
-                      </button>
+                      <Tip
+                        label={t("settings.storage.cacheHeading")}
+                        hint={t("settings.storage.clearCacheTipHint")}
+                      >
+                        <button className="btn-ghost" onClick={() => setConfirmCache(true)}>
+                          {t("settings.storage.clearCache", {
+                            size: formatSize(storage.cache_bytes),
+                          })}
+                        </button>
+                      </Tip>
                     </div>
                   </div>
                   {(() => {
@@ -916,15 +986,20 @@ export function Settings() {
                         </div>
                         <div className="sd">{t("settings.storage.toolsHint")}</div>
                         <div className="sc">
-                          <button
-                            className="btn-ghost"
-                            disabled={rows.length === 0}
-                            onClick={() => setConfirmTools(true)}
+                          <Tip
+                            label={t("settings.storage.toolsHeading")}
+                            hint={t("settings.storage.clearToolsTipHint")}
                           >
-                            {plural("settings.storage.clearTools", rows.length, {
-                              size: formatSize(bytes),
-                            })}
-                          </button>
+                            <button
+                              className="btn-ghost"
+                              disabled={rows.length === 0}
+                              onClick={() => setConfirmTools(true)}
+                            >
+                              {plural("settings.storage.clearTools", rows.length, {
+                                size: formatSize(bytes),
+                              })}
+                            </button>
+                          </Tip>
                         </div>
                       </div>
                     );
@@ -936,9 +1011,14 @@ export function Settings() {
                     </div>
                     <div className="sd">{t("settings.storage.modelsHint")}</div>
                     <div className="sc">
-                      <button className="btn-ghost" onClick={() => setSettingsTab("models")}>
-                        {t("home.manageModels")}
-                      </button>
+                      <Tip
+                        label={t("settings.storage.manageModelsTip")}
+                        hint={t("settings.storage.manageModelsTipHint")}
+                      >
+                        <button className="btn-ghost" onClick={() => setSettingsTab("models")}>
+                          {t("home.manageModels")}
+                        </button>
+                      </Tip>
                     </div>
                   </div>
                 </>
@@ -985,21 +1065,26 @@ export function Settings() {
                           : t("settings.remote.disconnectHint")}
                       </div>
                     </div>
-                    <button
-                      className="btn-ghost"
-                      disabled={pairBusy}
-                      onClick={() => {
-                        setPairBusy(true);
-                        setPairError(null);
-                        void unpairRemote()
-                          .then(setPairError)
-                          .finally(() => setPairBusy(false));
-                      }}
+                    <Tip
+                      label={t("settings.remote.disconnect")}
+                      hint={t("settings.remote.disconnectTipHint")}
                     >
-                      {pairBusy
-                        ? t("settings.remote.disconnecting")
-                        : t("settings.remote.disconnect")}
-                    </button>
+                      <button
+                        className="btn-ghost"
+                        disabled={pairBusy}
+                        onClick={() => {
+                          setPairBusy(true);
+                          setPairError(null);
+                          void unpairRemote()
+                            .then(setPairError)
+                            .finally(() => setPairBusy(false));
+                        }}
+                      >
+                        {pairBusy
+                          ? t("settings.remote.disconnecting")
+                          : t("settings.remote.disconnect")}
+                      </button>
+                    </Tip>
                   </div>
                   {/* Arming is a second decision, so it needs a second
                       control. Declining at pair time used to be final: the
@@ -1015,19 +1100,24 @@ export function Settings() {
                           {t("settings.remote.armHint", { keys: storedKeyLabels.join(", ") })}
                         </div>
                       </div>
-                      <button
-                        className="btn-ghost"
-                        disabled={armBusy}
-                        onClick={() => {
-                          setArmBusy(true);
-                          setPairError(null);
-                          void armRemoteKeys()
-                            .then(setPairError)
-                            .finally(() => setArmBusy(false));
-                        }}
+                      <Tip
+                        label={t("settings.remote.arm")}
+                        hint={t("settings.remote.armTipHint")}
                       >
-                        {armBusy ? t("settings.remote.arming") : t("settings.remote.arm")}
-                      </button>
+                        <button
+                          className="btn-ghost"
+                          disabled={armBusy}
+                          onClick={() => {
+                            setArmBusy(true);
+                            setPairError(null);
+                            void armRemoteKeys()
+                              .then(setPairError)
+                              .finally(() => setArmBusy(false));
+                          }}
+                        >
+                          {armBusy ? t("settings.remote.arming") : t("settings.remote.arm")}
+                        </button>
+                      </Tip>
                     </div>
                   )}
                   {remoteEngine && remoteKeysArmed && anyKeyStored && (
@@ -1068,25 +1158,32 @@ export function Settings() {
                       </label>
                     )}
                     <div className="provider-row">
-                      <button
-                        className="btn-ghost"
-                        disabled={pairBusy}
-                        onClick={() => {
-                          setPairPreview(null);
-                          setArmKeys(false);
-                        }}
+                      <Tip label={t("common.cancel")} hint={t("settings.remote.cancelTipHint")}>
+                        <button
+                          className="btn-ghost"
+                          disabled={pairBusy}
+                          onClick={() => {
+                            setPairPreview(null);
+                            setArmKeys(false);
+                          }}
+                        >
+                          {t("common.cancel")}
+                        </button>
+                      </Tip>
+                      <Tip
+                        label={t("settings.remote.reviewConfirm")}
+                        hint={t("settings.remote.confirmTipHint")}
                       >
-                        {t("common.cancel")}
-                      </button>
-                      <button
-                        className="btn-primary"
-                        disabled={pairBusy}
-                        onClick={() => confirmPairing(armKeys)}
-                      >
-                        {pairBusy
-                          ? t("settings.remote.pairing")
-                          : t("settings.remote.reviewConfirm")}
-                      </button>
+                        <button
+                          className="btn-primary"
+                          disabled={pairBusy}
+                          onClick={() => confirmPairing(armKeys)}
+                        >
+                          {pairBusy
+                            ? t("settings.remote.pairing")
+                            : t("settings.remote.reviewConfirm")}
+                        </button>
+                      </Tip>
                     </div>
                   </div>
                 ) : (
@@ -1100,13 +1197,18 @@ export function Settings() {
                       }}
                       aria-label={t("settings.remote.pairAria")}
                     />
-                    <button
-                      className="btn-primary"
-                      disabled={pairBusy || !pairingCode.trim()}
-                      onClick={submitPairing}
+                    <Tip
+                      label={t("settings.remote.pair")}
+                      hint={t("settings.remote.pairTipHint")}
                     >
-                      {pairBusy ? t("settings.remote.checking") : t("settings.remote.pair")}
-                    </button>
+                      <button
+                        className="btn-primary"
+                        disabled={pairBusy || !pairingCode.trim()}
+                        onClick={submitPairing}
+                      >
+                        {pairBusy ? t("settings.remote.checking") : t("settings.remote.pair")}
+                      </button>
+                    </Tip>
                   </div>
                 )}
                 {pairError && <div className="banner error">{pairError}</div>}
