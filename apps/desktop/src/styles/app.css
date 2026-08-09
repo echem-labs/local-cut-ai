@@ -6158,6 +6158,36 @@ button.link:hover {
   gap: var(--space-2);
 }
 
+/* The drag-and-drop overlay. Above everything including the settings layer,
+   because a drag is a live gesture and the app has to answer it wherever it
+   happens; `pointer-events: none` so it cannot itself swallow the drop it
+   is advertising. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  pointer-events: none;
+}
+
+.drop-overlay-card {
+  padding: var(--space-4) var(--space-5);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-m);
+  background: var(--surface-1);
+  font-weight: 600;
+}
+
+/* What happened after the drop, in the flow rather than over it. */
+.drop-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 /* The engine crash bar. Same treatment as the error boundary above — it is
    the same kind of event to a user — but it stacks its own message, an
    optional restart failure, and the two buttons. */

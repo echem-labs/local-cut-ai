@@ -30,6 +30,7 @@ import eta from "./en/eta.json";
 import palette from "./en/palette.json";
 import notices from "./en/notices.json";
 import notify from "./en/notify.json";
+import drop from "./en/drop.json";
 import failure from "./en/failure.json";
 import publish from "./en/publish.json";
 
@@ -80,6 +81,7 @@ const en = {
   palette,
   notices,
   notify,
+  drop,
   failure,
   publish,
 };
