@@ -16,6 +16,7 @@ const { app, BrowserWindow } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const { COLLECT } = require("./textprobe.cjs");
 
 // The offscreen frame inherits the PRIMARY display's scale at launch, and
 // capturePage returns physical pixels — on a 125% display the "960-wide"
@@ -81,7 +82,10 @@ const SETS = {
       ["session-voiceover", "session-mock.html?view=session-voiceover"],
       ["session-music", "session-mock.html?view=session-music"],
       ["session-image", "session-mock.html?view=session-image"],
-      ["session-clip-rendering", "session-mock.html?view=session-clip-rendering"],
+      [
+        "session-clip-rendering",
+        "session-mock.html?view=session-clip-rendering",
+      ],
     ],
   },
   /* The flowchart panel (U4). Not a window: the canvas is one panel of the
@@ -114,7 +118,9 @@ const SETS = {
 const setName = arg("set", "wizard");
 const SET = SETS[setName];
 if (!SET) {
-  console.error(`unknown --set ${setName}; expected one of ${Object.keys(SETS).join(", ")}`);
+  console.error(
+    `unknown --set ${setName}; expected one of ${Object.keys(SETS).join(", ")}`,
+  );
   app.exit(2);
   return;
 }
@@ -143,20 +149,76 @@ const MASKABLE = {
      frame gates the LAYOUT of the shelf and the chrome around it; what a
      tile says is the seed's business, and the geometry of these regions is
      checked against the reference boxes (parity-home.mjs). */
-  home: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
-  "home-downloads": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".dlsum", ".tool .well", ".models"],
-  "home-downloads-open": [".rail .item .count", ".rail .item .glyph", ".dlsum", ".srow .st", ".srow .model", ".tool .well", ".models"],
-  "home-empty": [".rail .item .count", ".rail .item .glyph", ".tool .well", ".models"],
-  library: [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
-  "library-tools": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
-  "library-menu": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".libbar .seg", ".chip"],
+  home: [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+  ],
+  "home-downloads": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".dlsum",
+    ".tool .well",
+    ".models",
+  ],
+  "home-downloads-open": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".dlsum",
+    ".srow .st",
+    ".srow .model",
+    ".tool .well",
+    ".models",
+  ],
+  "home-empty": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+  ],
+  library: [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
+  "library-tools": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
+  "library-menu": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".libbar .seg",
+    ".chip",
+  ],
   /* The card masks only its warning mark: a 14px lucide triangle in the
      app, a text glyph here. Everything else in the frame IS the design. */
   "inspector-failure": [".head .mark"],
   "wiz-1": [".mark"],
   "wiz-2": [],
   "wiz-3": [".row .meta", ".row .check", ".primary", ".hintline"],
-  "wiz-3lib": [".mrow .meta", ".mrow .check", ".mrow .badge", ".libfilter", ".primary", ".hintline"],
+  "wiz-3lib": [
+    ".mrow .meta",
+    ".mrow .check",
+    ".mrow .badge",
+    ".libfilter",
+    ".primary",
+    ".hintline",
+  ],
   "wiz-4": [".srow .st", ".overall", ".sub"],
   /* session set (U3). Same doctrine: tiles, rail glyphs and counts as the
      home set; plus — the status row (model name and wall time are live),
@@ -165,14 +227,78 @@ const MASKABLE = {
      slate), and the small lucide-vs-unicode glyphs inside controls (the
      tool-head icon and close button, the swatch play cells, the models
      readiness dot). Geometry is checked for every one of them. */
-  "panel-script": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x"],
-  "panel-voiceover": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".swatch .play"],
-  "panel-clip": [".tile .thumb", ".tile .tbody", ".rail .item .count", ".rail .item .glyph", ".tool .well", ".models", ".phead .ticon", ".phead .x", ".ghost.sf"],
-  "session-script": [".rail .item .count", ".rail .item .glyph", ".status", ".composer .models"],
-  "session-voiceover": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".clone .box", ".composer .models"],
-  "session-music": [".rail .item .count", ".rail .item .glyph", ".status", ".waveplot", ".wtoggle", ".wtime", ".actions .ghost", ".composer .models"],
-  "session-image": [".rail .item .count", ".rail .item .glyph", ".status", ".preview", ".actions .ghost", ".composer .models"],
-  "session-clip-rendering": [".rail .item .count", ".rail .item .glyph", ".status"],
+  "panel-script": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+  ],
+  "panel-voiceover": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+    ".swatch .play",
+  ],
+  "panel-clip": [
+    ".tile .thumb",
+    ".tile .tbody",
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".tool .well",
+    ".models",
+    ".phead .ticon",
+    ".phead .x",
+    ".ghost.sf",
+  ],
+  "session-script": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".composer .models",
+  ],
+  "session-voiceover": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".waveplot",
+    ".wtoggle",
+    ".wtime",
+    ".actions .ghost",
+    ".clone .box",
+    ".composer .models",
+  ],
+  "session-music": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".waveplot",
+    ".wtoggle",
+    ".wtime",
+    ".actions .ghost",
+    ".composer .models",
+  ],
+  "session-image": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+    ".preview",
+    ".actions .ghost",
+    ".composer .models",
+  ],
+  "session-clip-rendering": [
+    ".rail .item .count",
+    ".rail .item .glyph",
+    ".status",
+  ],
   /* canvas set (U4). The graph's GEOMETRY is the whole point of this frame,
      so almost nothing is masked — the layout is derived and the pose is
      fixed, which is exactly what makes the node grid diffable. What is
@@ -206,7 +332,15 @@ const MASKABLE = {
 const MASK_PAD = 6;
 
 const FONT = pathToFileURL(
-  path.resolve(__dirname, "..", "..", "src", "assets", "fonts", "InterVariable.woff2"),
+  path.resolve(
+    __dirname,
+    "..",
+    "..",
+    "src",
+    "assets",
+    "fonts",
+    "InterVariable.woff2",
+  ),
 ).href;
 
 /* Every rule below either injects the app's real font or snaps one mock
@@ -242,14 +376,43 @@ button, input, select, textarea { font-family: inherit !important; }
 ::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
 /* app body has no line-height override — UA normal, not the mock's 1.5.
    !important: the mock sets it via the font shorthand and insertCSS does
-   not reliably out-cascade the document sheet. */
-body, body * { line-height: normal !important; }
+   not reliably out-cascade the document sheet.
+
+   The bare body selector, NOT the descendant form: line-height inherits,
+   so this already reaches every element that does not state one - which
+   is the whole intent - while leaving alone the ones that do. The
+   descendant form reached those too, and a mock stating a height is a
+   mock agreeing with the app: the session's script table says 18px, as
+   the app's .script-table does, and stomping it to normal made every row
+   6px short and the last one 45px out of place. Where the mock states a
+   height the app does not share, the snap blocks below say so by name. */
+body { line-height: normal !important; }
 /* one control height (--control-h 32) and the app button type sizes */
 .primary { min-height: 32px !important; font-size: 14px !important; padding: 8px 16px !important; }
-.ghost { min-height: 32px !important; font-size: 13px !important; padding: 8px 12px !important; }
+/* The app's .btn-primary states line-height:1 and says why: at 18px the
+   14px label makes 8+18+8 = 34, one taller than every control beside it
+   in the composer row, and --control-h stops deciding the height. The
+   mocks that state a line box here say 18. */
+.primary { line-height: 1 !important; }
+/* ...and .btn-ghost's, for the same reason and in the same place. 13px on
+   an 18px anchor inside 8/12 padding and a border is 36, not the 32px floor
+   the line below states, and a mock that declares no line box at all - the
+   wizard's declares none - leaves its ghosts at whatever the UA's normal
+   makes of 13px Inter, which measures 34. It was stated only for the about
+   set, where it was found; the wizard draws Back, Skip setup and Open full
+   library the same way and was carrying 2px on each. */
+.ghost { min-height: 32px !important; font-size: 13px !important; padding: 8px 12px !important; line-height: 18px !important; }
 .link { font-size: 14px !important; }
 /* the app's one eyebrow letter-spacing */
 .steps, .srow .stage { letter-spacing: .1em !important; }
+/* ...and its one eyebrow line box. The blanket line-height:normal above is
+   right wherever the app inherits the UA's and wrong on every row where
+   the app states a height instead - and the app's .eyebrow rule states 16
+   for exactly this reason: an 11px line left to Inter's metrics rounds one
+   way in the app and the other here. It is 2-3px per heading, and it
+   accumulates: the wizard's library draws five group headings above its
+   last model row, which sat 12px low. */
+.eyebrow { line-height: 16px !important; }
 /* type scale: 13.5 -> --text-s, 12.5 -> --text-xs, 11.5 -> --text-xs */
 .row .name, .mrow .name, .srow .model, .verdict { font-size: 14px !important; }
 .st, .overall { font-size: 12px !important; }
@@ -273,11 +436,13 @@ body, body * { line-height: normal !important; }
 .st .bar { margin-top: 4px !important; }
 `;
 
-/* ---- the home set's snaps (same rule: each one is a token the app owns) */
-const SNAP_HOME = `
-/* 12.5px is not on the scale: --text-xs everywhere it appears */
-.tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
-.rail .item, .sortmenu div, .menu div { font-size: 12px !important; }
+/* ---- the window's own chrome, shared by every mock that draws it.
+   The rail and the title bar are ONE shipped component pair; the home and
+   session mocks each hand-drew them, so a snap that lived in the home
+   block left the session's rail 3px tall in places and its brand in the
+   wrong weight - the same difference, gated on one screen and waived on
+   the other. */
+const SNAP_SHELL = `
 /* rail rows are --text-s, and the readiness button is an --control-h icon */
 .rail .item { font-size: 14px !important; }
 /* the rail's group label sits on the rail's own rhythm, not the wizard's */
@@ -287,27 +452,72 @@ const SNAP_HOME = `
 .rail .engine b { font-size: 11px !important; }
 .rail .engine small { font-size: 10px !important; }
 .models { width: 32px !important; height: 32px !important; }
+.titlebar { height: 38px !important; }
+/* the brand is the app's own type: --text-xs at the brand weight, where the
+   mock hand-set 12.5px/400. 12.5 is not on the scale, and 650 is the same
+   weight About's heading was snapped to in U6 */
+.titlebar { font-size: 12px !important; font-weight: 650 !important; letter-spacing: -0.01em !important; }
+/* ...but only the brand. The project name beside it is the app's
+   .tb-project - same size, normal weight, no tracking - and the mock
+   writes the brand as a bare text node, so the weight has to be set on
+   the bar and taken back here. */
+.titlebar .proj { font-weight: 400 !important; letter-spacing: normal !important; }
+body { padding-top: 38px !important; }
+.frame { min-height: calc(100vh - 38px) !important; }
+`;
+
+/* ---- the home set's snaps (same rule: each one is a token the app owns) */
+const SNAP_HOME = `
+/* 12.5px is not on the scale: --text-xs everywhere it appears.
+   NOT .rail .item, which is --text-s and is SNAP_SHELL's to say. It used
+   to be in this list and be overridden by a 14px rule two lines below it;
+   moving that rule to the shared block moved it EARLIER in the sheet, which
+   at equal specificity means it lost. The rail would have rendered a step
+   small in the next reference anyone re-rendered - so state it once, in the
+   block that owns the rail, rather than relying on which string is
+   concatenated last. */
+.tbody .t, .shelfhead a, .search, .srow .st, .overall, .fromtpl, .dlsum, .note,
+.sortmenu div, .menu div { font-size: 12px !important; }
 /* the 4px grid where the mock sits off it */
 .fromtpl { margin-top: 12px !important; }
+/* ...and the app's stated 16px line box. Both sides drew this row at
+   whatever Inter's metrics made of a 12px line, and the fraction rounded
+   differently on each - one pixel, inherited by the downloads panel under
+   it, which then drew all fourteen of its borders on the wrong row. */
+.fromtpl { line-height: 16px !important; }
 .toolhead { margin: 24px 0 12px !important; }
 .shelfhead { margin: 32px 0 12px !important; }
 /* a seg-toggle's cells sit inside its border, so 30 + 2 is the app's 32 */
 .seg span, .sortwrap .chip { min-height: 30px !important; align-items: center !important; }
-/* Generate carries the app's min-width so the row's right edge matches */
+/* Generate carries the app's min-width so the row's right edge matches.
+   Its HEIGHT needs nothing here: the mock writes the CTA's icon as a "✦"
+   character, which falls back to a font whose metrics made the line box
+   taller than the button - 34px measured - and a fallback glyph was
+   therefore deciding the height of the CTA, the prompt box's control row
+   and every row below it. The cure is SNAP_COMMON's .primary line box,
+   which takes the font's metrics out of the line entirely; with it stated,
+   the mock's own min-height of 32 decides, and pinning an explicit height
+   on top of it measured identically. State the line box, don't pin the
+   box. */
 .primary { min-width: 128px !important; justify-content: center !important; }
 .hero .row { padding: 12px !important; }
-/* the shipped page gutter (main.content) is 32px, not the mock's 24, and
-   the title bar is --titlebar-h 38 */
+/* the shipped page gutter (main.content) is 32px, not the mock's 24 */
 .page { padding: 32px 32px 40px !important; }
-.titlebar { height: 38px !important; }
-body { padding-top: 38px !important; }
-.frame { min-height: calc(100vh - 38px) !important; }
 .sub { margin: 8px 0 16px !important; }
 /* the empty card's box on the 4px grid, and its buttons at --text-xs */
 .empty { margin-top: 16px !important; padding: 24px !important; }
 .empty h2 { font-size: 16px !important; }
 .empty p { font-size: 12px !important; margin: 8px 0 12px !important; }
-.empty .tpl span { font-size: 12px !important; padding: 8px 12px !important; }
+/* The starter rows are the app's ghost BUTTON, which is what they are - one
+   click each, and they set the prompt. So they carry its box: 13/18 type on
+   a 32px floor, not the mock's 12.5px span. The old snap took them to 12px,
+   which was neither the mock's value nor the app's, and left every row 3px
+   short - the three rows drifted 2, 1 and 4px apart down the card. */
+.empty .tpl span {
+  font-size: 13px !important;
+  line-height: 18px !important;
+  padding: 8px 12px !important;
+}
 /* quick-tool cards are the app's --space-3 box with a 76px floor */
 .tool { padding: 12px !important; min-height: 76px !important; }
 .tools { gap: 8px !important; }
@@ -316,7 +526,8 @@ body { padding-top: 38px !important; }
 .tbody { padding: 8px 10px !important; }
 .tbody .m { margin-top: 4px !important; }
 .grid { gap: 12px !important; }
-/* the shelf head is an eyebrow at the app's letter-spacing */
+/* the shelf head is an eyebrow at the app's letter-spacing (its line box
+   is snapped in SNAP_COMMON, where every set needs it) */
 .eyebrow { letter-spacing: .1em !important; }
 `;
 
@@ -325,8 +536,12 @@ body { padding-top: 38px !important; }
    .actions sit 24px under a form; the session's ride the column's 16px flex
    gap. */
 const SNAP_SESSION = `
-.rail .group { margin-top: 0 !important; }
 .actions { margin-top: 0 !important; }
+/* The script table's header row is the only cell in it that forgets to
+   state a line box; the app gives th and td the same 18px, and left to
+   Inter's metrics at 11px the reference's header was 4px short - which
+   the whole table inherited. */
+.stable th { line-height: 18px !important; }
 `;
 
 /* ---- the u5 set's snap. The app's `.chip` pins an 18px line box (it is
@@ -373,10 +588,8 @@ h1 { font-size: 14px !important; font-weight: 650 !important; }
 .chips { margin-top: 0 !important; }
 .vrow .name { font-size: 14px !important; }
 .vrow .ver, .ok, .kv dd, .whatsnew a, .privacy p { font-size: 12px !important; }
-/* The app's .btn-ghost is 13px on an 18px rhythm anchor inside 8/12 padding
-   and a border - 36px, not the 32px floor SNAP_COMMON states. Left at 32
-   the whole Support card, and everything under it, sat 4px high. */
-.ghost { min-height: 32px !important; line-height: 18px !important; }
+/* (.ghost's 18px line box is SNAP_COMMON's now - every set needs it, and
+   the wizard's was the set still going without.) */
 /* the app's .kv, which About shares with the pairing review: a 140px key
    column on --space-2/--space-3 gaps, keys at --text-s over mono values at
    --text-xs */
@@ -409,6 +622,8 @@ h2 + .card { margin-top: 0 !important; }
 
 const SNAP =
   SNAP_COMMON +
+  /* the two sets whose mocks draw the whole window */
+  (setName === "home" || setName === "session" ? SNAP_SHELL : "") +
   (setName === "home" ? SNAP_HOME : "") +
   (setName === "session" ? SNAP_SESSION : "") +
   (setName === "u5" ? SNAP_U5 : "") +
@@ -419,7 +634,9 @@ async function render(win, name, file) {
   const url = `${pathToFileURL(path.join(mocksDir, base)).href}${query ? `?${query}` : ""}`;
   await win.loadURL(url);
   await win.webContents.insertCSS(SNAP, { cssOrigin: "author" });
-  await win.webContents.executeJavaScript("document.fonts.ready.then(() => null)");
+  await win.webContents.executeJavaScript(
+    "document.fonts.ready.then(() => null)",
+  );
   // Two frames so the font swap has painted before measuring.
   await win.webContents.executeJavaScript(
     "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
@@ -427,28 +644,42 @@ async function render(win, name, file) {
   // body is min-height:100vh, so its box reports the viewport, not the
   // content; the card is the content — its bottom edge (padding included)
   // is the true page height.
-  const height = SET.height ?? await win.webContents.executeJavaScript(
-    setName === "home"
-      ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
-      : setName === "session"
-        ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
-        : setName === "about"
-          ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
-          : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
-  );
+  const height =
+    SET.height ??
+    (await win.webContents.executeJavaScript(
+      setName === "home"
+        ? "Math.max(640, Math.ceil(document.getElementById('main').getBoundingClientRect().bottom) + 40)"
+        : setName === "session"
+          ? "Math.max(640, Math.ceil(document.querySelector('.page > .col').getBoundingClientRect().bottom) + 40)"
+          : setName === "about"
+            ? "Math.ceil(document.querySelector('main').getBoundingClientRect().bottom)"
+            : "Math.ceil(document.querySelector('.card').getBoundingClientRect().bottom)",
+    ));
   // Resize, then paint the frame fresh: an offscreen window that grows after
   // painting composites the old frame under the new one, which ghosts
   // anything positioned against a moved edge.
   win.setContentSize(SET.width, height);
   await win.loadURL(url);
   await win.webContents.insertCSS(SNAP, { cssOrigin: "author" });
-  await win.webContents.executeJavaScript("document.fonts.ready.then(() => null)");
+  await win.webContents.executeJavaScript(
+    "document.fonts.ready.then(() => null)",
+  );
   await win.webContents.executeJavaScript(
     "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
   );
   const image = await win.webContents.capturePage();
   fs.writeFileSync(path.join(outDir, `${name}.png`), image.toPNG());
   console.log(`${name}.png ${SET.width}x${height}`);
+
+  // Where the mock puts its text, for the convergence probe. Written beside
+  // the frame rather than gated behind a flag: it is a few KB, it is only
+  // meaningful for the reference it was measured from, and a probe you have
+  // to remember to enable is one that is stale when you finally look.
+  const text = await win.webContents.executeJavaScript(COLLECT);
+  fs.writeFileSync(
+    path.join(outDir, `${name}.text.json`),
+    JSON.stringify(text, null, 1),
+  );
 
   const rects = await win.webContents.executeJavaScript(`
     (${JSON.stringify(MASKABLE[name] ?? [])}).flatMap((selector) =>
@@ -482,7 +713,10 @@ app.whenReady().then(async () => {
     for (const [name, file] of STATES) {
       masks[`${name}.png`] = await render(win, name, file);
     }
-    fs.writeFileSync(path.join(outDir, "masks.json"), JSON.stringify(masks, null, 1));
+    fs.writeFileSync(
+      path.join(outDir, "masks.json"),
+      JSON.stringify(masks, null, 1),
+    );
     console.log("masks.json written");
     app.exit(0);
   } catch (error) {

@@ -31,6 +31,7 @@ import {
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
+import { writeProbe } from "./textprobe.cjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
@@ -221,7 +222,7 @@ const refSize = (name) => {
 const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
 const MASK_PAD = 6;
 
-const RAIL_ICONS = ".rail button:not(.rail-tab-close) > svg";
+const RAIL_ICONS = ".rail button:not(.rail-tab-close):not(.menu-pop button) > svg";
 
 /** What each masked region of the reference is, in the app — a mask hides
  * pixels, never geometry (U1's lesson, now doctrine). */
@@ -292,9 +293,12 @@ const MASKED_AS = {
 };
 /** Design-owned sizes: matched rigidly. */
 const RIGID = /thumb|wave-plot|tool-preview|swatch-play|wave-toggle/;
-/** Content-sized boxes: matched on where they start, not how big they are
- * (a status row's width is a model name and a wall time; a time readout
- * and the composer's model line are whatever their text measures). */
+/** Content-sized boxes: matched on where they start HORIZONTALLY, not on
+ * how wide they are (a status row's width is a model name and a wall time;
+ * a time readout and the composer's model line are whatever their text
+ * measures). Loose is a statement about x only - the vertical band binds
+ * every box, loose or not, because without it a box could claim a mask
+ * several rows above it. */
 const LOOSE = /tile-body|rail-count|tool-status|audio|btn-ghost|consent|icon-btn|wave-plot|wave-time|models-pop|swatch-play/;
 const TOL = 2;
 
@@ -315,20 +319,22 @@ const checkMaskGeometry = (name, boxes) => {
     const hit = want.find(
       (ref) =>
         !ref.taken &&
-        box.y >= ref.y - TOL &&
         // Content-sized boxes (a status row is a model name and a wall
         // time; a right-aligned cell grows leftward) are matched on
         // vertical position plus horizontal overlap; design-owned boxes
-        // must sit wholly inside the mask that was drawn for them.
+        // must sit wholly inside the mask that was drawn for them. The
+        // vertical band binds both: "loose" is a statement about x, and
+        // left unbounded below it lets a box claim a mask far above it.
+        box.y >= ref.y - TOL &&
+        box.y + box.height <= ref.y + ref.height + TOL &&
         box.x < ref.x + ref.width &&
         box.x + box.width > ref.x &&
         (LOOSE.test(box.sel) ||
-          (box.y + box.height <= ref.y + ref.height + TOL &&
-            // Inside the mask, or pinned to the edge the control is
-            // anchored on (a right-aligned control grows leftward past
-            // the box the mask was drawn around).
-            (box.x >= ref.x - TOL ||
-              Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL))),
+          // Inside the mask, or pinned to the edge the control is
+          // anchored on (a right-aligned control grows leftward past
+          // the box the mask was drawn around).
+          box.x >= ref.x - TOL ||
+          Math.abs(box.x + box.width - (ref.x + ref.width - MASK_PAD)) <= TOL),
     );
     if (!hit) {
       problems.push(`${box.sel} at ${box.x},${box.y} ${box.width}x${box.height} masks nothing`);
@@ -547,6 +553,27 @@ try {
       }, [${width}, ${height}]);
       await page.mouse.move(4, 4);
       await page.waitForTimeout(350);
+      // ...and then until the layout stops moving. The resize above
+      // re-flows the whole page, so a fixed wait after it is the same
+      // gamble the panel-expand step used to take - and it is the one that
+      // actually decides the picture, since every settle done BEFORE the
+      // resize is re-laid-out by it. home-downloads-open shot its quick
+      // tools 84px high about one run in four this way.
+      //
+      // Never throws: a frame that will not settle is a frame worth
+      // diffing anyway, and compare.mjs reports it with a number.
+      await page
+        .waitForFunction(
+          () => {
+            const now = document.documentElement.scrollHeight;
+            const settled = window.__rigHeight === now;
+            window.__rigHeight = now;
+            return settled;
+          },
+          null,
+          { timeout: 4000, polling: 120 },
+        )
+        .catch(() => {});
       await page.screenshot({
         path: ${JSON.stringify(path.join(dir, `${name}.png`))},
         scale: "css",
@@ -571,6 +598,10 @@ try {
       ${JSON.stringify(MASKED_AS[name] ?? [])});
     `);
     checkMaskGeometry(name, boxes);
+    // Convergence only: the frame's own text, measured the same way the
+    // reference measured its own, so `converge.mjs` can say which element
+    // moved rather than how many pixels did.
+    await writeProbe(dir, name, evalInApp);
     // Frame-level, not just run-level: the off-scale flip strikes on a
     // shrinking resize and every frame after it measures 1.25x wide.
     scaleHeld &&= await layoutTrue();

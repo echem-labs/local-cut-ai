@@ -168,6 +168,26 @@ describe("the style preset", () => {
       "anime",
     );
   });
+
+  // The design draws a mark on every chip in the prompt row; aspect and
+  // duration shipped with one and style did not, which reads as a rendering
+  // fault rather than a choice.
+  //
+  // Asked of the ROW, not of a list of three labels: a hardcoded list says
+  // nothing about the fourth chip, which is the one this is here to catch.
+  // Every chip is a Dropdown, and every Dropdown trigger carries its mark
+  // before its label - so enumerate the triggers the row actually renders.
+  it("gives every chip in the prompt row its mark", () => {
+    const { container } = render(<Home />);
+    const row = container.querySelector(".prompt-box");
+    const chips = [...(row?.querySelectorAll("button.dropdown-trigger") ?? [])];
+    // A query that finds nothing passes every assertion under it.
+    expect(chips.length).toBeGreaterThanOrEqual(3);
+    const bare = chips
+      .filter((chip) => !chip.querySelector("svg"))
+      .map((chip) => chip.getAttribute("aria-label"));
+    expect(bare).toEqual([]);
+  });
 });
 
 describe("the download bridge", () => {
