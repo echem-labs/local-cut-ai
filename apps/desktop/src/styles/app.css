@@ -224,10 +224,36 @@ textarea {
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
-  /* The width is sized to fit the vertical bar above; this is the guarantee
-     rather than the fix, so a longer title or a future glyph cannot put a
-     horizontal bar under a 58px column. */
   overflow-x: hidden;
+  /* The bar belongs against the rail's edge, and the column it scrolls has
+     to keep its width. Both come from the same trick: the list reaches out
+     through the rail's horizontal padding (negative margin) and puts back
+     just enough of it (padding) to leave the bar exactly the space that
+     padding used to occupy. Left inside the padding instead, the bar sat
+     7px short of the edge with dead space beside it AND took its width out
+     of the glyph column, which is what clipped the rows.
+     Expanded rail: 12px of padding, 6px bar, 6px put back. */
+  margin-right: calc(-1 * var(--space-3));
+  padding-right: 6px;
+}
+
+/* 6px, not the app-wide 10px: this is the one scroller inside a 48px strip,
+   and 10px of it is a fifth of the rail. Same thumb, same token colour, same
+   radius — the border shrinks with it, because the shared rule insets a 3px
+   transparent border that would leave a 6px bar with nothing drawn in it. */
+.rail-tabs::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rail-tabs::-webkit-scrollbar-thumb,
+.rail-tabs::-webkit-scrollbar-thumb:hover {
+  border-width: 1px;
+}
+
+/* Compact rail: 7px of padding rather than 12, so 1px goes back. */
+.rail.compact .rail-tabs {
+  margin-right: -7px;
+  padding-right: 1px;
 }
 
 /* `scrollbar-width` used to sit on the rule above, and it is the one
