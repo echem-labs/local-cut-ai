@@ -54,6 +54,25 @@ const boardWith = (takes?: TakeInfo[]): Board => ({
 const chipsOf = (group: HTMLElement) =>
   Array.from(group.querySelectorAll<HTMLButtonElement>("button.chip"));
 
+/**
+ * What a chip's tooltip says.
+ *
+ * These warnings used to be `title` attributes, readable straight off the
+ * element. They are `Tip` bubbles now — the app's own — and a bubble exists
+ * only while it is shown, so the chip has to be hovered first. Hovered on
+ * the WRAPPER: the current take's chip is disabled, and Chromium delivers no
+ * pointer events to a disabled control, which is why the warning moved off
+ * `title` in the first place.
+ */
+const tipOf = (chip: HTMLButtonElement): string => {
+  const wrap = chip.closest(".tip-wrap");
+  if (!wrap) throw new Error("take chip carries no tooltip");
+  fireEvent.mouseEnter(wrap);
+  const said = document.querySelector(".tip")?.textContent ?? "";
+  fireEvent.mouseLeave(wrap);
+  return said;
+};
+
 let selectTake: ReturnType<typeof vi.fn>;
 
 function mount(takes?: TakeInfo[]) {
@@ -102,8 +121,8 @@ describe("Inspector takes", () => {
       take("b".repeat(64), true, true, null),
     ]);
     const chip = chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!;
-    expect(chip.title).toMatch(/cloud:kling-2\.5/);
-    expect(chip.title).toMatch(/bills again/i);
+    expect(tipOf(chip)).toMatch(/cloud:kling-2\.5/);
+    expect(tipOf(chip)).toMatch(/bills again/i);
     expect(chip.className).toContain("billed");
   });
 
@@ -118,7 +137,7 @@ describe("Inspector takes", () => {
     ]);
     const chip = chipsOf(screen.getByRole("group", { name: /takes/i }))[0]!;
     expect(chip.className).not.toContain("billed");
-    expect(chip.title).not.toMatch(/bills again/i);
+    expect(tipOf(chip)).not.toMatch(/bills again/i);
   });
 
   it("does not call a local take billed", () => {

@@ -1,5 +1,6 @@
 import type { NodeStatus } from "../api/types";
 import { t } from "../i18n";
+import { Tip } from "./Tooltip";
 
 const COLORS: Record<NodeStatus, string> = {
   queued: "var(--text-tertiary)",
@@ -26,14 +27,18 @@ export function StatusRing({ status, progress }: { status: NodeStatus; progress:
     status === "rendering"
       ? t("status.renderingLong", { pct: Math.round(progress * 100) })
       : statusLabel(status);
+  // The wrapper takes the ring's place as the flex child, so it takes the
+  // `flex-shrink: 0` with it — otherwise a crowded row squashes the dot the
+  // ring's own rule was written to protect.
   return (
-    <span
-      className={`status-ring ${status}`}
-      style={{ background: COLORS[status] }}
-      role="img"
-      aria-label={label}
-      title={label}
-    />
+    <Tip label={label} className="ring-tip">
+      <span
+        className={`status-ring ${status}`}
+        style={{ background: COLORS[status] }}
+        role="img"
+        aria-label={label}
+      />
+    </Tip>
   );
 }
 

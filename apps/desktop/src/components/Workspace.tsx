@@ -18,6 +18,7 @@ import { Monitor } from "./Monitor";
 import { NodeCanvas } from "./NodeCanvas";
 import { SceneCard } from "./SceneCard";
 import { TimelineStrip } from "./TimelineStrip";
+import { Tip } from "./Tooltip";
 
 /** Our token-mapped dockview theme (CSS in app.css). */
 const THEME = { ...themeDark, name: "localcut", className: "dockview-theme-localcut" };
@@ -134,21 +135,22 @@ function BoardPanel(_props: IDockviewPanelProps) {
             />
           ))}
           {scenes.length > 0 && (
-            <button
-              className="scene-card scene-add"
-              disabled={addingScene}
-              title={t("scene.addSceneTitle")}
-              onClick={() => {
-                setAddingScene(true);
-                setAddSceneError(null);
-                void addScene()
-                  .then((error) => setAddSceneError(error))
-                  .finally(() => setAddingScene(false));
-              }}
-            >
-              <span aria-hidden="true">+</span>
-              {t("scene.addScene")}
-            </button>
+            <Tip label={t("scene.addScene")} hint={t("scene.addSceneTitle")}>
+              <button
+                className="scene-card scene-add"
+                disabled={addingScene}
+                onClick={() => {
+                  setAddingScene(true);
+                  setAddSceneError(null);
+                  void addScene()
+                    .then((error) => setAddSceneError(error))
+                    .finally(() => setAddingScene(false));
+                }}
+              >
+                <span aria-hidden="true">+</span>
+                {t("scene.addScene")}
+              </button>
+            </Tip>
           )}
         </div>
         {addSceneError && <div role="status">{addSceneError}</div>}

@@ -46,6 +46,7 @@ import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { PanelHelp } from "./Help";
 import { MediaThumb } from "./MediaThumb";
+import { Tip } from "./Tooltip";
 
 /** The one node the engine refuses to remove (see graph/patch.py): the rest
  * of the pipeline is rebuilt from it, so deleting it would make every other
@@ -508,6 +509,11 @@ export function NodeCanvas() {
             // The Enter hint lives here rather than in the tally beside the
             // field: it is the same sentence on every keystroke, and the bar
             // is the narrowest row in the app.
+            //
+            // The browser's tooltip on purpose, like the timeline's timecode
+            // box. `Tip` shows on `:focus-visible`, which Chromium matches
+            // for a TEXT input however it was focused, so the bubble would
+            // sit over the canvas for as long as a search is being typed.
             title={t("canvas.searchHint")}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -915,8 +921,13 @@ function NodeBox(props: NodeBoxProps) {
           </>
         )}
       </button>
+      {/* No tooltip of any kind, and the `title` it used to carry was dead:
+          the dot is `pointer-events: none` so it can never be hovered, and
+          `aria-hidden` so it is not announced either. It is a mark that the
+          node is pinned; the inspector's pin button is where that state is
+          named and changed. */}
       {node.pinned && (
-        <span className="canvas-node-pin" title={t("canvas.pinned")} aria-hidden>
+        <span className="canvas-node-pin" aria-hidden>
           ●
         </span>
       )}
@@ -925,54 +936,60 @@ function NodeBox(props: NodeBoxProps) {
           node was the only way to remove one, which is a thing you have to
           be told; a sibling button (never nested in the body, see above) is
           a thing you can find. It asks first, like the key does. */}
-      <button
-        type="button"
-        className="canvas-node-del"
-        aria-label={t("canvas.actions.remove", { id: node.id })}
-        title={t("canvas.actions.remove", { id: node.id })}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onRemove();
-        }}
-      >
-        <X size={11} strokeWidth={2.4} aria-hidden="true" />
-      </button>
+      <Tip label={t("canvas.actions.remove", { id: node.id })} className="canvas-node-del-slot">
+        <button
+          type="button"
+          className="canvas-node-del"
+          aria-label={t("canvas.actions.remove", { id: node.id })}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onRemove();
+          }}
+        >
+          <X size={11} strokeWidth={2.4} aria-hidden="true" />
+        </button>
+      </Tip>
 
       <div className={`canvas-ports in${ports.length > 4 ? " crowded" : ""}`}>
         {ports.map((port) => (
-          <button
+          /* While a wire is out, a filled port is a REPLACEMENT, not a
+             disconnect — said on the hover before the release rather than
+             leaving the displaced edge to be noticed afterwards. */
+          <Tip
             key={port}
-            type="button"
-            className={`canvas-port${heldPorts[port] ? " filled" : ""}`}
-            aria-label={t("canvas.portAria", {
-              port: portLabel(port),
-              id: node.id,
-            })}
-            // Pointer-up rather than click: the wire is a drag, and a click
-            // needs a matching down on the same element, which the drag
-            // started elsewhere.
-            onPointerUp={(event) => {
-              if (!props.wiring) return;
-              event.stopPropagation();
-              props.onDropWire(port);
-            }}
-            onClick={(event) => {
-              // Not wiring: a click on a filled port frees it. Stopped so the
-              // node's own select handler does not also fire.
-              event.stopPropagation();
-              if (!props.wiring && heldPorts[port]) props.onDisconnect(port);
-            }}
-            // While a wire is out, a filled port is a REPLACEMENT, not a
-            // disconnect — say so on the hover before the release rather
-            // than leaving the displaced edge to be noticed afterwards.
-            title={
+            label={portLabel(port)}
+            hint={
               !heldPorts[port]
-                ? portLabel(port)
+                ? undefined
                 : props.wiring
                   ? t("canvas.wiring.replace", { port: portLabel(port) })
                   : t("canvas.actions.disconnect", { port: portLabel(port) })
             }
-          />
+            side="right"
+          >
+            <button
+              type="button"
+              className={`canvas-port${heldPorts[port] ? " filled" : ""}`}
+              aria-label={t("canvas.portAria", {
+                port: portLabel(port),
+                id: node.id,
+              })}
+              // Pointer-up rather than click: the wire is a drag, and a click
+              // needs a matching down on the same element, which the drag
+              // started elsewhere.
+              onPointerUp={(event) => {
+                if (!props.wiring) return;
+                event.stopPropagation();
+                props.onDropWire(port);
+              }}
+              onClick={(event) => {
+                // Not wiring: a click on a filled port frees it. Stopped so the
+                // node's own select handler does not also fire.
+                event.stopPropagation();
+                if (!props.wiring && heldPorts[port]) props.onDisconnect(port);
+              }}
+            />
+          </Tip>
         ))}
       </div>
 

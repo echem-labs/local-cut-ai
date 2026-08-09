@@ -1665,6 +1665,18 @@ button.link:hover {
   grid-template-columns: repeat(auto-fill, minmax(250px, 310px));
 }
 
+/* The add card's tooltip wrapper is the grid item now, so the card inside
+   it has to fill the track the wrapper was given — otherwise the dashed
+   "+ Add scene" box shrinks to its two words and stops matching the cards
+   beside it. */
+.scene-grid > .tip-wrap {
+  display: flex;
+}
+
+.scene-grid > .tip-wrap > .scene-card {
+  width: 100%;
+}
+
 .scene-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
@@ -1855,10 +1867,15 @@ button.link:hover {
   color: var(--text-secondary);
 }
 
-.scene-card .pin-badge {
+/* The corner slot the pin sits in. Held by the tooltip wrapper so the
+   bubble is measured from where the badge is actually drawn. */
+.scene-card .pin-badge-slot {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
+}
+
+.scene-card .pin-badge {
   display: grid;
   place-items: center;
   padding: 3px;
@@ -1906,6 +1923,13 @@ button.link:hover {
 
 .scene-card .body {
   padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+/* The narration line is a two-line `-webkit-box` clamp, which needs the full
+   column width. Its tooltip wrapper is inline-flex by default and would hand
+   it the width of the text instead. */
+.scene-card .narration-slot {
+  display: block;
 }
 
 .scene-card .narration {
@@ -2506,6 +2530,19 @@ button.link:hover {
 .menu-pop > *,
 .dropdown-menu > * {
   flex-shrink: 0;
+}
+
+/* `.tip-wrap` is inline-flex, so a tooltip around a full-width menu row
+   shrinks it to its text and the hover target stops covering the row. The
+   board menu wraps its audio and caption rows for the same reason the
+   dropdown wraps its options, so it needs the same two lines (see
+   `.dropdown-menu .tip-wrap` above). */
+.menu-pop .tip-wrap {
+  display: flex;
+}
+
+.menu-pop .tip-wrap > button {
+  width: 100%;
 }
 
 .menu-pop .menu-label {
@@ -3128,6 +3165,12 @@ button.link:hover {
   width: 14px;
   height: 14px;
   border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* The ring's tooltip wrapper is what the parent row now lays out, so the
+   no-shrink rule has to travel with it. */
+.tip-wrap.ring-tip {
   flex-shrink: 0;
 }
 
@@ -6474,10 +6517,17 @@ button.link:hover {
 /* Quiet until the node is wanted: a delete on every box at once would read
    as the canvas's main offer, which it is not. Focus counts as hover so the
    control is reachable by keyboard alone. */
-.canvas-node-del {
+/* The corner the delete button sits in, held by its tooltip wrapper so the
+   bubble is measured from where the button is drawn rather than from the
+   wrapper's place in the flow. The opacity rules below still address the
+   button itself, so hover and focus reveal it exactly as before. */
+.canvas-node-del-slot {
   position: absolute;
   top: 4px;
   right: 4px;
+}
+
+.canvas-node-del {
   display: grid;
   place-items: center;
   width: 18px;
@@ -6582,6 +6632,20 @@ button.link:hover {
   left: -7px;
 }
 
+/* Each port is wrapped in its tooltip, so the WRAPPER is what the port
+   column lays out. A flex item with no width of its own stretches to the
+   cross axis, which would have pulled every dot off-centre and left-aligned
+   it in a stretched box — so the wrapper carries the dot's width, at both
+   sizes, and the dot inside keeps its own. */
+.canvas-ports .tip-wrap {
+  width: 12px;
+  flex-shrink: 0;
+}
+
+.canvas-ports.crowded .tip-wrap {
+  width: 8px;
+}
+
 .canvas-port {
   width: 12px;
   height: 12px;
@@ -6675,6 +6739,17 @@ button.link:hover {
 .scene-card.scene-add:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* "Render another take" is a full-width commit in the inspector's column,
+   and `.tip-wrap` is inline-flex — so without this the button shrinks to its
+   own label and stops lining up with the commit above it. */
+.tip-wrap.take-tip {
+  display: flex;
+}
+
+.tip-wrap.take-tip > button {
+  width: 100%;
 }
 
 /* ---------- takes (alternate versions) ---------- */

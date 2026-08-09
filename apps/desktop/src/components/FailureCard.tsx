@@ -6,6 +6,7 @@ import { t } from "../i18n";
 import { modelThatFailed, nextResolutionScale, smallerModelFor } from "../lib/oom";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
+import { Tip } from "./Tooltip";
 
 /**
  * What the engine suggested doing about a render that ran out of memory.
@@ -109,22 +110,22 @@ export function FailureCard({ node }: { node: NodeState }) {
         {failure.suggestions.map((code) => {
           const { label, hint, ready } = describe(code);
           return (
-            <button
-              key={code}
-              type="button"
-              className="chip"
-              disabled={!ready || busy !== null}
-              title={hint}
-              onClick={() => {
-                setError(null);
-                setBusy(code);
-                void applyOomSuggestion(node.node_id, code)
-                  .then(setError)
-                  .finally(() => setBusy(null));
-              }}
-            >
-              {label}
-            </button>
+            <Tip key={code} label={label} hint={hint}>
+              <button
+                type="button"
+                className="chip"
+                disabled={!ready || busy !== null}
+                onClick={() => {
+                  setError(null);
+                  setBusy(code);
+                  void applyOomSuggestion(node.node_id, code)
+                    .then(setError)
+                    .finally(() => setBusy(null));
+                }}
+              >
+                {label}
+              </button>
+            </Tip>
           );
         })}
       </div>

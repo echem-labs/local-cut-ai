@@ -20,6 +20,7 @@ import { SavePoints } from "../components/SavePoints";
 import { ToolSession } from "../components/ToolSession";
 import { PromotedFrom } from "../components/Provenance";
 import { PublishKit } from "../components/PublishKit";
+import { Tip } from "../components/Tooltip";
 import { Workspace } from "../components/Workspace";
 import { m, t } from "../i18n";
 import { pendingCheckpoint } from "../lib/checkpoints";
@@ -127,17 +128,18 @@ function PipelineIntro({
           </span>
         </span>
       ))}
-      <button
-        className="icon-btn-sm"
-        aria-label={t("common.dismiss")}
-        title={t("common.gotItTitle")}
-        onClick={() => {
-          localStorage.setItem(INTRO_KEY, "1");
-          setDismissed(true);
-        }}
-      >
-        ✕
-      </button>
+      <Tip label={t("common.gotItTitle")}>
+        <button
+          className="icon-btn-sm"
+          aria-label={t("common.dismiss")}
+          onClick={() => {
+            localStorage.setItem(INTRO_KEY, "1");
+            setDismissed(true);
+          }}
+        >
+          ✕
+        </button>
+      </Tip>
     </div>
   );
 }
@@ -174,20 +176,21 @@ function StalledNotice() {
   return (
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
       <span>{t("project.stalled")}</span>
-      <button
-        className="btn-ghost"
-        disabled={busy}
-        title={t("terms.tips.resume")}
-        onClick={() => {
-          setError(null);
-          setBusy(true);
-          void resumeRender()
-            .then(setError)
-            .finally(() => setBusy(false));
-        }}
-      >
-        {busy ? t("project.resuming") : t("project.resume")}
-      </button>
+      <Tip label={t("project.resume")} hint={t("terms.tips.resume")}>
+        <button
+          className="btn-ghost"
+          disabled={busy}
+          onClick={() => {
+            setError(null);
+            setBusy(true);
+            void resumeRender()
+              .then(setError)
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? t("project.resuming") : t("project.resume")}
+        </button>
+      </Tip>
       {error && <Alert message={error} onDismiss={() => setError(null)} />}
     </div>
   );
@@ -243,15 +246,16 @@ function BoardMenu() {
 
   return (
     <div className="board-menu" ref={ref}>
-      <button
-        className="icon-btn"
-        aria-label={t("project.menu.aria")}
-        aria-expanded={open}
-        title={t("project.menu.title")}
-        onClick={() => setOpen(!open)}
-      >
-        <MoreHorizontal size={15} strokeWidth={1.8} />
-      </button>
+      <Tip label={t("project.menu.title")}>
+        <button
+          className="icon-btn"
+          aria-label={t("project.menu.aria")}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <MoreHorizontal size={15} strokeWidth={1.8} />
+        </button>
+      </Tip>
       {open && (
         <div className="menu-pop" role="menu" ref={fit}>
           <div className="menu-label">{t("project.menu.history")}</div>
@@ -311,47 +315,65 @@ function BoardMenu() {
           {timeline && (
             <>
               <div className="menu-label">{t("project.menu.audio")}</div>
-              <button
-                role="menuitemcheckbox"
-                aria-checked={ducking}
-                title={t("terms.tips.duck")}
-                onClick={() => applyTimeline({ ducking: !ducking })}
-              >
-                <span className="check">{ducking ? "✓" : ""}</span>
-                {t("project.menu.duck")}
-              </button>
-              <button
-                role="menuitemcheckbox"
-                aria-checked={beatAlign}
-                title={t("terms.tips.beat")}
-                onClick={() => applyTimeline({ beat_align: !beatAlign })}
-              >
-                <span className="check">{beatAlign ? "✓" : ""}</span>
-                {t("project.menu.beat")}
-              </button>
+              {/* Presentational wrappers, and `side="right"`: `role="menu"`
+                  owns its `menuitem*` children directly, and a bubble drawn
+                  above a row would cover the rows it is not describing. Same
+                  pair of reasons as the Dropdown's options. */}
+              <Tip label={t("project.menu.duck")} hint={t("terms.tips.duck")} side="right" presentational>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={ducking}
+                  onClick={() => applyTimeline({ ducking: !ducking })}
+                >
+                  <span className="check">{ducking ? "✓" : ""}</span>
+                  {t("project.menu.duck")}
+                </button>
+              </Tip>
+              <Tip label={t("project.menu.beat")} hint={t("terms.tips.beat")} side="right" presentational>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={beatAlign}
+                  onClick={() => applyTimeline({ beat_align: !beatAlign })}
+                >
+                  <span className="check">{beatAlign ? "✓" : ""}</span>
+                  {t("project.menu.beat")}
+                </button>
+              </Tip>
             </>
           )}
           {exportNode && (
             <>
               <div className="menu-label">{t("project.menu.captions")}</div>
-              <button
-                role="menuitemradio"
-                aria-checked={captions === "burn"}
-                title={t("terms.tips.captionsBurn")}
-                onClick={() => applyExport({ captions: "burn" })}
+              <Tip
+                label={t("project.menu.captionsOnVideo")}
+                hint={t("terms.tips.captionsBurn")}
+                side="right"
+                presentational
               >
-                <span className="check">{captions === "burn" ? "✓" : ""}</span>
-                {t("project.menu.captionsOnVideo")}
-              </button>
-              <button
-                role="menuitemradio"
-                aria-checked={captions === "sidecar"}
-                title={t("terms.tips.captionsSidecar")}
-                onClick={() => applyExport({ captions: "sidecar" })}
+                <button
+                  role="menuitemradio"
+                  aria-checked={captions === "burn"}
+                  onClick={() => applyExport({ captions: "burn" })}
+                >
+                  <span className="check">{captions === "burn" ? "✓" : ""}</span>
+                  {t("project.menu.captionsOnVideo")}
+                </button>
+              </Tip>
+              <Tip
+                label={t("project.menu.captionsSidecar")}
+                hint={t("terms.tips.captionsSidecar")}
+                side="right"
+                presentational
               >
-                <span className="check">{captions === "sidecar" ? "✓" : ""}</span>
-                {t("project.menu.captionsSidecar")}
-              </button>
+                <button
+                  role="menuitemradio"
+                  aria-checked={captions === "sidecar"}
+                  onClick={() => applyExport({ captions: "sidecar" })}
+                >
+                  <span className="check">{captions === "sidecar" ? "✓" : ""}</span>
+                  {t("project.menu.captionsSidecar")}
+                </button>
+              </Tip>
               <div className="menu-label">{t("project.menu.frameRate")}</div>
               <button
                 role="menuitemradio"
@@ -408,17 +430,23 @@ function BoardMenu() {
             </>
           )}
           <div className="menu-label">{t("project.menu.workspace")}</div>
-          <button
-            role="menuitem"
-            title={t("project.menu.resetLayoutTitle")}
-            onClick={() => {
-              resetLayout();
-              setOpen(false);
-            }}
+          <Tip
+            label={t("project.menu.resetLayout")}
+            hint={t("project.menu.resetLayoutTitle")}
+            side="right"
+            presentational
           >
-            <span className="check" />
-            {t("project.menu.resetLayout")}
-          </button>
+            <button
+              role="menuitem"
+              onClick={() => {
+                resetLayout();
+                setOpen(false);
+              }}
+            >
+              <span className="check" />
+              {t("project.menu.resetLayout")}
+            </button>
+          </Tip>
         </div>
       )}
       {savePointsOpen && <SavePoints onClose={() => setSavePointsOpen(false)} />}
@@ -707,14 +735,16 @@ export function Project() {
               </>
             );
             return stage.onClick ? (
-              <button
+              <Tip
                 key={stage.id}
-                className={`st ${stage.state}`}
-                title={stage.hint}
-                onClick={stage.onClick}
+                label={t(`project.stages.${stage.id}`)}
+                hint={stage.hint}
+                side="bottom"
               >
-                {inner}
-              </button>
+                <button className={`st ${stage.state}`} onClick={stage.onClick}>
+                  {inner}
+                </button>
+              </Tip>
             ) : (
               <span key={stage.id} className={`st ${stage.state}`}>
                 {inner}
@@ -762,14 +792,12 @@ export function Project() {
             than in a band above the storyboard that has to be scrolled past
             on the way to everything earlier. */}
         {hasCut && !checkpointPending && (
-          <button
-            className="btn-ghost"
-            title={t("terms.tips.publishKit")}
-            onClick={() => setPublishOpen(true)}
-          >
-            <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
-            {t("publish.open")}
-          </button>
+          <Tip label={t("publish.open")} hint={t("terms.tips.publishKit")}>
+            <button className="btn-ghost" onClick={() => setPublishOpen(true)}>
+              <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
+              {t("publish.open")}
+            </button>
+          </Tip>
         )}
         {!checkpointPending &&
           (exported && client ? (
@@ -786,43 +814,51 @@ export function Project() {
             /* The render outlives the request that started it, so this holds
                from the click until the last final-quality job lands — not
                just while the HTTP call is open. */
-            <button className="btn-primary" disabled title={t("terms.tips.createFinal")}>
-              <Sparkles size={14} strokeWidth={2} />
-              {t("project.cta.creating")}
-            </button>
+            /* The bubble hangs on the WRAPPER, which is why it still appears
+               on the disabled states below: Chromium suppresses pointer
+               events on a disabled control, so `title` on one of these
+               showed nothing at all — the very buttons whose whole job is to
+               explain why they cannot be pressed. */
+            <Tip label={t("project.cta.creating")} hint={t("terms.tips.createFinal")}>
+              <button className="btn-primary" disabled>
+                <Sparkles size={14} strokeWidth={2} />
+                {t("project.cta.creating")}
+              </button>
+            </Tip>
           ) : allReady && active.length === 0 ? (
-            <button
-              className="btn-primary"
-              onClick={() => void runFinalize()}
-              title={t("terms.tips.createFinal")}
-            >
-              <Sparkles size={14} strokeWidth={2} />
-              {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
-            </button>
+            <Tip label={t("project.cta.create")} hint={t("terms.tips.createFinal")}>
+              <button className="btn-primary" onClick={() => void runFinalize()}>
+                <Sparkles size={14} strokeWidth={2} />
+                {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
+              </button>
+            </Tip>
           ) : allReady ? (
             /* Every clip is done and something else is not — a draft
                timeline or export still assembling. Says what the button
                does, and why it cannot do it yet: the count the branch below
                shows would read "7/7" and explain nothing. No ETA either,
                which on an unpressable button is noise. */
-            <button className="btn-primary" disabled title={t("project.cta.busyTitle")}>
-              <Sparkles size={14} strokeWidth={2} />
-              {t("project.cta.create")}
-            </button>
+            <Tip label={t("project.cta.create")} hint={t("project.cta.busyTitle")}>
+              <button className="btn-primary" disabled>
+                <Sparkles size={14} strokeWidth={2} />
+                {t("project.cta.create")}
+              </button>
+            </Tip>
           ) : scenes.length > 0 ? (
             /* Present but not pressable, rather than absent. The screen's
                one primary action used to vanish while the videos rendered
                and reappear when they finished, which reads as the app
                having lost it — and left nothing on screen to say what the
                final cut is waiting for. */
-            <button
-              className="btn-primary"
-              disabled
-              title={t("project.cta.pendingTitle", { done: clipDone, total: scenes.length })}
+            <Tip
+              label={t("project.cta.create")}
+              hint={t("project.cta.pendingTitle", { done: clipDone, total: scenes.length })}
             >
-              <Sparkles size={14} strokeWidth={2} />
-              {t("project.cta.pending", { done: clipDone, total: scenes.length })}
-            </button>
+              <button className="btn-primary" disabled>
+                <Sparkles size={14} strokeWidth={2} />
+                {t("project.cta.pending", { done: clipDone, total: scenes.length })}
+              </button>
+            </Tip>
           ) : null)}
       </div>
 
