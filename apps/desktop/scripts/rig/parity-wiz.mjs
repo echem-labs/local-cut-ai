@@ -387,6 +387,40 @@ try {
 
   await shoot("wiz-1");
   await click("Get started");
+  // Step 2 draws the machine card only once `/system` has answered — until
+  // then it shows a "checking" placeholder in the same box, and the Continue
+  // beneath it is disabled. Two settled states, and `click`'s fixed 250ms
+  // landed on whichever one the engine's timing gave it: wiz-2 came out at
+  // 72 differing pixels or at 829, on identical code, and both are inside
+  // the budget so nothing ever reported it.
+  //
+  // Waited for by its own evidence rather than slept past. The tier badge is
+  // in the settled arm only, so its presence IS the answer having landed.
+  const machineReady = await evalInApp(`
+    return page
+      .waitForSelector(".setup-machine .badge", { timeout: 30000 })
+      .then(() => true)
+      .catch(() => false);
+  `);
+  check(
+    "the machine card has the engine's answer before it is shot",
+    machineReady,
+    "/system never landed - wiz-2 would have captured the checking placeholder",
+  );
+  // What the engine actually recommended, printed on every run. wiz-2 and
+  // wiz-4 alternate between two counts TOGETHER, and the only thing they
+  // share is this: step 2's verdict sentence and step 4's summary rows are
+  // both derived from the recommendations that came back with a model. A
+  // number that moves here explains both frames; one that holds steady
+  // while the frames move rules this out and says to look elsewhere.
+  const verdict = await evalInApp(`
+    return page.evaluate(() => ({
+      tier: document.querySelector(".machine-head .badge")?.textContent?.trim() ?? null,
+      verdict: document.querySelector(".setup-machine .verdict")?.textContent?.trim() ?? null,
+      chips: [...document.querySelectorAll(".spec-chip")].map((c) => c.textContent.trim()),
+    }));
+  `);
+  console.log(`  SYSTEM ${JSON.stringify(verdict)}`);
   await shoot("wiz-2");
   await click("Continue");
   await shoot("wiz-3");
@@ -400,6 +434,24 @@ try {
     return page.evaluate((patch) => { window.__localcutSeed(patch); return null; },
       ${JSON.stringify({ models: MODELS_DOWNLOADING })});
   `);
+  // Same treatment, for the same reason and with less evidence: wiz-4 also
+  // lands on one of two counts (288 or 649). Its rows derive from the same
+  // `/system` answer, so waiting for the summary to be fully drawn — a row
+  // per stage, and the overall bar — removes the one settling this script
+  // can actually name. If it still alternates, the cause is elsewhere and
+  // the run below will say so rather than this comment.
+  const readyDrawn = await evalInApp(`
+    await page.waitForSelector(".overall", { timeout: 30000 }).catch(() => {});
+    return page.evaluate(() => ({
+      rows: document.querySelectorAll(".srow").length,
+      overall: !!document.querySelector(".overall"),
+    }));
+  `);
+  check(
+    "the ready summary is fully drawn before it is shot",
+    readyDrawn.rows > 0 && readyDrawn.overall,
+    JSON.stringify(readyDrawn),
+  );
   await evalInApp("await page.waitForTimeout(250); return null;");
   await shoot("wiz-4");
   // The off-scale state can strike mid-run; a run it touched is
