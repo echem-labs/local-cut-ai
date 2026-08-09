@@ -68,16 +68,17 @@ export function PanelHelp({
 
   return (
     <div className="panel-help" ref={ref}>
-      <button
-        ref={btnRef}
-        className="icon-btn-sm"
-        aria-label={t("help.panelHelp.whatLooking")}
-        aria-expanded={open}
-        title={t("help.panelHelp.whatLooking")}
-        onClick={toggle}
-      >
-        <HelpCircle size={13} strokeWidth={1.8} />
-      </button>
+      <Tip label={t("help.panelHelp.whatLooking")}>
+        <button
+          ref={btnRef}
+          className="icon-btn-sm"
+          aria-label={t("help.panelHelp.whatLooking")}
+          aria-expanded={open}
+          onClick={toggle}
+        >
+          <HelpCircle size={13} strokeWidth={1.8} />
+        </button>
+      </Tip>
       {open && pos && (
         <div
           className="panel-help-pop"
