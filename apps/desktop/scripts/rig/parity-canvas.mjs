@@ -238,19 +238,49 @@ try {
     await app.evaluate(({ BrowserWindow }, [w, h]) => {
       BrowserWindow.getAllWindows()[0].setContentBounds({ x: 0, y: 0, width: w, height: h });
     }, [${Math.round(WINDOW.width * units.x)}, ${Math.round(WINDOW.height * units.y)}]);
-    await page.waitForTimeout(400);
     return null;
   `);
-  const panel = await evalInApp(`
-    return page.evaluate(() => {
-      const r = document.querySelector(".canvas-panel").getBoundingClientRect();
-      return {
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-        inner: { width: window.innerWidth, height: window.innerHeight },
-      };
-    });
-  `);
+
+  const readPanel = () =>
+    evalInApp(`
+      return page.evaluate(() => {
+        const r = document.querySelector(".canvas-panel").getBoundingClientRect();
+        return {
+          x: Math.round(r.left), y: Math.round(r.top),
+          width: Math.round(r.width), height: Math.round(r.height),
+          inner: { width: window.innerWidth, height: window.innerHeight },
+        };
+      });
+    `);
+  const sameBox = (a, b) =>
+    !!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+  /**
+   * Wait for the panel to STOP MOVING, rather than sleeping a fixed 400ms and
+   * hoping.
+   *
+   * dockview lays its groups out asynchronously after a window resize, and
+   * 400ms was sometimes not enough. What that cost is subtle enough to be
+   * worth spelling out: everything in this frame is anchored to the panel's
+   * TOP — the toolbar, the node grid — so a late height change moves none of
+   * it. The legend is the one thing anchored to the BOTTOM, and it slid out
+   * of a crop that had already been measured. The frame came out looking
+   * perfectly correct with one line missing, 2230 differing pixels against a
+   * budget of 899, and passed at 816 on the next run with nothing changed.
+   */
+  let panel = await readPanel();
+  let settled = false;
+  for (let attempt = 0; attempt < 20 && !settled; attempt += 1) {
+    await evalInApp("await page.waitForTimeout(150); return null;");
+    const next = await readPanel();
+    settled = sameBox(panel, next);
+    panel = next;
+  }
+  check(
+    "the flowchart panel settled before its crop was measured",
+    settled,
+    `still moving after 3s: ${JSON.stringify(panel)}`,
+  );
   check(
     "the window is the size the reference was drawn at",
     Math.abs(panel.inner.width - WINDOW.width) <= 1 &&
@@ -287,6 +317,17 @@ try {
     await page.screenshot({ path: ${JSON.stringify(full)}, fullPage: true, scale: "css" });
     return null;
   `);
+  // The crop below is arithmetic on a box measured before that wait. If the
+  // panel moved during it the crop is wrong, and wrong in the quietest way
+  // available: a frame that looks right with one bottom-anchored element
+  // outside it. Assert it did not, so that failure is named rather than
+  // charged to the pixels.
+  const atShutter = await readPanel();
+  check(
+    "the panel did not move between measuring the crop and the shutter",
+    sameBox(panel, atShutter),
+    `measured ${JSON.stringify(panel)} but shot ${JSON.stringify(atShutter)}`,
+  );
   const shot = PNG.sync.read(readFileSync(full));
   const out = new PNG({ width: FRAME.width, height: FRAME.height });
   PNG.bitblt(
