@@ -224,6 +224,10 @@ textarea {
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
+  /* The width is sized to fit the vertical bar above; this is the guarantee
+     rather than the fix, so a longer title or a future glyph cannot put a
+     horizontal bar under a 58px column. */
+  overflow-x: hidden;
 }
 
 /* `scrollbar-width` used to sit on the rule above, and it is the one
@@ -378,8 +382,14 @@ textarea {
 
 /* activity bar: inside a project the rail collapses to 48px icons —
  * VS Code's answer to "where does the navbar go" */
+/* 58, not 48: the open-project list scrolls, and a vertical scrollbar is
+   10px of the width it is drawn in. At 48 the glyph column had 34px with no
+   bar and 24px with one, which is narrower than a row needs — so the moment
+   enough projects were open to scroll, a HORIZONTAL bar appeared under them
+   as well. The extra 10px is exactly what the vertical bar takes, so the
+   column is the same 34px either way. */
 .rail.compact {
-  width: 48px;
+  width: 58px;
   padding: var(--space-3) 7px;
   align-items: stretch;
 }
@@ -2480,12 +2490,17 @@ button.link:hover {
   padding: var(--space-2) var(--space-2) var(--space-1);
 }
 
+/* A menu row is icon · label · trailing hint, and all three were 8px from
+   whatever was beside them — including the popover's own border, so the
+   icons sat against the left edge and a hint as long as "what's a scene?"
+   finished hard against the right one. 12px inside the row, and the hint
+   keeps its own 12px so it can never close up against the label either. */
 .menu-pop button,
 .menu-pop a {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
   min-height: 28px;
   border-radius: var(--radius-xs);
   font-size: var(--text-xs);
@@ -2524,6 +2539,7 @@ button.link:hover {
 
 .menu-pop small {
   margin-left: auto;
+  padding-left: var(--space-3);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
