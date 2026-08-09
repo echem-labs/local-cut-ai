@@ -250,7 +250,45 @@ try {
         .filter((svg) => !svg.closest(".menu-pop"))
         .map(box);
       const items = [...document.querySelectorAll(".help-pop [role=menuitem] > svg")].map(box);
-      return { rows, items, opened: wasOpened };
+      // The row's own spacing, measured rather than argued about. Every menu
+      // row is icon · label · trailing hint, and all three were 8px from
+      // whatever was beside them - including the popover's own border, so
+      // the icons sat against the left edge and a hint as long as "what's a
+      // scene?" finished hard against the right one. Read from the drawn
+      // boxes, not from the stylesheet: this went round three times on the
+      // stylesheet being correct while the screen disagreed, and only a
+      // measurement settled it.
+      const pop = document.querySelector(".help-pop");
+      const popBox = pop ? pop.getBoundingClientRect() : null;
+      const spacing = !popBox
+        ? []
+        : [...pop.querySelectorAll("[role=menuitem]")].map((row) => {
+            const svg = row.querySelector("svg");
+            const hint = row.querySelector("small");
+            const label = [...row.childNodes].find(
+              (n) => n.nodeType === 3 && n.textContent.trim(),
+            );
+            let labelLeft = null;
+            if (label) {
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              labelLeft = range.getBoundingClientRect().left;
+            }
+            return {
+              text: row.textContent.trim().slice(0, 24),
+              iconToEdge: svg
+                ? Math.round(svg.getBoundingClientRect().left - popBox.left)
+                : null,
+              iconToText:
+                svg && labelLeft !== null
+                  ? Math.round(labelLeft - svg.getBoundingClientRect().right)
+                  : null,
+              hintToEdge: hint
+                ? Math.round(popBox.right - hint.getBoundingClientRect().right)
+                : null,
+            };
+          });
+      return { rows, items, opened: wasOpened, spacing };
     }, opened);
   `);
   check("the Help popover opens from the rail", railIcons.opened === true);
@@ -263,6 +301,20 @@ try {
     "the Help popover's menu items keep their own icon size",
     railIcons.items.length >= 2 && railIcons.items.every((icon) => icon.w === 13 && icon.h === 13),
     JSON.stringify(railIcons.items),
+  );
+  // 12px inside the row plus the popover's own 4px of padding and 1px border
+  // = 17 from either edge, and 12 between the icon and its label. Asserted
+  // per ROW, because the row that misbehaves is the one whose trailing hint
+  // is long enough to fight the label for the space - "what's a scene?" is
+  // on the second row, and a check that read only the first would have
+  // called this fixed while it was not.
+  check(
+    "every Help popover row keeps 12px inside it and 17px from both edges",
+    railIcons.spacing.length >= 2 &&
+      railIcons.spacing.every(
+        (row) => row.iconToEdge === 17 && row.iconToText === 12 && row.hintToEdge === 17,
+      ),
+    JSON.stringify(railIcons.spacing),
   );
   // Close it by toggling the trigger, and CHECK that it closed. Neither
   // Escape nor a synthetic `body.click()` can do it: HelpMenu has no
