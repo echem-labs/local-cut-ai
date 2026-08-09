@@ -9,6 +9,11 @@ export interface DropdownOption<V extends string | number> {
   value: V;
   label: string;
   icon?: ComponentType<{ size?: number | string; strokeWidth?: number | string }>;
+  /** What this option means, in the menu. Optional: without one the bubble
+   * still carries the label, which is the answer for the menus whose
+   * options are names — a model id ellipsed to fit is unreadable in the row
+   * and complete in the bubble. */
+  hint?: string;
 }
 
 /** Chip-styled dropdown that can render icons in its menu items — the one
@@ -121,19 +126,32 @@ export function Dropdown<V extends string | number>({
             const Icon = option.icon;
             const isSelected = option.value === value;
             return (
-              <button
-                type="button"
+              /* The trigger's bubble explains the CONTROL; this one explains
+                 the option under the cursor, which is the question an open
+                 menu actually raises. `side="right"` so it sits beside the
+                 list rather than over the rows above and below the one it
+                 describes. The trigger's own bubble is already gone by then:
+                 it hides on mousedown, which is the click that opened this. */
+              <Tip
                 key={String(option.value)}
-                role="option"
-                aria-selected={isSelected}
-                className={`${isSelected ? "selected" : ""}${index === safeIndex ? " focused" : ""}`}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => pick(option)}
+                label={option.label}
+                hint={option.hint}
+                side="right"
+                presentational
               >
-                {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" />}
-                <span className="grow">{option.label}</span>
-                {isSelected && <Check size={12} strokeWidth={2.2} aria-hidden="true" />}
-              </button>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`${isSelected ? "selected" : ""}${index === safeIndex ? " focused" : ""}`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => pick(option)}
+                >
+                  {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" />}
+                  <span className="grow">{option.label}</span>
+                  {isSelected && <Check size={12} strokeWidth={2.2} aria-hidden="true" />}
+                </button>
+              </Tip>
             );
           })}
         </div>

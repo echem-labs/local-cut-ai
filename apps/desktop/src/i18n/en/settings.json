@@ -41,7 +41,7 @@
   "defaults": {
     "hint": "Starting values for new videos — every field can still be changed per video.",
     "formatHeading": "New video defaults",
-    "formatHint": "The same controls as Home's prompt row; live changes on Home overwrite this baseline.",
+    "formatHint": "The same controls as Home's prompt row. What you set here is where every new video starts; changing them on Home applies to that video only.",
     "voiceHeading": "Default voice",
     "voiceHint": "Narrator used when a video doesn't specify one.",
     "modelHeading": "Final video model",
