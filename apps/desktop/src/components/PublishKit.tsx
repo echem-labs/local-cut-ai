@@ -9,6 +9,7 @@ import { useApp } from "../store";
 import { Alert } from "./Alert";
 import { MediaThumb } from "./MediaThumb";
 import { Modal } from "./Modal";
+import { Tip } from "./Tooltip";
 
 /**
  * The last mile: what you paste into the upload form.
@@ -256,22 +257,23 @@ function Field({
             onChange={(event) => onChange(event.target.value)}
           />
         )}
-        <button
-          type="button"
-          className="icon-btn-sm"
-          aria-label={t("publish.copyField", { field: label })}
-          title={t("publish.copyField", { field: label })}
-          disabled={value.trim() === ""}
-          onClick={() => {
-            void navigator.clipboard.writeText(value).then(() => setCopied(true));
-          }}
-        >
-          {copied ? (
-            <Check size={13} strokeWidth={2.2} aria-hidden="true" />
-          ) : (
-            <Copy size={13} strokeWidth={2} aria-hidden="true" />
-          )}
-        </button>
+        <Tip label={t("publish.copyField", { field: label })}>
+          <button
+            type="button"
+            className="icon-btn-sm"
+            aria-label={t("publish.copyField", { field: label })}
+            disabled={value.trim() === ""}
+            onClick={() => {
+              void navigator.clipboard.writeText(value).then(() => setCopied(true));
+            }}
+          >
+            {copied ? (
+              <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+            ) : (
+              <Copy size={13} strokeWidth={2} aria-hidden="true" />
+            )}
+          </button>
+        </Tip>
       </div>
     </label>
   );

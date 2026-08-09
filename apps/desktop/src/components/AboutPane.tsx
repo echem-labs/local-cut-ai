@@ -9,6 +9,7 @@ import { Alert } from "./Alert";
 import { BrandMark } from "./BrandMark";
 import { OPEN_SHORTCUTS_EVENT } from "./Help";
 import { SpecChips } from "./SpecChips";
+import { Tip } from "./Tooltip";
 
 /**
  * About — what version this is, what machine it is on, and what the app
@@ -124,9 +125,11 @@ export function AboutPane({ onShowLicenses }: { onShowLicenses: () => void }) {
         <a href={LINKS.issues} target="_blank" rel="noreferrer">
           {t("settings.about.linkIssues")}
         </a>
-        <button className="link" onClick={onShowLicenses}>
-          {t("settings.about.licenses")}
-        </button>
+        <Tip label={t("settings.about.licenses")} hint={t("settings.about.licensesTipHint")}>
+          <button className="link" onClick={onShowLicenses}>
+            {t("settings.about.licenses")}
+          </button>
+        </Tip>
       </div>
       <p className="about-fine">{t("settings.about.fine", { year: BUILD_YEAR })}</p>
     </section>
@@ -215,11 +218,16 @@ function UpdateCheck() {
             {t("settings.about.updateAvailable", { version: state.version })}
           </a>
         )}
-        <button className="btn-ghost" disabled={state.kind === "checking"} onClick={check}>
-          {state.kind === "checking"
-            ? t("settings.about.checking")
-            : t("settings.about.checkUpdates")}
-        </button>
+        <Tip
+          label={t("settings.about.checkUpdates")}
+          hint={t("settings.about.checkUpdatesTipHint")}
+        >
+          <button className="btn-ghost" disabled={state.kind === "checking"} onClick={check}>
+            {state.kind === "checking"
+              ? t("settings.about.checking")
+              : t("settings.about.checkUpdates")}
+          </button>
+        </Tip>
       </div>
       <div className="about-whatsnew">
         <span>
@@ -333,31 +341,37 @@ function SupportActions() {
   return (
     <>
       <div className="about-actions">
-        <button className="btn-ghost" onClick={copyDiagnostics}>
-          {copied ? t("settings.about.copied") : t("settings.about.copy")}
-        </button>
+        <Tip label={t("settings.about.copy")} hint={t("settings.about.copyTipHint")}>
+          <button className="btn-ghost" onClick={copyDiagnostics}>
+            {copied ? t("settings.about.copied") : t("settings.about.copy")}
+          </button>
+        </Tip>
         {/* What the bundle holds rides on the button rather than in a line
             under the row. The sentence was there, and the privacy card two
             cards below already promises nothing is sent — so it was
             repeating a claim in the place a reader had just read it, and
-            pushing every card under it down a line to do so. */}
-        <button
-          className="btn-ghost"
-          disabled={busy}
-          title={t("settings.about.supportHint")}
-          onClick={exportBundle}
-        >
-          {busy ? t("settings.about.bundling") : t("settings.about.exportBundle")}
-        </button>
-        <button className="btn-ghost" onClick={openLogs}>
-          {t("settings.about.openLogs")}
-        </button>
-        <button
-          className="btn-ghost"
-          onClick={() => window.dispatchEvent(new Event(OPEN_SHORTCUTS_EVENT))}
-        >
-          {t("settings.about.shortcuts")}
-        </button>
+            pushing every card under it down a line to do so.
+            In the app's bubble rather than the browser's: `title` waits a
+            second, never reaches the keyboard, and drew this row's one
+            explanation in the OS's style beside four that had none. */}
+        <Tip label={t("settings.about.exportBundle")} hint={t("settings.about.supportHint")}>
+          <button className="btn-ghost" disabled={busy} onClick={exportBundle}>
+            {busy ? t("settings.about.bundling") : t("settings.about.exportBundle")}
+          </button>
+        </Tip>
+        <Tip label={t("settings.about.openLogs")} hint={t("settings.about.openLogsTipHint")}>
+          <button className="btn-ghost" onClick={openLogs}>
+            {t("settings.about.openLogs")}
+          </button>
+        </Tip>
+        <Tip label={t("settings.about.shortcuts")} hint={t("settings.about.shortcutsTipHint")}>
+          <button
+            className="btn-ghost"
+            onClick={() => window.dispatchEvent(new Event(OPEN_SHORTCUTS_EVENT))}
+          >
+            {t("settings.about.shortcuts")}
+          </button>
+        </Tip>
       </div>
       {/* Where it landed, named. A save dialog that closes with no trace
           leaves the user hunting for the file they just made. */}

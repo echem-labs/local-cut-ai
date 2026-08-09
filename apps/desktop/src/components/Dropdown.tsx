@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
@@ -9,6 +9,11 @@ export interface DropdownOption<V extends string | number> {
   value: V;
   label: string;
   icon?: ComponentType<{ size?: number | string; strokeWidth?: number | string }>;
+  /** What this option means, in the menu. Optional: without one the bubble
+   * still carries the label, which is the answer for the menus whose
+   * options are names — a model id ellipsed to fit is unreadable in the row
+   * and complete in the bubble. */
+  hint?: string;
 }
 
 /** Chip-styled dropdown that can render icons in its menu items — the one
@@ -22,6 +27,7 @@ export function Dropdown<V extends string | number>({
   tip,
   tipHint,
   tipSide = "top",
+  variant = "chip",
 }: {
   value: V;
   options: DropdownOption<V>[];
@@ -37,6 +43,20 @@ export function Dropdown<V extends string | number>({
   /** "top" suits a control on a bottom-anchored row; a chip near the top of
    * the window wants "bottom", or the bubble is drawn off it. */
   tipSide?: "top" | "bottom" | "right";
+  /**
+   * How much the control has to say for itself.
+   *
+   * "chip" is the design proposal's look and the default: a chip sits in a
+   * ROW of chips, and the row is what reads as pickable — the mocks draw no
+   * chevron on any of them, and the home and session parity frames hold that.
+   *
+   * "field" is a settings row's control, which has none of that context. It
+   * stands alone against a label with the width of the pane between them, so
+   * a bare word like "Auto" reads as a value someone typed rather than one of
+   * several you can choose. The caret is the affordance the row cannot give
+   * it, and it gets a minimum width so a column of them lines up.
+   */
+  variant?: "chip" | "field";
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -90,7 +110,7 @@ export function Dropdown<V extends string | number>({
       {withTip(
       <button
         type="button"
-        className="dropdown-trigger"
+        className={variant === "field" ? "dropdown-trigger field" : "dropdown-trigger"}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -113,6 +133,9 @@ export function Dropdown<V extends string | number>({
       >
         {SelectedIcon && <SelectedIcon size={13} strokeWidth={1.8} aria-hidden="true" />}
         {selected?.label}
+        {variant === "field" && (
+          <ChevronDown className="dropdown-caret" size={13} strokeWidth={2} aria-hidden="true" />
+        )}
       </button>,
       )}
       {open && (
@@ -121,19 +144,32 @@ export function Dropdown<V extends string | number>({
             const Icon = option.icon;
             const isSelected = option.value === value;
             return (
-              <button
-                type="button"
+              /* The trigger's bubble explains the CONTROL; this one explains
+                 the option under the cursor, which is the question an open
+                 menu actually raises. `side="right"` so it sits beside the
+                 list rather than over the rows above and below the one it
+                 describes. The trigger's own bubble is already gone by then:
+                 it hides on mousedown, which is the click that opened this. */
+              <Tip
                 key={String(option.value)}
-                role="option"
-                aria-selected={isSelected}
-                className={`${isSelected ? "selected" : ""}${index === safeIndex ? " focused" : ""}`}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => pick(option)}
+                label={option.label}
+                hint={option.hint}
+                side="right"
+                presentational
               >
-                {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" />}
-                <span className="grow">{option.label}</span>
-                {isSelected && <Check size={12} strokeWidth={2.2} aria-hidden="true" />}
-              </button>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`${isSelected ? "selected" : ""}${index === safeIndex ? " focused" : ""}`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => pick(option)}
+                >
+                  {Icon && <Icon size={13} strokeWidth={1.8} aria-hidden="true" />}
+                  <span className="grow">{option.label}</span>
+                  {isSelected && <Check size={12} strokeWidth={2.2} aria-hidden="true" />}
+                </button>
+              </Tip>
             );
           })}
         </div>
