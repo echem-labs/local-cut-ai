@@ -167,6 +167,14 @@
     "watercolor": "Watercolor",
     "retro": "Retro film"
   },
+  "styleHints": {
+    "cinematic": "Shallow depth, dramatic light — the default film look.",
+    "documentary": "Natural light, handheld framing, no styling.",
+    "animated": "Bold shapes and flat colour, like a 3D short.",
+    "anime": "Japanese animation — cel shading and expressive faces.",
+    "watercolor": "Soft painted washes with visible paper texture.",
+    "retro": "Grainy stock, faded colour and the odd light leak."
+  },
   "startTemplate": "Start from a template…",
   "continueEyebrow": "Continue",
   "continueCount": "last {count}",

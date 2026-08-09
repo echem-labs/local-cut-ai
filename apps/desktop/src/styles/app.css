@@ -224,7 +224,27 @@ textarea {
   gap: 2px;
   min-height: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
+}
+
+/* `scrollbar-width` used to sit on the rule above, and it is the one
+   property that opts an element OUT of the ::-webkit-scrollbar styling at
+   the top of this file: Chromium draws either the standard scrollbar or the
+   webkit-customised one, never both, and naming `scrollbar-width` picks the
+   standard. So the one list in the app that asked for a thin bar was the
+   one list that got the stock OS bar, beside ten scrollers wearing the
+   app's. Nothing replaces it — the shared rule is already 10px and
+   token-coloured.
+
+   The heading stays put instead of scrolling away with the rows it names.
+   It lives inside the scroller (it is part of the group, and the pinned
+   bottom cluster must not move for it), so with any list long enough to
+   scroll — which is the only time the label earns its place — "OPEN"
+   was the first thing to leave. */
+.rail-tabs .group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-1);
 }
 
 .rail-tab {
@@ -947,6 +967,18 @@ textarea {
   color: var(--text-secondary);
   white-space: nowrap;
   text-align: left;
+}
+
+/* Each option is wrapped in its bubble, and `.tip-wrap` is inline-flex — so
+   without this the option shrinks to its label and the hover highlight is a
+   capsule the width of the text instead of the row you are pointing at. The
+   rail carries the same two lines for the same reason. */
+.dropdown-menu .tip-wrap {
+  display: flex;
+}
+
+.dropdown-menu .tip-wrap > button {
+  width: 100%;
 }
 
 .dropdown-menu button svg {
