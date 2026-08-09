@@ -207,6 +207,11 @@ const canRetintOverlay = process.platform === "win32" || process.platform === "l
  * every launch flashes dark chrome at a light-mode user. */
 const initialTheme = (): "dark" | "light" => (nativeTheme.shouldUseDarkColors ? "dark" : "light");
 
+/** The window's title with nothing rendering. One constant, because the
+ * progress handler restores it: two copies drift the moment one is edited,
+ * and the symptom is a window stuck under the old name after a render. */
+const IDLE_TITLE = "LocalCut AI";
+
 async function createWindow(): Promise<void> {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const window = new BrowserWindow({
@@ -215,7 +220,7 @@ async function createWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: initialTheme() === "dark" ? "#0E0F12" : "#ffffff",
-    title: "LocalCut AI",
+    title: IDLE_TITLE,
     // Frameless: the renderer draws a slim branded title bar; the OS
     // min/max/close buttons float on top via the overlay.
     titleBarStyle: "hidden",
@@ -428,8 +433,6 @@ function trustedSender(event: IpcMainInvokeEvent): boolean {
   }
 }
 
-/** The window title with nothing rendering. Mirrors `createWindow`'s. */
-const IDLE_TITLE = "LocalCut AI";
 /** Long enough for any project title, short enough that a hostile string
  * cannot be used to grow the taskbar tooltip without bound. */
 const TITLE_MAX = 200;
