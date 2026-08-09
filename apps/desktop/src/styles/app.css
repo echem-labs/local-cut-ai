@@ -382,14 +382,15 @@ textarea {
 
 /* activity bar: inside a project the rail collapses to 48px icons —
  * VS Code's answer to "where does the navbar go" */
-/* 58, not 48: the open-project list scrolls, and a vertical scrollbar is
-   10px of the width it is drawn in. At 48 the glyph column had 34px with no
-   bar and 24px with one, which is narrower than a row needs — so the moment
-   enough projects were open to scroll, a HORIZONTAL bar appeared under them
-   as well. The extra 10px is exactly what the vertical bar takes, so the
-   column is the same 34px either way. */
+/* 48, and widening it is the wrong fix for a scrollbar — tried, reverted.
+   The destinations above the open list are centred in the RAIL; the glyphs
+   in the list are centred in the SCROLLER, which is narrower by the bar. Any
+   width that gives the bar its own room therefore splits the rail into two
+   columns that do not line up, and leaves the bar floating short of the
+   edge instead of against it. The horizontal bar this was meant to prevent
+   is prevented on `.rail-tabs` itself, which costs no geometry at all. */
 .rail.compact {
-  width: 58px;
+  width: 48px;
   padding: var(--space-3) 7px;
   align-items: stretch;
 }

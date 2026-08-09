@@ -89,6 +89,20 @@ be fixed for exactly this.
 - **Global keys are window-level listeners in a `useEffect`,** not `onKeyDown`
   on a div. A div with no `tabIndex` never receives the event, which is how
   Escape-to-cancel silently did nothing during a pointer drag.
+- **Tooltips are `<Tip>`, never the `title` attribute.** `title` waits about a
+  second, never appears for a keyboard user, and draws in the OS's style
+  rather than the app's — so a surface carrying both speaks two ways at once.
+  `Tip` takes a label and an optional qualifier, portals its bubble to
+  `<body>` (a dockview panel's overflow clips anything absolutely positioned
+  inside it), and shows on `:focus-visible` as well as hover. Fall back to
+  `title` only where a wrapper cannot go — inside an SVG, or on an element
+  whose parent styles it by position. `Settings.tips.test.tsx` asserts the
+  rule for the settings dialog; a bare `title` there fails the suite.
+- **Modals are `<Modal>`, never a hand-rolled overlay div.** One shell owns
+  the backdrop, the focus trap and restore, Escape, the labelled heading and
+  the footer's button order. A private overlay re-implements four of those
+  and forgets the fifth — which is how a dialog shipped that Escape did not
+  close and Tab walked straight out of.
 - **ARIA vocabulary is `group` / `img` / `dialog` / `status` / `note` /
   `menuitem` / `tab`.** Never nest interactive controls inside
   `role="button"` — ARIA specifies a button's children as presentational, so
