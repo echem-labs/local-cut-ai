@@ -3015,7 +3015,12 @@ button.link:hover {
     color var(--motion-fast);
 }
 
-.seg-toggle button + button {
+/* The divider sits between SEGMENTS, and a segment is a button or a tooltip
+   wrapper around one. Written as `button + button` it stopped matching the
+   day Home's mode toggle was wrapped in <Tip> — the children became spans,
+   and Auto|Review has been drawn with no rule between them since. Written
+   against the children, both spellings work and neither can drift again. */
+.seg-toggle > * + * {
   border-left: 1px solid var(--border);
 }
 
