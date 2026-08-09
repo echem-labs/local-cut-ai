@@ -61,12 +61,21 @@ const VERDICTS: Record<
   "personal-only": { glyph: "✗", labelKey: "personalOnly", cls: "bad" },
 };
 
+/** A badge is not focusable, so the bubble needs something that is — hence
+ *  `tabIndex={0}` and a real label. `title` reached neither the keyboard nor
+ *  the app's own styling, and license terms are the last thing that should be
+ *  readable only to a mouse. */
 export function LicenseBadge({ license }: { license: ModelLicense }) {
   const verdict = VERDICTS[license.verdict] ?? VERDICTS.conditions;
+  const label = license.id
+    ? t("models.licenseTip", { id: license.id })
+    : t("models.licenseTipFallback");
   return (
-    <span className={`badge ${verdict.cls}`} title={license.notes || license.id}>
-      {verdict.glyph} {t(`models.verdicts.${verdict.labelKey}`)}
-    </span>
+    <Tip label={label} hint={license.notes || undefined}>
+      <span className={`badge ${verdict.cls}`} tabIndex={0} aria-label={label}>
+        {verdict.glyph} {t(`models.verdicts.${verdict.labelKey}`)}
+      </span>
+    </Tip>
   );
 }
 
@@ -145,18 +154,22 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
           <label htmlFor="custom-source">{t("models.custom.source")}</label>
           <div style={{ display: "flex", gap: 8 }}>
             <div className="seg-toggle" role="group" aria-label={t("models.custom.source")}>
-              <button
-                className={source === "url" ? "active" : ""}
-                onClick={() => setSource("url")}
-              >
-                {t("models.custom.sourceUrl")}
-              </button>
-              <button
-                className={source === "file" ? "active" : ""}
-                onClick={() => setSource("file")}
-              >
-                {t("models.custom.sourceFile")}
-              </button>
+              <Tip label={t("models.custom.sourceUrlTip")}>
+                <button
+                  className={source === "url" ? "active" : ""}
+                  onClick={() => setSource("url")}
+                >
+                  {t("models.custom.sourceUrl")}
+                </button>
+              </Tip>
+              <Tip label={t("models.custom.sourceFileTip")}>
+                <button
+                  className={source === "file" ? "active" : ""}
+                  onClick={() => setSource("file")}
+                >
+                  {t("models.custom.sourceFile")}
+                </button>
+              </Tip>
             </div>
             <input
               id="custom-source"
@@ -183,6 +196,8 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
             value={task}
             onChange={setTask}
             ariaLabel={t("models.custom.task")}
+            tip={t("models.custom.taskTip")}
+            tipHint={t("models.custom.taskTipHint")}
             options={CUSTOM_TASKS.map((id) => ({ value: id, label: taskLabels[id] ?? id }))}
           />
         </div>
@@ -224,14 +239,15 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
         {importedWorkflows.length > 0 && (
           <div className="chip-row" role="group" aria-label={t("models.custom.workflowPickAria")}>
             {importedWorkflows.map((row) => (
-              <button
-                type="button"
-                key={row.name}
-                className={`chip${workflow === row.name ? " active" : ""}`}
-                onClick={() => setWorkflow(workflow === row.name ? "" : row.name)}
-              >
-                {row.name}
-              </button>
+              <Tip key={row.name} label={t("models.custom.workflowChipTip", { name: row.name })}>
+                <button
+                  type="button"
+                  className={`chip${workflow === row.name ? " active" : ""}`}
+                  onClick={() => setWorkflow(workflow === row.name ? "" : row.name)}
+                >
+                  {row.name}
+                </button>
+              </Tip>
             ))}
           </div>
         )}
@@ -252,12 +268,16 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
       </div>
       {error && <div className="banner error">{error}</div>}
       <div className="form-row">
-        <button className="btn-primary" disabled={!canAdd} onClick={() => void submit()}>
-          {saving ? t("models.custom.adding") : t("models.custom.add")}
-        </button>
-        <button className="btn-ghost" onClick={onDone}>
-          {t("common.cancel")}
-        </button>
+        <Tip label={t("models.custom.addTip")} hint={t("models.custom.addTipHint")}>
+          <button className="btn-primary" disabled={!canAdd} onClick={() => void submit()}>
+            {saving ? t("models.custom.adding") : t("models.custom.add")}
+          </button>
+        </Tip>
+        <Tip label={t("models.custom.cancelTip")}>
+          <button className="btn-ghost" onClick={onDone}>
+            {t("common.cancel")}
+          </button>
+        </Tip>
       </div>
     </div>
   );
@@ -379,9 +399,11 @@ export function ModelLibrary({
                   {error && <div className="meta error-text">{error}</div>}
                 </div>
                 {fit === "tight" && (
-                  <span className="badge warn" title={t("models.tightFitTitle")}>
-                    {t("models.tightFit")}
-                  </span>
+                  <Tip label={t("models.tightFitTip")} hint={t("models.tightFitTitle")}>
+                    <span className="badge warn" tabIndex={0} aria-label={t("models.tightFitTip")}>
+                      {t("models.tightFit")}
+                    </span>
+                  </Tip>
                 )}
                 {fit === "wont" && (
                   <span className="badge warn">
@@ -391,17 +413,28 @@ export function ModelLibrary({
                 {row.custom ? (
                   <>
                     <span className="badge">{t("models.custom.tag")}</span>
-                    <span className="badge warn" title={row.license.notes}>
-                      ⚠ {t("models.custom.yourLicense")}
-                    </span>
+                    <Tip
+                      label={t("models.custom.yourLicenseTip")}
+                      hint={row.license.notes || t("models.custom.yourLicenseTipFallback")}
+                    >
+                      <span
+                        className="badge warn"
+                        tabIndex={0}
+                        aria-label={t("models.custom.yourLicenseTip")}
+                      >
+                        ⚠ {t("models.custom.yourLicense")}
+                      </span>
+                    </Tip>
                   </>
                 ) : (
                   <LicenseBadge license={row.license} />
                 )}
                 {external ? (
-                  <span className="badge" title={t("models.externalTitle")}>
-                    {t("models.external")}
-                  </span>
+                  <Tip label={t("models.external")} hint={t("models.externalTitle")}>
+                    <span className="badge" tabIndex={0} aria-label={t("models.external")}>
+                      {t("models.external")}
+                    </span>
+                  </Tip>
                 ) : row.downloaded ? (
                   <>
                     <span className="badge ok">{t("models.installed")}</span>
@@ -423,24 +456,53 @@ export function ModelLibrary({
                 ) : row.downloading ? (
                   <>
                     <span className="badge">{Math.round(fraction * 100)}%</span>
-                    <button className="btn-ghost" onClick={() => setPending({ kind: "cancel", row })}>
-                      {t("common.cancel")}
-                    </button>
+                    <Tip
+                      label={t("models.cancelDownloadTip")}
+                      hint={t("models.cancelDownloadTipHint")}
+                    >
+                      <button
+                        className="btn-ghost"
+                        onClick={() => setPending({ kind: "cancel", row })}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                    </Tip>
                   </>
                 ) : showActions ? (
                   <>
-                    <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
-                      {error
-                        ? t("common.retry")
-                        : row.partial_bytes > 0 && row.size_bytes > 0
-                          ? t("models.resumePct", {
-                              pct: Math.min(
-                                99,
-                                Math.round((row.partial_bytes / row.size_bytes) * 100),
-                              ),
-                            })
-                          : t("common.download")}
-                    </button>
+                    {/* One button, three jobs — and the word on it changes
+                        while the consequence does too. "Resume · 25%" says
+                        how far it got and nothing about what pressing it
+                        costs; the bubble carries the size. */}
+                    <Tip
+                      label={
+                        error
+                          ? t("models.retryTip")
+                          : row.partial_bytes > 0
+                            ? t("models.resumeTip")
+                            : t("models.downloadTip")
+                      }
+                      hint={
+                        error
+                          ? t("models.retryTipHint")
+                          : row.partial_bytes > 0
+                            ? t("models.resumeTipHint", { size: formatSize(row.partial_bytes) })
+                            : t("models.downloadTipHint", { size: formatSize(row.size_bytes) })
+                      }
+                    >
+                      <button className="btn-ghost" onClick={() => void startDownload(row.id)}>
+                        {error
+                          ? t("common.retry")
+                          : row.partial_bytes > 0 && row.size_bytes > 0
+                            ? t("models.resumePct", {
+                                pct: Math.min(
+                                  99,
+                                  Math.round((row.partial_bytes / row.size_bytes) * 100),
+                                ),
+                              })
+                            : t("common.download")}
+                      </button>
+                    </Tip>
                     {row.partial_bytes > 0 && (
                       <Tip
                         label={t("models.discardPartial")}
@@ -477,14 +539,19 @@ export function ModelLibrary({
         (adding ? (
           <AddCustomModel onDone={() => setAdding(false)} />
         ) : (
-          <button
-            className="btn-ghost"
-            style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6 }}
-            onClick={() => setAdding(true)}
+          <Tip
+            label={t("models.custom.addEntryTip")}
+            hint={t("models.custom.addEntryTipHint")}
           >
-            <Plus size={13} strokeWidth={2} aria-hidden="true" />
-            {t("models.custom.addEntry")}
-          </button>
+            <button
+              className="btn-ghost"
+              style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6 }}
+              onClick={() => setAdding(true)}
+            >
+              <Plus size={13} strokeWidth={2} aria-hidden="true" />
+              {t("models.custom.addEntry")}
+            </button>
+          </Tip>
         ))}
       {pending?.kind === "delete" && (
         <ConfirmDialog

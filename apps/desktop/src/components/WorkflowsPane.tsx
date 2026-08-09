@@ -7,6 +7,7 @@ import { useApp } from "../store";
 import { Alert } from "./Alert";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
+import { Tip } from "./Tooltip";
 
 /**
  * Settings → Workflows: the ComfyUI half of the engine, which has had a
@@ -123,14 +124,28 @@ function PackRow({
           {plural("settings.workflows.packNodes", pack.nodes.length, { count: pack.nodes.length })}
         </div>
       </div>
+      {/* "Enable" and "Disable" are the two most consequential words on this
+          pane and the two least self-explanatory: neither installs or removes
+          anything, they record whether third-party Python already on this
+          machine may run. The bubble is where that fits. */}
       {pack.enabled ? (
-        <button className="btn-ghost" disabled={busy} onClick={disable}>
-          {t("settings.workflows.disable")}
-        </button>
+        <Tip
+          label={t("settings.workflows.disableTip", { name: pack.name })}
+          hint={t("settings.workflows.disableTipHint")}
+        >
+          <button className="btn-ghost" disabled={busy} onClick={disable}>
+            {t("settings.workflows.disable")}
+          </button>
+        </Tip>
       ) : (
-        <button className="btn-ghost" onClick={onEnable}>
-          {t("settings.workflows.enable")}
-        </button>
+        <Tip
+          label={t("settings.workflows.enableTip", { name: pack.name })}
+          hint={t("settings.workflows.enableTipHint")}
+        >
+          <button className="btn-ghost" onClick={onEnable}>
+            {t("settings.workflows.enable")}
+          </button>
+        </Tip>
       )}
     </div>
   );
@@ -204,18 +219,25 @@ function EnablePackDialog({
       onClose={onClose}
       footer={
         <>
-          <button className="btn-ghost" onClick={() => closeRef.current()}>
-            {t("common.cancel")}
-          </button>
+          <Tip label={t("settings.workflows.enableCancelTip")}>
+            <button className="btn-ghost" onClick={() => closeRef.current()}>
+              {t("common.cancel")}
+            </button>
+          </Tip>
           {/* Both conditions, checked here AND by the engine. This gate is
               a courtesy to the operator; the engine's is the real one. */}
-          <button
-            className="btn-primary"
-            disabled={busy || !acknowledged || version.trim() === ""}
-            onClick={submit}
+          <Tip
+            label={t("settings.workflows.enableConfirmTip")}
+            hint={t("settings.workflows.enableConfirmTipHint")}
           >
-            {busy ? t("settings.workflows.enabling") : t("settings.workflows.enableConfirm")}
-          </button>
+            <button
+              className="btn-primary"
+              disabled={busy || !acknowledged || version.trim() === ""}
+              onClick={submit}
+            >
+              {busy ? t("settings.workflows.enabling") : t("settings.workflows.enableConfirm")}
+            </button>
+          </Tip>
         </>
       }
     >
@@ -328,23 +350,33 @@ function WorkflowList({
                   {row.readable && row.placeholders.length === 0 && ` · ${t("settings.workflows.noSlots")}`}
                 </div>
               </div>
-              <button
-                className="icon-btn"
-                aria-label={t("settings.workflows.removeAria", { name: row.name })}
-                onClick={() => setConfirmDelete(row.name)}
+              <Tip
+                label={t("settings.workflows.removeTip")}
+                hint={t("settings.workflows.removeTipHint")}
               >
-                <Trash2 size={14} strokeWidth={1.8} />
-              </button>
+                <button
+                  className="icon-btn"
+                  aria-label={t("settings.workflows.removeAria", { name: row.name })}
+                  onClick={() => setConfirmDelete(row.name)}
+                >
+                  <Trash2 size={14} strokeWidth={1.8} />
+                </button>
+              </Tip>
             </div>
           ))}
         </div>
       )}
 
       <div className="sc">
-        <button className="btn-ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
-          <Plus {...ICON_SM} aria-hidden="true" />
-          {busy ? t("settings.workflows.importing") : t("settings.workflows.import")}
-        </button>
+        <Tip
+          label={t("settings.workflows.importTip")}
+          hint={t("settings.workflows.importTipHint")}
+        >
+          <button className="btn-ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
+            <Plus {...ICON_SM} aria-hidden="true" />
+            {busy ? t("settings.workflows.importing") : t("settings.workflows.import")}
+          </button>
+        </Tip>
         <input
           ref={fileRef}
           type="file"

@@ -9,6 +9,7 @@ import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { ModelsPopover } from "./ModelsPopover";
+import { Tip } from "./Tooltip";
 
 /** Floor for the scope menu's width — the `150px` half of the shared
  * `.dropdown-menu` rule's `min-width: max(100%, 150px)`, which this menu
@@ -379,15 +380,13 @@ export function Composer() {
                 {entry.dirty.length > 0 && (
                   <span className="chips">
                     {entry.dirty.slice(0, 6).map((id) => (
-                      <button
-                        key={id}
-                        onClick={() => select(id)}
-                        title={t("composer.showChanged")}
-                      >
-                        {id.includes(".")
-                          ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
-                          : id}
-                      </button>
+                      <Tip key={id} label={t("composer.showChanged")}>
+                        <button onClick={() => select(id)}>
+                          {id.includes(".")
+                            ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
+                            : id}
+                        </button>
+                      </Tip>
                     ))}
                   </span>
                 )}
@@ -405,14 +404,15 @@ export function Composer() {
           <p className="plan-summary">{t("composer.scriptConfirm")}</p>
           <p className="plan-counts">{t("composer.scriptConfirmCost")}</p>
           <div className="plan-actions">
-            <button
-              className="btn-primary"
-              disabled={rewriting}
-              title={t("terms.tips.rewriteScript")}
-              onClick={() => void rewriteScript()}
-            >
-              {rewriting ? t("composer.scriptRewritingShort") : t("composer.scriptRewrite")}
-            </button>
+            <Tip label={t("composer.scriptRewrite")} hint={t("terms.tips.rewriteScript")}>
+              <button
+                className="btn-primary"
+                disabled={rewriting}
+                onClick={() => void rewriteScript()}
+              >
+                {rewriting ? t("composer.scriptRewritingShort") : t("composer.scriptRewrite")}
+              </button>
+            </Tip>
             <button
               className="btn-ghost"
               disabled={rewriting}
@@ -442,11 +442,13 @@ export function Composer() {
           {proposal.dirty.length > 0 && (
             <div className="plan-chips">
               {proposal.dirty.slice(0, 8).map((id) => (
-                <button key={id} onClick={() => select(id)} title={t("composer.showChanged")}>
-                  {id.includes(".")
-                    ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
-                    : id}
-                </button>
+                <Tip key={id} label={t("composer.showChanged")}>
+                  <button onClick={() => select(id)}>
+                    {id.includes(".")
+                      ? t("composer.scene", { n: id.split(".")[0].replace(/^s/, "") })
+                      : id}
+                  </button>
+                </Tip>
               ))}
             </div>
           )}
@@ -460,14 +462,11 @@ export function Composer() {
             </ul>
           )}
           <div className="plan-actions">
-            <button
-              className="btn-primary"
-              disabled={editBusy}
-              title={t("terms.tips.applyEdit")}
-              onClick={() => void applyProposal()}
-            >
-              {editBusy ? t("composer.applying") : t("composer.apply")}
-            </button>
+            <Tip label={t("composer.apply")} hint={t("terms.tips.applyEdit")}>
+              <button className="btn-primary" disabled={editBusy} onClick={() => void applyProposal()}>
+                {editBusy ? t("composer.applying") : t("composer.apply")}
+              </button>
+            </Tip>
             <button className="btn-ghost" disabled={editBusy} onClick={() => setProposal(null)}>
               {t("composer.discard")}
             </button>
@@ -535,17 +534,18 @@ export function Composer() {
 
         <div className="composer-controls">
         <div className="composer-scope">
-          <button
-            ref={scopeChipRef}
-            className="scope-chip"
-            aria-haspopup="listbox"
-            aria-expanded={scopeOpen}
-            onClick={() => (scopeOpen ? setScopeOpen(false) : openScopeMenu())}
-            title={t("composer.scopeTitle")}
-          >
-            {scopeLabel}
-            <ChevronDown size={11} strokeWidth={2} />
-          </button>
+          <Tip label={t("composer.scopeTitle")}>
+            <button
+              ref={scopeChipRef}
+              className="scope-chip"
+              aria-haspopup="listbox"
+              aria-expanded={scopeOpen}
+              onClick={() => (scopeOpen ? setScopeOpen(false) : openScopeMenu())}
+            >
+              {scopeLabel}
+              <ChevronDown size={11} strokeWidth={2} />
+            </button>
+          </Tip>
           {scopeOpen && scopeMenu && (
             <div
               className="dropdown-menu scope-menu"
@@ -610,26 +610,32 @@ export function Composer() {
         <div className="spacer" />
 
         {log.length > 0 && (
-          <button
-            className={`icon-btn-sm${logOpen ? " active" : ""}`}
-            aria-label={t("composer.historyAria")}
-            aria-pressed={logOpen}
-            title={t("composer.historyTitle")}
-            onClick={() => setLogOpen(!logOpen)}
-          >
-            <History size={13} strokeWidth={1.8} />
-          </button>
+          <Tip label={t("composer.historyTitle")}>
+            <button
+              className={`icon-btn-sm${logOpen ? " active" : ""}`}
+              aria-label={t("composer.historyAria")}
+              aria-pressed={logOpen}
+              onClick={() => setLogOpen(!logOpen)}
+            >
+              <History size={13} strokeWidth={1.8} />
+            </button>
+          </Tip>
         )}
         <ModelsPopover opens="up" />
-        <button
-          className="composer-send"
-          aria-label={t("composer.sendAria")}
-          disabled={editBusy || !text.trim() || matches.length > 0}
-          onClick={() => void submit()}
-          title={t("composer.sendTitle")}
-        >
-          <SendHorizontal size={13} strokeWidth={2} />
-        </button>
+        {/* On the wrapper, not the button: this one is disabled whenever the
+            box is empty or a scene is still being matched, and Chromium
+            delivers no pointer events to a disabled control — so the `title`
+            here never appeared in any of the states that needed explaining. */}
+        <Tip label={t("composer.sendTitle")}>
+          <button
+            className="composer-send"
+            aria-label={t("composer.sendAria")}
+            disabled={editBusy || !text.trim() || matches.length > 0}
+            onClick={() => void submit()}
+          >
+            <SendHorizontal size={13} strokeWidth={2} />
+          </button>
+        </Tip>
         </div>
       </div>
       {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}
@@ -637,17 +643,18 @@ export function Composer() {
         <div className="hint composer-hint">
           {feedback}
           {undoable && (
-            <button
-              className="composer-undo"
-              title={t("composer.undoTitle")}
-              onClick={() => {
-                setFeedback(null);
-                setReplyApplied(false);
-                void undoEdit().then((message) => setError(message));
-              }}
-            >
-              {t("composer.undo")}
-            </button>
+            <Tip label={t("composer.undo")} hint={t("composer.undoTitle")}>
+              <button
+                className="composer-undo"
+                onClick={() => {
+                  setFeedback(null);
+                  setReplyApplied(false);
+                  void undoEdit().then((message) => setError(message));
+                }}
+              >
+                {t("composer.undo")}
+              </button>
+            </Tip>
           )}
         </div>
       )}

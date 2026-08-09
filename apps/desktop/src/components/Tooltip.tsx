@@ -15,6 +15,7 @@ export function Tip({
   shortcut,
   side = "top",
   className,
+  presentational = false,
   children,
 }: {
   label: string;
@@ -27,6 +28,12 @@ export function Tip({
    * control that was positioned by its parent needs to hand that placement
    * to the wrapper rather than keep it and leave an empty box behind. */
   className?: string;
+  /** Hide the wrapper from assistive tech. A container role owns its items
+   * by role — `listbox` owns `option`, `tablist` owns `tab` — and a generic
+   * span between the two is a foreign node in that relationship. Marking it
+   * presentational takes it back out of the tree, leaving the options owned
+   * directly. Only set this where the wrapper lands inside such a pair. */
+  presentational?: boolean;
   children: ReactNode;
 }) {
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -46,6 +53,7 @@ export function Tip({
   return (
     <span
       className={className ? `tip-wrap ${className}` : "tip-wrap"}
+      {...(presentational ? { role: "presentation" } : {})}
       ref={wrapRef}
       onMouseEnter={show}
       onMouseLeave={hide}

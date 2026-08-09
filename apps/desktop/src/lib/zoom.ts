@@ -29,14 +29,41 @@ function readStored(): number {
 let baseline = 1;
 let userZoom = readStored();
 
+/** What `--titlebar-h` is declared as in tokens.css, and the height main.ts
+ *  sizes `titleBarOverlay` against (one pixel short, so the bar's bottom
+ *  border still shows under the buttons). */
+const TITLEBAR_PX = 38;
+
+/** The same clamp `setUiZoom` applies in the preload. Mirrored rather than
+ *  imported because it lives across the bridge — and the CSS below has to be
+ *  divided by the factor that was actually APPLIED, not the one asked for. */
+const clampZoom = (factor: number): number =>
+  Number.isFinite(factor) ? Math.min(3, Math.max(0.5, factor)) : 1;
+
 export function userZoomFactor(): number {
   return userZoom;
 }
 
 function apply(): void {
+  const factor = clampZoom(baseline * userZoom);
   // Optional-chained like theme.ts: the bridge is absent outside Electron
   // (e.g. vite serving a plain browser), where the browser owns zoom.
-  window.localcut?.setUiZoom(baseline * userZoom);
+  if (!window.localcut) {
+    window.dispatchEvent(new Event(ZOOM_EVENT));
+    return;
+  }
+  window.localcut.setUiZoom(factor);
+  // The min/max/close buttons are the OS's, drawn by the shell over the top
+  // right of the window. Their height is in DEVICE pixels and does not move
+  // with the renderer's zoom — but `--titlebar-h` is CSS, so it does. At 0.8
+  // the drawn bar came out around 30 device pixels under a 37-pixel overlay,
+  // and the buttons hung below the bar's own bottom border with the divider
+  // line stopping short of them.
+  //
+  // Divide the zoom back out so the bar keeps the device height the overlay
+  // was sized against. Everything INSIDE it still scales, which is right: the
+  // OS glyphs are fixed, so the strip they sit in has to be too.
+  document.documentElement.style.setProperty("--titlebar-h", `${TITLEBAR_PX / factor}px`);
   window.dispatchEvent(new Event(ZOOM_EVENT));
 }
 
