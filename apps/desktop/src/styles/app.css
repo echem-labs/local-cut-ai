@@ -2612,6 +2612,13 @@ button.link:hover {
   color: var(--text-secondary);
   text-align: left;
   text-decoration: none;
+  /* A menu row is one line. Every `min-width` in this file is a floor on how
+     narrow a menu may be, never a promise its rows fit — the library's sort
+     menu asks for 172px and its active row is a label AND a direction, so
+     "Last modified · newest first" broke across two lines and the row grew to
+     twice its height. These menus have no max-width, so the honest answer is
+     to let the box follow its content. */
+  white-space: nowrap;
 }
 
 .menu-pop button:hover,
