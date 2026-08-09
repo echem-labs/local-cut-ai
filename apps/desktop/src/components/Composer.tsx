@@ -622,15 +622,20 @@ export function Composer() {
           </Tip>
         )}
         <ModelsPopover opens="up" />
-        <button
-          className="composer-send"
-          aria-label={t("composer.sendAria")}
-          disabled={editBusy || !text.trim() || matches.length > 0}
-          onClick={() => void submit()}
-          title={t("composer.sendTitle")}
-        >
-          <SendHorizontal size={13} strokeWidth={2} />
-        </button>
+        {/* On the wrapper, not the button: this one is disabled whenever the
+            box is empty or a scene is still being matched, and Chromium
+            delivers no pointer events to a disabled control — so the `title`
+            here never appeared in any of the states that needed explaining. */}
+        <Tip label={t("composer.sendTitle")}>
+          <button
+            className="composer-send"
+            aria-label={t("composer.sendAria")}
+            disabled={editBusy || !text.trim() || matches.length > 0}
+            onClick={() => void submit()}
+          >
+            <SendHorizontal size={13} strokeWidth={2} />
+          </button>
+        </Tip>
         </div>
       </div>
       {editBusy && <div className="hint composer-hint">{t("composer.thinking")}</div>}

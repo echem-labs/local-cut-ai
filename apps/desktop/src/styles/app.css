@@ -2693,6 +2693,13 @@ button.link:hover {
   flex: 1;
 }
 
+/* Both the history and send buttons are fixed-size circles that must not be
+   squeezed, and a Tip wrapper is what this row lays out now — so the rule
+   belongs on the wrapper rather than on the button inside it. */
+.composer-controls > .tip-wrap {
+  flex-shrink: 0;
+}
+
 /* In the bottom-docked composer the readiness menu unfolds upward. */
 .models-pop-wrap.opens-up .menu-pop {
   top: auto;

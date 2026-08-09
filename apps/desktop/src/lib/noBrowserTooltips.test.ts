@@ -70,23 +70,63 @@ const components = (): [string, string][] =>
     .filter(([file]) => !file.endsWith(".test.tsx"))
     .map(([file, source]) => [file.replace(/^\.\.\//, ""), source]);
 
+/**
+ * Where the tag opening at `open` closes, or -1 if it never does.
+ *
+ * The `>` that ends a tag is the one at brace depth zero *counted from this
+ * tag* — anything inside a `{…}` prop belongs to JavaScript, not to the tag.
+ * That distinction is the whole point: `disabled={… || matches.length > 0}`
+ * used to read as the end of the tag, which hid every attribute written
+ * after it. Not hypothetical — it is how the composer's send button, a
+ * DISABLED control whose `title` could therefore never appear at all, sat in
+ * this file's blind spot while the suite reported clean.
+ *
+ * Depth is counted from the tag rather than over the whole file because a
+ * component's own body brace puts all of its JSX at depth ≥ 1, which makes a
+ * global count say "expression" about everything and decide nothing.
+ *
+ * A `>` inside a quoted attribute value would still fool this. No such value
+ * exists here, and the cost is a missed report rather than a false one.
+ */
+function tagClose(source: string, open: number): number {
+  let depth = 0;
+  for (let i = open + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") depth = Math.max(0, depth - 1);
+    else if (ch === ">" && depth === 0) return i;
+  }
+  return -1;
+}
+
 /** Line numbers carrying an HTML `title` attribute. */
 function htmlTitles(source: string): number[] {
-  // Same length, so offsets still line up.
-  const scan = source.replace(/=>/g, "==").replace(/->/g, "--");
   const found: number[] = [];
   for (const match of source.matchAll(/\btitle=/g)) {
-    let i = match.index!;
-    while (i > 0) {
-      i -= 1;
-      if (scan[i] === ">") break;
-      if (scan[i] === "<") {
-        const tag = /^<\s*([A-Za-z][\w.]*)/.exec(scan.slice(i));
-        if (tag && tag[1][0] === tag[1][0].toLowerCase()) {
-          found.push(source.slice(0, match.index).split("\n").length);
-        }
-        break;
-      }
+    const at = match.index!;
+    const open = source.lastIndexOf("<", at);
+    if (open < 0) continue;
+    // `title=` on a <Component> is a React prop (`Modal`, `ConfirmDialog`);
+    // on a lowercase tag it is the HTML attribute this rule is about.
+    const tag = /^<\s*([A-Za-z][\w.]*)/.exec(source.slice(open));
+    if (!tag || tag[1][0] !== tag[1][0].toLowerCase()) continue;
+    // The nearest `<` going backwards is only OUR tag if it has not already
+    // closed — otherwise this `title=` is loose text, not an attribute.
+    const close = tagClose(source, open);
+    if (close !== -1 && close < at) continue;
+    found.push(source.slice(0, at).split("\n").length);
+  }
+  return found;
+}
+
+/** Line numbers where a `<Tip>` wraps a text field directly. */
+function tipWrappedFields(source: string): number[] {
+  const found: number[] = [];
+  for (const match of source.matchAll(/<Tip\b/g)) {
+    const close = tagClose(source, match.index!);
+    if (close === -1) continue;
+    if (/^\s*<(input|textarea)\b/.test(source.slice(close + 1))) {
+      found.push(source.slice(0, match.index!).split("\n").length);
     }
   }
   return found;
@@ -122,6 +162,22 @@ describe("no control falls back to the browser tooltip", () => {
       .filter(([, want, got]) => want !== got)
       .map(([file, want, got]) => `${file}: allowed ${want}, found ${got}`);
     expect(drifted).toEqual([]);
+  });
+
+  it("keeps text fields out of the app's own bubble as well", () => {
+    // The other half of the same rule. `Tip` shows on `:focus-visible`, and
+    // Chromium matches that on a TEXT input however it was focused — so a
+    // wrapped field parks a bubble over the row above it for as long as
+    // someone types, which is why two `title`s survive in the allowlist. The
+    // rule was written down in three comments and held nowhere: a Tip around
+    // an <input> is invisible both to the `title=` scan above and to
+    // `Settings.tips.test.tsx`, which enumerates buttons. Put the
+    // explanation on an InfoDot beside the label, as Home's voice field does.
+    const wrapped = components()
+      .map(([file, source]) => [file, tipWrappedFields(source)] as const)
+      .filter(([, lines]) => lines.length)
+      .map(([file, lines]) => `${file}:${lines.join(",")}`);
+    expect(wrapped).toEqual([]);
   });
 
   it("keeps a reason on every entry", () => {

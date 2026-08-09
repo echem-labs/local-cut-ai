@@ -725,22 +725,27 @@ export function Settings() {
                 <div className="st">
                   <Mic {...ICON_SUBHEAD} />
                   {t("settings.defaults.voiceHeading")}
+                  {/* Beside the label, not around the field. The `title` this
+                      replaced repeated the field's own placeholder, but a Tip
+                      on the input is no better: it shows on `:focus-visible`,
+                      which Chromium matches on a text input however it was
+                      focused, so the bubble would sit over this row for as
+                      long as a voice is being typed into it. Home's voice
+                      field carries its explanation the same way. */}
+                  <InfoDot
+                    label={t("settings.defaults.voiceTip")}
+                    hint={t("home.voiceTipHint")}
+                  />
                 </div>
                 <div className="sd">{t("settings.defaults.voiceHint")}</div>
                 <div className="sc">
-                  {/* The `title` here repeated the field's own placeholder,
-                      so the browser waited a second to show you the words
-                      already in front of you. The bubble says what the field
-                      accepts instead, as Home's voice field does. */}
-                  <Tip label={t("settings.defaults.voiceTip")} hint={t("home.voiceTipHint")}>
-                    <input
-                      style={{ minWidth: 240 }}
-                      value={defaults.voice}
-                      placeholder={t("home.voicePlaceholder")}
-                      aria-label={t("settings.defaults.voiceHeading")}
-                      onChange={(event) => setDefaults({ voice: event.target.value })}
-                    />
-                  </Tip>
+                  <input
+                    style={{ minWidth: 240 }}
+                    value={defaults.voice}
+                    placeholder={t("home.voicePlaceholder")}
+                    aria-label={t("settings.defaults.voiceHeading")}
+                    onChange={(event) => setDefaults({ voice: event.target.value })}
+                  />
                 </div>
               </div>
               <div className="setting-row">
