@@ -331,6 +331,41 @@ try {
   `);
   check("the Help popover closes again", helpClosed === true);
 
+  // The rail draws two kinds of row — destinations, and the open-project
+  // tabs under them — and the tabs live in their own scroller, which is
+  // pulled out to the rail's edge so its bar sits against it and then given
+  // back the bar's width. That arithmetic assumed a 6px bar; it measures 5,
+  // and every tab row came out a pixel wider than the destinations above it.
+  //
+  // A pixel, and invisible until you look for it: a resting tab has no
+  // background, so nothing draws at the edge that moved. Only the labels'
+  // x differs on purpose here (47 vs 35 in the reference — a tab is a list
+  // item under the row above it, not another destination); the row BOX is
+  // the rail's own width in both cases. Nothing in the unit suite can see
+  // this: vitest stubs CSS imports away and jsdom loads no stylesheet.
+  const railRows = await evalInApp(`
+    return page.evaluate(() => {
+      const rail = document.querySelector(".rail");
+      if (!rail) return null;
+      const width = (el) => Math.round(el.getBoundingClientRect().width);
+      const tabs = [...rail.querySelectorAll(".rail-tab")].map(width);
+      const dest = [...rail.querySelectorAll(":scope > button")].map(width);
+      return { tabs, dest };
+    });
+  `);
+  if (railRows && railRows.tabs.length > 0) {
+    const want = railRows.dest[0];
+    check(
+      "an open-project tab is the same width as a destination above it",
+      want > 0 && railRows.tabs.every((row) => row === want),
+      JSON.stringify(railRows),
+    );
+  } else {
+    // Said out loud rather than passed over: with no project open there are
+    // no tabs, and the check above measured nothing.
+    console.log("NOTE no open-project tabs in this profile - rail row width unchecked");
+  }
+
   // U3: the clip panel carries the widest controls row Home has (motion
   // field, seconds, start frame, aspect, generate) plus a preset chip row.
   // Opened as a stop of its own because a flex row that wraps politely at

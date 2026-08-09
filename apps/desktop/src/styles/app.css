@@ -234,7 +234,18 @@ textarea {
      of the glyph column, which is what clipped the rows.
      Expanded rail: 12px of padding, 6px bar, 6px put back. */
   margin-right: calc(-1 * var(--space-3));
-  padding-right: 6px;
+  /* 7, not 6, and measured rather than nudged. The scroller is pulled out to
+     the rail's edge so its bar sits against it, then given back the width
+     the bar takes so its rows land where the rest of the rail draws them.
+     The bar measures 5px, not the 6 its own rule asks for, so 6 here left
+     every tab row 176px wide against a 175px destination — one pixel wider
+     than everything above it, and ending one pixel further right.
+
+     This is NOT the +27px every framed rail carries against the reference:
+     that number is identical before and after. It is its own small
+     disagreement, and the walk now asserts the two row kinds share a width
+     so neither can drift again. */
+  padding-right: 7px;
 }
 
 /* 6px, not the app-wide 10px: this is the one scroller inside a 48px strip,
