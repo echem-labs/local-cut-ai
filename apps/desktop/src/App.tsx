@@ -16,6 +16,7 @@ import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
+import { EngineCrashBanner } from "./components/EngineCrashBanner";
 import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -126,6 +127,8 @@ export default function App() {
     closeSettings,
     openSettings,
     engineError,
+    engineCrash,
+    noteEngineCrash,
     firstRunDone,
     libraryOpen,
     openLibrary,
@@ -140,6 +143,11 @@ export default function App() {
   useEffect(() => {
     void connect();
   }, [connect]);
+
+  // The one channel the shell pushes on. Subscribed here rather than in the
+  // banner so the unsubscribe is tied to the app's lifetime, and so a
+  // StrictMode double mount cannot leave two listeners behind.
+  useEffect(() => window.localcut?.onEngineCrash?.(noteEngineCrash), [noteEngineCrash]);
 
   // The tab list scrolls; keep the active tab visible in it (the removed
   // overflow cap used to guarantee this by swapping it into the window).
@@ -376,7 +384,13 @@ export default function App() {
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
-        {engineError && <div className="banner error">{engineError}</div>}
+        {/* A crash outranks the generic bar: both describe an engine that is
+            not answering, and only one of them can do anything about it. */}
+        {engineCrash ? (
+          <EngineCrashBanner />
+        ) : (
+          engineError && <div className="banner error">{engineError}</div>
+        )}
         <TemplateNotice />
         {screen}
         {firstRunDone && settingsOpen && (
