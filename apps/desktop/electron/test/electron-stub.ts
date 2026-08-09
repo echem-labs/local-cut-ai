@@ -174,6 +174,9 @@ export class BrowserWindow {
   private readonly navigationListeners: ((event: { preventDefault(): void }, url: string) => void)[] =
     [];
 
+  /** Everything main pushed at this window's renderer. */
+  readonly sent: { channel: string; args: unknown[] }[] = [];
+
   readonly webContents = {
     on: (event: string, listener: (e: { preventDefault(): void }, url: string) => void) => {
       if (event === "will-navigate") this.navigationListeners.push(listener);
@@ -183,6 +186,9 @@ export class BrowserWindow {
     },
     downloadURL: (url: string) => {
       this.downloads.push(url);
+    },
+    send: (channel: string, ...args: unknown[]) => {
+      this.sent.push({ channel, args });
     },
   };
 
@@ -276,10 +282,23 @@ export const contextBridge = {
 };
 
 export const ipcInvocations: { channel: string; args: unknown[] }[] = [];
+/** Push-channel listeners, so a test can deliver an event the way Electron
+ * does — raw handler first argument is the IpcRendererEvent — and check what
+ * the bridge passes on from it. */
+export const ipcListeners: { channel: string; handler: (...args: unknown[]) => void }[] = [];
 export const ipcRenderer = {
   invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     ipcInvocations.push({ channel, args });
     return Promise.resolve(undefined);
+  },
+  on(channel: string, handler: (...args: unknown[]) => void): void {
+    ipcListeners.push({ channel, handler });
+  },
+  off(channel: string, handler: (...args: unknown[]) => void): void {
+    const at = ipcListeners.findIndex(
+      (entry) => entry.channel === channel && entry.handler === handler,
+    );
+    if (at >= 0) ipcListeners.splice(at, 1);
   },
 };
 

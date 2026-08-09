@@ -61,8 +61,11 @@ let savedEnv: Record<string, string | undefined>;
 // Typed by what is actually read rather than with vitest's MockInstance,
 // whose generic arity has moved between versions.
 let warnSpy: { mock: { calls: unknown[][] } };
+let errorSpy: { mock: { calls: unknown[][] } };
 /** Everything logged to console.warn this test, joined. */
 const warned = (): string => warnSpy.mock.calls.map((call) => call.join(" ")).join("\n");
+/** Everything logged to console.error this test, joined. */
+const errored = (): string => errorSpy.mock.calls.map((call) => call.join(" ")).join("\n");
 
 beforeEach(() => {
   spawned.calls.length = 0;
@@ -72,7 +75,7 @@ beforeEach(() => {
   // pid 4242, which on this machine belongs to something real.
   vi.spyOn(process, "kill").mockReturnValue(true);
   warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.stubGlobal("fetch", healthyEngine());
 });
@@ -419,5 +422,81 @@ describe("when startup does not work out", () => {
     await manager.start();
     expect(engineSpawns()).toHaveLength(2);
     expect(manager.connection).not.toBeNull();
+  });
+});
+
+/**
+ * A crash and a quit arrive at the same handler looking identical.
+ *
+ * `killTree` uses `taskkill /PID <pid> /T /F` on Windows, and `/F` terminates
+ * with **exit code 1**. So the ordinary teardown — every window close, every
+ * unpair, every failed startup that cleans up after itself — reached the exit
+ * handler with the same code an engine that fell over reports, and the
+ * handler logged both through `console.error`. The app's own log could not
+ * tell them apart, and neither could anything built on top of it.
+ */
+describe("telling a crash from a quit the app asked for", () => {
+  it("does not report the teardown it asked for as a failure", async () => {
+    const manager = new EngineManager();
+    await manager.start();
+    const crashes: unknown[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+
+    manager.stop();
+    firstSpawn().child.emit("exit", 1, null);
+
+    expect(crashes).toEqual([]);
+    expect(errored()).not.toMatch(/exited/);
+  });
+
+  it("reports an engine that fell over on its own", async () => {
+    const manager = new EngineManager();
+    await manager.start();
+    const crashes: { code: number | null }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+
+    firstSpawn().child.emit("exit", 1, null);
+
+    expect(crashes).toHaveLength(1);
+    expect(crashes[0]!.code).toBe(1);
+    expect(errored()).toMatch(/exited/);
+  });
+
+  it("carries the engine's last words, with the token taken out", async () => {
+    // The report exists to be pasted into an issue, so what the engine said
+    // on the way down has to travel with it — and the bearer token for every
+    // project on the machine must not.
+    const manager = new EngineManager();
+    const connection = await manager.start();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+
+    const { child } = firstSpawn();
+    child.stderr.emit("data", Buffer.from("Traceback (most recent call last):\n"));
+    child.stderr.emit("data", Buffer.from(`RuntimeError: bad token ${connection.token}\n`));
+    child.emit("exit", 3, null);
+
+    const tail = crashes[0]!.tail.join("\n");
+    expect(tail).toContain("Traceback (most recent call last):");
+    expect(tail).toContain("<token redacted>");
+    expect(tail).not.toContain(connection.token);
+  });
+
+  it("does not let a killed child's late exit report a crash", async () => {
+    // Same hazard the 'late exit' test above covers for `this.child`: a child
+    // we already terminated can emit long after a replacement is healthy, and
+    // a banner saying the engine died would be the only thing on screen
+    // claiming so.
+    const manager = new EngineManager();
+    await manager.start();
+    const first = firstSpawn().child;
+    const crashes: unknown[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+
+    manager.stop();
+    await manager.start();
+    first.emit("exit", 1, null);
+
+    expect(crashes).toEqual([]);
   });
 });

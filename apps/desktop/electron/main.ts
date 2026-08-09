@@ -65,6 +65,19 @@ installLogSink(LOGS_DIR);
 const UPDATE_FEED = process.env.LOCALCUT_UPDATE_FEED?.trim() ?? "";
 
 const engine = new EngineManager();
+/**
+ * An engine that stopped on its own is the one failure the renderer cannot
+ * see for itself: it keeps every bit of its state, so the app looks intact
+ * and simply does nothing. Push it, rather than leaving the UI to infer a
+ * crash from requests that fail — those also fail while an engine is merely
+ * restarting, and the two want different words on screen.
+ */
+engine.onCrash((crash) => {
+  engineError = `engine exited with ${crash.signal ? `signal ${crash.signal}` : `code ${crash.code}`}`;
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("engine:crashed", crash);
+  }
+});
 const keyStore = new ProviderKeyStore();
 const remoteStore = new RemoteEngineStore();
 let engineError: string | null = null;
@@ -413,6 +426,26 @@ function trustedSender(event: IpcMainInvokeEvent): boolean {
     return false;
   }
 }
+
+/**
+ * Bring the engine back after it stopped without being asked to.
+ *
+ * `connectEngine`, not `engine.start`: a paired remote is still the engine
+ * the user chose, and restarting a local one instead would silently move
+ * their work onto this machine.
+ */
+ipcMain.handle("engine:restart", async (event) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  try {
+    await connectEngine();
+    engineError = null;
+    return { ok: true, error: null };
+  } catch (error) {
+    engineError = error instanceof Error ? error.message : String(error);
+    console.error("[engine] restart failed:", engineError);
+    return { ok: false, error: engineError };
+  }
+});
 
 // Gated like the mutators: this hands out the engine's URL and bearer token,
 // which is full authenticated access to every project on the machine.
