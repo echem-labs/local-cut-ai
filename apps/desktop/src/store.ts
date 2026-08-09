@@ -1142,12 +1142,20 @@ export const useApp = create<AppState>((set, get) => {
       }
     }
     try {
-      // Guard the set: `client` here is this establish's own closure, so a
-      // superseded establish must not write the old engine's hardware over
-      // the new one's. (refreshHome/refreshBoard read get().client, so they
-      // already resolve against the live engine.)
+      // Guard the set twice: `client` here is this establish's own closure,
+      // so a superseded establish must not write the old engine's hardware
+      // over the new one's (refreshHome/refreshBoard read get().client, so
+      // they already resolve against the live engine) — and a frozen store
+      // must not have posed hardware replaced by this box's own.
+      //
+      // The freeze was the one this branch was missing, and it cost real
+      // gate time: the wizard's step-2 card reports free RAM and free disk,
+      // both of which move between runs, so an answer landing after the pose
+      // photographed a different machine. wiz-2 came out at 72 differing
+      // pixels or 836 and wiz-4 at 288 or 649 on identical code, both inside
+      // budget, so nothing ever went red over it.
       const info = await client.system();
-      if (gen === establishGen) set({ system: info });
+      if (gen === establishGen && !seedFrozen) set({ system: info });
     } catch {
       /* system info is cosmetic at this stage */
     }
