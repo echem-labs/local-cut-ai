@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 
@@ -27,6 +27,7 @@ export function Dropdown<V extends string | number>({
   tip,
   tipHint,
   tipSide = "top",
+  variant = "chip",
 }: {
   value: V;
   options: DropdownOption<V>[];
@@ -42,6 +43,20 @@ export function Dropdown<V extends string | number>({
   /** "top" suits a control on a bottom-anchored row; a chip near the top of
    * the window wants "bottom", or the bubble is drawn off it. */
   tipSide?: "top" | "bottom" | "right";
+  /**
+   * How much the control has to say for itself.
+   *
+   * "chip" is the design proposal's look and the default: a chip sits in a
+   * ROW of chips, and the row is what reads as pickable — the mocks draw no
+   * chevron on any of them, and the home and session parity frames hold that.
+   *
+   * "field" is a settings row's control, which has none of that context. It
+   * stands alone against a label with the width of the pane between them, so
+   * a bare word like "Auto" reads as a value someone typed rather than one of
+   * several you can choose. The caret is the affordance the row cannot give
+   * it, and it gets a minimum width so a column of them lines up.
+   */
+  variant?: "chip" | "field";
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -95,7 +110,7 @@ export function Dropdown<V extends string | number>({
       {withTip(
       <button
         type="button"
-        className="dropdown-trigger"
+        className={variant === "field" ? "dropdown-trigger field" : "dropdown-trigger"}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -118,6 +133,9 @@ export function Dropdown<V extends string | number>({
       >
         {SelectedIcon && <SelectedIcon size={13} strokeWidth={1.8} aria-hidden="true" />}
         {selected?.label}
+        {variant === "field" && (
+          <ChevronDown className="dropdown-caret" size={13} strokeWidth={2} aria-hidden="true" />
+        )}
       </button>,
       )}
       {open && (

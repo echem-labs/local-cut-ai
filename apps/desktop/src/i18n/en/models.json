@@ -8,6 +8,15 @@
     "music.gen": "Music",
     "transcribe": "Captions"
   },
+  "taskHints": {
+    "text.llm": "Turns your prompt into a scene-by-scene script.",
+    "image.gen": "Draws the still frame each clip is animated from.",
+    "video.i2v": "Animates a keyframe into a moving clip.",
+    "video.t2v": "Renders a clip straight from the text, with no keyframe.",
+    "speech.tts": "Reads the narration aloud.",
+    "music.gen": "Writes the backing track.",
+    "transcribe": "Times the captions against the narration."
+  },
   "verdicts": {
     "commercial": "commercial-safe",
     "conditions": "conditions",

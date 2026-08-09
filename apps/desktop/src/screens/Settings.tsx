@@ -154,6 +154,7 @@ function ModelDefaultsPanel() {
 
   if (!modelDefaults) return null;
   const taskLabels = m().models.taskLabels as Record<string, string>;
+  const taskHints = m().models.taskHints as Record<string, string>;
   const rows = modelDefaults.tasks
     .map((task) => {
       const auto = { value: "", label: t("settings.models.defaultsAuto") };
@@ -190,11 +191,24 @@ function ModelDefaultsPanel() {
       <p className="hint">{t("settings.models.defaultsHint")}</p>
       {rows.map(({ task, current, options }) => (
         <div className="model-default-row" key={task}>
-          <span>{taskLabels[task] ?? task}</span>
+          {/* The label says WHICH stage; the dot says what that stage does.
+              "Keyframes" and "Video clips" are the app's own vocabulary, and
+              a row that only names them tells someone choosing a model
+              nothing about what they are choosing it for. */}
+          <span className="model-default-label">
+            {taskLabels[task] ?? task}
+            <InfoDot
+              label={taskLabels[task] ?? task}
+              hint={taskHints[task] ?? t("settings.models.defaultsTaskFallback")}
+            />
+          </span>
           <Dropdown
             value={current}
             options={options}
+            variant="field"
             ariaLabel={taskLabels[task] ?? task}
+            tip={t("settings.models.defaultsPickTip", { task: taskLabels[task] ?? task })}
+            tipHint={t("settings.models.defaultsPickTipHint")}
             onChange={(value) => {
               void setModelDefault(task, value === "" ? null : String(value)).then(setError);
             }}

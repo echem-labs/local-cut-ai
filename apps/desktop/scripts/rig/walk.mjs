@@ -331,6 +331,90 @@ try {
   `);
   check("the Help popover closes again", helpClosed === true);
 
+  /**
+   * The same rows again, with the rail COMPACT.
+   *
+   * This is the state the spacing was actually broken in, and the reason it
+   * survived three rounds of being reported: `.rail.compact button` is
+   * (0,2,1) against `.menu-pop button`'s (0,1,1), so a compact rail took the
+   * popover's horizontal padding and its icon gap away — and every
+   * measurement anyone took, including the check above, was made with the
+   * rail expanded, where the rule does not apply.
+   *
+   * Driven by width rather than by the toggle: below 1000px the rail
+   * auto-compacts, which the stop above this one already relies on.
+   */
+  const popSpacingAt = async (label) => {
+    const measured = await evalInApp(`
+      const trigger = await page.$(".rail .help-menu button");
+      if (trigger) await trigger.click();
+      const opened = await page
+        .waitForSelector(".help-pop", { timeout: 5000 })
+        .then(() => true)
+        .catch(() => false);
+      return page.evaluate((wasOpened) => {
+        const pop = document.querySelector(".help-pop");
+        if (!pop) return { opened: wasOpened, compact: null, rows: [] };
+        const popBox = pop.getBoundingClientRect();
+        return {
+          opened: wasOpened,
+          compact: !!document.querySelector(".rail.compact"),
+          rows: [...pop.querySelectorAll("[role=menuitem]")].map((row) => {
+            const svg = row.querySelector("svg");
+            const hint = row.querySelector("small");
+            const label = [...row.childNodes].find(
+              (n) => n.nodeType === 3 && n.textContent.trim(),
+            );
+            let labelLeft = null;
+            if (label) {
+              const range = document.createRange();
+              range.selectNodeContents(label);
+              labelLeft = range.getBoundingClientRect().left;
+            }
+            return {
+              iconToEdge: svg
+                ? Math.round(svg.getBoundingClientRect().left - popBox.left)
+                : null,
+              iconToText:
+                svg && labelLeft !== null
+                  ? Math.round(labelLeft - svg.getBoundingClientRect().right)
+                  : null,
+              hintToEdge: hint
+                ? Math.round(popBox.right - hint.getBoundingClientRect().right)
+                : null,
+            };
+          }),
+        };
+      }, opened);
+    `);
+    check(
+      `${label}: every Help popover row keeps 12px inside it and 17px from both edges`,
+      measured.rows.length >= 2 &&
+        measured.rows.every(
+          (row) => row.iconToEdge === 17 && row.iconToText === 12 && row.hintToEdge === 17,
+        ),
+      JSON.stringify(measured),
+    );
+    // Close it again the only way that works (see the note above): the
+    // trigger. Left open, it paints over the rail for every later frame.
+    await evalInApp(`
+      const trigger = await page.$(".rail .help-menu button");
+      if (trigger) await trigger.click();
+      await page.waitForSelector(".help-pop", { state: "detached", timeout: 5000 }).catch(() => {});
+      return null;
+    `);
+    return measured;
+  };
+
+  await setSize(980, 800);
+  const compactPop = await popSpacingAt("compact rail");
+  check(
+    "the compact-rail popover check actually ran against a compact rail",
+    compactPop.compact === true,
+    JSON.stringify({ compact: compactPop.compact }),
+  );
+  await setSize(1440, 900);
+
   // The rail draws two kinds of row — destinations, and the open-project
   // tabs under them — and the tabs live in their own scroller, which is
   // pulled out to the rail's edge so its bar sits against it and then given
