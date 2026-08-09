@@ -6,6 +6,7 @@ import {
   type IpcMainInvokeEvent,
   Menu,
   nativeTheme,
+  Notification,
   session,
   shell,
 } from "electron";
@@ -462,6 +463,38 @@ ipcMain.handle("window:set-progress", (event, payload: unknown) => {
   const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX).trim() : "";
   window.setTitle(title || IDLE_TITLE);
   return { ok: true, error: null };
+});
+
+/**
+ * Tell the user a render finished, if they are not already watching it.
+ *
+ * The focus check belongs here rather than in the renderer: `document
+ * .hasFocus()` answers a question about the page, and the one that matters
+ * is whether the WINDOW is in front — a minimised app whose page still holds
+ * focus would otherwise decide it had been seen. Main is also the only side
+ * that can know the OS refused to show notifications at all.
+ *
+ * A notification for something already on screen is worse than none: it is
+ * the app interrupting to report what the user is looking at.
+ */
+ipcMain.handle("shell:notify", (event, payload: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { ok: false, error: "no window" };
+  if (window.isFocused()) return { ok: true, shown: false, error: null };
+  if (!Notification.isSupported()) return { ok: true, shown: false, error: null };
+  const value = (payload ?? {}) as { title?: unknown; body?: unknown };
+  const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX) : "";
+  const body = typeof value.body === "string" ? value.body.slice(0, TITLE_MAX) : "";
+  if (!title) return { ok: false, error: "no title" };
+  const notification = new Notification({ title, body });
+  // Clicking it is a request to come back to the work it is about.
+  notification.on("click", () => {
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  });
+  notification.show();
+  return { ok: true, shown: true, error: null };
 });
 
 /**

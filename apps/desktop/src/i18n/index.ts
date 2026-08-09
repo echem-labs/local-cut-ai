@@ -29,6 +29,7 @@ import toolSession from "./en/toolSession.json";
 import eta from "./en/eta.json";
 import palette from "./en/palette.json";
 import notices from "./en/notices.json";
+import notify from "./en/notify.json";
 import failure from "./en/failure.json";
 import publish from "./en/publish.json";
 
@@ -78,6 +79,7 @@ const en = {
   eta,
   palette,
   notices,
+  notify,
   failure,
   publish,
 };

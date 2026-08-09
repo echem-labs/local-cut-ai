@@ -1,0 +1,5 @@
+{
+  "renderDoneTitle": "Your video is ready",
+  "renderDoneBody": "{project} has finished rendering.",
+  "renderDoneBodyUnknown": "The render has finished."
+}

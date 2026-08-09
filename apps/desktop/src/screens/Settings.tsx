@@ -15,6 +15,7 @@ import {
   Server,
   SlidersHorizontal,
   Sparkles,
+  Bell,
   SunMoon,
   Trash2,
   Waypoints,
@@ -246,6 +247,8 @@ export function Settings() {
     models,
     defaults,
     setDefaults,
+    notifyOnDone,
+    setNotifyOnDone,
     remoteEngine,
     remotePaired,
     remoteKeysArmed,
@@ -592,6 +595,31 @@ export function Settings() {
                           }}
                         >
                           {t(`settings.theme.${option.value}`)}
+                        </button>
+                      </Tip>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="setting-row">
+                <div className="st">
+                  <Bell {...ICON_SUBHEAD} />
+                  {t("settings.notify.heading")}
+                </div>
+                <div className="sd">{t("settings.notify.hint")}</div>
+                <div className="sc">
+                  <div className="seg-toggle" role="group" aria-label={t("settings.notify.aria")}>
+                    {[true, false].map((on) => (
+                      <Tip
+                        key={String(on)}
+                        label={t(on ? "settings.notify.on" : "settings.notify.off")}
+                        hint={t(on ? "settings.notify.tipOn" : "settings.notify.tipOff")}
+                      >
+                        <button
+                          className={notifyOnDone === on ? "active" : ""}
+                          onClick={() => setNotifyOnDone(on)}
+                        >
+                          {t(on ? "settings.notify.on" : "settings.notify.off")}
                         </button>
                       </Tip>
                     ))}
