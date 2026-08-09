@@ -60,6 +60,8 @@ export function resetElectron(): void {
   certificateVerifyProc = null;
   quitCalls = 0;
   applicationMenu = undefined;
+  notifications.length = 0;
+  notificationSupport.supported = true;
 }
 
 /* ------------------------------------------------------------------ app -- */
@@ -230,6 +232,9 @@ export class BrowserWindow {
   isMinimized(): boolean {
     return this.minimized;
   }
+  isFocused(): boolean {
+    return this.focused;
+  }
   restore(): void {
     this.restored = true;
   }
@@ -250,6 +255,48 @@ const windows: BrowserWindow[] = BrowserWindow.instances;
 /* ------------------------------------------------------------ misc APIs -- */
 
 let applicationMenu: unknown;
+export interface StubNotification {
+  title: string;
+  body: string;
+  /** Whether `.show()` was reached — constructing one is not showing it. */
+  shown: boolean;
+  /** Deliver the user's click, so the "bring the window back" path is real
+   * rather than merely registered. */
+  click(): void;
+}
+
+/** Notifications raised, in order. */
+export const notifications: StubNotification[] = [];
+/** Flipped by a test to stand in for an OS that has them switched off. */
+export const notificationSupport = { supported: true };
+
+export class Notification {
+  static isSupported(): boolean {
+    return notificationSupport.supported;
+  }
+  private readonly record: StubNotification;
+  private readonly clickListeners: (() => void)[] = [];
+
+  constructor(options: { title?: string; body?: string } = {}) {
+    this.record = {
+      title: options.title ?? "",
+      body: options.body ?? "",
+      shown: false,
+      click: () => {
+        for (const listener of this.clickListeners) listener();
+      },
+    };
+    notifications.push(this.record);
+  }
+  on(event: string, listener: () => void): this {
+    if (event === "click") this.clickListeners.push(listener);
+    return this;
+  }
+  show(): void {
+    this.record.shown = true;
+  }
+}
+
 export const Menu = {
   setApplicationMenu(menu: unknown): void {
     applicationMenu = menu;

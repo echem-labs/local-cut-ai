@@ -17,6 +17,7 @@ import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
 import { EngineCrashBanner } from "./components/EngineCrashBanner";
+import { useDoneNotice } from "./lib/useDoneNotice";
 import { useShellProgress } from "./lib/useShellProgress";
 import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
@@ -152,6 +153,8 @@ export default function App() {
 
   // Taskbar bar and window title, for the window nobody is looking at.
   useShellProgress();
+  // And the notification for when they walked away entirely.
+  useDoneNotice();
 
   // The tab list scrolls; keep the active tab visible in it (the removed
   // overflow cap used to guarantee this by swapping it into the window).
