@@ -19,6 +19,7 @@ import type {
   Checkpoint,
   EditProposal,
   EditResult,
+  EngineCrash,
   EngineEvent,
   HistoryInfo,
   InstalledWorkflow,
@@ -96,6 +97,12 @@ declare global {
       setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
       getSystemTextScale: () => Promise<number>;
       setUiZoom: (factor: number) => void;
+      /** Start the engine again after it stopped without being asked to.
+       * Optional: an older preload has no such channel, and the banner that
+       * calls it must degrade rather than throw. */
+      restartEngine?: () => Promise<{ ok: boolean; error: string | null }>;
+      /** Subscribe to engine crashes; returns its own unsubscribe. */
+      onEngineCrash?: (listener: (crash: EngineCrash) => void) => () => void;
       /** About → Support. Neither takes a path or a URL: the shell owns
        * which folder is opened and which feed is fetched. */
       openLogsFolder: () => Promise<{ ok: boolean; error: string | null }>;
@@ -217,6 +224,10 @@ export interface HomeDraft {
 interface AppState {
   client: EngineClient | null;
   engineError: string | null;
+  /** Set when the engine stopped without being asked to. Distinct from
+   * `engineError`, which also covers "not started yet" and "restarting" —
+   * a crash has a report to copy and a button that fixes it. */
+  engineCrash: EngineCrash | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -297,6 +308,9 @@ interface AppState {
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
+  /** Start the engine again after a crash. Null means it came back. */
+  restartEngine: () => Promise<string | null>;
+  noteEngineCrash: (crash: EngineCrash | null) => void;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -1272,6 +1286,7 @@ export const useApp = create<AppState>((set, get) => {
     remoteEngine: false,
     remotePaired: false,
     remoteKeysArmed: true,
+    engineCrash: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1286,6 +1301,28 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (!get().client) scheduleReconnect(); // engine still down — keep trying
     },
+
+    restartEngine: async () => {
+      // Spawning is the shell's job; the renderer only ever asks. A build
+      // whose preload predates the channel says so rather than throwing at
+      // the one moment the app is already broken.
+      const restart = window.localcut?.restartEngine;
+      if (!restart) return t("errors.engineUnavailable");
+      const result = await restart();
+      if (!result.ok) return result.error ?? t("errors.engineUnavailable");
+      // A new engine means a new token, so the client has to be rebuilt
+      // before this reports success — `engineError` is what says whether it
+      // actually came back.
+      await get().reconnect();
+      const error = get().engineError;
+      // Cleared only on the way back up. Dropping the crash on a failed
+      // restart would take the report and the retry off screen while the
+      // engine is still down.
+      if (!error) set({ engineCrash: null });
+      return error;
+    },
+
+    noteEngineCrash: (crash) => set({ engineCrash: crash }),
 
     refreshHome: async () => {
       const { client } = get();

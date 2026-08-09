@@ -24,7 +24,12 @@ const localEngine = vi.hoisted(() => ({ url: "http://127.0.0.1:1", token: "local
 /** The EngineManager main.ts constructed, plus a hook to make its teardown
  * slow — the quit path must wait for it rather than exiting first. */
 const engineMock = vi.hoisted(() => ({
-  instance: null as { stopped: number; waited: number } | null,
+  instance: null as {
+    stopped: number;
+    waited: number;
+    connection: { url: string; token: string } | null;
+    crashListeners: ((crash: unknown) => void)[];
+  } | null,
   teardown: null as Promise<void> | null,
 }));
 
@@ -34,8 +39,13 @@ vi.mock("./engine", () => {
     connection: { url: string; token: string } | null = null;
     stopped = 0;
     waited = 0;
+    /** Kept so a test can fire a crash the way the real supervisor does. */
+    crashListeners: ((crash: unknown) => void)[] = [];
     constructor() {
       engineMock.instance = this;
+    }
+    onCrash(listener: (crash: unknown) => void): void {
+      this.crashListeners.push(listener);
     }
     async start(): Promise<{ url: string; token: string }> {
       this.connection = { ...localEngine };
@@ -256,6 +266,9 @@ describe("who may call the IPC handlers", () => {
     ["engine:inspect-pairing", ["code"]],
     ["engine:pair", ["code", {}]],
     ["engine:unpair", []],
+    // Spawns a process. An injected frame that can ask for that can ask for
+    // it repeatedly, whatever the banner on screen says.
+    ["engine:restart", []],
     ["providers:arm-keys", []],
     // Opens a file-manager window. No secret leaves, but a page that can
     // make the shell act on the OS at all is a foothold.
@@ -1188,5 +1201,32 @@ describe("About → the update check", () => {
     } finally {
       await feed.close();
     }
+  });
+});
+
+describe("when the engine stops on its own", () => {
+  it("tells the renderer, so the app does not just go quiet", async () => {
+    // The renderer keeps its whole state when the engine dies: nothing it
+    // can observe changes until the next request fails, and by then the
+    // words on screen are about that request rather than the engine. So the
+    // shell says it, once, on the channel the banner listens to.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    const window = electron.BrowserWindow.instances[0]!;
+    expect(window.sent).toEqual([{ channel: "engine:crashed", args: [crash] }]);
+  });
+
+  it("lets a trusted renderer start it again", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const before = engineMock.instance!.connection;
+    engineMock.instance!.connection = null;
+
+    const result = await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+
+    expect(result).toEqual({ ok: true, error: null });
+    expect(engineMock.instance!.connection).toEqual(before);
   });
 });

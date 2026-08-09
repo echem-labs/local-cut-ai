@@ -21,6 +21,22 @@ contextBridge.exposeInMainWorld("localcut", {
   pairEngine: (code: string, options?: { armKeys?: boolean }) =>
     ipcRenderer.invoke("engine:pair", code, options ?? {}),
   unpairEngine: () => ipcRenderer.invoke("engine:unpair"),
+  restartEngine: () => ipcRenderer.invoke("engine:restart"),
+  /**
+   * The only channel that pushes rather than answers.
+   *
+   * The listener is wrapped rather than handed to `ipcRenderer.on` directly:
+   * the raw handler's first argument is the IpcRendererEvent, which carries
+   * `sender` — a live handle to the whole IPC surface — and passing that
+   * across the bridge would hand the page more than the crash it asked for.
+   * Returns its own unsubscribe so a remounting component cannot stack
+   * listeners.
+   */
+  onEngineCrash: (listener: (crash: unknown) => void) => {
+    const handler = (_event: unknown, crash: unknown): void => listener(crash);
+    ipcRenderer.on("engine:crashed", handler);
+    return () => void ipcRenderer.off("engine:crashed", handler);
+  },
   armProviderKeys: () => ipcRenderer.invoke("providers:arm-keys"),
   setProviderKeys: (keys: Record<string, string>) =>
     ipcRenderer.invoke("providers:set-keys", keys),

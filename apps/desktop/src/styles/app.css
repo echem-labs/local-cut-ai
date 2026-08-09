@@ -6158,6 +6158,22 @@ button.link:hover {
   gap: var(--space-2);
 }
 
+/* The engine crash bar. Same treatment as the error boundary above — it is
+   the same kind of event to a user — but it stacks its own message, an
+   optional restart failure, and the two buttons. */
+.engine-crash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.engine-crash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* ---------------------------------------------------------------- canvas --
  * The flowchart view. Positions come from lib/graphLayout (pure, derived —
  * see that module for why), so everything here is presentation only: the
