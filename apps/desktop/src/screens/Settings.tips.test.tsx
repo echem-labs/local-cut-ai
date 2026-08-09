@@ -160,6 +160,14 @@ const WORKFLOWS = [
   { name: "broken-one", nodes: 0, placeholders: [], readable: false },
 ];
 
+/** The default-model pickers. Without this `ModelDefaultsPanel` returns null
+ *  and the pane renders without its own controls — which is how its dropdown
+ *  went untipped under a guard that was already asserting this tab. */
+const MODEL_DEFAULTS = {
+  tasks: ["image.gen", "video.i2v"],
+  defaults: { "image.gen": null, "video.i2v": "wan/2.2-i2v-q5" },
+};
+
 async function mount(tab: string, over: Record<string, unknown> = {}) {
   useApp.setState({
     settingsOpen: true,
@@ -171,6 +179,9 @@ async function mount(tab: string, over: Record<string, unknown> = {}) {
     remotePaired: false,
     remote: false,
     models: MODELS,
+    modelDefaults: MODEL_DEFAULTS,
+    refreshModelDefaults: vi.fn(async () => {}),
+    setModelDefault: vi.fn(async () => null),
     downloadErrors: {},
     nodePacks: NODE_PACKS,
     workflows: WORKFLOWS,
