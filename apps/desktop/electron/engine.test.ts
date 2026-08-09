@@ -500,3 +500,35 @@ describe("telling a crash from a quit the app asked for", () => {
     expect(crashes).toEqual([]);
   });
 });
+
+describe("whose crash the tail belongs to", () => {
+  it("does not file a killed engine's dying line under its replacement", async () => {
+    // A force-killed child's pipe is DESTROYED rather than ended, so
+    // `mirrorEngineOutput` flushes its last unterminated line on `close` —
+    // and that can land after a replacement engine has already started. The
+    // report exists to be pasted into an issue about the engine that just
+    // died; a previous engine's death rattle at the top of it misleads
+    // whoever reads it.
+    const manager = new EngineManager();
+    await manager.start();
+    const first = firstSpawn().child;
+
+    // No trailing newline: it sits in the buffer until `close`.
+    first.stderr.emit("data", Buffer.from("FATAL: port 7830 is taken"));
+    manager.stop();
+
+    await manager.start();
+    const second = engineSpawns()[1]!.child;
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+
+    // The dead child's pipe finally drains, long after its replacement.
+    first.stderr.emit("close");
+    second.stderr.emit("data", Buffer.from("RuntimeError: no CUDA device\n"));
+    second.emit("exit", 1, null);
+
+    const tail = crashes[0]!.tail.join("\n");
+    expect(tail).toContain("RuntimeError: no CUDA device");
+    expect(tail).not.toContain("FATAL: port 7830 is taken");
+  });
+});

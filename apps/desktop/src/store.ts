@@ -1614,7 +1614,12 @@ export const useApp = create<AppState>((set, get) => {
 
     applySessionVoiceClone: async (file) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
+      if (!client) return t("errors.engineUnavailable");
+      // Split from the client check rather than collapsed into it. The tool
+      // session always has a project, so the two read the same there — but a
+      // voice sample dropped on Home reaches this with the engine answering
+      // fine, and "engine unavailable" then blames the one part that works.
+      if (!currentProject) return t("drop.needsProject");
       try {
         // The consent affirmation was collected in the UI; the engine
         // refuses to stamp the sample without it either way.
