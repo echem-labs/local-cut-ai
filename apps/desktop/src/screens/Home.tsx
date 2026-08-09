@@ -37,7 +37,7 @@ import {
   isToolSession,
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
-import { useApp } from "../store";
+import { EMPTY_TOOL_OPTIONS, useApp } from "../store";
 
 /** The bundled 2-second samples the voice swatches play. Resolved at build
  * time by Vite; keyed by the kokoro speaker each swatch's brief picks. */
@@ -94,7 +94,13 @@ export function Home() {
 
   const { prompt, tool, toolInput, voice, motion, scriptModel, toolAspect, toolDuration, clipSeconds } =
     homeDraft;
-  const { aspect, duration, style, mode } = defaults;
+  // This video's choices, falling back to the saved baseline. `??` and not
+  // `||`: a duration of 0 would never reach the engine, but neither should a
+  // legitimate falsy override be mistaken for "unset".
+  const aspect = homeDraft.aspect ?? defaults.aspect;
+  const duration = homeDraft.duration ?? defaults.duration;
+  const style = homeDraft.style ?? defaults.style;
+  const mode = homeDraft.mode ?? defaults.mode;
   const activeTool = TOOLS.find((entry) => entry.kind === tool) ?? null;
   const toolCopy = activeTool ? m().tools[activeTool.kind] : null;
   // The clip's optional conditioning image. Component state, not the
@@ -208,7 +214,11 @@ export function Home() {
     setBusy(true);
     try {
       await createFromPrompt(prompt.trim(), duration, aspect, mode, style);
-      if (!useApp.getState().actionError) setHomeDraft({ prompt: "" });
+      // The whole composition goes, not just the words: the row described
+      // THAT video, and leaving a look or a run mode behind aims the next
+      // one without anyone choosing it. Back to the Settings baseline.
+      if (!useApp.getState().actionError)
+        setHomeDraft({ prompt: "", aspect: null, duration: null, style: null, mode: null });
     } finally {
       setBusy(false);
     }
@@ -243,7 +253,20 @@ export function Home() {
         tool === "clip" ? (startFrame ?? undefined) : undefined,
       );
       if (!useApp.getState().actionError) {
-        setHomeDraft({ toolInput: "" });
+        // Same rule as the video row above: the options described THAT run,
+        // so they go back to their starting values with the text. Keeping
+        // `tool` is the exception and deliberate — the panel you are looking
+        // at is not a choice about the output, and closing it under you
+        // after every run would be its own bug.
+        setHomeDraft({
+          toolInput: "",
+          voice: "",
+          motion: "",
+          scriptModel: "",
+          toolAspect: EMPTY_TOOL_OPTIONS.toolAspect,
+          toolDuration: EMPTY_TOOL_OPTIONS.toolDuration,
+          clipSeconds: EMPTY_TOOL_OPTIONS.clipSeconds,
+        });
         setStartFrame(null);
       }
     } finally {
@@ -323,7 +346,7 @@ export function Home() {
                 near the top of Home and a top bubble is drawn off it. */}
             <Dropdown
               value={aspect}
-              onChange={(value) => setDefaults({ aspect: value })}
+              onChange={(value) => setHomeDraft({ aspect: value })}
               ariaLabel={t("home.aspectAria")}
               tip={t("home.aspectTip")}
               tipHint={t("home.aspectTipHint")}
@@ -336,7 +359,7 @@ export function Home() {
             />
             <DurationPicker
               value={duration}
-              onChange={(value) => setDefaults({ duration: value })}
+              onChange={(value) => setHomeDraft({ duration: value })}
               ariaLabel={t("home.durationAria")}
               tip={t("home.durationTip")}
               tipHint={t("home.durationTipHint")}
@@ -347,7 +370,7 @@ export function Home() {
                 which look they wanted. */}
             <Dropdown
               value={style}
-              onChange={(value) => setDefaults({ style: value })}
+              onChange={(value) => setHomeDraft({ style: value })}
               ariaLabel={t("home.styleAria")}
               tip={t("home.styleTip")}
               tipHint={t("home.styleTipHint")}
@@ -355,6 +378,10 @@ export function Home() {
               options={STYLE_PRESETS.map((preset) => ({
                 value: preset.id,
                 label: (m().home.styles as Record<string, string>)[preset.id] ?? preset.id,
+                // "Watercolor" is a word everyone knows and a look nobody can
+                // picture the model's version of. The menu is where that is
+                // worth a sentence — the chip has room for one word.
+                hint: (m().home.styleHints as Record<string, string>)[preset.id],
                 icon: preset.icon,
               }))}
             />
@@ -365,7 +392,7 @@ export function Home() {
               <Tip label={t("home.modeAuto")} hint={t("home.modeAutoTitle")} side="bottom">
                 <button
                   className={mode === "prompt" ? "active" : ""}
-                  onClick={() => setDefaults({ mode: "prompt" })}
+                  onClick={() => setHomeDraft({ mode: "prompt" })}
                 >
                   {t("home.modeAuto")}
                 </button>
@@ -373,7 +400,7 @@ export function Home() {
               <Tip label={t("home.modeReview")} hint={t("home.modeReviewTitle")} side="bottom">
                 <button
                   className={mode === "beginner" ? "active" : ""}
-                  onClick={() => setDefaults({ mode: "beginner" })}
+                  onClick={() => setHomeDraft({ mode: "beginner" })}
                 >
                   {t("home.modeReview")}
                 </button>
@@ -805,8 +832,16 @@ export function Home() {
                 key={template.label}
                 className="btn-ghost"
                 onClick={() => {
-                  setHomeDraft({ tool: null, prompt: template.scaffold });
-                  setDefaults({ aspect: template.aspect, duration: template.duration });
+                  // A template describes the video it scaffolds, so its
+                  // format rides with that draft and leaves with it. It used
+                  // to be written into the baseline, which meant picking
+                  // "YouTube explainer" once aimed every later video at 16:9.
+                  setHomeDraft({
+                    tool: null,
+                    prompt: template.scaffold,
+                    aspect: template.aspect,
+                    duration: template.duration,
+                  });
                   requestAnimationFrame(() => promptRef.current?.focus());
                 }}
               >

@@ -189,6 +189,17 @@ export interface HomeDraft {
   prompt: string;
   tool: ToolKind | null;
   toolInput: string;
+  /** This video's format, look and run mode — `null` means "whatever the
+   * saved default is". They live here rather than in `defaults` because the
+   * prompt row composes ONE video: writing them through made every pick
+   * permanent, so a single anime video re-aimed every later one and one
+   * click on Auto retired the review checkpoints for good. Settings →
+   * Defaults is the one place a baseline is set; these are cleared on a
+   * successful generate, like the prompt above them. */
+  aspect: string | null;
+  duration: number | null;
+  style: string | null;
+  mode: "prompt" | "beginner" | null;
   voice: string;
   motion: string;
   /** Script tool's model pick; "" = the engine's configured default. */
@@ -518,18 +529,28 @@ const FALLBACK_DEFAULTS: HomeDefaults = {
   videoModel: null,
 };
 
+/** The tool panel's starting options — the ToolRequest defaults the engine
+ * would apply anyway, made visible instead of implied. Exported because a
+ * finished run puts the panel back to them, and a second copy of these three
+ * numbers in Home is a second thing to update when one of them moves. */
+export const EMPTY_TOOL_OPTIONS = {
+  toolAspect: "16:9",
+  toolDuration: 60,
+  clipSeconds: 5,
+};
+
 const EMPTY_DRAFT: HomeDraft = {
   prompt: "",
   tool: null,
   toolInput: "",
+  aspect: null,
+  duration: null,
+  style: null,
+  mode: null,
   voice: "",
   motion: "",
   scriptModel: "",
-  // The ToolRequest defaults — what the engine would apply anyway, made
-  // visible instead of implied.
-  toolAspect: "16:9",
-  toolDuration: 60,
-  clipSeconds: 5,
+  ...EMPTY_TOOL_OPTIONS,
 };
 
 function loadPersisted<T extends object>(key: string, fallback: T): T {
