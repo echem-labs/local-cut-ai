@@ -327,6 +327,8 @@ interface AppState {
   restartEngine: () => Promise<string | null>;
   noteEngineCrash: (crash: EngineCrash | null) => void;
   setNotifyOnDone: (on: boolean) => void;
+  /** Upload a dropped image as a project asset. Null means it applied. */
+  addDroppedImage: (file: File) => Promise<string | null>;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -1587,6 +1589,23 @@ export const useApp = create<AppState>((set, get) => {
         const named = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(header)?.[1];
         const name = named ?? `${tool}-${node.artifact_hash.slice(0, 8)}`;
         await client.uploadAsset(targetId, new File([blob], name, { type: blob.type }));
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    addDroppedImage: async (file) => {
+      const { client, currentProject } = get();
+      if (!client) return t("errors.engineUnavailable");
+      // A dropped image has to land somewhere. Home has no graph to attach
+      // it to, so this reports rather than silently uploading into nothing.
+      if (!currentProject) return t("drop.needsProject");
+      try {
+        await client.uploadAsset(currentProject.id, file);
+        // The asset is a node on the graph now; the canvas and inspector
+        // read it from there.
+        await get().refreshGraph();
         return null;
       } catch (err) {
         return messageOf(err);
