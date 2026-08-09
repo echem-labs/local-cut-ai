@@ -103,6 +103,12 @@ declare global {
       restartEngine?: () => Promise<{ ok: boolean; error: string | null }>;
       /** Subscribe to engine crashes; returns its own unsubscribe. */
       onEngineCrash?: (listener: (crash: EngineCrash) => void) => () => void;
+      /** Taskbar/dock bar and window title. `fraction` below 0 clears the
+       * bar; an empty title restores the app's own. */
+      setShellProgress?: (progress: {
+        fraction: number;
+        title: string;
+      }) => Promise<{ ok: boolean; error: string | null }>;
       /** About → Support. Neither takes a path or a URL: the shell owns
        * which folder is opened and which feed is fetched. */
       openLogsFolder: () => Promise<{ ok: boolean; error: string | null }>;

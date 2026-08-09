@@ -47,6 +47,7 @@ describe("the exposed surface", () => {
       "restartEngine",
       "seedHookEnabled",
       "setProviderKeys",
+      "setShellProgress",
       "setTitleBarTheme",
       "setUiZoom",
       "unpairEngine",
