@@ -49,6 +49,18 @@ _SERVER_TASKS = ("text.llm", "vision.llm")
 _LLM_NAME = re.compile(r"^[\w.:\-]{1,128}$")
 
 
+def is_server_model_name(model: str) -> bool:
+    """Whether a string is shaped like a model on the LLM server.
+
+    Public because `set_default` is no longer the only way one of these
+    reaches the server: `/suggest-scene` takes a `local:*` override from the
+    caller, and a name good enough to save is exactly the bar a name good
+    enough to send has to clear. One rule, one place — a second copy of the
+    pattern is a second thing to forget to bound.
+    """
+    return bool(_LLM_NAME.fullmatch(model.removeprefix("local:")))
+
+
 class DefaultsTooNew(RuntimeError):
     """model-defaults.json written by a newer engine — refused, never
     silently reduced (maps to HTTP 409, like every versioned document)."""
@@ -99,7 +111,7 @@ def set_default(config: EngineConfig, task: str, model: str | None) -> dict[str,
     else:
         model = model.removeprefix("local:")
         if task in _SERVER_TASKS:
-            if not _LLM_NAME.fullmatch(model):
+            if not is_server_model_name(model):
                 raise ValueError(f"{model!r} is not a valid model name")
         else:
             entry = next((m for m in load_manifest(config).models if m.id == model), None)

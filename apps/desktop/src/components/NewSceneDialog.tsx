@@ -8,9 +8,10 @@
  *
  * The Generate button is an offer, never a gate: the fields work perfectly
  * well typed by hand, and the button is what turns the picture into a first
- * draft of them. It always spends a cloud key, because there is no local
- * model that can see — so it says so under the button rather than surprising
- * anyone, and a machine with no key never sees the button at all.
+ * draft of them. Where the reading happens — a vision model on this machine
+ * or a cloud key — is the engine's decision, and the hint under the button
+ * reports whichever it chose. A machine that can do neither never sees the
+ * button at all.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -46,7 +47,11 @@ export function NewSceneDialog({
   const [busy, setBusy] = useState(false);
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [canGenerate, setCanGenerate] = useState(false);
+  // Which model would read the picture, or null for "nothing here can". The
+  // KIND is not decoration: the hint under the button is a privacy claim, and
+  // promising a cloud provider for a reading that never leaves the machine is
+  // exactly the sentence a local-first app must not print.
+  const [vision, setVision] = useState<"local" | "cloud" | null>(null);
   const firstField = useRef<HTMLTextAreaElement>(null);
 
   // Revoked on unmount: an object URL pins its blob in memory until it is,
@@ -79,13 +84,13 @@ export function NewSceneDialog({
     let live = true;
     void client
       .visionModel()
-      .then(({ model }) => {
-        if (live) setCanGenerate(model !== null);
+      .then(({ model, kind }) => {
+        if (live) setVision(model === null ? null : kind);
       })
       .catch(() => {
         // An answer we could not fetch is not a reason to block the dialog —
         // the fields are the point and they work without it.
-        if (live) setCanGenerate(false);
+        if (live) setVision(null);
       });
     return () => {
       live = false;
@@ -152,12 +157,16 @@ export function NewSceneDialog({
         <PhotoThumb src={preview} alt={name} title={name} />
       )}
 
-      {canGenerate && (
+      {vision && (
         <div className="field">
           <button className="btn-outline" onClick={() => void generate()} disabled={writing || busy}>
             {writing ? t("drop.sceneGenerating") : t("drop.sceneGenerate")}
           </button>
-          <div className="hint">{t("drop.sceneGenerateHint")}</div>
+          <div className="hint">
+            {vision === "local"
+              ? t("drop.sceneGenerateHintLocal")
+              : t("drop.sceneGenerateHintCloud")}
+          </div>
         </div>
       )}
 
