@@ -67,6 +67,19 @@ describe("adding a scene from a dropped image", () => {
     expect(ops.map((op) => op.op)).toEqual(["add_scene"]);
   });
 
+  it("selects the clip, not the keyframe this op just orphaned", async () => {
+    // `addScene` selects the keyframe so the Inspector opens on the prompt
+    // still to be written. Here it has just been written, and `src` leaves
+    // that node feeding nothing — so selecting it would open the panel on a
+    // tile marked "not needed" the instant the scene was made, and highlight
+    // no card, since the card matches on the still and the clip.
+    await useApp
+      .getState()
+      .addSceneFromImage("asset-abc", { narration: "n", prompt: "p" });
+
+    expect(useApp.getState().selectedNode).toBe("s2.clip");
+  });
+
   it("reports a refusal rather than throwing", async () => {
     patch.mockRejectedValueOnce(new Error("nope"));
 
