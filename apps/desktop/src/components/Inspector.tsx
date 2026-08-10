@@ -4,6 +4,7 @@ import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
 import { FailureCard } from "./FailureCard";
 import { t } from "../i18n";
+import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
@@ -61,6 +62,10 @@ export function Inspector() {
   const [photoError, setPhotoError] = useState<string | null>(null);
 
   const sceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
+  // A picture is in the air over this panel, and it belongs to the scene the
+  // panel is showing — so the panel says so itself rather than being covered
+  // by a window-wide scrim that cannot name a target.
+  const dropTarget = useIsDropTarget(sceneId);
   const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
   const auxNode: NodeState | null =
     !sceneId && selectedNode ? (board?.aux[selectedNode] ?? null) : null;
@@ -271,10 +276,15 @@ export function Inspector() {
     // element carrying it, so dropping on the open scene's own details did
     // the one thing the user cannot have meant.
     <aside
-      className="inspector"
+      className={`inspector${dropTarget ? " drop-target" : ""}`}
       aria-label={t("inspector.aria")}
       data-scene={sceneId ?? undefined}
     >
+      {dropTarget && (
+        <div className="drop-here" role="note">
+          {t("drop.overlayStill", { n: (sceneId ?? "").replace(/^s/, "") })}
+        </div>
+      )}
       {/* one-monitor rule: the Player view's big monitor owns playback */}
       {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
