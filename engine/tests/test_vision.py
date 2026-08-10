@@ -13,13 +13,14 @@ is labelled with its real type.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 
 import httpx
 import pytest
 
 from localcut_engine.providers.base import Capability, TextGen
-from localcut_engine.providers.images import data_url
+from localcut_engine.providers.images import data_url, encoded
 from localcut_engine.providers.registry import PROVIDERS
 from localcut_engine.providers.textgen import (
     AnthropicTextGen,
@@ -50,23 +51,52 @@ class _Capture:
         monkeypatch.setattr(httpx.AsyncClient, "post", post)
 
 
-def test_a_data_url_names_the_images_real_type(tmp_path):
+async def test_a_data_url_names_the_images_real_type(tmp_path):
     # A user's asset may be .jpg or .webp; the keyframe port accepts all of
     # them. Declaring every conditioning image as png mislabels the payload.
     jpg = tmp_path / "shot.jpg"
     jpg.write_bytes(PNG)
 
-    url = data_url(jpg)
+    url = await data_url(jpg)
 
     assert url.startswith("data:image/jpeg;base64,")
     assert base64.b64decode(url.split(",", 1)[1]) == PNG
 
 
-def test_an_unknown_suffix_does_not_claim_to_be_an_image(tmp_path):
+async def test_an_unknown_suffix_does_not_claim_to_be_an_image(tmp_path):
     odd = tmp_path / "shot.bin"
     odd.write_bytes(PNG)
 
-    assert data_url(odd).startswith("data:application/octet-stream;base64,")
+    assert (await data_url(odd)).startswith("data:application/octet-stream;base64,")
+
+
+async def test_reading_the_picture_does_not_block_the_event_loop(tmp_path):
+    """An asset may be tens of megabytes, and both adapters encode one on the
+    way out. Doing that inline stalls every other request and every `/ws`
+    progress frame for the length of the read — so it belongs in a thread,
+    like the route's own file work.
+
+    Asserted by watching the loop rather than by inspecting the call: a
+    ticker that keeps counting through the encode is the property that
+    matters, and it stays true however the offload is spelled.
+    """
+    big = tmp_path / "big.png"
+    big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
+
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    beat = asyncio.create_task(ticker())
+    await asyncio.sleep(0)
+    await encoded(big)
+    beat.cancel()
+
+    assert ticks > 1, "the loop stopped while the image was being encoded"
 
 
 async def test_anthropic_sends_the_image_as_a_content_block(monkeypatch, tmp_path):

@@ -11,6 +11,7 @@ their own photo.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
 
@@ -32,6 +33,23 @@ def mime_type(path: Path) -> str:
     return IMAGE_MIME_TYPES.get(path.suffix.lower(), "application/octet-stream")
 
 
-def data_url(path: Path) -> str:
+def _encode(path: Path) -> str:
+    return base64.b64encode(path.read_bytes()).decode()
+
+
+async def encoded(path: Path) -> str:
+    """The image's bytes, base64'd, without stalling the event loop.
+
+    An asset is allowed up to `_ASSET_MAX_BYTES`, and reading one of those
+    and encoding it inline blocks the loop for the whole read plus a buffer
+    a third larger again — during which no other request advances and no
+    progress frame reaches the `/ws` fan-out. The routes that reach these
+    adapters already put their own file work behind `asyncio.to_thread`;
+    an adapter awaited from one of them has to keep the same rule.
+    """
+    return await asyncio.to_thread(_encode, path)
+
+
+async def data_url(path: Path) -> str:
     """`data:<mime>;base64,<bytes>` — the form every inline-image API takes."""
-    return f"data:{mime_type(path)};base64,{base64.b64encode(path.read_bytes()).decode()}"
+    return f"data:{mime_type(path)};base64,{await encoded(path)}"

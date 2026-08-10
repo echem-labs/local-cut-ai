@@ -6,14 +6,13 @@ OpenAI-compatible chat shape behind different base URLs.
 
 from __future__ import annotations
 
-import base64
 import re
 from pathlib import Path
 
 import httpx
 
 from .base import PriceQuote, ProviderError, TextGen
-from .images import data_url, mime_type
+from .images import data_url, encoded, mime_type
 
 # Re-exported: `ProviderError` was defined here before the capability
 # interfaces needed to raise it, and half the engine imports it from this
@@ -63,7 +62,7 @@ class AnthropicTextGen(TextGen):
                     "source": {
                         "type": "base64",
                         "media_type": mime_type(image),
-                        "data": base64.b64encode(image.read_bytes()).decode(),
+                        "data": await encoded(image),
                     },
                 },
                 {"type": "text", "text": prompt},
@@ -131,7 +130,7 @@ class OpenAICompatTextGen(TextGen):
         return await self._chat(
             system,
             [
-                {"type": "image_url", "image_url": {"url": data_url(image)}},
+                {"type": "image_url", "image_url": {"url": await data_url(image)}},
                 {"type": "text", "text": prompt},
             ],
             max_tokens,

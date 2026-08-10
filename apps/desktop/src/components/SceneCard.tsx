@@ -80,7 +80,15 @@ export function SceneCard({
   const keyframe = scene.still ?? scene.keyframe;
   const primary = keyframe ?? clip;
   const keyframeHash = keyframe?.artifact_hash ?? null;
-  const selected = selectedNode === clip.node_id || selectedNode === keyframe?.node_id;
+  // Both picture nodes, not just the one being drawn. `keyframe` above
+  // resolves to the user's still when there is one — but the generated node
+  // stays on the graph and stays clickable on the flowchart, where it is the
+  // tile marked "not needed". Comparing only against the drawn node meant
+  // selecting that tile highlighted no card at all.
+  const selected =
+    selectedNode === clip.node_id ||
+    selectedNode === scene.still?.node_id ||
+    selectedNode === scene.keyframe?.node_id;
   const narrationText = scene.narration ? String(scene.narration.params.text ?? "") : "";
   const failed = clip.status === "failed";
   const rendering = clip.status === "rendering";
