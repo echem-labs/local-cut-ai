@@ -19,7 +19,8 @@ they no longer match this file.
 | `build/icon.ico` | Stamped on the Windows exe and installer by electron-builder. |
 | `build/icon.png` | The Linux AppImage/deb icon and the source of the freedesktop icon set. |
 | `build/icon.icns` | The macOS bundle. Inset to Apple's 824/1024 grid — the Dock sizes every icon against that, so a full-bleed tile renders larger than its neighbours. |
-| `public/icon.png` | The icon the *running* app uses (window, Linux taskbar, dev Dock, toasts) and the favicon. Vite copies `public/` into `dist/`, which is what puts it inside the asar; `build/` is build resources and never ships. |
+| `public/icon.png` | The icon the *running* app uses (window, Linux taskbar, toasts) and the favicon. Vite copies `public/` into `dist/`, which is what puts it inside the asar; `build/` is build resources and never ships. |
+| `public/icon-mac.png` | The same inset as the `.icns`, for the Dock icon an unpackaged macOS run has to set for itself — there being no bundle to read one from. Full-bleed there would put back exactly what the inset removes. |
 
 The Windows taskbar also needs `APP_USER_MODEL_ID` in `electron/main.ts` to
 equal `appId` in `electron-builder.yml`, or a pinned tile and a running

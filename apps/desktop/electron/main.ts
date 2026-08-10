@@ -155,6 +155,14 @@ const isActiveEngineUrl = (raw: string): boolean => {
   }
 };
 
+/** The app directory, relative to the compiled main module, which sits at
+ * dist-electron/electron/. Every path below that reaches out of the main
+ * bundle counts these same two levels — the renderer load, the file:// origin
+ * check, the app icon — so a change to the electron tsc layout has to move
+ * one expression rather than being noticed at three call sites, one of which
+ * (the icon) fails silently. */
+const BUNDLE_ROOT = path.resolve(__dirname, "..", "..");
+
 /** Is this URL the app's own renderer? Everything downstream of this — the
  * navigation lockdown and every state-mutating IPC handler — treats "yes"
  * as "may hold the engine token".
@@ -179,7 +187,7 @@ function isAppUrl(raw: string): boolean {
     }
   }
   if (url.protocol !== "file:") return false;
-  const root = path.resolve(__dirname, "..", "..", "dist");
+  const root = path.join(BUNDLE_ROOT, "dist");
   try {
     const file = path.resolve(fileURLToPath(url));
     return file === path.join(root, "index.html") || file.startsWith(root + path.sep);
@@ -224,27 +232,61 @@ const IDLE_TITLE = "LocalCut AI";
  * here would only make the call untestable on the Linux CI runner. */
 const APP_USER_MODEL_ID = "ai.localcut.desktop";
 
-/** The app icon, as a file the main process can actually open.
+/** A file the generator writes into public/, resolved where it actually is.
  *
- * Packaged, Vite has copied public/icon.png into the renderer bundle, so it
- * rides inside app.asar next to index.html and nativeImage reads it straight
- * out of the archive. Unpackaged it comes from public/ instead — the copy the
- * generator writes, and the only one certain to be there, since dist/ is a
- * build artifact a fresh checkout has never produced and a stale one can
- * disagree with the mark. Both resolve off __dirname (dist-electron/electron/)
- * exactly as the renderer load in createWindow does.
+ * Packaged, Vite has copied public/ into dist/, so it rides inside app.asar
+ * next to index.html and nativeImage reads it straight out of the archive.
+ * Unpackaged the copy in public/ is the one certain to be there, since dist/
+ * is a build artifact a fresh checkout has never produced and a stale one can
+ * disagree with the mark. */
+const bundleFile = (...parts: string[]): string =>
+  path.join(BUNDLE_ROOT, app.isPackaged ? "dist" : "public", ...parts);
+
+/** An image shipped in the bundle, loaded once.
  *
- * NOT build/icon.ico, despite that being the richer multi-size file:
- * nativeImage collapses an .ico to its single largest frame, so it buys
- * nothing over the PNG here. And NOT build/ at all — electron-builder treats
- * that directory as build resources and excludes it from the package, so the
- * path would resolve in dev and be missing in the shipped app. */
-const appIcon = (): Electron.NativeImage =>
-  nativeImage.createFromPath(
-    app.isPackaged
-      ? path.join(__dirname, "..", "..", "dist", "icon.png")
-      : path.join(__dirname, "..", "..", "public", "icon.png"),
-  );
+ * `app.isPackaged` cannot change after startup, so the file behind a given
+ * name is fixed for the life of the process — and `createFromPath` is a
+ * blocking read plus a PNG decode that the notify handler would otherwise pay
+ * again on every single toast.
+ *
+ * NOT build/icon.ico for the Windows case, despite that being the richer
+ * multi-size file: nativeImage collapses an .ico to its single largest frame.
+ * And NOT build/ at all — electron-builder treats that directory as build
+ * resources and excludes it from the package, so a path into it resolves in
+ * dev and is missing in the shipped app. */
+const images = new Map<string, Electron.NativeImage>();
+function bundledImage(name: string): Electron.NativeImage {
+  const cached = images.get(name);
+  if (cached) return cached;
+  const file = bundleFile(name);
+  const image = nativeImage.createFromPath(file);
+  // createFromPath answers a file that is not there with an EMPTY image
+  // rather than throwing, and every surface below then draws nothing at all —
+  // indistinguishable on screen from the missing-icon bug this replaced, and
+  // silent. A packaging change that stops carrying the file says so here.
+  if (image.isEmpty()) console.error(`[icon] no image at ${file}; surfaces using it will be blank`);
+  images.set(name, image);
+  return image;
+}
+
+/** The mark as every surface but the macOS Dock wants it: full-bleed. */
+const appIcon = (): Electron.NativeImage => bundledImage("icon.png");
+
+/** The icon a new window carries, or `undefined` to leave it to the OS.
+ *
+ * Electron applies this through WM_SETICON, which DISPLACES the icon Windows
+ * would otherwise read out of the exe — and a NativeImage built from a PNG
+ * has one 512px representation, so the 16 and 24px the taskbar and Alt-Tab
+ * actually draw would become a runtime downscale of it instead of the frames
+ * build/icon.ico carries for exactly those sizes. A packaged Windows build
+ * therefore passes nothing and keeps the richer resource.
+ *
+ * Everywhere else there is no resource to fall back to, and the window shows
+ * Electron's default atom without this: every Linux window, a directly-run
+ * AppImage with no installed .desktop entry to associate with, and the dev
+ * run on any platform. */
+const windowIcon = (): Electron.NativeImage | undefined =>
+  process.platform === "win32" && app.isPackaged ? undefined : appIcon();
 
 async function createWindow(): Promise<void> {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -255,12 +297,9 @@ async function createWindow(): Promise<void> {
     minHeight: 640,
     backgroundColor: initialTheme() === "dark" ? "#0E0F12" : "#ffffff",
     title: IDLE_TITLE,
-    // Windows reads the exe's own resource once packaged and macOS reads the
-    // bundle, so this is what covers the cases neither does: every Linux
-    // window (there is no exe resource to read, and a directly-run AppImage
-    // has no installed .desktop entry to associate with either), and the dev
-    // run on any platform — which otherwise shows Electron's default icon.
-    icon: appIcon(),
+    // Covers what electron-builder does not: see `windowIcon` for why a
+    // packaged Windows build is the one case that deliberately passes none.
+    icon: windowIcon(),
     // Frameless: the renderer draws a slim branded title bar; the OS
     // min/max/close buttons float on top via the overlay.
     titleBarStyle: "hidden",
@@ -307,7 +346,7 @@ async function createWindow(): Promise<void> {
     if (devUrl) {
       await window.loadURL(devUrl);
     } else {
-      await window.loadFile(path.join(__dirname, "..", "..", "dist", "index.html"));
+      await window.loadFile(path.join(BUNDLE_ROOT, "dist", "index.html"));
     }
   } catch (error) {
     // A load failure (Vite dev server not up yet, a packaging path slip) must
@@ -530,10 +569,12 @@ ipcMain.handle("shell:notify", (event, payload: unknown) => {
   const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX) : "";
   const body = typeof value.body === "string" ? value.body.slice(0, TITLE_MAX) : "";
   if (!title) return { ok: false, error: "no title" };
-  // The icon is explicit because Linux has nowhere else to get one: the toast
-  // is drawn by the desktop's notification daemon, which knows nothing about
-  // the window that asked for it. Windows takes it from the AppUserModelID
-  // and macOS from the bundle, and both ignore this without complaint.
+  // Linux has nowhere else to get one: the toast is drawn by the desktop's
+  // notification daemon, which knows nothing about the window that asked for
+  // it. The other two do honour this rather than ignore it — Windows renders
+  // it as the toast's appLogoOverride image (the sender name and the small
+  // attribution logo still come from the AppUserModelID) and macOS attaches
+  // it to the banner — so all three carry the mark, which is what was wanted.
   const notification = new Notification({ title, body, icon: appIcon() });
   // Clicking it is a request to come back to the work it is about.
   notification.on("click", () => {
@@ -888,7 +929,12 @@ app.whenReady().then(async () => {
   // has no bundle of its own and shows Electron's default instead. Keyed on
   // `app.dock` rather than the platform because that property IS the macOS
   // test — it is undefined everywhere else, so no platform branch is needed.
-  if (!app.isPackaged) app.dock?.setIcon(appIcon());
+  //
+  // The INSET copy, not the full-bleed one: the Dock sizes every icon against
+  // Apple's 824/1024 grid, so the tile the other surfaces want would render
+  // visibly larger than everything beside it — the exact defect the bundle's
+  // .icns is generated inset to avoid, and the bundle is not what is read here.
+  if (!app.isPackaged) app.dock?.setIcon(bundledImage("icon-mac.png"));
 
   // Pin the remote engine's certificate for the RENDERER's traffic too.
   // certificate-error (below) only fires once Chromium's own verification

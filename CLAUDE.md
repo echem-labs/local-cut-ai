@@ -50,7 +50,8 @@ be fixed for exactly this.
   Python/TS: the Windows app id is written in both `electron-builder.yml` and
   `main.ts` (`appId.contract.test.ts`), and the brand mark is drawn in both
   `branding/logo.svg` and `BrandMark.tsx` (`BrandMark.test.tsx`).
-- **Every board status needs a UI case and a catalog label.** Same file.
+- **Every board status needs a UI case and a catalog label.**
+  (`test_ui_contract.py` again.)
 - **A skip is a test that did not run.** CI runs `pytest -q -rs` so what was
   skipped is readable from the log — a runner with a crippled ffmpeg once
   looked green while testing no assembly at all.
