@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p electron --noEmit && tsc -p electron/tsconfig.test.json",
     "start": "electron .",
     "icon": "node scripts/make-icon.mjs",
+    "icon:check": "node scripts/make-icon.mjs --check",
     "check:engine": "node scripts/check-engine.mjs",
     "package": "npm run check:engine -- win && npm run build && electron-builder --win",
     "package:dir": "npm run check:engine -- win && npm run build && electron-builder --win --dir",

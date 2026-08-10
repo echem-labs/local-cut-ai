@@ -170,6 +170,11 @@ async function loadMain(
     /** Stands in for the release feed. Read at module scope, so it has to
      * be in the environment before main.ts is imported. */
     feed?: string;
+    /** An installed build rather than `electron .`. Several startup choices
+     * turn on this, so it has to be set before main.ts is imported. */
+    packaged?: boolean;
+    /** Give `app` a Dock, i.e. stand in for macOS. */
+    dock?: boolean;
   } = {},
 ) {
   const lock = options.lock ?? true;
@@ -178,6 +183,8 @@ async function loadMain(
   electron.resetElectron();
   electron.state.userData = dir;
   electron.state.singleInstanceLock = lock;
+  electron.state.isPackaged = options.packaged ?? false;
+  electron.state.hasDock = options.dock ?? false;
 
   if (options.devUrl === undefined) delete process.env.VITE_DEV_SERVER_URL;
   else process.env.VITE_DEV_SERVER_URL = options.devUrl;
@@ -1022,6 +1029,103 @@ describe("the window", () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
     expect(electron.BrowserWindow.instances).toHaveLength(1);
     expect(electron.BrowserWindow.instances[0]!.loaded).toEqual([DEV_ORIGIN]);
+  });
+});
+
+/**
+ * The app icon at RUNTIME, which is a different question from the icon the
+ * installer stamps on the exe.
+ *
+ * electron-builder covers two of the surfaces on its own — the Windows exe
+ * resource and the macOS bundle — and nothing at all covers the rest: a Linux
+ * window has no exe resource to read and an un-integrated AppImage has no
+ * .desktop entry either, and no dev run on any platform has either of those.
+ * Those cases showed Electron's default icon until the window started being
+ * given one explicitly, so what these assert is that it still is, and that the
+ * path it comes from is one that exists in the build being tested.
+ */
+describe("the app icon", () => {
+  /**
+   * What main.ts's own `path.join(__dirname, "..", "..", …)` comes out as.
+   *
+   * Shipped, main.js sits at dist-electron/electron/ and two levels up is
+   * apps/desktop. Here it is the TypeScript in electron/ that runs, so the
+   * same two levels land somewhere else entirely — which is why these tests
+   * pin the relationship (two up from the main module, then the file) rather
+   * than an absolute location. `ships the file` below covers the other half:
+   * that the real path that relationship resolves to on disk exists.
+   */
+  const fromMain = (...parts: string[]) => path.join(__dirname, "..", "..", ...parts);
+
+  it("gives the window an icon", async () => {
+    const { electron } = await loadMain();
+    const window = electron.BrowserWindow.instances[0]!;
+    const icon = window.options.icon as { path: string } | undefined;
+    expect(icon?.path).toBe(fromMain("public", "icon.png"));
+  });
+
+  it("reads it from the renderer bundle once packaged", async () => {
+    // build/ is where the generator also writes, but electron-builder treats
+    // that directory as build resources and leaves it OUT of the package —
+    // so a packaged build reading from there finds nothing. public/ is copied
+    // into dist/ by Vite and ships inside the asar.
+    const { electron } = await loadMain({ packaged: true });
+    const icon = electron.BrowserWindow.instances[0]!.options.icon as { path: string };
+    expect(icon.path).toBe(fromMain("dist", "icon.png"));
+  });
+
+  it("ships the file those paths resolve to", () => {
+    // The assertion the two above cannot make: that the name is not merely
+    // well-formed but actually on disk. Checked at its real location —
+    // dist/ is a build artifact, so only its source in public/ is there to
+    // find in a bare checkout, and Vite copying public/ into dist/ is what
+    // carries it the rest of the way.
+    expect(fs.existsSync(path.join(__dirname, "..", "public", "icon.png"))).toBe(true);
+  });
+
+  it("puts the mark on a toast, which Linux has no other source for", async () => {
+    // devUrl, because the notify handler only answers a sender it trusts and
+    // the app's own origin is the dev server's in an unpackaged run.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    electron.BrowserWindow.instances[0]!.focused = false;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: true, shown: true, error: null });
+    expect(electron.notifications[0]!.icon?.path).toBe(fromMain("public", "icon.png"));
+  });
+
+  it("sets the Dock icon in a dev run on macOS", async () => {
+    // `electron .` has no bundle of its own to take one from.
+    const { electron } = await loadMain({ dock: true });
+    expect(electron.dockIcons.map((image) => image.path)).toEqual([
+      fromMain("public", "icon.png"),
+    ]);
+  });
+
+  it("leaves the Dock alone in a packaged macOS build", async () => {
+    // There the bundle is authoritative, and overriding it with a PNG would
+    // drop the inset .icns the packaging step went to the trouble of making.
+    const { electron } = await loadMain({ packaged: true, dock: true });
+    expect(electron.dockIcons).toEqual([]);
+  });
+
+  it("does not reach for a Dock that isn't there", async () => {
+    // app.dock is undefined off macOS; main.ts keys on that rather than on
+    // process.platform, so this is the assertion that the guard is real.
+    const { electron } = await loadMain({ dock: false });
+    expect(electron.dockIcons).toEqual([]);
+  });
+
+  it("claims the app's Windows identity before anything can show", async () => {
+    // AppUserModelID is what the taskbar groups by, what a pinned shortcut
+    // points at, and where a toast gets its icon and name. Set late, a window
+    // or a notification can beat it.
+    const { electron } = await loadMain();
+    expect(electron.appUserModelIds).toEqual(["ai.localcut.desktop"]);
   });
 });
 

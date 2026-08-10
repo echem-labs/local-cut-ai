@@ -62,6 +62,11 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # The icons are generated from branding/logo.svg but committed as
+      # binaries, and it is the committed ones that ship — so an edit to the
+      # mark that never had `npm run icon` run against it would otherwise
+      # reach an installer before anyone saw it.
+      - run: npm run icon:check
       # `build` also runs both tsc projects, so a renderer that typechecks
       # but cannot bundle still fails here.
       - run: npm run build
