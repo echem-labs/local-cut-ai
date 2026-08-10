@@ -408,6 +408,42 @@ try {
     JSON.stringify({ measured }),
   );
 
+  // The workspace has no narrower column, so the bar spans the content box.
+  // That is a different code path from the two above: `.content.project-mode`
+  // is a flex COLUMN, and an auto inline margin on a flex item absorbs the
+  // free space in preference to `stretch` — the bar shrank to the width of
+  // its own sentence and sat centred over a workspace it should have spanned.
+  //
+  // Posed by putting the class and a bar on the real container rather than by
+  // opening a real project: by this point the engine is dead, and entering
+  // the workspace needs one. What is under test is a rule about a flex
+  // column and an auto margin, and the stylesheet and layout engine here are
+  // the real ones — so this isolates the rule rather than approximating it.
+  // It is NOT end-to-end: it would not notice `measure-full` being handed to
+  // the wrong screen, which is what the two checks above cover for Home.
+  const workspace = await evalInApp(`
+    return page.evaluate(() => {
+      const content = document.querySelector(".content");
+      const bars = document.createElement("div");
+      bars.className = "content-banners measure-full";
+      bars.innerHTML = '<div class="banner error">The engine stopped unexpectedly.</div>';
+      content.prepend(bars);
+      const width = () => Math.round(bars.getBoundingClientRect().width);
+      content.classList.add("project-mode");
+      const posed = { bars: width(), content: Math.round(content.getBoundingClientRect().width) };
+      const pad = getComputedStyle(content).paddingLeft;
+      content.classList.remove("project-mode");
+      bars.remove();
+      return { ...posed, pad: Math.round(parseFloat(pad)) };
+    });
+  `);
+  check(
+    "and spans the workspace, which has no column to match",
+    workspace !== null &&
+      Math.abs(workspace.bars - (workspace.content - 2 * workspace.pad)) <= 2,
+    JSON.stringify({ workspace }),
+  );
+
   // And the way back actually works — the whole claim of "crash-safe".
   const recovered = await evalInApp(`
     await page.evaluate(() => {
