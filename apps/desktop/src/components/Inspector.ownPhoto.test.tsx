@@ -137,6 +137,24 @@ describe("the Inspector's own-photo picker", () => {
     expect(clearSceneStill).toHaveBeenCalledWith("s1");
   });
 
+  it("still shows the photo when the generated picture is gone", () => {
+    // Everything else on this tab edits the generated keyframe and dies with
+    // it — but the clip renders from the user's photo, which was left with
+    // nowhere to be seen, swapped or taken back. The tab did not appear at
+    // all. Removal IS withheld: there would be nothing to hand the clip back
+    // to, and a clip with no keyframe reads as not ready.
+    const orphaned = withStill();
+    orphaned.scenes[0]!.keyframe = null;
+    mount(null, orphaned);
+
+    // The tab is offered at all — it keyed off the generated node alone, so
+    // there was no way back to this scene's picture.
+    expect(screen.getByRole("tab", { name: t("inspector.tabs.image") })).toBeInTheDocument();
+    expect(screen.getByAltText(t("inspector.photoAlt", { n: "1" }))).toBeInTheDocument();
+    expect(screen.getByText(t("inspector.yourPhoto"))).toBeInTheDocument();
+    expect(screen.queryByLabelText(t("inspector.photoRemove"))).toBeNull();
+  });
+
   it("says nothing when the picture was taken", async () => {
     mount(null);
 
