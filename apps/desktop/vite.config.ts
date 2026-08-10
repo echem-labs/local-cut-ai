@@ -56,6 +56,11 @@ export default defineConfig({
   // launches at all.
   server: { host: "127.0.0.1", port: 5173, strictPort: true },
   build: { outDir: "dist" },
+  // Stated rather than defaulted: this copy step is what puts icon.png inside
+  // app.asar, and the main process reads it from there for the window icon,
+  // the Dock and every toast. Turned off, nothing fails — not the build, not
+  // `icon:check`, not the suite — the installed app just has no icon again.
+  publicDir: "public",
   // Settings → About reads the app version straight from package.json —
   // injected at build, no IPC round-trip (review 4 §S6).
   define: {

@@ -34,7 +34,10 @@ on:
   #     - "apps/desktop/electron-builder.yml"
   #     - "apps/desktop/package.json"
   #     - "apps/desktop/scripts/check-engine.mjs"
+  #     - "apps/desktop/scripts/make-icon.mjs"
   #     - "apps/desktop/build/**"
+  #     - "apps/desktop/public/**"
+  #     - "branding/**"
   #     - "engine/localcut.spec"
   #     - "engine/packaging/**"
   #     - ".github/workflows/package.yml"
@@ -131,6 +134,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           npm ci
+          # Before the installer, not after: these are the icons about to be
+          # stamped into the exe and the bundle, and ci-desktop runs on pull
+          # requests only. A tag build is the last point at which committed
+          # icons that no longer match branding/logo.svg can still be caught.
+          npm run icon:check
           npm run ${{ matrix.script }}
 
       - name: Show what was produced
