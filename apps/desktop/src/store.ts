@@ -327,8 +327,6 @@ interface AppState {
   restartEngine: () => Promise<string | null>;
   noteEngineCrash: (crash: EngineCrash | null) => void;
   setNotifyOnDone: (on: boolean) => void;
-  /** Upload a dropped image as a project asset. Null means it applied. */
-  addDroppedImage: (file: File) => Promise<string | null>;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -436,7 +434,24 @@ interface AppState {
   refreshModelDefaults: () => Promise<void>;
   setModelDefault: (task: string, model: string | null) => Promise<string | null>;
   cancelJob: (jobId: string) => Promise<void>;
-  conditionScene: (sceneId: string, file: File) => Promise<void>;
+  /** Make this image the scene's still. Null means it applied. */
+  conditionScene: (sceneId: string, file: File) => Promise<string | null>;
+  /** Hand the scene back to its generated keyframe. Null means it applied. */
+  clearSceneStill: (sceneId: string) => Promise<string | null>;
+  /** Upload an image and keep its node id, without wiring it to anything —
+   *  the dialog needs the asset on the engine before it can ask a model to
+   *  look at it, and the user may still cancel. A cancelled drop leaves an
+   *  unwired asset behind, which is what the flowchart is for. */
+  uploadSceneImage: (file: File) => Promise<{ nodeId?: string; error?: string }>;
+  /** Ask a cloud model to write this scene's words from the image. */
+  suggestScene: (
+    nodeId: string,
+  ) => Promise<{ narration?: string; prompt?: string; error?: string }>;
+  /** Append a scene built on an already-uploaded image. Null means applied. */
+  addSceneFromImage: (
+    nodeId: string,
+    fields: { narration: string; prompt: string },
+  ) => Promise<string | null>;
   applyClonedVoice: (file: File) => Promise<void>;
   applyTimeline: (params: Record<string, unknown>) => void;
   applyExport: (params: Record<string, unknown>) => void;
@@ -1603,22 +1618,6 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    addDroppedImage: async (file) => {
-      const { client, currentProject } = get();
-      if (!client) return t("errors.engineUnavailable");
-      // A dropped image has to land somewhere. Home has no graph to attach
-      // it to, so this reports rather than silently uploading into nothing.
-      if (!currentProject) return t("drop.needsProject");
-      try {
-        await client.uploadAsset(currentProject.id, file);
-        // The asset is a node on the graph now; the canvas and inspector
-        // read it from there.
-        await get().refreshGraph();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
-    },
 
     applySessionVoiceClone: async (file) => {
       const { client, currentProject } = get();
@@ -2128,27 +2127,140 @@ export const useApp = create<AppState>((set, get) => {
 
     conditionScene: async (sceneId, file) => {
       const { client, currentProject, board } = get();
-      if (!client || !currentProject) return;
-      const asset = await client.uploadAsset(currentProject.id, file);
-      // Every take of the scene draws from the same source image, exactly
-      // like the generated keyframe it displaces.
+      // Reports rather than throwing, like every other action that can be
+      // refused. It used to throw, and its only caller logged the failure to
+      // a console the user cannot see — so a photo that never uploaded looked
+      // exactly like one that did, until the render came back unchanged.
+      if (!client) return t("errors.engineUnavailable");
+      if (!currentProject) return t("drop.needsProject");
+      try {
+        const asset = await client.uploadAsset(currentProject.id, file);
+        // Every take of the scene draws from the same source image, exactly
+        // like the generated keyframe it displaces.
+        const scene = board?.scenes.find((entry) => entry.scene_id === sceneId);
+        const takes = [
+          `${sceneId}.clip`,
+          ...(scene?.clip_takes ?? [])
+            .filter((take): take is NodeState => take !== null)
+            .map((take) => take.node_id),
+        ];
+        await client.patch(
+          currentProject.id,
+          takes.map((nodeId) => ({
+            op: "connect",
+            node_id: nodeId,
+            src: asset.node_id,
+            port: "keyframe",
+          })),
+        );
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    clearSceneStill: async (sceneId) => {
+      const { client, currentProject, board } = get();
+      if (!client) return t("errors.engineUnavailable");
+      if (!currentProject) return t("drop.needsProject");
       const scene = board?.scenes.find((entry) => entry.scene_id === sceneId);
-      const takes = [
-        `${sceneId}.clip`,
-        ...(scene?.clip_takes ?? [])
-          .filter((take): take is NodeState => take !== null)
-          .map((take) => take.node_id),
-      ];
-      await client.patch(
-        currentProject.id,
-        takes.map((nodeId) => ({
-          op: "connect",
-          node_id: nodeId,
-          src: asset.node_id,
-          port: "keyframe",
-        })),
-      );
-      await get().refreshBoard();
+      // Put the GENERATED keyframe back on the port, rather than
+      // disconnecting: `connect` replaces the edge, so this is the exact
+      // inverse of conditioning. A bare disconnect would leave the clip with
+      // no picture at all, which the compiler reads as not ready — the scene
+      // would stop rendering instead of going back to how it started.
+      //
+      // So a scene whose generated node was removed cannot be restored, and
+      // the caller does not offer it: there is nothing to fall back TO.
+      if (!scene?.keyframe) return t("errors.noGeneratedKeyframe");
+      try {
+        const takes = [
+          `${sceneId}.clip`,
+          ...(scene.clip_takes ?? [])
+            .filter((take): take is NodeState => take !== null)
+            .map((take) => take.node_id),
+        ];
+        await client.patch(
+          currentProject.id,
+          takes.map((nodeId) => ({
+            op: "connect",
+            node_id: nodeId,
+            src: scene.keyframe!.node_id,
+            port: "keyframe",
+          })),
+        );
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    uploadSceneImage: async (file) => {
+      const { client, currentProject } = get();
+      if (!client) return { error: t("errors.engineUnavailable") };
+      if (!currentProject) return { error: t("drop.needsProject") };
+      try {
+        const asset = await client.uploadAsset(currentProject.id, file);
+        return { nodeId: asset.node_id };
+      } catch (err) {
+        return { error: messageOf(err) };
+      }
+    },
+
+    suggestScene: async (nodeId) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return { error: t("errors.engineUnavailable") };
+      try {
+        return await client.suggestScene(currentProject.id, nodeId);
+      } catch (err) {
+        return { error: messageOf(err) };
+      }
+    },
+
+    addSceneFromImage: async (nodeId, fields) => {
+      const { client, currentProject } = get();
+      if (!client) return t("errors.engineUnavailable");
+      if (!currentProject) return t("drop.needsProject");
+      try {
+        await flushPatches();
+        const known = new Set((get().board?.scenes ?? []).map((scene) => scene.scene_id));
+        // One op, doing all three things: the words, the scene, and the
+        // picture it is built on.
+        //
+        // The words ride along because `add_scene` compiles them straight
+        // into the new keyframe and narration nodes, so the scene is never
+        // briefly blank — and blank is what the compiler reads as "not
+        // ready", which would enqueue nothing and then enqueue everything a
+        // moment later.
+        //
+        // The image rides along for a sharper reason: wiring it in a SECOND
+        // patch means the first one enqueues the generated keyframe — which
+        // still feeds the clip at that moment — and renders it in full
+        // before the connect displaces it. `src` on the op makes the engine
+        // wire the asset as it builds the scene, so that node is orphaned
+        // before anything is queued. It also makes this atomic: two patches
+        // can half-succeed, and a wordless pictureless scene is one the
+        // user's next attempt duplicates rather than repairs.
+        const { dirty } = await client.patch(currentProject.id, [
+          { op: "add_scene", node_id: "", src: nodeId, params: { ...fields } },
+        ]);
+        // The CLIP, unlike `addScene` above, which selects the keyframe so
+        // the Inspector opens on the prompt still to be written. Here that
+        // prompt has just been written, and the keyframe this op minted is
+        // the node `src` orphaned — so selecting it would open the panel on
+        // a tile marked "not needed" the moment the scene was created.
+        //
+        // Best-effort either way: the scene and its picture have landed, so
+        // failing to spot the new id is nothing to report.
+        const added = dirty.find((id) => id.endsWith(".clip") && !known.has(id.split(".")[0]));
+        if (added) set({ selectedNode: added });
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     applyClonedVoice: async (file) => {

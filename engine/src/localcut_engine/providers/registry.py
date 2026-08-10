@@ -16,9 +16,21 @@ _OPENAI_BASE = "https://api.openai.com/v1"
 _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 PROVIDERS = [
-    ProviderInfo(id="anthropic", label="Anthropic Claude", capabilities=[Capability.TEXT]),
-    ProviderInfo(id="openai", label="OpenAI", capabilities=[Capability.TEXT]),
-    ProviderInfo(id="google", label="Google Gemini", capabilities=[Capability.TEXT]),
+    ProviderInfo(
+        id="anthropic",
+        label="Anthropic Claude",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
+    ProviderInfo(
+        id="openai",
+        label="OpenAI",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
+    ProviderInfo(
+        id="google",
+        label="Google Gemini",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
     ProviderInfo(id="fal", label="fal.ai (video aggregator)", capabilities=[Capability.VIDEO]),
 ]
 
@@ -50,6 +62,40 @@ def _key_for(config: EngineConfig, provider: str) -> str:
             f"{provider} API key not configured — set {env} (BYOK, stored in your OS keychain)"
         )
     return key
+
+
+# The model each provider is asked to read a picture with, when the caller
+# has not named one. Here rather than in the desktop for the same reason
+# FAL_MODELS is: model names drift, and a renderer that hardcodes one ships
+# a dead string to everyone until the next release.
+VISION_MODELS = {
+    "anthropic": "cloud:claude-sonnet-5",
+    "openai": "cloud:gpt-5",
+    "google": "cloud:gemini-2.5-flash",
+}
+
+
+def default_vision_model(config: EngineConfig) -> str:
+    """A vision model the user has actually paid for, or a refusal naming
+    what is missing.
+
+    Ordered, not arbitrary: whichever provider is configured first in
+    `PROVIDERS` wins, so the answer is stable across restarts rather than
+    depending on dict ordering the user cannot see.
+    """
+    for info in PROVIDERS:
+        model = VISION_MODELS.get(info.id)
+        if model is None or Capability.VISION not in info.capabilities:
+            continue
+        try:
+            _key_for(config, info.id)
+        except ProviderError:
+            continue
+        return model
+    raise ProviderError(
+        "reading an image needs a cloud provider key — add one for Anthropic, "
+        "OpenAI or Gemini in Settings"
+    )
 
 
 def configured_providers(config: EngineConfig) -> list[dict]:

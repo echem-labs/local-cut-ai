@@ -138,6 +138,14 @@ export interface SceneCardModel {
   scene_id: string;
   // keyframe/narration can be removed via remove_node patches; clip never is.
   keyframe: NodeState | null;
+  /** What is actually on the clip's keyframe port, when that is NOT the
+   * generated `keyframe` node — i.e. the image the user supplied. Absent in
+   * the ordinary case rather than duplicating the state above it, because
+   * the board is re-fetched through every render.
+   *
+   * The card draws this; the flowchart still reads `keyframe` for the
+   * generated node's own status, which is `skipped` once displaced. */
+  still?: NodeState | null;
   clip: NodeState;
   narration: NodeState | null;
   // Sequential takes of a split scene, beyond the first clip.

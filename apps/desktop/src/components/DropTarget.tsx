@@ -17,9 +17,12 @@
 import { useEffect, useRef, useState } from "react";
 
 import { dropKind, looksLikeDirectory } from "../lib/dropKind";
+import { useDropTarget } from "../lib/dropTarget";
 import { t } from "../i18n";
 import { useApp } from "../store";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
+import { NewSceneDialog } from "./NewSceneDialog";
 
 /**
  * How long a notice stays up on its own.
@@ -35,6 +38,20 @@ const NOTICE_MS = 10_000;
  *  drop result and a scene's state agree about what green means. */
 type Notice = { text: string; tone: "success" | "warning" | "error" };
 
+/**
+ * Which scene the pointer was over, if any.
+ *
+ * Read off the DOM rather than tracked in state: the drop event names the
+ * element it landed on, and every scene card already carries `data-scene`
+ * for the board's own scroll-into-view. Anywhere else in the project — the
+ * gaps in the grid, the timeline, the flowchart — means no scene, which is
+ * the "make a new one" case.
+ */
+function sceneUnder(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  return target.closest("[data-scene]")?.getAttribute("data-scene") ?? null;
+}
+
 /** What a drag is carrying, from the types alone — the files themselves are
  * not readable until the drop. */
 function draggedKind(transfer: DataTransfer | null): "image" | "audio" | "mixed" {
@@ -45,10 +62,28 @@ function draggedKind(transfer: DataTransfer | null): "image" | "audio" | "mixed"
 }
 
 export function DropTarget() {
-  const { addDroppedImage, applySessionVoiceClone } = useApp();
+  const { uploadSceneImage, conditionScene, applySessionVoiceClone, currentProject } = useApp();
   const [over, setOver] = useState<"image" | "audio" | "mixed" | null>(null);
+  /**
+   * The scene under the pointer WHILE the drag is still in the air.
+   *
+   * The overlay used to say "add this image to your project" wherever you
+   * were, so the one thing the user had to know — that dropping on a scene
+   * means something different from dropping beside it — was the one thing it
+   * did not say. A target-aware drop that looks identical to a target-blind
+   * one reads as broken however correctly it behaves.
+   */
+  const [overScene, setOverScene] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<File | null>(null);
+  /** An uploaded image waiting for the words that make it a scene. */
+  const [pendingScene, setPendingScene] = useState<{
+    name: string;
+    nodeId: string;
+    file: File;
+  } | null>(null);
+  /** A scene that already has a picture, and the one offered to replace it. */
+  const [pendingStill, setPendingStill] = useState<{ sceneId: string; file: File } | null>(null);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
   // Held while the pointer or the keyboard is on the bar. A notice that
@@ -65,6 +100,15 @@ export function DropTarget() {
       // Both of these, on every event: preventing only `drop` still lets the
       // window navigate, because the default action is decided at dragover.
       event.preventDefault();
+      // Tracked here rather than at the drop, because the point is to say
+      // what WILL happen while there is still a choice about it. React bails
+      // out when the value has not changed, so a per-pixel event is cheap.
+      const scene = sceneUnder(event.target);
+      setOverScene(scene);
+      // Published so the card or panel under the pointer can light ITSELF up.
+      // A full-window scrim cannot say "this one" — it covers the very thing
+      // the answer is about.
+      useDropTarget.getState().over(scene);
     };
     const onEnter = (event: DragEvent): void => {
       event.preventDefault();
@@ -74,15 +118,23 @@ export function DropTarget() {
     const onLeave = (event: DragEvent): void => {
       event.preventDefault();
       depth.current = Math.max(0, depth.current - 1);
-      if (depth.current === 0) setOver(null);
+      if (depth.current === 0) {
+        setOver(null);
+        setOverScene(null);
+        useDropTarget.getState().end();
+      }
     };
     const onDrop = (event: DragEvent): void => {
       event.preventDefault();
       depth.current = 0;
       setOver(null);
+      setOverScene(null);
+      useDropTarget.getState().end();
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length === 0) return;
-      void accept(files);
+      // Resolved here, synchronously: `event.target` is live only for the
+      // duration of the handler, and `accept` awaits an upload.
+      void accept(files, sceneUnder(event.target));
     };
 
     window.addEventListener("dragover", onOver);
@@ -95,11 +147,11 @@ export function DropTarget() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-    // `accept` closes over the two store actions, which are stable.
+    // `accept` closes over the store actions above, which are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function accept(files: File[]): Promise<void> {
+  async function accept(files: File[], sceneId: string | null): Promise<void> {
     const file = files[0]!;
     if (looksLikeDirectory(file)) {
       setNotice({ text: t("drop.notAFile"), tone: "warning" });
@@ -117,14 +169,52 @@ export function DropTarget() {
       setPending(file);
       return;
     }
-    const error = await addDroppedImage(file);
-    // A refusal is the app declining to do something ("open a video first"),
-    // an error is it trying and failing. Both are the store's message; only
-    // the second is a fault.
-    if (error) setNotice({ text: error, tone: "error" });
-    else if (files.length > 1)
+    // Where it landed decides what it means. On a scene card, the image is
+    // that shot; anywhere else in an open project, it is a new scene. Read
+    // before any await — `event.target` is gone by the time the upload
+    // returns.
+    if (sceneId) {
+      await useAsStill(sceneId, file);
+      return;
+    }
+    const { nodeId, error } = await uploadSceneImage(file);
+    if (error || !nodeId) {
+      setNotice({ text: error ?? t("errors.engineUnavailable"), tone: "error" });
+      return;
+    }
+    if (files.length > 1) {
       setNotice({ text: t("drop.onlyFirst", { name: file.name }), tone: "warning" });
-    else setNotice({ text: t("drop.addedImage", { name: file.name }), tone: "success" });
+    }
+    // The scene is not created here: `add_scene` leaves the words blank and
+    // the compiler reads blank as "not ready", so a scene made now would sit
+    // inert. The dialog collects them and lands the whole thing at once.
+    setPendingScene({ name: file.name, nodeId, file });
+  }
+
+  /** Make this image the scene's still, asking first if one is already there. */
+  async function useAsStill(sceneId: string, file: File): Promise<void> {
+    const scene = useApp.getState().board?.scenes.find((entry) => entry.scene_id === sceneId);
+    // What the card is DRAWING, which is what the user would be replacing —
+    // `still` when they have supplied one before, the generated keyframe
+    // otherwise. A scene with no picture yet is nothing to confirm about.
+    const shown = scene?.still ?? scene?.keyframe;
+    if (shown?.artifact_hash) {
+      setPendingStill({ sceneId, file });
+      return;
+    }
+    await applyStill(sceneId, file);
+  }
+
+  async function applyStill(sceneId: string, file: File): Promise<void> {
+    const error = await conditionScene(sceneId, file);
+    setNotice(
+      error
+        ? { text: error, tone: "error" }
+        : {
+            text: t("drop.stillApplied", { name: file.name, n: sceneId.replace(/^s/, "") }),
+            tone: "success",
+          },
+    );
   }
 
   const confirmVoice = async (): Promise<void> => {
@@ -148,19 +238,32 @@ export function DropTarget() {
     return () => clearTimeout(timer);
   }, [notice, held]);
 
+  /**
+   * What the overlay promises, which has to be what the drop will do.
+   *
+   * Four answers, not one: an image over a scene becomes that shot, an image
+   * anywhere else in an open project becomes a new one, an image with no
+   * project open cannot land at all, and audio is a voice sample either way.
+   */
+  function overlayMessage(): string {
+    if (over === "audio") return t("drop.overlayAudio");
+    if (over === "mixed") return t("drop.overlayMixed");
+    if (!currentProject) return t("drop.overlayNeedsProject");
+    return t("drop.overlayNewScene");
+  }
+
+  // The dim is always there — it is what says a file is in the air, and it
+  // is the same treatment in all three cases. What moves is the WORDS: over
+  // a scene they belong on that scene, which raises itself through this
+  // scrim and carries its own copy (see `.scene-card.drop-target`). Two
+  // sentences on screen at once, one of them wrong, is the thing to avoid.
+  const targeted = over === "image" && Boolean(overScene) && Boolean(currentProject);
+
   return (
     <>
       {over && (
         <div className="drop-overlay" role="note" aria-label={t("drop.overlayAria")}>
-          <div className="drop-overlay-card">
-            {t(
-              over === "image"
-                ? "drop.overlayImage"
-                : over === "audio"
-                  ? "drop.overlayAudio"
-                  : "drop.overlayMixed",
-            )}
-          </div>
+          {!targeted && <div className="drop-overlay-card">{overlayMessage()}</div>}
         </div>
       )}
       {pending && (
@@ -193,6 +296,35 @@ export function DropTarget() {
             {t("drop.consentCheck")}
           </label>
         </Modal>
+      )}
+      {pendingScene && (
+        <NewSceneDialog
+          name={pendingScene.name}
+          nodeId={pendingScene.nodeId}
+          file={pendingScene.file}
+          onClose={() => setPendingScene(null)}
+          onAdded={() => {
+            const { name } = pendingScene;
+            setPendingScene(null);
+            setNotice({ text: t("drop.sceneAdded", { name }), tone: "success" });
+          }}
+        />
+      )}
+      {pendingStill && (
+        <ConfirmDialog
+          title={t("drop.replaceTitle")}
+          message={t("drop.replaceBody", {
+            n: pendingStill.sceneId.replace(/^s/, ""),
+            name: pendingStill.file.name,
+          })}
+          confirmLabel={t("drop.replaceConfirm")}
+          onConfirm={() => {
+            const { sceneId, file } = pendingStill;
+            setPendingStill(null);
+            void applyStill(sceneId, file);
+          }}
+          onCancel={() => setPendingStill(null)}
+        />
       )}
       {notice && (
         <div

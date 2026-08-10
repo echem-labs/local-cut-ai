@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..aspects import (
     EXPORT_AUDIO_KBPS_BOUNDS,
@@ -57,6 +57,49 @@ _MAX_TEXT = 2000
 _MAX_OVERLAY = 200
 _CLIP_MIN_S, _CLIP_MAX_S = 1.0, 15.0
 _SPEED_MIN, _SPEED_MAX = 0.5, 1.5
+
+SUGGEST_SCENE_SYSTEM_PROMPT = """You are helping build one scene of a short video from a \
+picture the user just supplied. You receive a JSON view of the project so far and the image \
+itself. Respond with JSON only (no markdown fences), in this exact shape:
+{"narration": str, "prompt": str}
+Rules:
+- "narration" is what the voice says over this scene. Write it to be spoken aloud, in the \
+voice and tense the project's existing narration already uses.
+- "prompt" describes the shot for a video model that will ANIMATE this exact image. Describe \
+what is in the picture and how it should move; do not invent a different subject.
+- Keep the narration to one or two sentences: scene length follows narration length.
+- Match the established visual style of the project's other scenes.
+- Return the two keys and nothing else."""
+
+# Two short strings. A cap this size is generous for them and still bounds a
+# model that decides to explain itself at length on the user's key.
+SUGGEST_SCENE_MAX_TOKENS = 1024
+
+
+class SceneSuggestion(BaseModel):
+    """The two fields `add_scene` leaves blank, and the compiler needs."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    narration: str = Field(min_length=1, max_length=_MAX_TEXT)
+    prompt: str = Field(min_length=1, max_length=_MAX_TEXT)
+
+
+def parse_scene_suggestion(raw: str) -> dict:
+    """LLM output → the two strings. Raises ValueError on anything unusable.
+
+    Same fence-stripping as `parse_edit_plan`: models emit ```json blocks
+    however firmly the system prompt asks them not to. Validated rather than
+    passed through, because these two strings go straight into a patch.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1].removeprefix("json").strip()
+    try:
+        return SceneSuggestion.model_validate(json.loads(text)).model_dump()
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ValueError(f"the model returned an unusable scene suggestion: {exc}") from exc
+
 
 EDIT_SYSTEM_PROMPT = """You are a video project editor operating on a scene graph. You receive a \
 JSON view of a project's editable nodes and an instruction. Respond with JSON only (no markdown \

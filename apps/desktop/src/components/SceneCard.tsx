@@ -4,6 +4,7 @@ import type { SceneCardModel } from "../api/types";
 import { t } from "../i18n";
 import { remainingLabel } from "../lib/eta";
 import { displaySeconds } from "../lib/formats";
+import { useIsDropTarget } from "../lib/dropTarget";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -29,6 +30,13 @@ function luminanceOf(img: HTMLImageElement): number | null {
     return null;
   }
 }
+
+/** Is this drag carrying files from outside the window, rather than a card
+ *  being dragged to a new place in the cut? `types` is the only thing that
+ *  answers during `dragover` — the files themselves are unreadable until the
+ *  drop, by design. */
+const isFileDrag = (event: React.DragEvent): boolean =>
+  [...(event.dataTransfer?.types ?? [])].includes("Files");
 
 /** Scene card — the thumb has a designed treatment for every state
  * (review 3): queued = numbered slate, rendering = shimmer + live %,
@@ -57,6 +65,10 @@ export function SceneCard({
   const { client, currentProject, selectedNode, select, regenerate, togglePin, applyNode } =
     useApp();
   const playScene = usePlayback((state) => state.play);
+  // A picture is in the air over THIS card. The card says so itself rather
+  // than letting a window-wide scrim say it, because a scrim covers the one
+  // thing the answer is about.
+  const dropTarget = useIsDropTarget(scene.scene_id);
   const [dark, setDark] = useState(false);
   const [dropSide, setDropSide] = useState<"before" | "after" | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
@@ -65,10 +77,29 @@ export function SceneCard({
   const [wordsDraft, setWordsDraft] = useState("");
   const scrubRef = useRef<HTMLVideoElement>(null);
   const clip = scene.clip;
-  const keyframe = scene.keyframe;
-  const primary = keyframe ?? clip;
-  const keyframeHash = keyframe?.artifact_hash ?? null;
-  const selected = selectedNode === clip.node_id || selectedNode === keyframe?.node_id;
+  // The picture this scene will actually be built from: the image the user
+  // supplied when there is one, and the generated keyframe otherwise. Drawing
+  // `keyframe` unconditionally showed the model's render over a clip made
+  // from the user's photo, because displacing that node leaves its artifact
+  // where it was.
+  const shown = scene.still ?? scene.keyframe;
+  // What CLICKING the card selects, which is not what it draws. The still is
+  // an ASSET node: it has no prompt, no seed and no model, so selecting it
+  // opened the Inspector's bare aux-node editor — an empty Prompt box over
+  // "Apply & regenerate" — instead of the scene's own Image/Motion/Voice
+  // panel. A scene built from a dropped picture then looked nothing like the
+  // scene beside it, for a difference the user never asked for.
+  const primary = scene.keyframe ?? clip;
+  const keyframeHash = shown?.artifact_hash ?? null;
+  // Both picture nodes, not just the one being drawn. `keyframe` above
+  // resolves to the user's still when there is one — but the generated node
+  // stays on the graph and stays clickable on the flowchart, where it is the
+  // tile marked "not needed". Comparing only against the drawn node meant
+  // selecting that tile highlighted no card at all.
+  const selected =
+    selectedNode === clip.node_id ||
+    selectedNode === scene.still?.node_id ||
+    selectedNode === scene.keyframe?.node_id;
   const narrationText = scene.narration ? String(scene.narration.params.text ?? "") : "";
   const failed = clip.status === "failed";
   const rendering = clip.status === "rendering";
@@ -110,6 +141,7 @@ export function SceneCard({
         selected ? "selected" : "",
         rendering ? "rendering" : "",
         dragging ? "dragging" : "",
+        dropTarget ? "drop-target" : "",
         dropSide ? `drop-${dropSide}` : "",
       ]
         .filter(Boolean)
@@ -150,21 +182,43 @@ export function SceneCard({
         onDragEnd?.();
       }}
       onDragOver={(event) => {
-        if (!onDropSide) return;
+        // A drag carrying FILES is not a reorder — it comes from outside the
+        // window and means "use this here". Both kinds arrive at these
+        // handlers, and React's run BEFORE the window listener that owns
+        // file drops, so this card is what has to tell them apart. Judged on
+        // the drag's types, because `dataTransfer.files` stays empty until
+        // the drop: dragover has nothing else to go on, and the drop has to
+        // agree with what dragover already decided.
+        if (!onDropSide || isFileDrag(event)) return;
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
         setDropSide(event.clientX > rect.left + rect.width / 2 ? "after" : "before");
       }}
       onDragLeave={() => setDropSide(null)}
       onDrop={(event) => {
+        // Deliberately NOT prevented for a file: preventing the default is
+        // what claims the drop, and the file surface would never hear the
+        // one it exists for. The indicator still clears — a file dragged
+        // across the board must not leave a reorder marker behind.
+        setDropSide(null);
+        if (isFileDrag(event)) return;
         event.preventDefault();
         if (onDropSide) {
           const rect = event.currentTarget.getBoundingClientRect();
           onDropSide(event.clientX > rect.left + rect.width / 2);
         }
-        setDropSide(null);
       }}
     >
+      {dropTarget && (
+        // `note`, not `status`: this is a label on a thing, not an
+        // announcement of something that happened. Pointer-transparent, or it
+        // would become the drop's target and take the card's place in
+        // `closest("[data-scene]")` — the card would stop being the answer at
+        // the exact moment the user let go.
+        <div className="drop-here" role="note">
+          <span>{t("drop.overlayStill", { n: sceneNo })}</span>
+        </div>
+      )}
       <div
         className="thumb"
         onMouseEnter={() => setScrubbing(true)}
