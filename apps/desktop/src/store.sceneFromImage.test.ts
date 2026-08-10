@@ -19,6 +19,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { t } from "./i18n";
 import { useApp } from "./store";
 
 const patch = vi.fn(async (_id: string, _ops: unknown[]) => ({ dirty: ["s2.keyframe", "s2.clip"] }));
@@ -36,6 +37,45 @@ beforeEach(() => {
   vi.clearAllMocks();
   patch.mockResolvedValue({ dirty: ["s2.keyframe", "s2.clip"] });
   fakeEngine();
+});
+
+describe("handing a scene back to its generated picture", () => {
+  const conditioned = (keyframe: unknown) => {
+    useApp.setState({
+      client: { patch } as never,
+      currentProject: { id: "p1", title: "t" } as never,
+      board: {
+        scenes: [{ scene_id: "s1", keyframe, still: { node_id: "asset-abc" }, clip: {} }],
+        aux: {},
+      } as never,
+      refreshBoard: async () => {},
+    } as never);
+  };
+
+  it("puts the generated keyframe back on the clip's port", async () => {
+    // The exact inverse of conditioning, and a `connect` because that op
+    // REPLACES the edge on a port.
+    conditioned({ node_id: "s1.keyframe" });
+
+    const error = await useApp.getState().clearSceneStill("s1");
+
+    expect(error).toBeNull();
+    expect(patch.mock.calls[0]![1]).toEqual([
+      { op: "connect", node_id: "s1.clip", src: "s1.keyframe", port: "keyframe" },
+    ]);
+  });
+
+  it("refuses when there is no generated picture to go back to", async () => {
+    // A bare disconnect would leave the clip with no keyframe at all, which
+    // the compiler reads as not ready: the scene would stop rendering rather
+    // than return to how it started.
+    conditioned(null);
+
+    const error = await useApp.getState().clearSceneStill("s1");
+
+    expect(error).toBe(t("errors.noGeneratedKeyframe"));
+    expect(patch).not.toHaveBeenCalled();
+  });
 });
 
 describe("adding a scene from a dropped image", () => {

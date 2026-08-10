@@ -436,6 +436,8 @@ interface AppState {
   cancelJob: (jobId: string) => Promise<void>;
   /** Make this image the scene's still. Null means it applied. */
   conditionScene: (sceneId: string, file: File) => Promise<string | null>;
+  /** Hand the scene back to its generated keyframe. Null means it applied. */
+  clearSceneStill: (sceneId: string) => Promise<string | null>;
   /** Upload an image and keep its node id, without wiring it to anything —
    *  the dialog needs the asset on the engine before it can ask a model to
    *  look at it, and the user may still cancel. A cancelled drop leaves an
@@ -2148,6 +2150,43 @@ export const useApp = create<AppState>((set, get) => {
             op: "connect",
             node_id: nodeId,
             src: asset.node_id,
+            port: "keyframe",
+          })),
+        );
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    clearSceneStill: async (sceneId) => {
+      const { client, currentProject, board } = get();
+      if (!client) return t("errors.engineUnavailable");
+      if (!currentProject) return t("drop.needsProject");
+      const scene = board?.scenes.find((entry) => entry.scene_id === sceneId);
+      // Put the GENERATED keyframe back on the port, rather than
+      // disconnecting: `connect` replaces the edge, so this is the exact
+      // inverse of conditioning. A bare disconnect would leave the clip with
+      // no picture at all, which the compiler reads as not ready — the scene
+      // would stop rendering instead of going back to how it started.
+      //
+      // So a scene whose generated node was removed cannot be restored, and
+      // the caller does not offer it: there is nothing to fall back TO.
+      if (!scene?.keyframe) return t("errors.noGeneratedKeyframe");
+      try {
+        const takes = [
+          `${sceneId}.clip`,
+          ...(scene.clip_takes ?? [])
+            .filter((take): take is NodeState => take !== null)
+            .map((take) => take.node_id),
+        ];
+        await client.patch(
+          currentProject.id,
+          takes.map((nodeId) => ({
+            op: "connect",
+            node_id: nodeId,
+            src: scene.keyframe!.node_id,
             port: "keyframe",
           })),
         );

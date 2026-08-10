@@ -154,16 +154,18 @@ describe("the overlay while the drag is still in the air", () => {
   // broken however correctly it behaves: the overlay promised "add this
   // image to your project" whether the pointer was over a scene or not, so
   // the only thing the user needed to know was the thing it never said.
-  it("hands the naming to the scene itself rather than covering the window", async () => {
-    // A scrim over everything answers "where will this land?" with
-    // "everywhere", and it dims the very card the answer is about. Over a
-    // scene there is no scrim at all — the card lights itself up, which it
-    // can only do if the target is published for it to read.
+  it("hands the words to the scene itself, keeping only the dim", async () => {
+    // The dim stays in all three cases — it is what says a file is in the
+    // air, and it is why they read as one design. What moves is the WORDS:
+    // over a scene they belong ON that scene, which raises itself through
+    // the scrim and carries its own copy. Two sentences at once, one of them
+    // wrong, is the thing to avoid.
     mount();
 
     await act(async () => void dragOver(sceneElement("s3")));
 
-    expect(screen.queryByRole("note")).toBeNull();
+    expect(screen.getByRole("note")).toBeInTheDocument();
+    expect(screen.getByRole("note")).not.toHaveTextContent(t("drop.overlayNewScene"));
     expect(useDropTarget.getState().scene).toBe("s3");
     expect(useDropTarget.getState().dragging).toBe(true);
   });
