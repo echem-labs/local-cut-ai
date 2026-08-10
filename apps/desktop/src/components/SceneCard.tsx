@@ -72,7 +72,12 @@ export function SceneCard({
   const [wordsDraft, setWordsDraft] = useState("");
   const scrubRef = useRef<HTMLVideoElement>(null);
   const clip = scene.clip;
-  const keyframe = scene.keyframe;
+  // The picture this scene will actually be built from: the image the user
+  // supplied when there is one, and the generated keyframe otherwise. Drawing
+  // `keyframe` unconditionally showed the model's render over a clip made
+  // from the user's photo, because displacing that node leaves its artifact
+  // where it was.
+  const keyframe = scene.still ?? scene.keyframe;
   const primary = keyframe ?? clip;
   const keyframeHash = keyframe?.artifact_hash ?? null;
   const selected = selectedNode === clip.node_id || selectedNode === keyframe?.node_id;

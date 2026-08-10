@@ -99,7 +99,15 @@ function statusIndex(board: BoardOrNull): Record<string, NodeState> {
   const index: Record<string, NodeState> = {};
   if (!board) return index;
   for (const scene of board.scenes) {
-    for (const slot of [scene.keyframe, scene.clip, scene.narration, ...(scene.clip_takes ?? [])]) {
+    // `still` too: a user's image is a real node on the canvas, and without
+    // it the only asset the graph shows draws with no status at all.
+    for (const slot of [
+      scene.keyframe,
+      scene.still,
+      scene.clip,
+      scene.narration,
+      ...(scene.clip_takes ?? []),
+    ]) {
       if (slot) index[slot.node_id] = slot;
     }
   }
