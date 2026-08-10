@@ -40,6 +40,13 @@ export const state = {
    * the default is the CI runner's answer (no dock) and a macOS test opts in.
    */
   hasDock: false,
+  /**
+   * Paths `nativeImage.createFromPath` should answer with an EMPTY image, the
+   * way the real one does for a file that is not there. It does not throw, so
+   * "the packaging stopped carrying this" has no symptom but a blank icon —
+   * listing a path here is how a test reaches the branch that says so.
+   */
+  missingImages: [] as string[],
 };
 
 /** Delimiter around the keychain identity in a sealed blob. Any marker no
@@ -56,9 +63,9 @@ export function resetElectron(): void {
   state.keychainId = "keychain-1";
   state.shouldUseDarkColors = false;
   state.hasDock = false;
+  state.missingImages = [];
   appUserModelIds.length = 0;
   dockIcons.length = 0;
-  loadedImagePaths.length = 0;
   ipcHandlers.clear();
   appEvents.clear();
   openedPaths.length = 0;
@@ -211,6 +218,14 @@ export class BrowserWindow {
   readonly progressBars: number[] = [];
   /** Window titles, in the order they were set. */
   readonly titles: string[] = [];
+  /**
+   * How many AppUserModelIDs had been claimed when this window was built.
+   *
+   * Windows attributes a window to whatever identity is current at the moment
+   * it appears, and no later call moves it — so "the id was claimed FIRST" is
+   * a property of the window, not something the id list can show on its own.
+   */
+  readonly appUserModelIdsAtCreation: number = appUserModelIds.length;
 
   setProgressBar(fraction: number): void {
     this.progressBars.push(fraction);
@@ -292,13 +307,11 @@ export interface StubImage {
   isEmpty(): boolean;
 }
 
-/** Every path handed to createFromPath, in order. */
-export const loadedImagePaths: string[] = [];
-
 export const nativeImage = {
   createFromPath(imagePath: string): StubImage {
-    loadedImagePaths.push(imagePath);
-    return { path: imagePath, isEmpty: () => false };
+    // Never throws, exactly like the real one — a path that is not there
+    // comes back as an image with nothing in it.
+    return { path: imagePath, isEmpty: () => state.missingImages.includes(imagePath) };
   },
 };
 

@@ -11,31 +11,25 @@
  * Neither file can see the other and no build step reconciles them, which is
  * exactly the shape CLAUDE.md says gets a contract test.
  */
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-
-const read = (...parts: string[]) =>
-  fs.readFileSync(path.join(__dirname, "..", ...parts), "utf8");
-
-/** Deliberately a regex over the text rather than a YAML parse: the point is
- * to read the same bytes electron-builder does, without a dependency that
- * could normalise away a difference this test exists to see. */
-const declaredAppId = (yaml: string): string | null =>
-  /^appId:[ \t]*(\S+)[ \t]*$/m.exec(yaml)?.[1] ?? null;
-
-const declaredModelId = (source: string): string | null =>
-  /^const APP_USER_MODEL_ID = "([^"]+)";$/m.exec(source)?.[1] ?? null;
+import { claimsDeclaredModelId, declaredAppId, declaredModelId } from "./test/appId";
 
 describe("the Windows application id", () => {
   it("is the same in the installer config and the running app", () => {
-    const appId = declaredAppId(read("electron-builder.yml"));
-    const modelId = declaredModelId(read("electron", "main.ts"));
+    const appId = declaredAppId();
+    const modelId = declaredModelId();
 
-    // Guard the regexes themselves: a rename that made either return null
+    // Guard the readers themselves: a rename that made either return null
     // would otherwise pass as null === null.
     expect(appId).toBeTruthy();
     expect(modelId).toBeTruthy();
     expect(modelId).toBe(appId);
+  });
+
+  it("is the constant main.ts hands to Electron, not merely one it declares", () => {
+    // The reader above matches a literal. Replacing the call with
+    // `app.setAppUserModelId(app.getName())` would leave that literal — and
+    // this whole contract — green while the process claimed something else.
+    expect(claimsDeclaredModelId()).toBe(true);
   });
 });
