@@ -117,7 +117,7 @@ export function DropTarget() {
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
     };
-    // `accept` closes over the two store actions, which are stable.
+    // `accept` closes over the store actions above, which are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

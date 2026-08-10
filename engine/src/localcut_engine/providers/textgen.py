@@ -51,9 +51,7 @@ class AnthropicTextGen(TextGen):
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
         return await self._messages(system, prompt, max_tokens)
 
-    async def describe(
-        self, system: str, prompt: str, image: Path, max_tokens: int = 4096
-    ) -> str:
+    async def describe(self, system: str, prompt: str, image: Path, max_tokens: int = 4096) -> str:
         # Anthropic takes the picture as a base64 `source` block, and takes it
         # BEFORE the text: the vendor's guidance is that an image placed after
         # the question is attended to less.
@@ -126,9 +124,7 @@ class OpenAICompatTextGen(TextGen):
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
         return await self._chat(system, prompt, max_tokens)
 
-    async def describe(
-        self, system: str, prompt: str, image: Path, max_tokens: int = 4096
-    ) -> str:
+    async def describe(self, system: str, prompt: str, image: Path, max_tokens: int = 4096) -> str:
         # The other shape entirely: a parts list carrying a data URI, rather
         # than Anthropic's base64 source block. Image first for the same
         # reason.
