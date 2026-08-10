@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { t } from "../i18n";
 import { Tip } from "./Tooltip";
@@ -25,6 +26,16 @@ export type ModalSize = "s" | "m" | "l";
  * bug that was fixed once. Five dialogs used to hand-roll the backdrop
  * around them; two of those trapped no focus at all, so Tab walked out into
  * the page behind a thing calling itself `aria-modal`.
+ *
+ * PLACE — portaled to `<body>`, like `Tip`'s bubble and for the same kind of
+ * reason: a dialog must not inherit the context of whatever opened it. The
+ * rail's Help menu renders its dialog beside the ? button, which put the
+ * dialog inside `.rail` — where `.rail .tip-wrap { width: 100% }` found the
+ * close button's tooltip wrapper and stretched ✕ across the header, leaving
+ * the title 0px wide and stacked one letter per line. `position: fixed`
+ * takes a dialog out of the visual flow but not out of the selector tree
+ * (nor out of an ancestor's stacking context or `overflow`), so the portal
+ * is the only thing that actually makes placement irrelevant.
  */
 export function Modal({
   title,
@@ -133,7 +144,7 @@ export function Modal({
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={() => close.current()} role="presentation">
       <div
         className={`modal modal-${size}${className ? ` ${className}` : ""}`}
@@ -168,6 +179,7 @@ export function Modal({
         </div>
         {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

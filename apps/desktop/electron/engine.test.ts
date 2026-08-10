@@ -14,7 +14,15 @@ const spawned = vi.hoisted(() => ({
     cmd: string;
     args: string[];
     options: Record<string, unknown>;
-    child: import("node:events").EventEmitter & { pid?: number };
+    // The whole child, not just its pid: the crash-tail tests drive the
+    // engine's dying words in through `stderr`, and a type that stops at
+    // `pid` describes a stub the mock below does not build.
+    child: import("node:events").EventEmitter & {
+      pid?: number;
+      stdout: import("node:events").EventEmitter;
+      stderr: import("node:events").EventEmitter;
+      kill: () => void;
+    };
   }[],
 }));
 

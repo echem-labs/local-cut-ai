@@ -1310,9 +1310,12 @@ describe("the taskbar bar and the window title", () => {
 });
 
 describe("telling the user a render finished", () => {
-  /** The window main created, focused or not. */
-  const windowOf = (electron: { BrowserWindow: { instances: { focused: boolean }[] } }) =>
-    electron.BrowserWindow.instances[0]!;
+  /** The window main created — focused or not, minimised or not. A
+   *  notification click has to restore before it focuses, so `minimized`
+   *  and `restored` are part of what these tests read. */
+  const windowOf = (electron: {
+    BrowserWindow: { instances: { focused: boolean; minimized: boolean; restored: boolean }[] };
+  }) => electron.BrowserWindow.instances[0]!;
 
   it("says so when the app is in the background", async () => {
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });

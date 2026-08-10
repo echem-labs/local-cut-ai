@@ -244,6 +244,55 @@ try {
     JSON.stringify({ idle }),
   );
 
+  /* ------------------------------------------------------- dialogs -- */
+
+  // A dialog must not inherit the context of whatever opened it. The rail's
+  // Help menu renders its dialog beside the ? button, which put the dialog
+  // inside `.rail` — where `.rail .tip-wrap { width: 100% }` reached the
+  // close button's tooltip wrapper and stretched the ✕ across the header.
+  // The title, its flex sibling, was squeezed to 0px and rendered one
+  // letter per line down the side of the dialog.
+  //
+  // Only a browser can see this: jsdom computes no layout, so every unit
+  // test on `Modal` passed throughout. The assertion is on the geometry
+  // rather than on the portal, because the portal is one way to be
+  // independent of the ancestor and the geometry is what independence is
+  // FOR — a rail rule invented tomorrow fails this the same way.
+  const dialog = await evalInApp(`
+    await page.evaluate(() => window.dispatchEvent(new Event("localcut:open-shortcuts")));
+    await page.waitForSelector(".modal", { timeout: 5000 });
+    await page.waitForTimeout(200);
+    return page.evaluate(() => {
+      const h2 = document.querySelector(".modal h2");
+      const close = document.querySelector(".modal-close");
+      const head = document.querySelector(".modal-head");
+      return {
+        title: Math.round(h2.getBoundingClientRect().width),
+        titleHeight: Math.round(h2.getBoundingClientRect().height),
+        close: Math.round(close.getBoundingClientRect().width),
+        closeHeight: Math.round(close.getBoundingClientRect().height),
+        head: Math.round(head.getBoundingClientRect().width),
+        insideRail: !!close.closest(".rail"),
+      };
+    });
+  `);
+  check(
+    "a dialog opened from the rail keeps its title on one line",
+    (dialog?.title ?? 0) > (dialog?.head ?? 0) / 2 && (dialog?.titleHeight ?? 0) < 60,
+    JSON.stringify({ dialog }),
+  );
+  check(
+    "and its close button stays the square it is drawn as",
+    Math.abs((dialog?.close ?? 0) - (dialog?.closeHeight ?? 0)) <= 2,
+    JSON.stringify({ dialog }),
+  );
+
+  await evalInApp(`
+    await page.evaluate(() => document.querySelector(".modal-close")?.click());
+    await page.waitForTimeout(200);
+    return null;
+  `);
+
   /* ------------------------------------------------- engine crash -- */
 
   const killed = killEngine(ENGINE_PORT);
@@ -282,6 +331,40 @@ try {
     "carrying both a way back and a report",
     (banner?.buttons ?? []).length >= 2,
     JSON.stringify({ buttons: banner?.buttons }),
+  );
+
+  // The bar sits above the screen rather than inside it, so nothing tells it
+  // how wide that screen's column is: left alone it spanned the window while
+  // Home's column sat centred and far narrower, and it read as window chrome
+  // rather than as this page speaking. Measured against the column itself,
+  // not against a number, so the check survives a change to either token.
+  const measured = await evalInApp(`
+    return page.evaluate(() => {
+      const bars = document.querySelector(".content-banners");
+      const column = document.querySelector(".home > *");
+      if (!bars || !column) return null;
+      const b = bars.getBoundingClientRect();
+      const c = column.getBoundingClientRect();
+      return {
+        barsWidth: Math.round(b.width),
+        columnWidth: Math.round(c.width),
+        barsLeft: Math.round(b.x),
+        columnLeft: Math.round(c.x),
+        gapBelow: Math.round(c.y - b.bottom),
+      };
+    });
+  `);
+  check(
+    "the crash bar takes the width of the screen under it",
+    measured !== null &&
+      Math.abs(measured.barsWidth - measured.columnWidth) <= 2 &&
+      Math.abs(measured.barsLeft - measured.columnLeft) <= 2,
+    JSON.stringify({ measured }),
+  );
+  check(
+    "and leaves air between itself and the heading it interrupts",
+    (measured?.gapBelow ?? 0) >= 20,
+    JSON.stringify({ measured }),
   );
 
   // And the way back actually works — the whole claim of "crash-safe".
