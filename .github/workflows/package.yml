@@ -131,6 +131,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
           npm ci
+          # Before the installer, not after: these are the icons about to be
+          # stamped into the exe and the bundle, and ci-desktop runs on pull
+          # requests only. A tag build is the last point at which committed
+          # icons that no longer match branding/logo.svg can still be caught.
+          npm run icon:check
           npm run ${{ matrix.script }}
 
       - name: Show what was produced
