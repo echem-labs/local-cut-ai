@@ -88,6 +88,36 @@ describe("restarting the engine from the crash banner", () => {
 
     await expect(useApp.getState().restartEngine()).resolves.toBe(t("errors.engineUnavailable"));
   });
+
+  it("takes down the failures the dead engine caused", async () => {
+    // Whatever the user tried while the engine was down left an action error
+    // on screen — "the engine could not be reached". A restart that works
+    // makes that sentence false, and it is the one the user is looking at
+    // while the status light beside it says connected. The engine that
+    // refused the action no longer exists, so neither should its complaint.
+    shell({ ok: true, error: null });
+    useApp.setState({
+      actionError: { scope: "open", message: t("errors.engineUnreachable", { detail: "Failed to fetch" }) },
+    } as never);
+
+    await useApp.getState().restartEngine();
+
+    expect(useApp.getState().actionError).toBeNull();
+  });
+
+  it("leaves the failures alone when the engine did not come back", async () => {
+    // The mirror of the above: with the app still dead, "the engine could
+    // not be reached" is exactly as true as it was, and clearing it would
+    // take a real explanation off a screen that has nothing else to say.
+    shell({ ok: true, error: null });
+    connection.ok = false;
+    const stale = { scope: "open" as const, message: "boom" };
+    useApp.setState({ actionError: stale } as never);
+
+    await useApp.getState().restartEngine();
+
+    expect(useApp.getState().actionError).toEqual(stale);
+  });
 });
 
 /**

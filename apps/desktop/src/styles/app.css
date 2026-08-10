@@ -560,6 +560,37 @@ textarea {
   position: relative;
 }
 
+/* The app-level bars — the engine crash bar, the engine error bar, the
+   template notice — stacked above whichever screen is showing.
+
+   They are rendered OUTSIDE the screen, so they inherit none of its measure:
+   left alone each one spanned the window while Home's column sat centred and
+   far narrower, which reads as window chrome rather than as this page
+   speaking. The modifier below carries the current screen's column width so
+   a bar lines up with the thing it is about.
+
+   `:empty` because the wrapper is mounted whether or not anything has
+   something to say — without it every screen would open under a blank
+   var(--space-6) of nothing. */
+.content-banners {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0 auto var(--space-6);
+}
+
+.content-banners:empty {
+  display: none;
+}
+
+.content-banners.measure-col {
+  max-width: var(--content-col);
+}
+
+.content-banners.measure-wide {
+  max-width: var(--content-wide);
+}
+
 /* project workspace: the content stops scrolling — panels scroll inside */
 .content.project-mode {
   overflow: hidden;

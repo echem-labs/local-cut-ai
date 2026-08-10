@@ -1354,7 +1354,15 @@ export const useApp = create<AppState>((set, get) => {
       // Cleared only on the way back up. Dropping the crash on a failed
       // restart would take the report and the retry off screen while the
       // engine is still down.
-      if (!error) set({ engineCrash: null });
+      //
+      // `actionError` goes with it: whatever the user tried during the
+      // outage left "the engine could not be reached" on screen, and a
+      // restart that worked makes that sentence false while the status
+      // light beside it says connected. The engine that refused the action
+      // is a dead process with a spent token — nothing on screen about it
+      // describes the app the user now has. A failed restart keeps both,
+      // because then it is all still true.
+      if (!error) set({ engineCrash: null, actionError: null });
       return error;
     },
 
