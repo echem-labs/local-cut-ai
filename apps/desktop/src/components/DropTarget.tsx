@@ -61,8 +61,18 @@ function draggedKind(transfer: DataTransfer | null): "image" | "audio" | "mixed"
 }
 
 export function DropTarget() {
-  const { uploadSceneImage, conditionScene, applySessionVoiceClone } = useApp();
+  const { uploadSceneImage, conditionScene, applySessionVoiceClone, currentProject } = useApp();
   const [over, setOver] = useState<"image" | "audio" | "mixed" | null>(null);
+  /**
+   * The scene under the pointer WHILE the drag is still in the air.
+   *
+   * The overlay used to say "add this image to your project" wherever you
+   * were, so the one thing the user had to know — that dropping on a scene
+   * means something different from dropping beside it — was the one thing it
+   * did not say. A target-aware drop that looks identical to a target-blind
+   * one reads as broken however correctly it behaves.
+   */
+  const [overScene, setOverScene] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<File | null>(null);
   /** An uploaded image waiting for the words that make it a scene. */
@@ -85,6 +95,10 @@ export function DropTarget() {
       // Both of these, on every event: preventing only `drop` still lets the
       // window navigate, because the default action is decided at dragover.
       event.preventDefault();
+      // Tracked here rather than at the drop, because the point is to say
+      // what WILL happen while there is still a choice about it. React bails
+      // out when the value has not changed, so a per-pixel event is cheap.
+      setOverScene(sceneUnder(event.target));
     };
     const onEnter = (event: DragEvent): void => {
       event.preventDefault();
@@ -94,12 +108,16 @@ export function DropTarget() {
     const onLeave = (event: DragEvent): void => {
       event.preventDefault();
       depth.current = Math.max(0, depth.current - 1);
-      if (depth.current === 0) setOver(null);
+      if (depth.current === 0) {
+        setOver(null);
+        setOverScene(null);
+      }
     };
     const onDrop = (event: DragEvent): void => {
       event.preventDefault();
       depth.current = 0;
       setOver(null);
+      setOverScene(null);
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length === 0) return;
       // Resolved here, synchronously: `event.target` is live only for the
@@ -208,19 +226,26 @@ export function DropTarget() {
     return () => clearTimeout(timer);
   }, [notice, held]);
 
+  /**
+   * What the overlay promises, which has to be what the drop will do.
+   *
+   * Four answers, not one: an image over a scene becomes that shot, an image
+   * anywhere else in an open project becomes a new one, an image with no
+   * project open cannot land at all, and audio is a voice sample either way.
+   */
+  function overlayMessage(): string {
+    if (over === "audio") return t("drop.overlayAudio");
+    if (over === "mixed") return t("drop.overlayMixed");
+    if (!currentProject) return t("drop.overlayNeedsProject");
+    if (overScene) return t("drop.overlayStill", { n: overScene.replace(/^s/, "") });
+    return t("drop.overlayNewScene");
+  }
+
   return (
     <>
       {over && (
         <div className="drop-overlay" role="note" aria-label={t("drop.overlayAria")}>
-          <div className="drop-overlay-card">
-            {t(
-              over === "image"
-                ? "drop.overlayImage"
-                : over === "audio"
-                  ? "drop.overlayAudio"
-                  : "drop.overlayMixed",
-            )}
-          </div>
+          <div className="drop-overlay-card">{overlayMessage()}</div>
         </div>
       )}
       {pending && (
