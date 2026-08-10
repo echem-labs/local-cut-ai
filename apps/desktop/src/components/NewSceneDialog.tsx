@@ -21,6 +21,7 @@ import { Modal } from "./Modal";
 export function NewSceneDialog({
   name,
   nodeId,
+  file,
   onClose,
   onAdded,
 }: {
@@ -28,6 +29,11 @@ export function NewSceneDialog({
   name: string;
   /** The asset already uploaded, which is what the model will look at. */
   nodeId: string;
+  /** The picture itself, shown so the dialog is about something the user can
+   *  see. Read from the local File rather than fetched back from the engine:
+   *  the bytes are already here, and a thumbnail that needs a round trip is a
+   *  thumbnail that can be missing at the moment it matters. */
+  file?: File;
   onClose: () => void;
   /** The scene landed. Failure never reaches here — it stays in the dialog,
    *  beside the fields the user would edit to retry. */
@@ -41,6 +47,19 @@ export function NewSceneDialog({
   const [error, setError] = useState<string | null>(null);
   const [canGenerate, setCanGenerate] = useState(false);
   const firstField = useRef<HTMLTextAreaElement>(null);
+
+  // Revoked on unmount: an object URL pins its blob in memory until it is,
+  // and this dialog opens once per dropped picture.
+  const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => {
+      URL.revokeObjectURL(url);
+      setPreview(null);
+    };
+  }, [file]);
 
   // No key, no button. Offering a control that can only fail is worse than
   // not offering it — the engine refuses with a message about Settings that
@@ -121,6 +140,12 @@ export function NewSceneDialog({
       }
     >
       <p>{t("drop.sceneBody")}</p>
+
+      {preview && (
+        // Decorative: the file's name is already the dialog's subtitle, so an
+        // alt repeating it would say the same thing twice to a screen reader.
+        <img className="scene-preview" src={preview} alt="" />
+      )}
 
       {canGenerate && (
         <div className="field">
