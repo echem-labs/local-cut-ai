@@ -49,7 +49,14 @@ from ..comfy import allowlist as comfy_allowlist
 from ..comfy import workflows
 from ..config import EngineConfig
 from ..events import EventBus
-from ..graph.editor import EDIT_SYSTEM_PROMPT, EditPlan, parse_edit_plan
+from ..graph.editor import (
+    EDIT_SYSTEM_PROMPT,
+    SUGGEST_SCENE_MAX_TOKENS,
+    SUGGEST_SCENE_SYSTEM_PROMPT,
+    EditPlan,
+    parse_edit_plan,
+    parse_scene_suggestion,
+)
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..graph.template_io import TemplateError, cloud_models, from_template
@@ -1299,6 +1306,70 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # the caller's fault, not a server fault.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"dirty": sorted(dirty)}
+
+    class SuggestSceneBody(BaseModel):
+        # The uploaded image to look at.
+        node_id: str = Field(pattern=NODE_ID_PATTERN)
+        # Cloud-only, unlike /edit's optional override: there is no local
+        # vision model in the manifest, so there is nothing to fall back TO.
+        # Answering from the project's text alone would return a confident
+        # description of a picture nothing ever looked at. Optional in the
+        # SHAPE so that omitting it earns the explanation below rather than a
+        # bare "field required".
+        model: str | None = None
+
+    @app.post("/projects/{project_id}/suggest-scene", dependencies=[Authed])
+    async def suggest_scene(project_id: ProjectId, body: SuggestSceneBody) -> dict:
+        """Propose the narration and prompt for a scene built on an image.
+
+        `add_scene` leaves both blank, and the compiler reads blank as "not
+        ready" and never enqueues it — so a scene made from a dropped photo
+        does nothing at all until someone writes them. This offers to.
+
+        Read-only: it returns two strings and lands nothing. The client
+        applies them through the ordinary `add_scene` patch op, so this adds
+        no mutation path and nothing here can edit a graph.
+        """
+        await _get_project(project_id)
+        if not body.model or not body.model.startswith("cloud:"):
+            raise HTTPException(
+                status_code=422,
+                detail="suggesting a scene needs a cloud:* model that can read an image",
+            )
+        if not CLOUD_SPEND_ALLOWED.get():
+            raise cloud_text_refusal(body.model)
+        try:
+            image = await asyncio.to_thread(service.asset_image_path, project_id, body.node_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"unknown asset: {body.node_id}"
+            ) from None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # The project's own words, so the suggestion belongs to THIS video
+        # rather than describing a photograph in isolation.
+        view = await asyncio.to_thread(service.edit_view, project_id, "project")
+        prompt = (
+            f"Project so far:\n{json.dumps(view)}\n\n"
+            "Write the narration and the visual prompt for one new scene built "
+            "on the attached image."
+        )
+        # A client precondition (missing BYOK key, unroutable model) is 4xx,
+        # distinct from the provider failing mid-call, which the 502 owns.
+        try:
+            cloud_gen = textgen_for_model(config, body.model)
+        except ProviderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            raw = await cloud_gen.describe(
+                system=SUGGEST_SCENE_SYSTEM_PROMPT,
+                prompt=prompt,
+                image=image,
+                max_tokens=SUGGEST_SCENE_MAX_TOKENS,
+            )
+            return parse_scene_suggestion(raw)
+        except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     class EditBody(BaseModel):
         instruction: str = Field(min_length=1, max_length=2000)

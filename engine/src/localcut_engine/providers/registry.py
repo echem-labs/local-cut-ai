@@ -16,9 +16,21 @@ _OPENAI_BASE = "https://api.openai.com/v1"
 _GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 PROVIDERS = [
-    ProviderInfo(id="anthropic", label="Anthropic Claude", capabilities=[Capability.TEXT]),
-    ProviderInfo(id="openai", label="OpenAI", capabilities=[Capability.TEXT]),
-    ProviderInfo(id="google", label="Google Gemini", capabilities=[Capability.TEXT]),
+    ProviderInfo(
+        id="anthropic",
+        label="Anthropic Claude",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
+    ProviderInfo(
+        id="openai",
+        label="OpenAI",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
+    ProviderInfo(
+        id="google",
+        label="Google Gemini",
+        capabilities=[Capability.TEXT, Capability.VISION],
+    ),
     ProviderInfo(id="fal", label="fal.ai (video aggregator)", capabilities=[Capability.VIDEO]),
 ]
 
