@@ -7,16 +7,24 @@ OpenAI-compatible chat shape behind different base URLs.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import httpx
 
-from .base import PriceQuote, TextGen
+from .base import PriceQuote, ProviderError, TextGen
+from .images import data_url, encoded, mime_type
+
+# Re-exported: `ProviderError` was defined here before the capability
+# interfaces needed to raise it, and half the engine imports it from this
+# module.
+__all__ = [
+    "AnthropicTextGen",
+    "OpenAICompatTextGen",
+    "ProviderError",
+    "TruncatedCompletion",
+]
 
 _TIMEOUT_S = 120
-
-
-class ProviderError(RuntimeError):
-    pass
 
 
 class TruncatedCompletion(ProviderError):
@@ -40,6 +48,31 @@ class AnthropicTextGen(TextGen):
         self.model = model
 
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
+        return await self._messages(system, prompt, max_tokens)
+
+    async def describe(self, system: str, prompt: str, image: Path, max_tokens: int = 4096) -> str:
+        # Anthropic takes the picture as a base64 `source` block, and takes it
+        # BEFORE the text: the vendor's guidance is that an image placed after
+        # the question is attended to less.
+        return await self._messages(
+            system,
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type(image),
+                        "data": await encoded(image),
+                    },
+                },
+                {"type": "text", "text": prompt},
+            ],
+            max_tokens,
+        )
+
+    async def _messages(self, system: str, content: str | list, max_tokens: int) -> str:
+        """One request shape for both. `content` is a bare string for text and
+        a list of blocks when a picture rides along — the API takes either."""
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
                 response = await client.post(
@@ -52,7 +85,7 @@ class AnthropicTextGen(TextGen):
                         "model": self.model,
                         "max_tokens": max_tokens,
                         "system": system,
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": [{"role": "user", "content": content}],
                     },
                 )
         except httpx.HTTPError as exc:
@@ -88,6 +121,22 @@ class OpenAICompatTextGen(TextGen):
         self.label = label
 
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str:
+        return await self._chat(system, prompt, max_tokens)
+
+    async def describe(self, system: str, prompt: str, image: Path, max_tokens: int = 4096) -> str:
+        # The other shape entirely: a parts list carrying a data URI, rather
+        # than Anthropic's base64 source block. Image first for the same
+        # reason.
+        return await self._chat(
+            system,
+            [
+                {"type": "image_url", "image_url": {"url": await data_url(image)}},
+                {"type": "text", "text": prompt},
+            ],
+            max_tokens,
+        )
+
+    async def _chat(self, system: str, content: str | list, max_tokens: int) -> str:
         # OpenAI's reasoning models (o1/o3/o4/…, gpt-5) reject `max_tokens` and
         # require `max_completion_tokens`; classic chat models still take
         # `max_tokens`. Pick the right key by model name.
@@ -104,7 +153,7 @@ class OpenAICompatTextGen(TextGen):
                         token_key: max_tokens,
                         "messages": [
                             {"role": "system", "content": system},
-                            {"role": "user", "content": prompt},
+                            {"role": "user", "content": content},
                         ],
                     },
                 )

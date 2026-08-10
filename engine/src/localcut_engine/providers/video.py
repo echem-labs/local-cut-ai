@@ -13,17 +13,8 @@ from pathlib import Path
 import httpx
 
 from .base import PriceQuote, VideoGen
+from .images import IMAGE_MIME_TYPES
 from .textgen import ProviderError
-
-# Conditioning images reach us either as a generated keyframe (.png) or as a
-# user asset — the API's _IMAGE_EXTENSIONS set, which the keyframe port
-# accepts through a `connect` patch. The data URI has to name the real type.
-_IMAGE_MIME_TYPES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-}
 
 _QUEUE_BASE = "https://queue.fal.run"
 _POLL_INTERVAL_S = 3.0
@@ -61,7 +52,7 @@ class FalVideoGen(VideoGen):
             # .jpg/.jpeg/.webp and stores it under that suffix — so declaring
             # every conditioning image as png mislabels the payload for every
             # scene the user conditioned on their own photo.
-            mime = _IMAGE_MIME_TYPES.get(source.suffix.lower(), "application/octet-stream")
+            mime = IMAGE_MIME_TYPES.get(source.suffix.lower(), "application/octet-stream")
             payload["image_url"] = f"data:{mime};base64,{data}"
 
         headers = {"Authorization": f"Key {self.api_key}"}
