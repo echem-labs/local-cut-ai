@@ -6,6 +6,7 @@ import {
   type IpcMainInvokeEvent,
   Menu,
   nativeTheme,
+  Notification,
   session,
   shell,
 } from "electron";
@@ -65,6 +66,19 @@ installLogSink(LOGS_DIR);
 const UPDATE_FEED = process.env.LOCALCUT_UPDATE_FEED?.trim() ?? "";
 
 const engine = new EngineManager();
+/**
+ * An engine that stopped on its own is the one failure the renderer cannot
+ * see for itself: it keeps every bit of its state, so the app looks intact
+ * and simply does nothing. Push it, rather than leaving the UI to infer a
+ * crash from requests that fail — those also fail while an engine is merely
+ * restarting, and the two want different words on screen.
+ */
+engine.onCrash((crash) => {
+  engineError = `engine exited with ${crash.signal ? `signal ${crash.signal}` : `code ${crash.code}`}`;
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send("engine:crashed", crash);
+  }
+});
 const keyStore = new ProviderKeyStore();
 const remoteStore = new RemoteEngineStore();
 let engineError: string | null = null;
@@ -193,6 +207,11 @@ const canRetintOverlay = process.platform === "win32" || process.platform === "l
  * every launch flashes dark chrome at a light-mode user. */
 const initialTheme = (): "dark" | "light" => (nativeTheme.shouldUseDarkColors ? "dark" : "light");
 
+/** The window's title with nothing rendering. One constant, because the
+ * progress handler restores it: two copies drift the moment one is edited,
+ * and the symptom is a window stuck under the old name after a render. */
+const IDLE_TITLE = "LocalCut AI";
+
 async function createWindow(): Promise<void> {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const window = new BrowserWindow({
@@ -201,7 +220,7 @@ async function createWindow(): Promise<void> {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: initialTheme() === "dark" ? "#0E0F12" : "#ffffff",
-    title: "LocalCut AI",
+    title: IDLE_TITLE,
     // Frameless: the renderer draws a slim branded title bar; the OS
     // min/max/close buttons float on top via the overlay.
     titleBarStyle: "hidden",
@@ -413,6 +432,99 @@ function trustedSender(event: IpcMainInvokeEvent): boolean {
     return false;
   }
 }
+
+/** Long enough for any project title, short enough that a hostile string
+ * cannot be used to grow the taskbar tooltip without bound. */
+const TITLE_MAX = 200;
+
+/**
+ * The taskbar bar and the window title, which report to someone who is not
+ * looking at the app.
+ *
+ * The renderer decides *what it says* — every user-facing string in this app
+ * lives in its i18n catalog, and a second copy of "Rendering {done}/{total}"
+ * over here is the drift that guarantees they disagree. Main decides only
+ * which window it lands on.
+ */
+ipcMain.handle("window:set-progress", (event, payload: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { ok: false, error: "no window" };
+  const value = (payload ?? {}) as { fraction?: unknown; title?: unknown };
+  // -1 is Electron's own sentinel for "remove the bar", so negatives pass
+  // through as -1 rather than being clamped up to 0 — clamping them is how
+  // "clear the bar" becomes "draw an empty one", which then never goes away.
+  // Anything that is not a usable number becomes -1 for the same reason: NaN
+  // paints a bar stuck at the left edge rather than no bar at all.
+  const fraction =
+    typeof value.fraction === "number" && Number.isFinite(value.fraction)
+      ? value.fraction < 0
+        ? -1
+        : Math.min(1, value.fraction)
+      : -1;
+  window.setProgressBar(fraction);
+  const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX).trim() : "";
+  window.setTitle(title || IDLE_TITLE);
+  return { ok: true, error: null };
+});
+
+/**
+ * Tell the user a render finished, if they are not already watching it.
+ *
+ * The focus check belongs here rather than in the renderer: `document
+ * .hasFocus()` answers a question about the page, and the one that matters
+ * is whether the WINDOW is in front — a minimised app whose page still holds
+ * focus would otherwise decide it had been seen. Main is also the only side
+ * that can know the OS refused to show notifications at all.
+ *
+ * A notification for something already on screen is worse than none: it is
+ * the app interrupting to report what the user is looking at.
+ */
+ipcMain.handle("shell:notify", (event, payload: unknown) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return { ok: false, error: "no window" };
+  if (window.isFocused()) return { ok: true, shown: false, error: null };
+  if (!Notification.isSupported()) return { ok: true, shown: false, error: null };
+  const value = (payload ?? {}) as { title?: unknown; body?: unknown };
+  const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX) : "";
+  const body = typeof value.body === "string" ? value.body.slice(0, TITLE_MAX) : "";
+  if (!title) return { ok: false, error: "no title" };
+  const notification = new Notification({ title, body });
+  // Clicking it is a request to come back to the work it is about.
+  notification.on("click", () => {
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  });
+  notification.show();
+  return { ok: true, shown: true, error: null };
+});
+
+/**
+ * Bring the engine back after it stopped without being asked to.
+ *
+ * `connectEngine`, not `engine.start`: a paired remote is still the engine
+ * the user chose, and restarting a local one instead would silently move
+ * their work onto this machine.
+ */
+ipcMain.handle("engine:restart", async (event) => {
+  if (!trustedSender(event)) return { ok: false, error: "untrusted sender" };
+  try {
+    await connectEngine();
+    // The engine holds BYOK keys in memory only, so the child just spawned
+    // has none of them. Without this, a crash-restart leaves every cloud
+    // provider failing for the rest of the session while Settings still
+    // reports the keys as configured — and the banner's promise that you
+    // can carry on would be false for anyone using one.
+    await armStoredKeys();
+    engineError = null;
+    return { ok: true, error: null };
+  } catch (error) {
+    engineError = error instanceof Error ? error.message : String(error);
+    console.error("[engine] restart failed:", engineError);
+    return { ok: false, error: engineError };
+  }
+});
 
 // Gated like the mutators: this hands out the engine's URL and bearer token,
 // which is full authenticated access to every project on the machine.

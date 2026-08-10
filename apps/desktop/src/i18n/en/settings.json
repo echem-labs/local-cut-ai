@@ -27,6 +27,15 @@
     "tipDark": "The design target — panels recede so footage reads true.",
     "tipLight": "Fully supported; easier in a bright room."
   },
+  "notify": {
+    "heading": "Tell me when a render finishes",
+    "hint": "A desktop notification when the queue empties — only while LocalCut AI is in the background.",
+    "aria": "Notify when a render finishes",
+    "on": "On",
+    "off": "Off",
+    "tipOn": "Raise a desktop notification when the last render in the queue finishes. Never while you are looking at the app.",
+    "tipOff": "Never notify. The taskbar still shows how far along a render is."
+  },
   "zoom": {
     "heading": "Interface zoom",
     "hint": "Scales the whole interface on top of your system text size. Ctrl + and Ctrl − work anywhere; Ctrl 0 resets.",

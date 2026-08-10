@@ -24,7 +24,12 @@ const localEngine = vi.hoisted(() => ({ url: "http://127.0.0.1:1", token: "local
 /** The EngineManager main.ts constructed, plus a hook to make its teardown
  * slow — the quit path must wait for it rather than exiting first. */
 const engineMock = vi.hoisted(() => ({
-  instance: null as { stopped: number; waited: number } | null,
+  instance: null as {
+    stopped: number;
+    waited: number;
+    connection: { url: string; token: string } | null;
+    crashListeners: ((crash: unknown) => void)[];
+  } | null,
   teardown: null as Promise<void> | null,
 }));
 
@@ -34,8 +39,13 @@ vi.mock("./engine", () => {
     connection: { url: string; token: string } | null = null;
     stopped = 0;
     waited = 0;
+    /** Kept so a test can fire a crash the way the real supervisor does. */
+    crashListeners: ((crash: unknown) => void)[] = [];
     constructor() {
       engineMock.instance = this;
+    }
+    onCrash(listener: (crash: unknown) => void): void {
+      this.crashListeners.push(listener);
     }
     async start(): Promise<{ url: string; token: string }> {
       this.connection = { ...localEngine };
@@ -256,6 +266,9 @@ describe("who may call the IPC handlers", () => {
     ["engine:inspect-pairing", ["code"]],
     ["engine:pair", ["code", {}]],
     ["engine:unpair", []],
+    // Spawns a process. An injected frame that can ask for that can ask for
+    // it repeatedly, whatever the banner on screen says.
+    ["engine:restart", []],
     ["providers:arm-keys", []],
     // Opens a file-manager window. No secret leaves, but a page that can
     // make the shell act on the OS at all is a foothold.
@@ -1188,5 +1201,196 @@ describe("About → the update check", () => {
     } finally {
       await feed.close();
     }
+  });
+});
+
+describe("when the engine stops on its own", () => {
+  it("tells the renderer, so the app does not just go quiet", async () => {
+    // The renderer keeps its whole state when the engine dies: nothing it
+    // can observe changes until the next request fails, and by then the
+    // words on screen are about that request rather than the engine. So the
+    // shell says it, once, on the channel the banner listens to.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    const window = electron.BrowserWindow.instances[0]!;
+    expect(window.sent).toEqual([{ channel: "engine:crashed", args: [crash] }]);
+  });
+
+  it("re-arms the stored provider keys against the engine it just started", async () => {
+    // The engine holds BYOK keys in memory only, so a fresh child inherits
+    // none of them. Every other path that (re)establishes a connection —
+    // whenReady, unpair, pair — re-arms after it; without the same follow-up
+    // here, a crash-restart leaves every cloud provider dead for the rest of
+    // the session while Settings still reports the keys as configured.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN, keys: { anthropic: "sk-ant" } });
+    const before = keyPuts().length;
+
+    await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+
+    const puts = keyPuts().slice(before);
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toMatchObject({ anthropic_key: "sk-ant" });
+  });
+
+  it("lets a trusted renderer start it again", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const before = engineMock.instance!.connection;
+    engineMock.instance!.connection = null;
+
+    const result = await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+
+    expect(result).toEqual({ ok: true, error: null });
+    expect(engineMock.instance!.connection).toEqual(before);
+  });
+});
+
+describe("the taskbar bar and the window title", () => {
+  it("shows the renderer's own words, and does not invent its own", async () => {
+    // The catalog is the renderer's; a second copy of "Rendering {done}/
+    // {total}" in main is how the two come to disagree. Main places it.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    await electron.invokeIpc("window:set-progress", senderStub(electron), {
+      fraction: 0.44,
+      title: "Rendering 4/9 - A film about bees",
+    });
+
+    expect(window.progressBars.at(-1)).toBe(0.44);
+    expect(window.titles.at(-1)).toBe("Rendering 4/9 - A film about bees");
+  });
+
+  it("takes the bar away rather than drawing an empty one", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    await electron.invokeIpc("window:set-progress", senderStub(electron), {
+      fraction: -1,
+      title: "",
+    });
+
+    // -1 is Electron's own sentinel for "no bar", and the title goes back to
+    // the app's rather than to nothing at all.
+    expect(window.progressBars.at(-1)).toBe(-1);
+    expect(window.titles.at(-1)).toBe("LocalCut AI");
+  });
+
+  it("clamps what it is given instead of painting a bar stuck at the edge", async () => {
+    // NaN is the one that matters: Electron draws it as a bar at 0 rather
+    // than removing it, so a single bad tick would leave the taskbar
+    // claiming a render forever.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+
+    for (const fraction of [4, -9, Number.NaN, "half"]) {
+      await electron.invokeIpc("window:set-progress", senderStub(electron), { fraction, title: "" });
+    }
+
+    // Every negative reads as "clear", not as "clamp up to an empty bar".
+    expect(window.progressBars.slice(-4)).toEqual([1, -1, -1, -1]);
+  });
+
+  it("refuses an untrusted sender", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = electron.BrowserWindow.instances[0]!;
+    const before = window.titles.length;
+
+    const result = await electron.invokeIpc(
+      "window:set-progress",
+      trusted("https://evil.example/"),
+      { fraction: 1, title: "Rendering 9/9 - anything at all" },
+    );
+
+    expect(result).toEqual({ ok: false, error: "untrusted sender" });
+    expect(window.titles).toHaveLength(before);
+  });
+});
+
+describe("telling the user a render finished", () => {
+  /** The window main created — focused or not, minimised or not. A
+   *  notification click has to restore before it focuses, so `minimized`
+   *  and `restored` are part of what these tests read. */
+  const windowOf = (electron: {
+    BrowserWindow: { instances: { focused: boolean; minimized: boolean; restored: boolean }[] };
+  }) => electron.BrowserWindow.instances[0]!;
+
+  it("says so when the app is in the background", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "A film about bees has finished rendering.",
+    });
+
+    expect(result).toEqual({ ok: true, shown: true, error: null });
+    expect(electron.notifications).toMatchObject([
+      {
+        title: "Your video is ready",
+        body: "A film about bees has finished rendering.",
+        shown: true,
+      },
+    ]);
+  });
+
+  it("stays quiet when the user is already watching it", async () => {
+    // A notification for something on screen is the app interrupting to
+    // report what is already in front of you.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = true;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: true, shown: false, error: null });
+    expect(electron.notifications).toEqual([]);
+  });
+
+  it("does nothing at all where the OS has them switched off", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+    electron.notificationSupport.supported = false;
+
+    const result = await electron.invokeIpc("shell:notify", senderStub(electron), {
+      title: "Your video is ready",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: true, shown: false, error: null });
+    expect(electron.notifications).toEqual([]);
+  });
+
+  it("brings the window back when the notification is clicked", async () => {
+    // The notice is about work the user asked for, so clicking it is a
+    // request to return to that work. A minimised window has to be restored
+    // first: focusing one that is minimised does nothing at all.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const window = windowOf(electron);
+    window.focused = false;
+    window.minimized = true;
+    await electron.invokeIpc("shell:notify", senderStub(electron), { title: "Ready", body: "" });
+
+    electron.notifications.at(-1)!.click();
+
+    expect(window.restored).toBe(true);
+    expect(window.focused).toBe(true);
+  });
+
+  it("refuses an untrusted sender", async () => {
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    windowOf(electron).focused = false;
+
+    const result = await electron.invokeIpc("shell:notify", trusted("https://evil.example/"), {
+      title: "Click here",
+      body: "",
+    });
+
+    expect(result).toEqual({ ok: false, error: "untrusted sender" });
+    expect(electron.notifications).toEqual([]);
   });
 });
