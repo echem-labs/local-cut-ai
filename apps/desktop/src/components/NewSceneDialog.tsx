@@ -62,26 +62,28 @@ export function NewSceneDialog({
     };
   }, [file]);
 
-  // No key, no button. Offering a control that can only fail is worse than
-  // not offering it — the engine refuses with a message about Settings that
-  // the user has to read to discover the button never worked here.
+  // Nothing that can see, no button. Offering a control that can only fail is
+  // worse than not offering it — the engine refuses with a message about
+  // Settings that the user has to read to discover the button never worked.
+  //
+  // The ENGINE decides, and this only relays it. Deriving the rule here from
+  // the provider slate meant writing it twice in two languages, and the copy
+  // in the renderer knew only about BYOK keys: a machine with a local vision
+  // model set up to do this for free was told to go and buy a cloud key.
   //
   // Asked rather than read from the store because nothing else in the app
-  // needs the provider slate outside Settings, and a field kept fresh for
-  // one dialog is a field that goes stale everywhere else.
+  // needs the answer, and a field kept fresh for one dialog is a field that
+  // goes stale everywhere else.
   useEffect(() => {
     if (!client) return;
     let live = true;
     void client
-      .listProviders()
-      .then((providers) => {
-        if (!live) return;
-        setCanGenerate(
-          providers.some((p) => p.configured && p.capabilities.includes("vision")),
-        );
+      .visionModel()
+      .then(({ model }) => {
+        if (live) setCanGenerate(model !== null);
       })
       .catch(() => {
-        // A slate we could not fetch is not a reason to block the dialog —
+        // An answer we could not fetch is not a reason to block the dialog —
         // the fields are the point and they work without it.
         if (live) setCanGenerate(false);
       });
