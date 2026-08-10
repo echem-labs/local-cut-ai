@@ -24,11 +24,28 @@ logger = logging.getLogger(__name__)
 
 DEFAULTS_VERSION = 1
 
-DEFAULTABLE_TASKS = ("text.llm", "image.gen", "video.i2v", "video.t2v", "music.gen")
+DEFAULTABLE_TASKS = (
+    "text.llm",
+    # An LLM that can SEE — the same local server, a model with a vision
+    # tower. Its own task rather than a flag on text.llm because the two are
+    # different models on almost every machine, and because setting it is the
+    # only honest signal that a local model can read a picture: nothing in an
+    # OpenAI-compatible `/models` list says whether a name has eyes, and
+    # guessing wrong means a confident description of an image nothing looked
+    # at. No engine-config fallback for the same reason — unset means "this
+    # machine cannot see", which is a true answer.
+    "vision.llm",
+    "image.gen",
+    "video.i2v",
+    "video.t2v",
+    "music.gen",
+)
 
-# Ollama-style names ("llama3.2", "qwen3:14b") — text.llm defaults name a
-# server-side model, not a manifest entry. Checked with fullmatch: Python's
-# `$` also matches before a trailing newline.
+# Tasks whose default names a model on the local LLM server rather than a
+# manifest entry — Ollama-style ("llama3.2", "qwen3:14b", "qwen2.5vl").
+_SERVER_TASKS = ("text.llm", "vision.llm")
+
+# Checked with fullmatch: Python's `$` also matches before a trailing newline.
 _LLM_NAME = re.compile(r"^[\w.:\-]{1,128}$")
 
 
@@ -81,7 +98,7 @@ def set_default(config: EngineConfig, task: str, model: str | None) -> dict[str,
         defaults.pop(task, None)
     else:
         model = model.removeprefix("local:")
-        if task == "text.llm":
+        if task in _SERVER_TASKS:
             if not _LLM_NAME.fullmatch(model):
                 raise ValueError(f"{model!r} is not a valid model name")
         else:

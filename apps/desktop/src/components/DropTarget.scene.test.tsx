@@ -28,9 +28,7 @@ const addSceneFromImage = vi.fn(
   async (_id: string, _fields: { narration: string; prompt: string }) => null as string | null,
 );
 const suggestScene = vi.fn(async (_id: string) => ({ narration: "N", prompt: "P" }));
-const listProviders = vi.fn(async () => [
-  { id: "anthropic", label: "Anthropic", capabilities: ["text", "vision"], configured: true },
-]);
+const visionModel = vi.fn(async () => ({ model: "local:qwen2.5vl", kind: "local" as const }));
 
 const node = (id: string, hash: string | null): NodeState =>
   ({ node_id: id, status: "draft", progress: 1, error: null, artifact_hash: hash, params: {}, seed: 0, model: null, pinned: false }) as NodeState;
@@ -61,7 +59,7 @@ function mount(scenes: SceneCardModel[] = [scene()], project: unknown = { id: "p
     conditionScene,
     addSceneFromImage,
     suggestScene,
-    client: { listProviders },
+    client: { visionModel },
     board: { scenes, aux: {} },
     currentProject: project,
   } as never);
@@ -277,12 +275,15 @@ describe("an image dropped anywhere else in a project", () => {
     expect(screen.getByLabelText(t("drop.scenePrompt"))).toHaveValue("P");
   });
 
-  it("hides the offer on a machine with no key for it", async () => {
+  it("hides the offer on a machine with nothing that can see", async () => {
     // A button that can only fail is worse than no button: the engine's
     // refusal names Settings, which the user reads only after clicking.
-    listProviders.mockResolvedValueOnce([
-      { id: "anthropic", label: "Anthropic", capabilities: ["text", "vision"], configured: false },
-    ]);
+    //
+    // The ENGINE answers this — local model or cloud key, one rule in one
+    // place. The renderer used to decide from the provider slate and so knew
+    // only about keys, hiding the button on a machine set up to do this
+    // locally for free.
+    visionModel.mockResolvedValueOnce({ model: null, kind: null } as never);
     mount();
 
     await act(async () => void dropOn(null, [file("shot.png", "image/png")]));

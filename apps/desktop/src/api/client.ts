@@ -272,6 +272,19 @@ export class EngineClient {
     });
   }
 
+  /**
+   * Whether anything on this machine can read a picture, and what.
+   *
+   * One question, one answer. The renderer used to derive this from the
+   * provider slate — the same rule written twice, in two languages — and its
+   * copy could not see a LOCAL vision model at all, so a machine set up to
+   * describe images for free still hid the button and told the user to add a
+   * cloud key.
+   */
+  visionModel(): Promise<{ model: string | null; kind: "local" | "cloud" | null }> {
+    return this.request("/vision");
+  }
+
   /** Undo/redo stack depths, next-step descriptors and save points. */
   history(projectId: string): Promise<HistoryInfo> {
     return this.request(`/projects/${projectId}/history`);
