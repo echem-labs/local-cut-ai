@@ -267,8 +267,68 @@ export function Inspector() {
   const statusNode = scene ? scene.clip : auxNode;
   const pinned = activeNode?.pinned ?? false;
 
+  /**
+   * The picture half of the Image tab, which is about the SCENE rather than
+   * about a node.
+   *
+   * Held here instead of inline because it has two homes. Everything else on
+   * this tab edits the generated keyframe and lives or dies with it — but a
+   * scene whose generated node was deleted still has the user's photo on its
+   * clip, and there was nowhere left to see it, swap it or take it back. The
+   * tab did not even appear.
+   */
+  const photoSection =
+    tab === "image" && sceneId && scene ? (
+      <div>
+        {/* "Use my photo" is the wrong sentence once there IS one — it
+            offers what is already done. With a picture in place the section
+            is about THAT picture, and the input beneath it swaps one for
+            another. */}
+        <label htmlFor="inspector-asset">
+          {t(stillUrl ? "inspector.yourPhoto" : "inspector.useMyPhoto")}
+        </label>
+        {stillUrl && scene.still && (
+          <PhotoThumb
+            src={stillUrl}
+            alt={t("inspector.photoAlt", { n: sceneId.replace(/^s/, "") })}
+            title={t("inspector.photoTitle", { n: sceneId.replace(/^s/, "") })}
+            // Only when there is a generated keyframe to hand back to:
+            // removing the still rewires the clip to it, and a scene whose
+            // generated node is gone would be left with no picture at all —
+            // which the compiler reads as not ready.
+            onRemove={scene.keyframe ? () => setRemovingPhoto(true) : undefined}
+          />
+        )}
+        <input
+          id="inspector-asset"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = ""; // same file re-selectable later
+            if (file) {
+              setPhotoError(null);
+              void conditionScene(sceneId, file).then(setPhotoError);
+            }
+          }}
+        />
+        {photoError && (
+          <div role="status" className="banner error">
+            {photoError}
+          </div>
+        )}
+        <div className="hint">{t("terms.tips.ownImage")}</div>
+      </div>
+    ) : null;
+
   const tabs: { id: SceneTab; label: string; present: boolean }[] = [
-    { id: "image", label: t("inspector.tabs.image"), present: Boolean(scene?.keyframe) },
+    // `still` too: the user's own picture is reason enough for the tab, even
+    // when the node that would have generated one is gone.
+    {
+      id: "image",
+      label: t("inspector.tabs.image"),
+      present: Boolean(scene?.keyframe || scene?.still),
+    },
     { id: "motion", label: t("inspector.tabs.motion"), present: Boolean(scene?.clip) },
     { id: "voice", label: t("inspector.tabs.voice"), present: Boolean(scene?.narration) },
   ];
@@ -356,7 +416,13 @@ export function Inspector() {
       )}
 
       {!activeNode && scene && (
-        <div className="hint">{t("inspector.noPart", { tab: partWord[tab] })}</div>
+        <>
+          {/* The generated node is gone, so there is no prompt, seed or model
+              to edit — but the photo the clip actually renders from is still
+              here, and this is the only surface that can show it. */}
+          {photoSection}
+          <div className="hint">{t("inspector.noPart", { tab: partWord[tab] })}</div>
+        </>
       )}
 
       {activeNode && (
@@ -431,48 +497,7 @@ export function Inspector() {
             </div>
           )}
 
-          {tab === "image" && sceneId && (
-            <div>
-              {/* "Use my photo" is the wrong sentence once there IS one — it
-                  offers what is already done. With a picture in place the
-                  section is about THAT picture, and the input beneath it
-                  swaps one for another. */}
-              <label htmlFor="inspector-asset">
-                {t(stillUrl ? "inspector.yourPhoto" : "inspector.useMyPhoto")}
-              </label>
-              {stillUrl && scene?.still && (
-                <PhotoThumb
-                  src={stillUrl}
-                  alt={t("inspector.photoAlt", { n: (sceneId ?? "").replace(/^s/, "") })}
-                  title={t("inspector.photoTitle", { n: (sceneId ?? "").replace(/^s/, "") })}
-                  // Only when there is a generated keyframe to hand back to:
-                  // removing the still rewires the clip to it, and a scene
-                  // whose generated node is gone would be left with no
-                  // picture at all — which the compiler reads as not ready.
-                  onRemove={scene.keyframe ? () => setRemovingPhoto(true) : undefined}
-                />
-              )}
-              <input
-                id="inspector-asset"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = ""; // same file re-selectable later
-                  if (file) {
-                    setPhotoError(null);
-                    void conditionScene(sceneId, file).then(setPhotoError);
-                  }
-                }}
-              />
-              {photoError && (
-                <div role="status" className="banner error">
-                  {photoError}
-                </div>
-              )}
-              <div className="hint">{t("terms.tips.ownImage")}</div>
-            </div>
-          )}
+          {photoSection}
 
           <div>
             <button
