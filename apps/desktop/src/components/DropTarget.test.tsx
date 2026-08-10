@@ -16,7 +16,12 @@ import { t } from "../i18n";
 import { useApp } from "../store";
 import { DropTarget } from "./DropTarget";
 
-const addDroppedImage = vi.fn(async (_file: File) => null as string | null);
+const uploadSceneImage = vi.fn(async (_file: File) => ({ nodeId: "asset-abc" }) as {
+  nodeId?: string;
+  error?: string;
+});
+const conditionScene = vi.fn(async (_sceneId: string, _file: File) => null as string | null);
+const listProviders = vi.fn(async () => [] as unknown[]);
 const applySessionVoiceClone = vi.fn(async (_file: File) => null as string | null);
 
 const file = (name: string, type: string, bytes = "x") =>
@@ -31,6 +36,16 @@ function dropOf(files: File[]): Event {
   return event;
 }
 
+/** A drop that lands ON something — the board reads `event.target` to decide
+ *  whether the image is a scene's still or a new scene. */
+function dropOnScene(sceneId: string, files: File[]): Element {
+  const card = document.createElement("div");
+  card.setAttribute("data-scene", sceneId);
+  document.body.appendChild(card);
+  card.dispatchEvent(dropOf(files));
+  return card;
+}
+
 function dragOf(name: string, files: { type: string }[]): Event {
   const event = new Event(name, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", {
@@ -40,11 +55,19 @@ function dragOf(name: string, files: { type: string }[]): Event {
 }
 
 beforeEach(() => {
-  addDroppedImage.mockClear();
+  uploadSceneImage.mockClear();
+  conditionScene.mockClear();
   applySessionVoiceClone.mockClear();
-  addDroppedImage.mockResolvedValue(null);
+  uploadSceneImage.mockResolvedValue({ nodeId: "asset-abc" });
+  conditionScene.mockResolvedValue(null);
   applySessionVoiceClone.mockResolvedValue(null);
-  useApp.setState({ addDroppedImage, applySessionVoiceClone } as never);
+  useApp.setState({
+    uploadSceneImage,
+    conditionScene,
+    applySessionVoiceClone,
+    client: { listProviders },
+    board: { scenes: [], aux: {} },
+  } as never);
 });
 
 afterEach(cleanup);
@@ -64,17 +87,17 @@ describe("dropping a file on the app", () => {
     expect(dropped.defaultPrevented).toBe(true);
   });
 
-  it("adds a dropped image to the project", async () => {
+  it("asks what the new scene should say rather than making a blank one", async () => {
+    // `add_scene` leaves prompt and narration empty, and the compiler reads
+    // empty as "not ready" — a scene made here and now would never render.
     render(<DropTarget />);
 
     await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
 
-    expect(addDroppedImage).toHaveBeenCalledTimes(1);
-    expect(addDroppedImage.mock.calls[0]![0].name).toBe("shot.png");
+    expect(uploadSceneImage).toHaveBeenCalledTimes(1);
+    expect(uploadSceneImage.mock.calls[0]![0].name).toBe("shot.png");
     await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent(
-        t("drop.addedImage", { name: "shot.png" }),
-      ),
+      expect(screen.getByRole("dialog")).toHaveTextContent(t("drop.sceneBody")),
     );
   });
 
@@ -111,14 +134,14 @@ describe("dropping a file on the app", () => {
 
     await act(async () => void window.dispatchEvent(dropOf([file("notes.pdf", "application/pdf")])));
 
-    expect(addDroppedImage).not.toHaveBeenCalled();
+    expect(uploadSceneImage).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent(
       t("drop.unsupported", { name: "notes.pdf" }),
     );
   });
 
   it("reports a rejection from the store instead of claiming success", async () => {
-    addDroppedImage.mockResolvedValue(t("drop.needsProject"));
+    uploadSceneImage.mockResolvedValue({ error: t("drop.needsProject") });
     render(<DropTarget />);
 
     await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
@@ -133,9 +156,12 @@ describe("dropping a file on the app", () => {
     // everywhere else in the app; a bar that reports a refusal in the same
     // colour as a success makes the reader parse the sentence to find out
     // which happened.
+    useApp.setState({ board: { scenes: [{ scene_id: "s1", clip: {}, keyframe: null }], aux: {} } } as never);
     render(<DropTarget />);
 
-    await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
+    // Dropped ON a scene with no picture yet: applied straight away, so the
+    // success bar is what it reports.
+    await act(async () => void dropOnScene("s1", [file("shot.png", "image/png")]));
     await waitFor(() => expect(screen.getByRole("status")).toHaveClass("success"));
 
     cleanup();
@@ -144,7 +170,7 @@ describe("dropping a file on the app", () => {
     expect(screen.getByRole("status")).toHaveClass("warning");
 
     cleanup();
-    addDroppedImage.mockResolvedValue("upload failed");
+    uploadSceneImage.mockResolvedValue({ error: "upload failed" });
     render(<DropTarget />);
     await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
     await waitFor(() => expect(screen.getByRole("status")).toHaveClass("error"));
@@ -156,7 +182,9 @@ describe("dropping a file on the app", () => {
     vi.useFakeTimers();
     try {
       render(<DropTarget />);
-      await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
+      // An unsupported file: refused outright, so the bar is the whole
+      // outcome and there is no dialog in the way of it.
+      await act(async () => void window.dispatchEvent(dropOf([file("notes.pdf", "application/pdf")])));
       await act(async () => {});
       expect(screen.getByRole("status")).toBeInTheDocument();
 
@@ -198,7 +226,9 @@ describe("dropping a file on the app", () => {
     await act(async () => void window.dispatchEvent(dragOf("dragenter", [{ type: "image/png" }])));
     await act(async () => void window.dispatchEvent(dragOf("dragleave", [{ type: "image/png" }])));
 
-    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayImage"));
+    // The overlay's presence is the point here; what it SAYS depends on what
+    // is under the pointer and is pinned in DropTarget.scene.test.tsx.
+    expect(screen.getByRole("note")).toBeInTheDocument();
 
     await act(async () => void window.dispatchEvent(dragOf("dragleave", [{ type: "image/png" }])));
     expect(screen.queryByRole("note")).toBeNull();

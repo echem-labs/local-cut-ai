@@ -202,7 +202,7 @@ async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, mon
 
     import httpx
 
-    from localcut_engine.providers.video import _IMAGE_MIME_TYPES
+    from localcut_engine.providers.images import IMAGE_MIME_TYPES as _IMAGE_MIME_TYPES
 
     sent: list[dict] = []
 
@@ -236,7 +236,7 @@ def test_the_mime_table_covers_every_image_asset_the_api_accepts():
     import re
     from pathlib import Path as _Path
 
-    from localcut_engine.providers.video import _IMAGE_MIME_TYPES
+    from localcut_engine.providers.images import IMAGE_MIME_TYPES as _IMAGE_MIME_TYPES
 
     # Read as source: the set is a local inside create_app, so there is
     # nothing to import — same approach test_ui_contract takes to types.ts.

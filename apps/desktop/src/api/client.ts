@@ -250,6 +250,28 @@ export class EngineClient {
     );
   }
 
+  /**
+   * Ask a cloud model to look at an uploaded image and write the narration
+   * and prompt for a scene built on it.
+   *
+   * Read-only: this lands nothing. The caller applies the two strings with
+   * an ordinary `add_scene` patch, so a suggestion the user rejects has left
+   * no trace on the graph. Cloud-only by the engine's contract — there is no
+   * local vision model — so this is the one call that always spends a key.
+   */
+  suggestScene(
+    projectId: string,
+    nodeId: string,
+  ): Promise<{ narration: string; prompt: string }> {
+    // No model named: the engine picks whichever vision provider the user
+    // has a key for. Model names drift, and a renderer that hardcodes one
+    // ships a dead string to everybody until the next release.
+    return this.request(`/projects/${projectId}/suggest-scene`, {
+      method: "POST",
+      body: JSON.stringify({ node_id: nodeId }),
+    });
+  }
+
   /** Undo/redo stack depths, next-step descriptors and save points. */
   history(projectId: string): Promise<HistoryInfo> {
     return this.request(`/projects/${projectId}/history`);

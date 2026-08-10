@@ -111,6 +111,12 @@ class PatchOp(BaseModel):
     node: Node | None = None
     # connect/disconnect: node_id is the destination; `src` the upstream node
     # (connect only), `port` the input being rewired.
+    #
+    # add_scene reads `src` too, with the same meaning one level up: the node
+    # to feed the new clip's keyframe port, in place of the keyframe it would
+    # generate. Folded into that op rather than left to a following `connect`
+    # so the generated keyframe is orphaned before anything is enqueued —
+    # otherwise it renders in full and is displaced a moment later.
     src: str | None = None
     port: str | None = None
     # select_take: the output hash of the recorded take to switch back to.

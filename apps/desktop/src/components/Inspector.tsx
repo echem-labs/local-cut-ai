@@ -2,8 +2,11 @@ import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FailureCard } from "./FailureCard";
+import { PhotoThumb } from "./PhotoThumb";
 import { t } from "../i18n";
+import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
@@ -29,9 +32,12 @@ export function Inspector() {
     regenerate,
     applyTimeline,
     conditionScene,
+    clearSceneStill,
     applyClonedVoice,
     selectTake,
     rerollWithSeed,
+    client,
+    currentProject,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
@@ -52,9 +58,28 @@ export function Inspector() {
   // it). The engine refuses with a reason; discarding it left the chip
   // looking simply dead.
   const [takeError, setTakeError] = useState<string | null>(null);
+  // Why "use my photo" needs its own: `conditionScene` reports a refusal by
+  // returning the message, and this caller used to `.catch` it — dead code
+  // against a promise that never rejects, so an upload the engine turned
+  // down said nothing at all here while the same failure through a drop
+  // showed a banner. Beside the input rather than in the shared banner far
+  // below, so the answer is where the question was asked.
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const sceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
+  // A picture is in the air over this panel, and it belongs to the scene the
+  // panel is showing — so the panel says so itself rather than being covered
+  // by a window-wide scrim that cannot name a target.
+  const dropTarget = useIsDropTarget(sceneId);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
   const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
+  // The user's OWN picture for this scene, when there is one. `still` is
+  // present only when the clip's keyframe port holds something other than
+  // the generated node, so its presence IS the "they supplied one" test.
+  const stillUrl =
+    scene?.still?.artifact_hash && client && currentProject
+      ? client.artifactUrl(currentProject.id, scene.still.artifact_hash)
+      : null;
   const auxNode: NodeState | null =
     !sceneId && selectedNode ? (board?.aux[selectedNode] ?? null) : null;
 
@@ -242,8 +267,68 @@ export function Inspector() {
   const statusNode = scene ? scene.clip : auxNode;
   const pinned = activeNode?.pinned ?? false;
 
+  /**
+   * The picture half of the Image tab, which is about the SCENE rather than
+   * about a node.
+   *
+   * Held here instead of inline because it has two homes. Everything else on
+   * this tab edits the generated keyframe and lives or dies with it — but a
+   * scene whose generated node was deleted still has the user's photo on its
+   * clip, and there was nowhere left to see it, swap it or take it back. The
+   * tab did not even appear.
+   */
+  const photoSection =
+    tab === "image" && sceneId && scene ? (
+      <div>
+        {/* "Use my photo" is the wrong sentence once there IS one — it
+            offers what is already done. With a picture in place the section
+            is about THAT picture, and the input beneath it swaps one for
+            another. */}
+        <label htmlFor="inspector-asset">
+          {t(stillUrl ? "inspector.yourPhoto" : "inspector.useMyPhoto")}
+        </label>
+        {stillUrl && scene.still && (
+          <PhotoThumb
+            src={stillUrl}
+            alt={t("inspector.photoAlt", { n: sceneId.replace(/^s/, "") })}
+            title={t("inspector.photoTitle", { n: sceneId.replace(/^s/, "") })}
+            // Only when there is a generated keyframe to hand back to:
+            // removing the still rewires the clip to it, and a scene whose
+            // generated node is gone would be left with no picture at all —
+            // which the compiler reads as not ready.
+            onRemove={scene.keyframe ? () => setRemovingPhoto(true) : undefined}
+          />
+        )}
+        <input
+          id="inspector-asset"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = ""; // same file re-selectable later
+            if (file) {
+              setPhotoError(null);
+              void conditionScene(sceneId, file).then(setPhotoError);
+            }
+          }}
+        />
+        {photoError && (
+          <div role="status" className="banner error">
+            {photoError}
+          </div>
+        )}
+        <div className="hint">{t("terms.tips.ownImage")}</div>
+      </div>
+    ) : null;
+
   const tabs: { id: SceneTab; label: string; present: boolean }[] = [
-    { id: "image", label: t("inspector.tabs.image"), present: Boolean(scene?.keyframe) },
+    // `still` too: the user's own picture is reason enough for the tab, even
+    // when the node that would have generated one is gone.
+    {
+      id: "image",
+      label: t("inspector.tabs.image"),
+      present: Boolean(scene?.keyframe || scene?.still),
+    },
     { id: "motion", label: t("inspector.tabs.motion"), present: Boolean(scene?.clip) },
     { id: "voice", label: t("inspector.tabs.voice"), present: Boolean(scene?.narration) },
   ];
@@ -257,9 +342,30 @@ export function Inspector() {
   };
 
   return (
-    <aside className="inspector" aria-label={t("inspector.aria")}>
-      {/* one-monitor rule: the Player view's big monitor owns playback */}
-      {scene && view === "storyboard" && <Monitor />}
+    // Named as this scene, so an image dropped anywhere on the panel becomes
+    // ITS picture rather than a new scene. The panel is where you are when
+    // you are thinking about one shot — the drop surface reads `data-scene`
+    // off whatever the pointer is over, and the board card was the only
+    // element carrying it, so dropping on the open scene's own details did
+    // the one thing the user cannot have meant.
+    <aside
+      className={`inspector${dropTarget ? " drop-target" : ""}`}
+      aria-label={t("inspector.aria")}
+      data-scene={sceneId ?? undefined}
+    >
+      {dropTarget && (
+        <div className="drop-here" role="note">
+          <span>{t("drop.overlayStill", { n: (sceneId ?? "").replace(/^s/, "") })}</span>
+        </div>
+      )}
+      {/* The scrolling half, so the drop overlay above can be a sibling of it
+          rather than a child. An absolutely positioned box inside a scroller
+          is anchored to the CONTENT, not the frame: with the panel scrolled
+          down, the overlay sat that far above the top of the panel and its
+          ring cut across the middle of whatever was on screen. */}
+      <div className="inspector-scroll">
+        {/* one-monitor rule: the Player view's big monitor owns playback */}
+        {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <h2 style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
           {inspectorTitle(selectedNode)}
@@ -316,7 +422,13 @@ export function Inspector() {
       )}
 
       {!activeNode && scene && (
-        <div className="hint">{t("inspector.noPart", { tab: partWord[tab] })}</div>
+        <>
+          {/* The generated node is gone, so there is no prompt, seed or model
+              to edit — but the photo the clip actually renders from is still
+              here, and this is the only surface that can show it. */}
+          {photoSection}
+          <div className="hint">{t("inspector.noPart", { tab: partWord[tab] })}</div>
+        </>
       )}
 
       {activeNode && (
@@ -391,26 +503,7 @@ export function Inspector() {
             </div>
           )}
 
-          {tab === "image" && sceneId && (
-            <div>
-              <label htmlFor="inspector-asset">{t("inspector.useMyPhoto")}</label>
-              <input
-                id="inspector-asset"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  event.target.value = ""; // same file re-selectable later
-                  if (file) {
-                    void conditionScene(sceneId, file).catch((err) =>
-                      console.warn("asset conditioning failed:", err),
-                    );
-                  }
-                }}
-              />
-              <div className="hint">{t("terms.tips.ownImage")}</div>
-            </div>
-          )}
+          {photoSection}
 
           <div>
             <button
@@ -700,6 +793,23 @@ export function Inspector() {
             </p>
           )}
         </>
+      )}
+      </div>
+      {removingPhoto && sceneId && (
+        // Asked, because the picture is the user's own file and the app
+        // cannot get it back: the asset stays on the flowchart, but nothing
+        // on this panel would lead them there.
+        <ConfirmDialog
+          title={t("inspector.photoRemoveTitle")}
+          message={t("inspector.photoRemoveBody", { n: sceneId.replace(/^s/, "") })}
+          confirmLabel={t("inspector.photoRemoveConfirm")}
+          onConfirm={() => {
+            setRemovingPhoto(false);
+            setPhotoError(null);
+            void clearSceneStill(sceneId).then(setPhotoError);
+          }}
+          onCancel={() => setRemovingPhoto(false)}
+        />
       )}
     </aside>
   );
