@@ -226,7 +226,9 @@ describe("dropping a file on the app", () => {
     await act(async () => void window.dispatchEvent(dragOf("dragenter", [{ type: "image/png" }])));
     await act(async () => void window.dispatchEvent(dragOf("dragleave", [{ type: "image/png" }])));
 
-    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayImage"));
+    // The overlay's presence is the point here; what it SAYS depends on what
+    // is under the pointer and is pinned in DropTarget.scene.test.tsx.
+    expect(screen.getByRole("note")).toBeInTheDocument();
 
     await act(async () => void window.dispatchEvent(dragOf("dragleave", [{ type: "image/png" }])));
     expect(screen.queryByRole("note")).toBeNull();
