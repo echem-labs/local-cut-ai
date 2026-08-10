@@ -76,6 +76,16 @@ describe("the Inspector's own-photo picker", () => {
     );
   });
 
+  it("names its scene so a dropped image lands on it", () => {
+    // The drop surface reads `data-scene` off whatever the pointer is over,
+    // and the board card was the only element carrying it — so dropping a
+    // picture on the open scene's own details offered to build a NEW scene,
+    // which is the one thing the user cannot have meant while looking at it.
+    mount(null);
+
+    expect(document.querySelector(".inspector")).toHaveAttribute("data-scene", "s1");
+  });
+
   it("says nothing when the picture was taken", async () => {
     const input = mount(null);
 

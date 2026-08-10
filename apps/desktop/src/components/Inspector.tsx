@@ -264,7 +264,17 @@ export function Inspector() {
   };
 
   return (
-    <aside className="inspector" aria-label={t("inspector.aria")}>
+    // Named as this scene, so an image dropped anywhere on the panel becomes
+    // ITS picture rather than a new scene. The panel is where you are when
+    // you are thinking about one shot — the drop surface reads `data-scene`
+    // off whatever the pointer is over, and the board card was the only
+    // element carrying it, so dropping on the open scene's own details did
+    // the one thing the user cannot have meant.
+    <aside
+      className="inspector"
+      aria-label={t("inspector.aria")}
+      data-scene={sceneId ?? undefined}
+    >
       {/* one-monitor rule: the Player view's big monitor owns playback */}
       {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>

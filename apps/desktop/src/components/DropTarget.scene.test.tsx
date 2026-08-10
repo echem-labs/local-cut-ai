@@ -54,7 +54,7 @@ function dropOn(sceneId: string | null, files: File[]): void {
   card.dispatchEvent(event);
 }
 
-function mount(scenes: SceneCardModel[] = [scene()]) {
+function mount(scenes: SceneCardModel[] = [scene()], project: unknown = { id: "p1", title: "t" }) {
   useApp.setState({
     uploadSceneImage,
     conditionScene,
@@ -62,8 +62,31 @@ function mount(scenes: SceneCardModel[] = [scene()]) {
     suggestScene,
     client: { listProviders },
     board: { scenes, aux: {} },
+    currentProject: project,
   } as never);
   return render(<DropTarget />);
+}
+
+/** Drag an image over `el` (or the bare window) without dropping it. */
+function dragOver(el: Element | null): void {
+  const enter = new Event("dragenter", { bubbles: true, cancelable: true });
+  Object.defineProperty(enter, "dataTransfer", {
+    value: { items: [{ type: "image/png" }], types: ["Files"] },
+  });
+  window.dispatchEvent(enter);
+  const over = new Event("dragover", { bubbles: true, cancelable: true });
+  Object.defineProperty(over, "dataTransfer", {
+    value: { items: [{ type: "image/png" }], types: ["Files"] },
+  });
+  (el ?? window).dispatchEvent(over);
+}
+
+/** A stand-in for a scene card or the open scene's inspector panel. */
+function sceneElement(id: string): Element {
+  const el = document.createElement("div");
+  el.setAttribute("data-scene", id);
+  document.body.appendChild(el);
+  return el;
 }
 
 beforeEach(() => {
@@ -121,6 +144,46 @@ describe("an image dropped on a scene", () => {
 
     expect(conditionScene).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+});
+
+describe("the overlay while the drag is still in the air", () => {
+  // A target-aware drop that looks identical to a target-blind one reads as
+  // broken however correctly it behaves: the overlay promised "add this
+  // image to your project" whether the pointer was over a scene or not, so
+  // the only thing the user needed to know was the thing it never said.
+  it("promises the scene's own picture when the pointer is over one", async () => {
+    mount();
+
+    await act(async () => void dragOver(sceneElement("s3")));
+
+    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayStill", { n: "3" }));
+  });
+
+  it("promises a new scene anywhere else in the project", async () => {
+    mount();
+
+    await act(async () => void dragOver(document.body));
+
+    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayNewScene"));
+  });
+
+  it("says a project is needed when none is open", async () => {
+    mount([scene()], null);
+
+    await act(async () => void dragOver(document.body));
+
+    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayNeedsProject"));
+  });
+
+  it("follows the pointer from a scene back out to the gaps", async () => {
+    mount();
+    const card = sceneElement("s3");
+    await act(async () => void dragOver(card));
+
+    await act(async () => void dragOver(document.body));
+
+    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayNewScene"));
   });
 });
 
