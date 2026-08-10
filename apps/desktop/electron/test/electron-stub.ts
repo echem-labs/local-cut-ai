@@ -34,6 +34,12 @@ export const state = {
    */
   keychainId: "keychain-1",
   shouldUseDarkColors: false,
+  /**
+   * Whether `app.dock` exists. Electron defines it on macOS and nowhere else,
+   * and main.ts uses exactly that to decide whether to set a Dock icon — so
+   * the default is the CI runner's answer (no dock) and a macOS test opts in.
+   */
+  hasDock: false,
 };
 
 /** Delimiter around the keychain identity in a sealed blob. Any marker no
@@ -49,6 +55,10 @@ export function resetElectron(): void {
   state.storageBackend = "gnome_libsecret";
   state.keychainId = "keychain-1";
   state.shouldUseDarkColors = false;
+  state.hasDock = false;
+  appUserModelIds.length = 0;
+  dockIcons.length = 0;
+  loadedImagePaths.length = 0;
   ipcHandlers.clear();
   appEvents.clear();
   openedPaths.length = 0;
@@ -68,6 +78,11 @@ export function resetElectron(): void {
 
 const appEvents = new Map<string, ((...args: unknown[]) => void)[]>();
 let quitCalls = 0;
+
+/** AppUserModelIDs set, in order. Windows' notion of "which app is this". */
+export const appUserModelIds: string[] = [];
+/** Images handed to `app.dock.setIcon` — only reachable when state.hasDock. */
+export const dockIcons: StubImage[] = [];
 
 export const app = {
   getPath(name: string): string {
@@ -93,6 +108,20 @@ export const app = {
   },
   quit(): void {
     quitCalls += 1;
+  },
+  setAppUserModelId(id: string): void {
+    appUserModelIds.push(id);
+  },
+  /** Present only on macOS, which is the check main.ts makes instead of
+   * reading process.platform — so this has to be genuinely absent by
+   * default, not an object whose methods happen to be unused. */
+  get dock(): { setIcon(image: StubImage): void } | undefined {
+    if (!state.hasDock) return undefined;
+    return {
+      setIcon(image: StubImage): void {
+        dockIcons.push(image);
+      },
+    };
   },
   // Electron returns the App for chaining; nothing here chains, and saying so
   // would make `app` self-referential and untypeable.
@@ -252,12 +281,36 @@ export class BrowserWindow {
 
 const windows: BrowserWindow[] = BrowserWindow.instances;
 
+/* --------------------------------------------------------- nativeImage -- */
+
+/** What `nativeImage.createFromPath` hands back. The path is carried on the
+ * image itself so a test can assert WHICH file reached the window, the Dock
+ * and the toast — the identity is the whole point, and an opaque handle
+ * would let a wrong-path regression pass. */
+export interface StubImage {
+  readonly path: string;
+  isEmpty(): boolean;
+}
+
+/** Every path handed to createFromPath, in order. */
+export const loadedImagePaths: string[] = [];
+
+export const nativeImage = {
+  createFromPath(imagePath: string): StubImage {
+    loadedImagePaths.push(imagePath);
+    return { path: imagePath, isEmpty: () => false };
+  },
+};
+
 /* ------------------------------------------------------------ misc APIs -- */
 
 let applicationMenu: unknown;
 export interface StubNotification {
   title: string;
   body: string;
+  /** The image the toast was given, or null. Linux has no other source for
+   * one, so "a notification went out" is not the whole assertion. */
+  icon: StubImage | null;
   /** Whether `.show()` was reached — constructing one is not showing it. */
   shown: boolean;
   /** Deliver the user's click, so the "bring the window back" path is real
@@ -277,10 +330,11 @@ export class Notification {
   private readonly record: StubNotification;
   private readonly clickListeners: (() => void)[] = [];
 
-  constructor(options: { title?: string; body?: string } = {}) {
+  constructor(options: { title?: string; body?: string; icon?: StubImage } = {}) {
     this.record = {
       title: options.title ?? "",
       body: options.body ?? "",
+      icon: options.icon ?? null,
       shown: false,
       click: () => {
         for (const listener of this.clickListeners) listener();
@@ -418,6 +472,7 @@ export default {
   ipcMain,
   ipcRenderer,
   Menu,
+  nativeImage,
   nativeTheme,
   safeStorage,
   session,

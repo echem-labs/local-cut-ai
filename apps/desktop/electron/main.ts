@@ -5,6 +5,7 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   Menu,
+  nativeImage,
   nativeTheme,
   Notification,
   session,
@@ -212,6 +213,37 @@ const initialTheme = (): "dark" | "light" => (nativeTheme.shouldUseDarkColors ? 
  * and the symptom is a window stuck under the old name after a render. */
 const IDLE_TITLE = "LocalCut AI";
 
+/** Windows identifies an app to the shell by AppUserModelID — it is what
+ * groups taskbar buttons, what a pinned shortcut points at, and what a toast
+ * notification draws its icon and name from. This MUST equal `appId` in
+ * electron-builder.yml, which is the id stamped on the installed shortcut:
+ * disagree and the pinned tile and the running window become two different
+ * apps to the taskbar. `appId.contract.test.ts` holds the two together.
+ *
+ * Called unconditionally — it is a no-op off Windows, and a platform guard
+ * here would only make the call untestable on the Linux CI runner. */
+const APP_USER_MODEL_ID = "ai.localcut.desktop";
+
+/** The app icon, as a file the main process can actually open.
+ *
+ * Packaged, Vite has copied public/icon.png into the renderer bundle, so it
+ * rides inside app.asar next to index.html and nativeImage reads it straight
+ * out of the archive. Unpackaged there is no dist/, so the same PNG is read
+ * from public/ where the generator wrote it. Both resolve off __dirname
+ * (dist-electron/electron/) exactly as the renderer load in createWindow does.
+ *
+ * NOT build/icon.ico, despite that being the richer multi-size file:
+ * nativeImage collapses an .ico to its single largest frame, so it buys
+ * nothing over the PNG here. And NOT build/ at all — electron-builder treats
+ * that directory as build resources and excludes it from the package, so the
+ * path would resolve in dev and be missing in the shipped app. */
+const appIcon = (): Electron.NativeImage =>
+  nativeImage.createFromPath(
+    app.isPackaged
+      ? path.join(__dirname, "..", "..", "dist", "icon.png")
+      : path.join(__dirname, "..", "..", "public", "icon.png"),
+  );
+
 async function createWindow(): Promise<void> {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   const window = new BrowserWindow({
@@ -221,6 +253,12 @@ async function createWindow(): Promise<void> {
     minHeight: 640,
     backgroundColor: initialTheme() === "dark" ? "#0E0F12" : "#ffffff",
     title: IDLE_TITLE,
+    // Windows reads the exe's own resource once packaged and macOS reads the
+    // bundle, so this is what covers the cases neither does: every Linux
+    // window (there is no exe resource to read, and a directly-run AppImage
+    // has no installed .desktop entry to associate with either), and the dev
+    // run on any platform — which otherwise shows Electron's default icon.
+    icon: appIcon(),
     // Frameless: the renderer draws a slim branded title bar; the OS
     // min/max/close buttons float on top via the overlay.
     titleBarStyle: "hidden",
@@ -490,7 +528,11 @@ ipcMain.handle("shell:notify", (event, payload: unknown) => {
   const title = typeof value.title === "string" ? value.title.slice(0, TITLE_MAX) : "";
   const body = typeof value.body === "string" ? value.body.slice(0, TITLE_MAX) : "";
   if (!title) return { ok: false, error: "no title" };
-  const notification = new Notification({ title, body });
+  // The icon is explicit because Linux has nowhere else to get one: the toast
+  // is drawn by the desktop's notification daemon, which knows nothing about
+  // the window that asked for it. Windows takes it from the AppUserModelID
+  // and macOS from the bundle, and both ignore this without complaint.
+  const notification = new Notification({ title, body, icon: appIcon() });
   // Clicking it is a request to come back to the work it is about.
   notification.on("click", () => {
     if (window.isMinimized()) window.restore();
@@ -815,6 +857,10 @@ ipcMain.handle("update:check", async (event) => {
 });
 
 app.whenReady().then(async () => {
+  // Before anything can put a window or a toast on screen, since this is the
+  // identity Windows attributes both to.
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+
   // One instance per machine. A second one spawns a second engine against the
   // same data dir: two schedulers popping the same queue rows (the VRAM-serial
   // invariant broken, both rendering the same job), and two writers on
@@ -835,6 +881,12 @@ app.whenReady().then(async () => {
   // in packaged builds so Alt can't summon it either. Dev keeps it for the
   // reload/devtools accelerators.
   if (app.isPackaged) Menu.setApplicationMenu(null);
+
+  // A packaged macOS app takes its Dock icon from the bundle; `electron .`
+  // has no bundle of its own and shows Electron's default instead. Keyed on
+  // `app.dock` rather than the platform because that property IS the macOS
+  // test — it is undefined everywhere else, so no platform branch is needed.
+  if (!app.isPackaged) app.dock?.setIcon(appIcon());
 
   // Pin the remote engine's certificate for the RENDERER's traffic too.
   // certificate-error (below) only fires once Chromium's own verification
