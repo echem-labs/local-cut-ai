@@ -560,6 +560,49 @@ textarea {
   position: relative;
 }
 
+/* The app-level bars — the engine crash bar, the engine error bar, the
+   template notice — stacked above whichever screen is showing.
+
+   They are rendered OUTSIDE the screen, so they inherit none of its measure:
+   left alone each one spanned the window while Home's column sat centred and
+   far narrower, which reads as window chrome rather than as this page
+   speaking. The modifier below carries the current screen's column width so
+   a bar lines up with the thing it is about.
+
+   `:empty` because the wrapper is mounted whether or not anything has
+   something to say — without it every screen would open under a blank
+   var(--space-6) of nothing. */
+.content-banners {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0 auto var(--space-6);
+}
+
+.content-banners:empty {
+  display: none;
+}
+
+.content-banners.measure-col {
+  max-width: var(--content-col);
+}
+
+.content-banners.measure-wide {
+  max-width: var(--content-wide);
+}
+
+/* The workspace has no narrower column to match — its panels fill the
+   content box — so the bar does too.
+ *
+ * The auto margins have to go with the max-width, not merely stop having
+ * anything to centre: `.content.project-mode` is a flex COLUMN, and an auto
+ * inline margin on a flex item absorbs the free space in preference to
+ * `stretch`. The bar shrank to its own sentence (263px in a 1394px window)
+ * and sat centred over a workspace it was supposed to span. */
+.content-banners.measure-full {
+  margin-inline: 0;
+}
+
 /* project workspace: the content stops scrolling — panels scroll inside */
 .content.project-mode {
   overflow: hidden;
@@ -6153,6 +6196,77 @@ button.link:hover {
 }
 
 .error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The drag-and-drop overlay. Above everything including the settings layer,
+   because a drag is a live gesture and the app has to answer it wherever it
+   happens; `pointer-events: none` so it cannot itself swallow the drop it
+   is advertising. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--surface-0) 70%, transparent);
+  pointer-events: none;
+}
+
+.drop-overlay-card {
+  padding: var(--space-4) var(--space-6);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-m);
+  background: var(--surface-1);
+  font-weight: 600;
+}
+
+/* What happened after the drop.
+ *
+ * Fixed, not in the flow. `.app` is a flex ROW, and its children are the
+ * rail and the content — so a static banner rendered alongside them became
+ * a third column 618px wide and the full height of the window, shoving the
+ * whole app sideways on a single unsupported drop. The drop surface is
+ * mounted at app level (the target is the window), so anything it draws has
+ * to be out of flow, exactly like the overlay above it. */
+.drop-notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-6);
+  transform: translateX(-50%);
+  z-index: 1001;
+  max-width: min(560px, calc(100vw - 2 * var(--space-6)));
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* Shorter than a `.banner` in the flow: this one floats over the app and
+     holds a single line, so the block's own 16px top and bottom made it
+     read as a panel rather than as a remark. */
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--shadow-2);
+}
+
+/* What the notice reports, in the colour the rest of the app already uses
+   for it: the status tokens, so a drop result and a scene's state cannot
+   disagree about what green means. `.banner.error` and `.banner.warning`
+   are the existing two; success had no bar until now. */
+.banner.success {
+  border-color: var(--status-final);
+}
+
+/* The engine crash bar. Same treatment as the error boundary above — it is
+   the same kind of event to a user — but it stacks its own message, an
+   optional restart failure, and the two buttons. */
+.engine-crash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.engine-crash-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
