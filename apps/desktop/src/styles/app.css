@@ -3289,10 +3289,23 @@ button.link:hover {
 }
 
 /* ---- inspector (a dockview panel — in-flow, resizable, no overlay) ---- */
+/* The frame. It does NOT scroll — `.inspector-scroll` inside it does — so
+ * that the drop overlay can be a sibling of the scrolling content and stay
+ * pinned to the panel the user is looking at. An absolutely positioned box
+ * inside a scroller is anchored to the content, and slid off the top of the
+ * panel the moment anything was scrolled. */
 .inspector {
   width: 100%;
   height: 100%;
   background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.inspector-scroll {
+  flex: 1;
+  min-height: 0;
   padding: var(--space-6) var(--space-4);
   display: flex;
   flex-direction: column;
@@ -6277,15 +6290,10 @@ button.link:hover {
  * be at the top, which here is the video monitor. Nothing can be scrolled
  * mid-drag anyway, so the panel simply stops scrolling while it is the
  * target and the overlay covers the frame exactly. */
-.inspector.drop-target {
-  overflow: hidden;
-  /* And no reserved gutter with it. An absolutely positioned overlay is laid
-     out against its container's PADDING box, which `scrollbar-gutter: stable`
-     shortens by the scrollbar's width — so `inset: 0` stopped 10px short of
-     the panel's right edge and the ring hung in mid-air beside it. Nothing
-     scrolls while the panel is a drop target, so there is no gutter to keep. */
-  scrollbar-gutter: auto;
-}
+/* The frame carries no padding and no gutter of its own, so the overlay's
+ * `inset: 0` is the panel exactly — where `scrollbar-gutter: stable` on the
+ * old scrolling frame had shortened its padding box by a scrollbar's width
+ * and left the ring hanging in mid-air beside the panel. */
 
 /* Both hosts have to establish a containing block for it, or the label
  * escapes to the nearest positioned ancestor and lands across the app. */
@@ -6331,10 +6339,15 @@ button.link:hover {
 /* The rail's tab-close geometry: a small circle riding the corner, off the
  * button it belongs to rather than inside it — a control nested in a button
  * is presentational to assistive tech however reachable it stays by Tab. */
-.photo-thumb-remove {
+/* The wrapper is what rides the corner — see PhotoThumb for why it cannot be
+   the button. */
+.tip-wrap.photo-thumb-tip {
   position: absolute;
   top: -6px;
   right: -6px;
+}
+
+.photo-thumb-remove {
   display: grid;
   place-items: center;
   width: 20px;

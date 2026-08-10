@@ -358,8 +358,14 @@ export function Inspector() {
           <span>{t("drop.overlayStill", { n: (sceneId ?? "").replace(/^s/, "") })}</span>
         </div>
       )}
-      {/* one-monitor rule: the Player view's big monitor owns playback */}
-      {scene && view === "storyboard" && <Monitor />}
+      {/* The scrolling half, so the drop overlay above can be a sibling of it
+          rather than a child. An absolutely positioned box inside a scroller
+          is anchored to the CONTENT, not the frame: with the panel scrolled
+          down, the overlay sat that far above the top of the panel and its
+          ring cut across the middle of whatever was on screen. */}
+      <div className="inspector-scroll">
+        {/* one-monitor rule: the Player view's big monitor owns playback */}
+        {scene && view === "storyboard" && <Monitor />}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <h2 style={{ flex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
           {inspectorTitle(selectedNode)}
@@ -788,6 +794,7 @@ export function Inspector() {
           )}
         </>
       )}
+      </div>
       {removingPhoto && sceneId && (
         // Asked, because the picture is the user's own file and the app
         // cannot get it back: the asset stays on the flowchart, but nothing
