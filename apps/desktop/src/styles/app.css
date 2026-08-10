@@ -6204,7 +6204,7 @@ button.link:hover {
 }
 
 .drop-overlay-card {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--space-6);
   border: 2px dashed var(--accent);
   border-radius: var(--radius-m);
   background: var(--surface-1);
@@ -6222,14 +6222,26 @@ button.link:hover {
 .drop-notice {
   position: fixed;
   left: 50%;
-  bottom: var(--space-5);
+  bottom: var(--space-6);
   transform: translateX(-50%);
   z-index: 1001;
-  max-width: min(560px, calc(100vw - 2 * var(--space-5)));
+  max-width: min(560px, calc(100vw - 2 * var(--space-6)));
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  /* Shorter than a `.banner` in the flow: this one floats over the app and
+     holds a single line, so the block's own 16px top and bottom made it
+     read as a panel rather than as a remark. */
+  padding: var(--space-3) var(--space-4);
   box-shadow: var(--shadow-2);
+}
+
+/* What the notice reports, in the colour the rest of the app already uses
+   for it: the status tokens, so a drop result and a scene's state cannot
+   disagree about what green means. `.banner.error` and `.banner.warning`
+   are the existing two; success had no bar until now. */
+.banner.success {
+  border-color: var(--status-final);
 }
 
 /* The engine crash bar. Same treatment as the error boundary above — it is

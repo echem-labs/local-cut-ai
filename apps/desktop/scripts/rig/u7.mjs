@@ -95,6 +95,22 @@ try {
     "await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;",
   );
 
+  // Pose an app that has been used before. Every behaviour below belongs to
+  // the running app rather than to setup, and which of the two is showing is
+  // a property of the PROFILE — the developer's own has been through first
+  // run, a fresh one (CI, or `LOCALCUT_USERDATA` pointed somewhere new) has
+  // not. Left to chance, the bar checks measure `.home` on one machine and
+  // find nothing on the other.
+  await evalInApp(`
+    const setup = await page.$(".setup");
+    if (setup) {
+      await page.evaluate(() => localStorage.setItem("localcut.firstRunDone", "1"));
+      await page.reload();
+    }
+    await page.waitForSelector(".home", { timeout: 30000 });
+    return null;
+  `);
+
   /* ---------------------------------------------------------- drop -- */
 
   await evalInApp(
@@ -171,12 +187,16 @@ try {
   const afterNotice = await evalInApp(`
     return page.evaluate(() => {
       const notice = document.querySelector(".drop-notice");
+      const rect = notice ? notice.getBoundingClientRect() : null;
       return {
         shown: notice !== null,
         position: notice ? getComputedStyle(notice).position : null,
         railX: Math.round(document.querySelector(".rail").getBoundingClientRect().x),
         docScrollWidth: document.documentElement.scrollWidth,
         innerWidth: window.innerWidth,
+        fromBottom: rect ? Math.round(window.innerHeight - rect.bottom) : null,
+        width: rect ? Math.round(rect.width) : null,
+        tone: notice ? notice.className : null,
       };
     });
   `);
@@ -194,6 +214,27 @@ try {
     "nor pushing the document wider than the window",
     (afterNotice?.docScrollWidth ?? 0) <= (afterNotice?.innerWidth ?? 0),
     JSON.stringify({ afterNotice }),
+  );
+  // Where it is, not just that it is out of flow. `bottom` and `max-width`
+  // both read an undefined `--space-5`, and an undefined custom property
+  // invalidates the WHOLE declaration — so the notice took `bottom: auto`
+  // and `max-width: none` and sat across the top of the window, over the
+  // project header. Both checks above stayed green throughout: it was still
+  // `position: fixed` and it still moved nothing.
+  check(
+    "and puts it at the foot of the window, where it was aimed",
+    (afterNotice?.fromBottom ?? -1) >= 0 && (afterNotice?.fromBottom ?? 999) <= 64,
+    JSON.stringify({ fromBottom: afterNotice?.fromBottom }),
+  );
+  check(
+    "at a width it was actually given",
+    (afterNotice?.width ?? 0) > 0 && (afterNotice?.width ?? 9999) <= 560,
+    JSON.stringify({ width: afterNotice?.width }),
+  );
+  check(
+    "and coloured for the refusal it is",
+    /\bwarning\b/.test(afterNotice?.tone ?? ""),
+    JSON.stringify({ tone: afterNotice?.tone }),
   );
 
   /* ------------------------------------------------ shell progress -- */
