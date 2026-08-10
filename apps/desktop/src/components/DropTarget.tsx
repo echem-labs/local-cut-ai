@@ -21,6 +21,20 @@ import { t } from "../i18n";
 import { useApp } from "../store";
 import { Modal } from "./Modal";
 
+/**
+ * How long a notice stays up on its own.
+ *
+ * A drop is over by the time this appears, so the bar is a receipt rather
+ * than a thing to act on — and one left waiting to be dismissed is still on
+ * screen during the NEXT drop, describing the wrong file. Long enough to
+ * read a refusal, which is the longest thing it says.
+ */
+const NOTICE_MS = 10_000;
+
+/** What a notice reports. The three the status tokens already name, so a
+ *  drop result and a scene's state agree about what green means. */
+type Notice = { text: string; tone: "success" | "warning" | "error" };
+
 /** What a drag is carrying, from the types alone — the files themselves are
  * not readable until the drop. */
 function draggedKind(transfer: DataTransfer | null): "image" | "audio" | "mixed" {
@@ -33,10 +47,14 @@ function draggedKind(transfer: DataTransfer | null): "image" | "audio" | "mixed"
 export function DropTarget() {
   const { addDroppedImage, applySessionVoiceClone } = useApp();
   const [over, setOver] = useState<"image" | "audio" | "mixed" | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Held while the pointer or the keyboard is on the bar. A notice that
+  // clears itself on a timer is unreadable if it goes while being read, and
+  // the longest thing this says is why a file was refused.
+  const [held, setHeld] = useState(false);
   // dragenter/dragleave fire for every element the pointer crosses, so the
   // overlay would flicker on each boundary. Counting them means it closes
   // only when the drag has actually left the window.
@@ -84,12 +102,12 @@ export function DropTarget() {
   async function accept(files: File[]): Promise<void> {
     const file = files[0]!;
     if (looksLikeDirectory(file)) {
-      setNotice(t("drop.notAFile"));
+      setNotice({ text: t("drop.notAFile"), tone: "warning" });
       return;
     }
     const kind = dropKind(file);
     if (kind === "unsupported") {
-      setNotice(t("drop.unsupported", { name: file.name }));
+      setNotice({ text: t("drop.unsupported", { name: file.name }), tone: "warning" });
       return;
     }
     // Audio asks first. Everything else is reversible from the canvas; a
@@ -100,9 +118,13 @@ export function DropTarget() {
       return;
     }
     const error = await addDroppedImage(file);
-    if (error) setNotice(error);
-    else if (files.length > 1) setNotice(t("drop.onlyFirst", { name: file.name }));
-    else setNotice(t("drop.addedImage", { name: file.name }));
+    // A refusal is the app declining to do something ("open a video first"),
+    // an error is it trying and failing. Both are the store's message; only
+    // the second is a fault.
+    if (error) setNotice({ text: error, tone: "error" });
+    else if (files.length > 1)
+      setNotice({ text: t("drop.onlyFirst", { name: file.name }), tone: "warning" });
+    else setNotice({ text: t("drop.addedImage", { name: file.name }), tone: "success" });
   }
 
   const confirmVoice = async (): Promise<void> => {
@@ -111,8 +133,20 @@ export function DropTarget() {
     const error = await applySessionVoiceClone(pending);
     setBusy(false);
     setPending(null);
-    setNotice(error ?? t("drop.voiceApplied", { name: pending.name }));
+    setNotice(
+      error
+        ? { text: error, tone: "error" }
+        : { text: t("drop.voiceApplied", { name: pending.name }), tone: "success" },
+    );
   };
+
+  // Clears itself, unless it is being read. Keyed on the notice object, so a
+  // second drop restarts the clock rather than inheriting the first's.
+  useEffect(() => {
+    if (!notice || held) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice, held]);
 
   return (
     <>
@@ -161,8 +195,15 @@ export function DropTarget() {
         </Modal>
       )}
       {notice && (
-        <div className="banner drop-notice" role="status">
-          <span>{notice}</span>
+        <div
+          className={`banner drop-notice ${notice.tone}`}
+          role="status"
+          onMouseEnter={() => setHeld(true)}
+          onMouseLeave={() => setHeld(false)}
+          onFocus={() => setHeld(true)}
+          onBlur={() => setHeld(false)}
+        >
+          <span>{notice.text}</span>
           <button className="btn-ghost" onClick={() => setNotice(null)}>
             {t("common.dismiss")}
           </button>

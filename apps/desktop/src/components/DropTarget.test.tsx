@@ -128,6 +128,67 @@ describe("dropping a file on the app", () => {
     );
   });
 
+  it("colours the notice by what it is reporting", async () => {
+    // Green, amber and red are what the status tokens already mean
+    // everywhere else in the app; a bar that reports a refusal in the same
+    // colour as a success makes the reader parse the sentence to find out
+    // which happened.
+    render(<DropTarget />);
+
+    await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveClass("success"));
+
+    cleanup();
+    render(<DropTarget />);
+    await act(async () => void window.dispatchEvent(dropOf([file("notes.pdf", "application/pdf")])));
+    expect(screen.getByRole("status")).toHaveClass("warning");
+
+    cleanup();
+    addDroppedImage.mockResolvedValue("upload failed");
+    render(<DropTarget />);
+    await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveClass("error"));
+  });
+
+  it("takes itself down rather than waiting to be dismissed", async () => {
+    // The drop is over by the time this appears. A notice left up is still
+    // on screen during the NEXT drop, describing the wrong file.
+    vi.useFakeTimers();
+    try {
+      render(<DropTarget />);
+      await act(async () => void window.dispatchEvent(dropOf([file("shot.png", "image/png")])));
+      await act(async () => {});
+      expect(screen.getByRole("status")).toBeInTheDocument();
+
+      await act(async () => void vi.advanceTimersByTime(10_000));
+      expect(screen.queryByRole("status")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds while it is being read", async () => {
+    // A refusal is the longest thing this says, and one that clears itself
+    // mid-sentence cannot be read at all.
+    vi.useFakeTimers();
+    try {
+      render(<DropTarget />);
+      await act(async () => void window.dispatchEvent(dropOf([file("notes.pdf", "application/pdf")])));
+      await act(async () => {});
+      const bar = screen.getByRole("status");
+      fireEvent.mouseEnter(bar);
+
+      await act(async () => void vi.advanceTimersByTime(30_000));
+      expect(screen.getByRole("status")).toBeInTheDocument();
+
+      fireEvent.mouseLeave(bar);
+      await act(async () => void vi.advanceTimersByTime(10_000));
+      expect(screen.queryByRole("status")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the overlay up while the drag crosses elements inside the window", async () => {
     // dragenter/dragleave fire for every element the pointer crosses, so a
     // naive open/close flickers the overlay across the whole window.
