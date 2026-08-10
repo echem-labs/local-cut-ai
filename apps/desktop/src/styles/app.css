@@ -591,6 +591,18 @@ textarea {
   max-width: var(--content-wide);
 }
 
+/* The workspace has no narrower column to match — its panels fill the
+   content box — so the bar does too.
+ *
+ * The auto margins have to go with the max-width, not merely stop having
+ * anything to centre: `.content.project-mode` is a flex COLUMN, and an auto
+ * inline margin on a flex item absorbs the free space in preference to
+ * `stretch`. The bar shrank to its own sentence (263px in a 1394px window)
+ * and sat centred over a workspace it was supposed to span. */
+.content-banners.measure-full {
+  margin-inline: 0;
+}
+
 /* project workspace: the content stops scrolling — panels scroll inside */
 .content.project-mode {
   overflow: hidden;
