@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Absolute on purpose, even though the packaged renderer loads over
+         file:. Vite recognises a root-relative public/ reference, rewrites it
+         for `base: "./"` at build (dist/index.html gets `./icon.png`) and
+         fails the build if the file is gone. Written `./icon.png` it is
+         instead passed through untouched, and a dropped icon.png ships as a
+         dead href with nothing to notice it. -->
+    <link rel="icon" href="/icon.png" />
     <title>LocalCut AI</title>
   </head>
   <body>

@@ -109,10 +109,32 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # branding/ as well as apps/desktop/: BrandMark.test.tsx compares the
+      # on-screen mark against branding/logo.svg, so a commit touching only
+      # the SVG is exactly the one that test exists to catch. ci-desktop.yml's
+      # path filter names it for the same reason; keep the two lists in step.
       - id: desktop-tests
         name: desktop tests (vitest)
         entry: bash -c 'cd apps/desktop && npm test'
         language: system
-        files: ^apps/desktop/
+        files: ^(apps/desktop/|branding/)
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Its own hook rather than folding into the two above: this runs in a
+      # quarter of a second, and it is the guard for the one thing neither of
+      # them can see — the committed icon BINARIES, which are what ship, going
+      # stale against the SVG they are rendered from. Gated on the generator
+      # and its inputs and outputs, so an ordinary desktop edit does not pay it.
+      - id: icon-check
+        name: app icons match branding/logo.svg
+        entry: bash -c 'cd apps/desktop && npm run icon:check'
+        language: system
+        files: |
+          (?x)^(
+            branding/logo\.svg
+            |apps/desktop/scripts/make-icon\.mjs
+            |apps/desktop/(build|public)/icon(-mac)?\.(png|ico|icns)
+          )$
         pass_filenames: false
         stages: [pre-push]

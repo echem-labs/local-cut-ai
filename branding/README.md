@@ -8,9 +8,23 @@ through — the gap *is* the cut. Pure geometry, no letterforms.
 | `logo.svg` | Master mark on the brand-gradient tile. Scales losslessly — export PNGs at any size from this. |
 | `logo-mono.svg` | One-color variant (`#5F4FD8`) for light grounds and print; recolor to `#fff` for dark grounds. |
 
-The Windows app icon (`apps/desktop/build/icon.ico`) is generated from
-`logo.svg` by `apps/desktop/scripts/make-icon.mjs` — re-run it after any
-geometry change (`npm run icon` in `apps/desktop`).
+Every app icon is generated from `logo.svg` by
+`apps/desktop/scripts/make-icon.mjs` — re-run it after any geometry change
+(`npm run icon` in `apps/desktop`) and commit the result, since it is the
+committed binaries that ship. CI runs `npm run icon:check`, which fails if
+they no longer match this file.
+
+| Generated | Use |
+| --- | --- |
+| `build/icon.ico` | Stamped on the Windows exe and installer by electron-builder. |
+| `build/icon.png` | The Linux AppImage/deb icon and the source of the freedesktop icon set. |
+| `build/icon.icns` | The macOS bundle. Inset to Apple's 824/1024 grid — the Dock sizes every icon against that, so a full-bleed tile renders larger than its neighbours. |
+| `public/icon.png` | The icon the *running* app uses (window, Linux taskbar, toasts) and the favicon. Vite copies `public/` into `dist/`, which is what puts it inside the asar; `build/` is build resources and never ships. |
+| `public/icon-mac.png` | The same inset as the `.icns`, for the Dock icon an unpackaged macOS run has to set for itself — there being no bundle to read one from. Full-bleed there would put back exactly what the inset removes. |
+
+The Windows taskbar also needs `APP_USER_MODEL_ID` in `electron/main.ts` to
+equal `appId` in `electron-builder.yml`, or a pinned tile and a running
+window are two different apps to the shell.
 
 ## Palette — "Electric Iris"
 
