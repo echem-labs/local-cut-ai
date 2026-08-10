@@ -43,10 +43,13 @@ be fixed for exactly this.
   string literal reaches a console, and headless Windows stdout is the ANSI
   code page. Use `-` and `->`, not `—` and `→`. Docstrings are exempt.
   (`test_cli.py::test_every_string_the_cli_can_print_is_ascii`)
-- **Constants mirrored across the Python/TS boundary get a contract test.**
-  The desktop suite runs against TypeScript alone and cannot know what the
-  engine sends; `DURATION_BOUNDS` drifted once already.
-  (`test_ui_contract.py`)
+- **A value written down twice, on either side of a boundary no build step
+  reconciles, gets a contract test.** The desktop suite runs against
+  TypeScript alone and cannot know what the engine sends; `DURATION_BOUNDS`
+  drifted once already. (`test_ui_contract.py`) The shape is not confined to
+  Python/TS: the Windows app id is written in both `electron-builder.yml` and
+  `main.ts` (`appId.contract.test.ts`), and the brand mark is drawn in both
+  `branding/logo.svg` and `BrandMark.tsx` (`BrandMark.test.tsx`).
 - **Every board status needs a UI case and a catalog label.** Same file.
 - **A skip is a test that did not run.** CI runs `pytest -q -rs` so what was
   skipped is readable from the log — a runner with a crippled ffmpeg once
@@ -112,6 +115,15 @@ be fixed for exactly this.
 - **Layout is derived, never stored.** Canvas positions are a pure function of
   the graph, deterministic across machines — so use code-unit ordering, not
   `localeCompare`, in any tie-break.
+- **Every app icon is rendered from `branding/logo.svg`.** Never hand-edit the
+  binaries: `scripts/make-icon.mjs` writes all four, and `npm run icon:check`
+  fails the build when they stop matching the mark. Re-run `npm run icon` and
+  commit the result — it is the committed bytes that ship, not the SVG.
+  The one that is not guessable: the icon the *running* app loads comes from
+  `public/`, never `build/`. electron-builder treats `build/` as the build
+  resources directory and leaves it out of the package, so a path into it
+  resolves in dev and is missing in the installed app; `public/` is copied
+  into `dist/` by Vite, which is what carries it inside the asar.
 
 ## Dependencies
 
