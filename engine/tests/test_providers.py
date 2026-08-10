@@ -228,6 +228,53 @@ async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, mon
         assert payload.endswith(base64.b64encode(b"\x89PNG\r\n").decode())
 
 
+async def test_encoding_the_conditioning_image_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    """A keyframe reaching fal may be a user asset of up to `_ASSET_MAX_BYTES`,
+    and encoding one inline stalls the loop for the whole read - during which
+    no other request advances and no progress frame reaches the `/ws` fan-out.
+
+    Asserted by watching the loop rather than by inspecting the call: a ticker
+    that keeps counting between the call and the submit is the property that
+    matters, and it stays true however the offload is spelled.
+    """
+    import asyncio
+
+    import httpx
+
+    big = tmp_path / "big.png"
+    big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
+
+    ticks = 0
+    ticks_at_submit = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    class _Rejected:
+        status_code = 500
+        text = "stop before the poll loop"
+
+    async def capture(self, url, headers=None, json=None):
+        nonlocal ticks_at_submit
+        ticks_at_submit = ticks
+        return _Rejected()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", capture)
+    gen = FalVideoGen("k", "kling-2.5")
+
+    beat = asyncio.create_task(ticker())
+    await asyncio.sleep(0)
+    before = ticks
+    with pytest.raises(ProviderError):
+        await gen.generate("p", 4.0, str(big))
+    beat.cancel()
+
+    assert ticks_at_submit > before, "the loop stopped while the image was being encoded"
+
+
 def test_the_mime_table_covers_every_image_asset_the_api_accepts():
     """A contract, like test_ui_contract's: adding an extension to
     _IMAGE_EXTENSIONS without adding it here would silently ship
