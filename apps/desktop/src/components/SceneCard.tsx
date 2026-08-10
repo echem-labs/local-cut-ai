@@ -4,6 +4,7 @@ import type { SceneCardModel } from "../api/types";
 import { t } from "../i18n";
 import { remainingLabel } from "../lib/eta";
 import { displaySeconds } from "../lib/formats";
+import { useIsDropTarget } from "../lib/dropTarget";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -64,6 +65,10 @@ export function SceneCard({
   const { client, currentProject, selectedNode, select, regenerate, togglePin, applyNode } =
     useApp();
   const playScene = usePlayback((state) => state.play);
+  // A picture is in the air over THIS card. The card says so itself rather
+  // than letting a window-wide scrim say it, because a scrim covers the one
+  // thing the answer is about.
+  const dropTarget = useIsDropTarget(scene.scene_id);
   const [dark, setDark] = useState(false);
   const [dropSide, setDropSide] = useState<"before" | "after" | null>(null);
   const [scrubbing, setScrubbing] = useState(false);
@@ -77,9 +82,15 @@ export function SceneCard({
   // `keyframe` unconditionally showed the model's render over a clip made
   // from the user's photo, because displacing that node leaves its artifact
   // where it was.
-  const keyframe = scene.still ?? scene.keyframe;
-  const primary = keyframe ?? clip;
-  const keyframeHash = keyframe?.artifact_hash ?? null;
+  const shown = scene.still ?? scene.keyframe;
+  // What CLICKING the card selects, which is not what it draws. The still is
+  // an ASSET node: it has no prompt, no seed and no model, so selecting it
+  // opened the Inspector's bare aux-node editor — an empty Prompt box over
+  // "Apply & regenerate" — instead of the scene's own Image/Motion/Voice
+  // panel. A scene built from a dropped picture then looked nothing like the
+  // scene beside it, for a difference the user never asked for.
+  const primary = scene.keyframe ?? clip;
+  const keyframeHash = shown?.artifact_hash ?? null;
   // Both picture nodes, not just the one being drawn. `keyframe` above
   // resolves to the user's still when there is one — but the generated node
   // stays on the graph and stays clickable on the flowchart, where it is the
@@ -130,6 +141,7 @@ export function SceneCard({
         selected ? "selected" : "",
         rendering ? "rendering" : "",
         dragging ? "dragging" : "",
+        dropTarget ? "drop-target" : "",
         dropSide ? `drop-${dropSide}` : "",
       ]
         .filter(Boolean)
@@ -197,6 +209,16 @@ export function SceneCard({
         }
       }}
     >
+      {dropTarget && (
+        // `note`, not `status`: this is a label on a thing, not an
+        // announcement of something that happened. Pointer-transparent, or it
+        // would become the drop's target and take the card's place in
+        // `closest("[data-scene]")` — the card would stop being the answer at
+        // the exact moment the user let go.
+        <div className="drop-here" role="note">
+          {t("drop.overlayStill", { n: sceneNo })}
+        </div>
+      )}
       <div
         className="thumb"
         onMouseEnter={() => setScrubbing(true)}

@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { dropKind, looksLikeDirectory } from "../lib/dropKind";
+import { useDropTarget } from "../lib/dropTarget";
 import { t } from "../i18n";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -76,7 +77,11 @@ export function DropTarget() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<File | null>(null);
   /** An uploaded image waiting for the words that make it a scene. */
-  const [pendingScene, setPendingScene] = useState<{ name: string; nodeId: string } | null>(null);
+  const [pendingScene, setPendingScene] = useState<{
+    name: string;
+    nodeId: string;
+    file: File;
+  } | null>(null);
   /** A scene that already has a picture, and the one offered to replace it. */
   const [pendingStill, setPendingStill] = useState<{ sceneId: string; file: File } | null>(null);
   const [consented, setConsented] = useState(false);
@@ -98,7 +103,12 @@ export function DropTarget() {
       // Tracked here rather than at the drop, because the point is to say
       // what WILL happen while there is still a choice about it. React bails
       // out when the value has not changed, so a per-pixel event is cheap.
-      setOverScene(sceneUnder(event.target));
+      const scene = sceneUnder(event.target);
+      setOverScene(scene);
+      // Published so the card or panel under the pointer can light ITSELF up.
+      // A full-window scrim cannot say "this one" — it covers the very thing
+      // the answer is about.
+      useDropTarget.getState().over(scene);
     };
     const onEnter = (event: DragEvent): void => {
       event.preventDefault();
@@ -111,6 +121,7 @@ export function DropTarget() {
       if (depth.current === 0) {
         setOver(null);
         setOverScene(null);
+        useDropTarget.getState().end();
       }
     };
     const onDrop = (event: DragEvent): void => {
@@ -118,6 +129,7 @@ export function DropTarget() {
       depth.current = 0;
       setOver(null);
       setOverScene(null);
+      useDropTarget.getState().end();
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length === 0) return;
       // Resolved here, synchronously: `event.target` is live only for the
@@ -176,7 +188,7 @@ export function DropTarget() {
     // The scene is not created here: `add_scene` leaves the words blank and
     // the compiler reads blank as "not ready", so a scene made now would sit
     // inert. The dialog collects them and lands the whole thing at once.
-    setPendingScene({ name: file.name, nodeId });
+    setPendingScene({ name: file.name, nodeId, file });
   }
 
   /** Make this image the scene's still, asking first if one is already there. */
@@ -237,13 +249,20 @@ export function DropTarget() {
     if (over === "audio") return t("drop.overlayAudio");
     if (over === "mixed") return t("drop.overlayMixed");
     if (!currentProject) return t("drop.overlayNeedsProject");
-    if (overScene) return t("drop.overlayStill", { n: overScene.replace(/^s/, "") });
     return t("drop.overlayNewScene");
   }
 
+  // A scrim over the whole window answers "where will this land?" with
+  // "everywhere", and it covers the very card the answer is about. So it is
+  // drawn only for the drop that really is app-wide — a new scene, a voice
+  // sample, a file with nowhere to go. When the pointer is ON a scene, that
+  // scene lights itself up instead (see `.scene-card.drop-target`), and the
+  // window stays legible underneath.
+  const showScrim = over !== null && !(over === "image" && overScene && currentProject);
+
   return (
     <>
-      {over && (
+      {showScrim && (
         <div className="drop-overlay" role="note" aria-label={t("drop.overlayAria")}>
           <div className="drop-overlay-card">{overlayMessage()}</div>
         </div>
@@ -283,6 +302,7 @@ export function DropTarget() {
         <NewSceneDialog
           name={pendingScene.name}
           nodeId={pendingScene.nodeId}
+          file={pendingScene.file}
           onClose={() => setPendingScene(null)}
           onAdded={() => {
             const { name } = pendingScene;

@@ -6215,6 +6215,49 @@ button.link:hover {
   pointer-events: none;
 }
 
+/* The surface a dragged picture would actually land on.
+ *
+ * A ring on the thing itself, instead of a scrim over the window: the scrim
+ * answers "where will this go?" with "everywhere", and it dims the one card
+ * the answer is about. `outline` rather than `border` because the card's box
+ * is already laid out — a border would resize it under the pointer, and a
+ * target that moves while you aim at it is worse than no target at all. */
+.scene-card.drop-target,
+.inspector.drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-1));
+}
+
+/* The label sits over the surface it names. Pointer-transparent, or it
+ * becomes the drop's target and the card stops being what
+ * `closest("[data-scene]")` finds at the moment the user lets go. */
+.drop-here {
+  position: absolute;
+  inset-inline: var(--space-2);
+  top: var(--space-2);
+  z-index: 3;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  /* Literal white, as `.btn-primary` does on the same accent: there is no
+     on-accent token, and an undefined custom property does not fall back —
+     it invalidates the whole declaration and the text draws in whatever it
+     inherited, which on this violet is unreadable. */
+  color: #fff;
+  font-size: var(--text-s);
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Both hosts have to establish a containing block for it, or the label
+ * escapes to the nearest positioned ancestor and lands across the app. */
+.scene-card,
+.inspector {
+  position: relative;
+}
+
 .drop-overlay-card {
   padding: var(--space-4) var(--space-6);
   border: 2px dashed var(--accent);

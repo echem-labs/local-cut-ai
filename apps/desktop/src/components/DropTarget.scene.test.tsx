@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { NodeState, SceneCardModel } from "../api/types";
 import { t } from "../i18n";
+import { useDropTarget } from "../lib/dropTarget";
 import { useApp } from "../store";
 import { DropTarget } from "./DropTarget";
 
@@ -91,6 +92,7 @@ function sceneElement(id: string): Element {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useDropTarget.getState().end();
   uploadSceneImage.mockResolvedValue({ nodeId: "asset-abc" });
   conditionScene.mockResolvedValue(null);
   addSceneFromImage.mockResolvedValue(null);
@@ -152,12 +154,32 @@ describe("the overlay while the drag is still in the air", () => {
   // broken however correctly it behaves: the overlay promised "add this
   // image to your project" whether the pointer was over a scene or not, so
   // the only thing the user needed to know was the thing it never said.
-  it("promises the scene's own picture when the pointer is over one", async () => {
+  it("hands the naming to the scene itself rather than covering the window", async () => {
+    // A scrim over everything answers "where will this land?" with
+    // "everywhere", and it dims the very card the answer is about. Over a
+    // scene there is no scrim at all — the card lights itself up, which it
+    // can only do if the target is published for it to read.
     mount();
 
     await act(async () => void dragOver(sceneElement("s3")));
 
-    expect(screen.getByRole("note")).toHaveTextContent(t("drop.overlayStill", { n: "3" }));
+    expect(screen.queryByRole("note")).toBeNull();
+    expect(useDropTarget.getState().scene).toBe("s3");
+    expect(useDropTarget.getState().dragging).toBe(true);
+  });
+
+  it("stops naming a scene once the drag leaves the window", async () => {
+    // Otherwise a card stays lit after the pointer has gone, and the next
+    // drag begins with the last one's answer already on screen.
+    mount();
+    await act(async () => void dragOver(sceneElement("s3")));
+
+    const leave = new Event("dragleave", { bubbles: true, cancelable: true });
+    Object.defineProperty(leave, "dataTransfer", { value: { items: [], types: ["Files"] } });
+    await act(async () => void window.dispatchEvent(leave));
+
+    expect(useDropTarget.getState().dragging).toBe(false);
+    expect(useDropTarget.getState().scene).toBeNull();
   });
 
   it("promises a new scene anywhere else in the project", async () => {
