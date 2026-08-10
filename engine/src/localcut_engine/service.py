@@ -49,6 +49,7 @@ from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
 from .otio import edl_to_otio
+from .providers.images import IMAGE_MIME_TYPES
 from .project.store import (
     SAVEPOINT_LIMIT,
     GraphHistory,
@@ -742,6 +743,30 @@ class ProjectService:
         """The whitelisted graph view a natural-language edit works from."""
         with self._lock:
             return graph_view(self.store.load_graph(project_id), scope)
+
+    def asset_image_path(self, project_id: str, node_id: str) -> Path:
+        """Where an image asset's bytes actually are.
+
+        Refuses anything that is not an image asset here rather than letting a
+        vision provider discover it: sending the script node's JSON to a
+        cloud model spends a request to be told what this can answer for
+        free. `KeyError` for a node that is not in the graph, `ValueError`
+        for one that is not a picture — the two the route maps to 404 and
+        422.
+        """
+        with self._lock:
+            graph = self.store.load_graph(project_id)
+            node = graph.nodes.get(node_id)
+            if node is None:
+                raise KeyError(node_id)
+            if node.kind is not NodeKind.ASSET:
+                raise ValueError(f"{node_id} is not an image asset")
+            path = self.store.resolve_artifact(project_id, graph.output_hash(node_id))
+        if path is None:
+            raise KeyError(node_id)
+        if path.suffix.lower() not in IMAGE_MIME_TYPES:
+            raise ValueError(f"{node_id} is not an image asset")
+        return path
 
     def preview_edit_plan(
         self, project_id: str, plan: EditPlan, scope: str, revision: str | None = None
@@ -1856,7 +1881,12 @@ class ProjectService:
                 # reports itself honestly until it lands.
                 status = "blocked"
             elif out_hash in cached:
-                status = "final" if (job and job.spec.quality == "final") else "draft"
+                # A file the user supplied is not a draft of anything. "Draft"
+                # promises a cheap first pass that a final render replaces,
+                # and an asset is never rendered at all — it arrives finished
+                # and stays exactly as it came in.
+                asset = node.kind is NodeKind.ASSET
+                status = "final" if asset or (job and job.spec.quality == "final") else "draft"
             else:
                 status = "queued"
             state = {
@@ -1917,6 +1947,25 @@ class ProjectService:
         scenes = []
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}
         scene_ids = sorted(raw_ids, key=scene_sort_key)
+        def keyframe_source(sid: str) -> str | None:
+            """The node actually feeding this scene's clip on the keyframe port.
+
+            Normally the generated `{sid}.keyframe` — that is what the
+            template wires up — but a scene conditioned on an uploaded image
+            has the ASSET there instead, and the generated node is left
+            orphaned. Reported as its own slot rather than by rewriting
+            `keyframe`, because both nodes still matter and to different
+            readers: the card draws the picture the clip will actually use,
+            while the flowchart indexes node status out of these same slots
+            and would otherwise lose the generated node's "not needed"
+            entirely (see `orphaned_nodes` above, and NodeCanvas's
+            statusIndex).
+            """
+            for edge in graph.inputs_of(f"{sid}.clip"):
+                if edge.port == KEYFRAME_PORT:
+                    return edge.src
+            return None
+
         for sid in scene_ids:
             card = {
                 "scene_id": sid,
@@ -1924,6 +1973,12 @@ class ProjectService:
                 "clip": node_state(f"{sid}.clip"),
                 "narration": node_state(f"{sid}.narration"),
             }
+            # Only when it is NOT the generated node: the board is polled
+            # through every render, so the common case must not ship a second
+            # copy of the state directly above it.
+            source = keyframe_source(sid)
+            if source is not None and source != f"{sid}.keyframe":
+                card["still"] = node_state(source)
             # A split scene has sequential takes beyond ".clip" — surface
             # them so the card can show aggregate render state.
             extra = sorted(
