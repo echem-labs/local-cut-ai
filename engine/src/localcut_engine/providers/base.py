@@ -11,12 +11,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel
 
 
+class ProviderError(RuntimeError):
+    """Anything a cloud adapter could not do. Defined here rather than beside
+    the adapters because the capability interfaces below raise it too;
+    `textgen` re-exports it, so every existing import still resolves."""
+
+
 class Capability(StrEnum):
     TEXT = "text"  # script writing, graph patches, metadata
+    VISION = "vision"  # reading an image: describing a dropped photo
     IMAGE = "image"  # keyframes, thumbnails
     VIDEO = "video"  # clips (T2V / I2V)
     SPEECH = "speech"  # TTS / voice cloning
@@ -42,6 +50,20 @@ class ProviderInfo(BaseModel):
 class TextGen(ABC):
     @abstractmethod
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str: ...
+
+    async def describe(
+        self, system: str, prompt: str, image: Path, max_tokens: int = 4096
+    ) -> str:
+        """The same completion, with a picture the model can actually see.
+
+        Concrete rather than abstract, and refusing by default: an adapter
+        with no vision must not fall through to `complete()` and answer from
+        the prompt alone. That would return a confident description of a
+        photo nothing ever looked at — the same trap the local LLM backend
+        refuses a `cloud:` model for. A caller who asked for vision either
+        gets vision or gets an error.
+        """
+        raise ProviderError(f"{type(self).__name__} serves no vision capability")
 
     @abstractmethod
     def quote(self, prompt_chars: int) -> PriceQuote: ...

@@ -30,6 +30,13 @@ function luminanceOf(img: HTMLImageElement): number | null {
   }
 }
 
+/** Is this drag carrying files from outside the window, rather than a card
+ *  being dragged to a new place in the cut? `types` is the only thing that
+ *  answers during `dragover` — the files themselves are unreadable until the
+ *  drop, by design. */
+const isFileDrag = (event: React.DragEvent): boolean =>
+  [...(event.dataTransfer?.types ?? [])].includes("Files");
+
 /** Scene card — the thumb has a designed treatment for every state
  * (review 3): queued = numbered slate, rendering = shimmer + live %,
  * draft/final = artifact + duration badge, failed = dimmed frame under
@@ -150,19 +157,31 @@ export function SceneCard({
         onDragEnd?.();
       }}
       onDragOver={(event) => {
-        if (!onDropSide) return;
+        // A drag carrying FILES is not a reorder — it comes from outside the
+        // window and means "use this here". Both kinds arrive at these
+        // handlers, and React's run BEFORE the window listener that owns
+        // file drops, so this card is what has to tell them apart. Judged on
+        // the drag's types, because `dataTransfer.files` stays empty until
+        // the drop: dragover has nothing else to go on, and the drop has to
+        // agree with what dragover already decided.
+        if (!onDropSide || isFileDrag(event)) return;
         event.preventDefault();
         const rect = event.currentTarget.getBoundingClientRect();
         setDropSide(event.clientX > rect.left + rect.width / 2 ? "after" : "before");
       }}
       onDragLeave={() => setDropSide(null)}
       onDrop={(event) => {
+        // Deliberately NOT prevented for a file: preventing the default is
+        // what claims the drop, and the file surface would never hear the
+        // one it exists for. The indicator still clears — a file dragged
+        // across the board must not leave a reorder marker behind.
+        setDropSide(null);
+        if (isFileDrag(event)) return;
         event.preventDefault();
         if (onDropSide) {
           const rect = event.currentTarget.getBoundingClientRect();
           onDropSide(event.clientX > rect.left + rect.width / 2);
         }
-        setDropSide(null);
       }}
     >
       <div
