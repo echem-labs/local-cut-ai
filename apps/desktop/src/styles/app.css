@@ -6243,7 +6243,11 @@ button.link:hover {
 .drop-here {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  /* Above everything the two hosts draw inside themselves — the monitor and
+     its play button, a card's status pill and hover actions. Resolved inside
+     the host's own stacking context, so it competes with those and never
+     with a modal. */
+  z-index: 20;
   display: grid;
   place-items: center;
   padding: var(--space-4);
@@ -6262,20 +6266,14 @@ button.link:hover {
   text-align: center;
 }
 
-/* The panel scrolls, and an absolutely positioned label would scroll with
- * its content — off the top of the very panel it is labelling. */
-.inspector.drop-target > .drop-here {
-  position: sticky;
-  inset: auto;
-  top: 0;
-  height: 0;
-  overflow: visible;
-  background: none;
-}
-
-.inspector.drop-target > .drop-here > * {
-  position: relative;
-  top: var(--space-4);
+/* The panel scrolls, and an `inset: 0` overlay in a scroll container is
+ * sized to the content, not the frame — so it would slide away with the
+ * content under it and leave the label stranded over whatever happened to
+ * be at the top, which here is the video monitor. Nothing can be scrolled
+ * mid-drag anyway, so the panel simply stops scrolling while it is the
+ * target and the overlay covers the frame exactly. */
+.inspector.drop-target {
+  overflow: hidden;
 }
 
 /* Both hosts have to establish a containing block for it, or the label
