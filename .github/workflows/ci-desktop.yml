@@ -3,15 +3,24 @@ name: CI (desktop)
 # See ci-engine.yml for why the two suites are separate workflows rather than
 # two jobs behind one path filter: GitHub filters paths per workflow, not per
 # job, and a filter job of its own would cost about as much as it saves.
+#
+# `branding/**` is in the filter because two of the checks below are about
+# files outside apps/desktop: `icon:check` compares the committed icons
+# against branding/logo.svg, and BrandMark.test.tsx compares the on-screen
+# mark against the same file. A commit touching only the SVG is exactly what
+# they exist to catch, and without this it is the one commit that runs
+# neither.
 on:
   push:
     branches: [main]
     paths:
       - "apps/desktop/**"
+      - "branding/**"
       - ".github/workflows/ci-desktop.yml"
   pull_request:
     paths:
       - "apps/desktop/**"
+      - "branding/**"
       - ".github/workflows/ci-desktop.yml"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.

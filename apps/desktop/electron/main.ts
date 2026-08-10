@@ -228,9 +228,11 @@ const APP_USER_MODEL_ID = "ai.localcut.desktop";
  *
  * Packaged, Vite has copied public/icon.png into the renderer bundle, so it
  * rides inside app.asar next to index.html and nativeImage reads it straight
- * out of the archive. Unpackaged there is no dist/, so the same PNG is read
- * from public/ where the generator wrote it. Both resolve off __dirname
- * (dist-electron/electron/) exactly as the renderer load in createWindow does.
+ * out of the archive. Unpackaged it comes from public/ instead — the copy the
+ * generator writes, and the only one certain to be there, since dist/ is a
+ * build artifact a fresh checkout has never produced and a stale one can
+ * disagree with the mark. Both resolve off __dirname (dist-electron/electron/)
+ * exactly as the renderer load in createWindow does.
  *
  * NOT build/icon.ico, despite that being the richer multi-size file:
  * nativeImage collapses an .ico to its single largest frame, so it buys
