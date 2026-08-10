@@ -14,6 +14,7 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
+from ..providers.images import data_url
 from ..notices import SCRIPT_SHORT_OF_TARGET
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
@@ -360,9 +361,51 @@ class LLMScriptBackend(ExecutionBackend):
             await self._unload(model)
         return raw
 
+    async def describe(
+        self,
+        system: str,
+        prompt: str,
+        image: Path,
+        max_tokens: int = 4096,
+        model: str | None = None,
+    ) -> str:
+        """The same completion, with a picture the model can actually see.
+
+        The OpenAI-compatible `image_url` part, which is what Ollama and
+        llama.cpp serve for a vision model — the same shape
+        `OpenAICompatTextGen.describe` sends to a cloud endpoint, so one
+        request body serves both and there is no second spelling to drift.
+
+        `model` is required in practice and never falls back to the script
+        model: `resolve_model` would hand back a text-only default that
+        cannot see, and the server would answer from the prompt alone with a
+        confident description of a picture nothing looked at. That is the
+        trap `TextGen.describe` refuses by default, and it must not be
+        reachable here either.
+        """
+        if not model:
+            raise GenerationError(
+                "no local vision model is set — choose one under Settings > Models"
+            )
+        model = model.removeprefix("local:")
+        # Image first, for the same reason the cloud adapters do it: a picture
+        # placed after the question is attended to less.
+        raw = await self._local_complete(
+            [
+                {"type": "image_url", "image_url": {"url": await data_url(image)}},
+                {"type": "text", "text": prompt},
+            ],
+            model,
+            system=system,
+            max_tokens=max_tokens,
+        )
+        if self.unload_after:
+            await self._unload(model)
+        return raw
+
     async def _local_complete(
         self,
-        prompt: str,
+        content: str | list,
         model: str,
         system: str = _SYSTEM_PROMPT,
         max_tokens: int = _SCRIPT_TOKENS_MAX,
@@ -374,7 +417,7 @@ class LLMScriptBackend(ExecutionBackend):
                     "model": model,
                     "messages": [
                         {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
+                        {"role": "user", "content": content},
                     ],
                     "response_format": {"type": "json_object"},
                     "temperature": 0.7,

@@ -21,7 +21,9 @@ const uploadSceneImage = vi.fn(async (_file: File) => ({ nodeId: "asset-abc" }) 
   error?: string;
 });
 const conditionScene = vi.fn(async (_sceneId: string, _file: File) => null as string | null);
-const listProviders = vi.fn(async () => [] as unknown[]);
+// Nothing on this machine can see, so the New scene dialog offers no
+// Generate button — which is not what these tests are about.
+const visionModel = vi.fn(async () => ({ model: null, kind: null }));
 const applySessionVoiceClone = vi.fn(async (_file: File) => null as string | null);
 
 const file = (name: string, type: string, bytes = "x") =>
@@ -65,7 +67,7 @@ beforeEach(() => {
     uploadSceneImage,
     conditionScene,
     applySessionVoiceClone,
-    client: { listProviders },
+    client: { visionModel },
     board: { scenes: [], aux: {} },
   } as never);
 });

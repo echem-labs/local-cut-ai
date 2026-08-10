@@ -7,6 +7,7 @@ Rules enforced here, not by convention:
 - Version handshake on /health for frontend↔engine mismatch handling.
 """
 
+import functools
 import asyncio
 import json
 import logging
@@ -1311,15 +1312,33 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"dirty": sorted(dirty)}
 
+    @app.get("/vision", dependencies=[Authed])
+    async def vision() -> dict:
+        """Whether anything on this machine can read a picture, and what.
+
+        One question with one answer, because the desktop was deriving it
+        from the provider slate — the same rule written twice, in two
+        languages, and the copy in the renderer could not see a LOCAL model
+        at all. The client shows its "write these from the image" button
+        exactly when `model` is not null.
+        """
+        try:
+            model = await asyncio.to_thread(default_vision_model, config)
+        except ProviderError as exc:
+            return {"model": None, "kind": None, "reason": str(exc)}
+        return {
+            "model": model,
+            "kind": "local" if model.startswith("local:") else "cloud",
+            "reason": None,
+        }
+
     class SuggestSceneBody(BaseModel):
         # The uploaded image to look at.
         node_id: str = Field(pattern=NODE_ID_PATTERN)
-        # Cloud-only, unlike /edit's optional override: there is no local
-        # vision model in the manifest, so there is nothing to fall back TO.
-        # Answering from the project's text alone would return a confident
-        # description of a picture nothing ever looked at. Optional in the
-        # SHAPE so that omitting it earns the explanation below rather than a
-        # bare "field required".
+        # `local:*` (a vision model on the LLM server) or `cloud:*`. Optional
+        # in the SHAPE so that omitting it means "whichever this machine can
+        # run", and so a machine that can run none earns the explanation
+        # `default_vision_model` raises rather than a bare "field required".
         model: str | None = None
 
     @app.post("/projects/{project_id}/suggest-scene", dependencies=[Authed])
@@ -1335,19 +1354,24 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         no mutation path and nothing here can edit a graph.
         """
         await _get_project(project_id)
-        if body.model is not None and not body.model.startswith("cloud:"):
+        if body.model is not None and not body.model.startswith(("cloud:", "local:")):
             raise HTTPException(
                 status_code=422,
-                detail="suggesting a scene needs a cloud:* model that can read an image",
+                detail="suggesting a scene needs a local:* or cloud:* model that can read an image",
             )
-        # Omitted means "use whichever vision provider I have configured" —
-        # the desktop must not carry model names, which drift. Resolved
-        # BEFORE the spend gate so the refusal can say what it refused.
+        # Omitted means "whichever model this machine can run" — the desktop
+        # must not carry model names, which drift. Resolved BEFORE the spend
+        # gate so the refusal can say what it refused.
         try:
             model = body.model or default_vision_model(config)
         except ProviderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not CLOUD_SPEND_ALLOWED.get():
+        # Only the cloud path can bill anyone. Refusing a local model here
+        # would deny an agent with no spending rights a job that costs
+        # nothing and never leaves the machine — the same distinction the
+        # queue's own refusal draws on `CLOUD_PREFIX`.
+        local = model.startswith("local:")
+        if not local and not CLOUD_SPEND_ALLOWED.get():
             raise cloud_text_refusal(model)
         try:
             image = await asyncio.to_thread(service.asset_image_path, project_id, body.node_id)
@@ -1365,12 +1389,26 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         )
         # A client precondition (missing BYOK key, unroutable model) is 4xx,
         # distinct from the provider failing mid-call, which the 502 owns.
+        # The local server has no such precondition — it is either answering
+        # or it is not, and "not" is a 502 like any other transport failure.
+        if not local:
+            try:
+                describe = functools.partial(textgen_for_model(config, model).describe)
+            except ProviderError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            # The same interactive path onto the same local server as `/edit`,
+            # with the same VRAM-yield discipline afterwards.
+            describe = functools.partial(
+                LLMScriptBackend(
+                    base_url=config.llm_url,
+                    model=config.llm_model,
+                    timeout_s=config.llm_timeout_s,
+                ).describe,
+                model=model,
+            )
         try:
-            cloud_gen = textgen_for_model(config, model)
-        except ProviderError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            raw = await cloud_gen.describe(
+            raw = await describe(
                 system=SUGGEST_SCENE_SYSTEM_PROMPT,
                 prompt=prompt,
                 image=image,
