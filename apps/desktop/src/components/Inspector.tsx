@@ -2,7 +2,9 @@ import { ChevronRight, Pin, RotateCw, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { NodeState } from "../api/types";
 import { inspectorTitle } from "../help/terms";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FailureCard } from "./FailureCard";
+import { PhotoThumb } from "./PhotoThumb";
 import { t } from "../i18n";
 import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
@@ -30,9 +32,12 @@ export function Inspector() {
     regenerate,
     applyTimeline,
     conditionScene,
+    clearSceneStill,
     applyClonedVoice,
     selectTake,
     rerollWithSeed,
+    client,
+    currentProject,
   } = useApp();
   const view = useWorkspace((state) => state.view);
   const [tab, setTab] = useState<SceneTab>("image");
@@ -66,7 +71,15 @@ export function Inspector() {
   // panel is showing — so the panel says so itself rather than being covered
   // by a window-wide scrim that cannot name a target.
   const dropTarget = useIsDropTarget(sceneId);
+  const [removingPhoto, setRemovingPhoto] = useState(false);
   const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
+  // The user's OWN picture for this scene, when there is one. `still` is
+  // present only when the clip's keyframe port holds something other than
+  // the generated node, so its presence IS the "they supplied one" test.
+  const stillUrl =
+    scene?.still?.artifact_hash && client && currentProject
+      ? client.artifactUrl(currentProject.id, scene.still.artifact_hash)
+      : null;
   const auxNode: NodeState | null =
     !sceneId && selectedNode ? (board?.aux[selectedNode] ?? null) : null;
 
@@ -282,7 +295,7 @@ export function Inspector() {
     >
       {dropTarget && (
         <div className="drop-here" role="note">
-          {t("drop.overlayStill", { n: (sceneId ?? "").replace(/^s/, "") })}
+          <span>{t("drop.overlayStill", { n: (sceneId ?? "").replace(/^s/, "") })}</span>
         </div>
       )}
       {/* one-monitor rule: the Player view's big monitor owns playback */}
@@ -420,7 +433,25 @@ export function Inspector() {
 
           {tab === "image" && sceneId && (
             <div>
-              <label htmlFor="inspector-asset">{t("inspector.useMyPhoto")}</label>
+              {/* "Use my photo" is the wrong sentence once there IS one — it
+                  offers what is already done. With a picture in place the
+                  section is about THAT picture, and the input beneath it
+                  swaps one for another. */}
+              <label htmlFor="inspector-asset">
+                {t(stillUrl ? "inspector.yourPhoto" : "inspector.useMyPhoto")}
+              </label>
+              {stillUrl && scene?.still && (
+                <PhotoThumb
+                  src={stillUrl}
+                  alt={t("inspector.photoAlt", { n: (sceneId ?? "").replace(/^s/, "") })}
+                  title={t("inspector.photoTitle", { n: (sceneId ?? "").replace(/^s/, "") })}
+                  // Only when there is a generated keyframe to hand back to:
+                  // removing the still rewires the clip to it, and a scene
+                  // whose generated node is gone would be left with no
+                  // picture at all — which the compiler reads as not ready.
+                  onRemove={scene.keyframe ? () => setRemovingPhoto(true) : undefined}
+                />
+              )}
               <input
                 id="inspector-asset"
                 type="file"
@@ -731,6 +762,22 @@ export function Inspector() {
             </p>
           )}
         </>
+      )}
+      {removingPhoto && sceneId && (
+        // Asked, because the picture is the user's own file and the app
+        // cannot get it back: the asset stays on the flowchart, but nothing
+        // on this panel would lead them there.
+        <ConfirmDialog
+          title={t("inspector.photoRemoveTitle")}
+          message={t("inspector.photoRemoveBody", { n: sceneId.replace(/^s/, "") })}
+          confirmLabel={t("inspector.photoRemoveConfirm")}
+          onConfirm={() => {
+            setRemovingPhoto(false);
+            setPhotoError(null);
+            void clearSceneStill(sceneId).then(setPhotoError);
+          }}
+          onCancel={() => setRemovingPhoto(false)}
+        />
       )}
     </aside>
   );

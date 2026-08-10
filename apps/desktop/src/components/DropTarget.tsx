@@ -252,19 +252,18 @@ export function DropTarget() {
     return t("drop.overlayNewScene");
   }
 
-  // A scrim over the whole window answers "where will this land?" with
-  // "everywhere", and it covers the very card the answer is about. So it is
-  // drawn only for the drop that really is app-wide — a new scene, a voice
-  // sample, a file with nowhere to go. When the pointer is ON a scene, that
-  // scene lights itself up instead (see `.scene-card.drop-target`), and the
-  // window stays legible underneath.
-  const showScrim = over !== null && !(over === "image" && overScene && currentProject);
+  // The dim is always there — it is what says a file is in the air, and it
+  // is the same treatment in all three cases. What moves is the WORDS: over
+  // a scene they belong on that scene, which raises itself through this
+  // scrim and carries its own copy (see `.scene-card.drop-target`). Two
+  // sentences on screen at once, one of them wrong, is the thing to avoid.
+  const targeted = over === "image" && Boolean(overScene) && Boolean(currentProject);
 
   return (
     <>
-      {showScrim && (
+      {over && (
         <div className="drop-overlay" role="note" aria-label={t("drop.overlayAria")}>
-          <div className="drop-overlay-card">{overlayMessage()}</div>
+          {!targeted && <div className="drop-overlay-card">{overlayMessage()}</div>}
         </div>
       )}
       {pending && (

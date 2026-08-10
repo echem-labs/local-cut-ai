@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { useApp } from "../store";
 import { Modal } from "./Modal";
+import { PhotoThumb } from "./PhotoThumb";
 
 export function NewSceneDialog({
   name,
@@ -142,9 +143,11 @@ export function NewSceneDialog({
       <p>{t("drop.sceneBody")}</p>
 
       {preview && (
-        // Decorative: the file's name is already the dialog's subtitle, so an
-        // alt repeating it would say the same thing twice to a screen reader.
-        <img className="scene-preview" src={preview} alt="" />
+        // A thumbnail, not the picture: rendered at its natural width it
+        // pushed the dialog wider than the window, so reading a field meant
+        // scrolling sideways. Small states WHICH image this is about, which
+        // is all that is needed inline; the full view is one click away.
+        <PhotoThumb src={preview} alt={name} title={name} />
       )}
 
       {canGenerate && (
