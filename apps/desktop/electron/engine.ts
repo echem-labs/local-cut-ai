@@ -9,7 +9,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import type { EngineConnection } from "../src/api/types";
+import type { EngineConnection, EngineCrash } from "../src/api/types";
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_INTERVAL_MS = 250;
@@ -20,6 +20,12 @@ const TERM_GRACE_MS = 3_000;
 const KILL_GRACE_MS = 2_000;
 /** How long to wait for a killed orphan to release the port before retrying. */
 const PORT_RELEASE_MS = 4_000;
+/** How many of the engine's last output lines travel with a crash report. */
+const CRASH_TAIL_LINES = 50;
+
+/** How an exit reads in a log line. */
+const describeExit = (code: number | null, signal: NodeJS.Signals | null): string =>
+  signal ? `signal ${signal}` : `code ${code}`;
 /** The loopback port the local engine binds. ONE definition: `command()` and
  * orphan recovery must never disagree about which port to reclaim, or a stale
  * engine survives and the retry fails for a reason nobody can see. */
@@ -110,6 +116,24 @@ const mirrorEngineOutput = (
 
 export class EngineManager {
   private child: ChildProcess | null = null;
+  /**
+   * Children this app terminated on purpose.
+   *
+   * On Windows `killTree` shells out to `taskkill /T /F`, which ends the
+   * process with **exit code 1** — the same code a Python process reports
+   * when it dies of an unhandled exception. The exit code alone therefore
+   * cannot tell the ordinary teardown from a crash, and every window close
+   * used to write an error line indistinguishable from one.
+   *
+   * Keyed by the child rather than held as a flag on the manager: a child
+   * that was killed can exit long after a replacement is healthy, and that
+   * late event has to answer for itself, not for whatever the manager is
+   * doing by the time it lands.
+   */
+  private readonly asked = new WeakSet<ChildProcess>();
+  private readonly crashListeners: ((crash: EngineCrash) => void)[] = [];
+  /** The current child's last output lines, for a report worth pasting. */
+  private tail: string[] = [];
   // Published to the renderer over IPC only once the engine proves healthy;
   // a failed startup must read as "no connection", not a dead url.
   connection: EngineConnection | null = null;
@@ -225,8 +249,30 @@ export class EngineManager {
       detached: process.platform !== "win32",
     });
     this.child = child;
-    mirrorEngineOutput(child.stdout, connection.token, (line) => console.log(line));
-    mirrorEngineOutput(child.stderr, connection.token, (line) => console.error(line));
+    // Both streams are already token-redacted by the time they reach here,
+    // which is what makes the tail safe to hand to a user to paste.
+    //
+    // The array is bound as a local, not read off `this` at call time: a
+    // force-killed child's pipe is destroyed rather than ended, and
+    // `mirrorEngineOutput` flushes its last unterminated line on `close` —
+    // which can land after a replacement engine has already reassigned
+    // `this.tail`. Reading `this.tail` there would file a dead engine's
+    // dying words under the next one's crash, in the report whose whole
+    // value is belonging to the engine that just died.
+    const tail: string[] = [];
+    this.tail = tail;
+    const remember = (line: string): void => {
+      tail.push(line);
+      if (tail.length > CRASH_TAIL_LINES) tail.shift();
+    };
+    mirrorEngineOutput(child.stdout, connection.token, (line) => {
+      remember(line);
+      console.log(line);
+    });
+    mirrorEngineOutput(child.stderr, connection.token, (line) => {
+      remember(line);
+      console.error(line);
+    });
     // Only clear this.child if THIS child is still the current one: a
     // previously-killed child's late 'error'/'exit' must not detach a newer
     // child that has since replaced it (which would orphan the healthy engine
@@ -236,9 +282,25 @@ export class EngineManager {
       console.error(`[engine] failed to spawn: ${err.message}`);
       if (this.child === child) this.child = null;
     });
-    child.on("exit", (code) => {
-      console.error(`[engine] exited with code ${code}`);
-      if (this.child === child) this.child = null;
+    child.on("exit", (code, signal) => {
+      const current = this.child === child;
+      if (this.asked.has(child)) {
+        console.log(`[engine] stopped (${describeExit(code, signal)})`);
+      } else {
+        console.error(`[engine] exited with ${describeExit(code, signal)}`);
+        // Only for the engine currently in service: a replaced child dying
+        // late would otherwise raise a banner over an engine answering fine.
+        if (current) {
+          const crash: EngineCrash = {
+            code,
+            signal,
+            tail: [...this.tail],
+            at: new Date().toISOString(),
+          };
+          for (const listener of this.crashListeners) listener(crash);
+        }
+      }
+      if (current) this.child = null;
     });
     try {
       await this.waitHealthy(connection);
@@ -287,8 +349,16 @@ export class EngineManager {
     throw new Error("engine did not become healthy in time");
   }
 
+  /** Called when the engine exits without the app having asked it to. */
+  onCrash(listener: (crash: EngineCrash) => void): void {
+    this.crashListeners.push(listener);
+  }
+
   stop(): void {
     if (this.child) {
+      // Before the kill, not after: the exit can land in the same tick, and
+      // an unmarked child reads as a crash to everything downstream.
+      this.asked.add(this.child);
       killTree(this.child);
       this.child = null;
     }

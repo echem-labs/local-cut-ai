@@ -16,6 +16,10 @@ import { BrandMark } from "./components/BrandMark";
 import { HelpMenu } from "./components/Help";
 import { Palette } from "./components/Palette";
 import { QueueTray } from "./components/QueueTray";
+import { DropTarget } from "./components/DropTarget";
+import { EngineCrashBanner } from "./components/EngineCrashBanner";
+import { useDoneNotice } from "./lib/useDoneNotice";
+import { useShellProgress } from "./lib/useShellProgress";
 import { SaveTemplateDialog, TemplateNotice } from "./components/TemplateDialogs";
 import { Tip } from "./components/Tooltip";
 import { FirstRun } from "./screens/FirstRun";
@@ -126,6 +130,8 @@ export default function App() {
     closeSettings,
     openSettings,
     engineError,
+    engineCrash,
+    noteEngineCrash,
     firstRunDone,
     libraryOpen,
     openLibrary,
@@ -140,6 +146,16 @@ export default function App() {
   useEffect(() => {
     void connect();
   }, [connect]);
+
+  // The one channel the shell pushes on. Subscribed here rather than in the
+  // banner so the unsubscribe is tied to the app's lifetime, and so a
+  // StrictMode double mount cannot leave two listeners behind.
+  useEffect(() => window.localcut?.onEngineCrash?.(noteEngineCrash), [noteEngineCrash]);
+
+  // Taskbar bar and window title, for the window nobody is looking at.
+  useShellProgress();
+  // And the notification for when they walked away entirely.
+  useDoneNotice();
 
   // The tab list scrolls; keep the active tab visible in it (the removed
   // overflow cap used to guarantee this by swapping it into the window).
@@ -182,6 +198,14 @@ export default function App() {
     <Home />
   );
 
+  // The app-level bars sit ABOVE the screen rather than inside it, so
+  // nothing tells them how wide that screen's column is: Home centres a
+  // --content-col column, the Library fills --content-wide, and a project
+  // workspace uses the whole width. Left to itself a bar spans the window,
+  // which over a centred column reads as window chrome rather than as
+  // something this page is telling you.
+  const measure = !firstRunDone || currentProject ? "full" : libraryOpen ? "wide" : "col";
+
   // "NVIDIA GeForce RTX 3080" → "RTX 3080": the chip is narrow and the
   // vendor prefix says nothing the model number doesn't.
   const gpu = system?.hardware.gpus[0]?.name.replace(/^(NVIDIA|AMD|Intel)\s+(GeForce|Radeon|Arc)?\s*/i, "") ?? null;
@@ -221,6 +245,9 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* Window-level: a file dropped anywhere, including on chrome that is
+          not a drop target, would otherwise navigate the window to it. */}
+      <DropTarget />
       {/* Frameless window: this slim bar is the drag region; the native
           min/max/close buttons overlay its right edge (same background). */}
       <header className="titlebar">
@@ -376,8 +403,17 @@ export default function App() {
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
-        {engineError && <div className="banner error">{engineError}</div>}
-        <TemplateNotice />
+        <div className={`content-banners measure-${measure}`}>
+          {/* A crash outranks the generic bar: both describe an engine that
+              is not answering, and only one of them can do anything about
+              it. */}
+          {engineCrash ? (
+            <EngineCrashBanner />
+          ) : (
+            engineError && <div className="banner error">{engineError}</div>
+          )}
+          <TemplateNotice />
+        </div>
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">

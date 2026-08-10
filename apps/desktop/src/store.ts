@@ -19,6 +19,7 @@ import type {
   Checkpoint,
   EditProposal,
   EditResult,
+  EngineCrash,
   EngineEvent,
   HistoryInfo,
   InstalledWorkflow,
@@ -96,6 +97,24 @@ declare global {
       setTitleBarTheme: (theme: "dark" | "light") => Promise<void>;
       getSystemTextScale: () => Promise<number>;
       setUiZoom: (factor: number) => void;
+      /** Start the engine again after it stopped without being asked to.
+       * Optional: an older preload has no such channel, and the banner that
+       * calls it must degrade rather than throw. */
+      restartEngine?: () => Promise<{ ok: boolean; error: string | null }>;
+      /** Subscribe to engine crashes; returns its own unsubscribe. */
+      onEngineCrash?: (listener: (crash: EngineCrash) => void) => () => void;
+      /** Taskbar/dock bar and window title. `fraction` below 0 clears the
+       * bar; an empty title restores the app's own. */
+      setShellProgress?: (progress: {
+        fraction: number;
+        title: string;
+      }) => Promise<{ ok: boolean; error: string | null }>;
+      /** Raise an OS notification, if the window is not already in front.
+       * `shown` reports whether it actually appeared. */
+      notifyDone?: (notice: {
+        title: string;
+        body: string;
+      }) => Promise<{ ok: boolean; shown?: boolean; error: string | null }>;
       /** About → Support. Neither takes a path or a URL: the shell owns
        * which folder is opened and which feed is fetched. */
       openLogsFolder: () => Promise<{ ok: boolean; error: string | null }>;
@@ -217,6 +236,13 @@ export interface HomeDraft {
 interface AppState {
   client: EngineClient | null;
   engineError: string | null;
+  /** Set when the engine stopped without being asked to. Distinct from
+   * `engineError`, which also covers "not started yet" and "restarting" —
+   * a crash has a report to copy and a button that fixes it. */
+  engineCrash: EngineCrash | null;
+  /** Whether a finished render may raise an OS notification. On by default,
+   * and only ever shown while the window is unfocused. */
+  notifyOnDone: boolean;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -297,6 +323,12 @@ interface AppState {
 
   connect: () => Promise<void>;
   reconnect: () => Promise<void>;
+  /** Start the engine again after a crash. Null means it came back. */
+  restartEngine: () => Promise<string | null>;
+  noteEngineCrash: (crash: EngineCrash | null) => void;
+  setNotifyOnDone: (on: boolean) => void;
+  /** Upload a dropped image as a project asset. Null means it applied. */
+  addDroppedImage: (file: File) => Promise<string | null>;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -489,6 +521,7 @@ const FIRST_RUN_KEY = "localcut.firstRunDone";
 const DEFAULTS_KEY = "localcut.defaults.v1";
 const DRAFT_KEY = "localcut.home.draft";
 const OPEN_TABS_KEY = "localcut.openTabs";
+const NOTIFY_KEY = "localcut.notifyOnDone";
 
 /** Rail tabs survive a restart (ids only — titles rehydrate from /projects;
  * refreshHome prunes ids whose projects no longer exist, which also empties
@@ -571,6 +604,22 @@ function readFlag(key: string): boolean {
     return localStorage.getItem(key) === "1";
   } catch {
     return false;
+  }
+}
+
+/**
+ * The same read for a flag that defaults to ON.
+ *
+ * `readFlag` cannot express this: its fallback is false, so an unset key and
+ * a key explicitly set to "0" are the same answer. Notifications are on
+ * until someone turns them off — a render is minutes long and the whole
+ * point is to be told when it ends — so the absent key has to mean yes.
+ */
+function readFlagDefaultOn(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== "0";
+  } catch {
+    return true;
   }
 }
 // A stale /models snapshot can lag a terminal download event — refetch
@@ -1272,6 +1321,8 @@ export const useApp = create<AppState>((set, get) => {
     remoteEngine: false,
     remotePaired: false,
     remoteKeysArmed: true,
+    engineCrash: null,
+    notifyOnDone: readFlagDefaultOn(NOTIFY_KEY),
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1285,6 +1336,45 @@ export const useApp = create<AppState>((set, get) => {
         console.warn("reconnect failed:", err);
       }
       if (!get().client) scheduleReconnect(); // engine still down — keep trying
+    },
+
+    restartEngine: async () => {
+      // Spawning is the shell's job; the renderer only ever asks. A build
+      // whose preload predates the channel says so rather than throwing at
+      // the one moment the app is already broken.
+      const restart = window.localcut?.restartEngine;
+      if (!restart) return t("errors.engineUnavailable");
+      const result = await restart();
+      if (!result.ok) return result.error ?? t("errors.engineUnavailable");
+      // A new engine means a new token, so the client has to be rebuilt
+      // before this reports success — `engineError` is what says whether it
+      // actually came back.
+      await get().reconnect();
+      const error = get().engineError;
+      // Cleared only on the way back up. Dropping the crash on a failed
+      // restart would take the report and the retry off screen while the
+      // engine is still down.
+      //
+      // `actionError` goes with it: whatever the user tried during the
+      // outage left "the engine could not be reached" on screen, and a
+      // restart that worked makes that sentence false while the status
+      // light beside it says connected. The engine that refused the action
+      // is a dead process with a spent token — nothing on screen about it
+      // describes the app the user now has. A failed restart keeps both,
+      // because then it is all still true.
+      if (!error) set({ engineCrash: null, actionError: null });
+      return error;
+    },
+
+    noteEngineCrash: (crash) => set({ engineCrash: crash }),
+
+    setNotifyOnDone: (on) => {
+      set({ notifyOnDone: on });
+      try {
+        localStorage.setItem(NOTIFY_KEY, on ? "1" : "0");
+      } catch {
+        /* blocked storage — the preference just does not survive a restart */
+      }
     },
 
     refreshHome: async () => {
@@ -1513,9 +1603,31 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
+    addDroppedImage: async (file) => {
+      const { client, currentProject } = get();
+      if (!client) return t("errors.engineUnavailable");
+      // A dropped image has to land somewhere. Home has no graph to attach
+      // it to, so this reports rather than silently uploading into nothing.
+      if (!currentProject) return t("drop.needsProject");
+      try {
+        await client.uploadAsset(currentProject.id, file);
+        // The asset is a node on the graph now; the canvas and inspector
+        // read it from there.
+        await get().refreshGraph();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
     applySessionVoiceClone: async (file) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
+      if (!client) return t("errors.engineUnavailable");
+      // Split from the client check rather than collapsed into it. The tool
+      // session always has a project, so the two read the same there — but a
+      // voice sample dropped on Home reaches this with the engine answering
+      // fine, and "engine unavailable" then blames the one part that works.
+      if (!currentProject) return t("drop.needsProject");
       try {
         // The consent affirmation was collected in the UI; the engine
         // refuses to stamp the sample without it either way.

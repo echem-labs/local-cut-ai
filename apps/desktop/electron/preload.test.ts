@@ -8,7 +8,13 @@
  * stops a bad persisted value from rendering the app unusable at 0.01×.
  */
 import { beforeAll, describe, expect, it } from "vitest";
-import { exposedBridges, ipcInvocations, webFrame, zoomFactors } from "./test/electron-stub";
+import {
+  exposedBridges,
+  ipcInvocations,
+  ipcListeners,
+  webFrame,
+  zoomFactors,
+} from "./test/electron-stub";
 
 type Bridge = Record<string, (...args: never[]) => unknown>;
 let bridge: Bridge;
@@ -35,15 +41,41 @@ describe("the exposed surface", () => {
       "getProviderKeyPresence",
       "getSystemTextScale",
       "inspectPairing",
+      "notifyDone",
+      "onEngineCrash",
       "openLogsFolder",
       "pairEngine",
+      "restartEngine",
       "seedHookEnabled",
       "setProviderKeys",
+      "setShellProgress",
       "setTitleBarTheme",
       "setUiZoom",
       "unpairEngine",
       "updatesConfigured",
     ]);
+  });
+
+  it("passes on the crash without the IPC event that carried it", () => {
+    // The one channel that pushes. Electron calls the raw handler with the
+    // IpcRendererEvent first, and that object carries `sender` — a live
+    // handle to the whole IPC surface. Handing the listener straight to
+    // `ipcRenderer.on` would put it in reach of any script in the page.
+    const seen: unknown[] = [];
+    const subscribe = bridge.onEngineCrash as unknown as (
+      listener: (crash: unknown) => void,
+    ) => () => void;
+    const unsubscribe = subscribe((crash) => seen.push(crash));
+
+    const entry = ipcListeners.find((listener) => listener.channel === "engine:crashed")!;
+    entry.handler({ sender: "the whole ipc surface" }, { code: 1, tail: [] });
+
+    expect(seen).toEqual([{ code: 1, tail: [] }]);
+
+    // And it takes itself off again, so a remounting component cannot stack
+    // listeners that each fire the banner.
+    unsubscribe();
+    expect(ipcListeners.some((listener) => listener.channel === "engine:crashed")).toBe(false);
   });
 
   // Both take no path and no URL. The point of routing these through main

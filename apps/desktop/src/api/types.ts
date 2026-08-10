@@ -165,6 +165,24 @@ export interface HardwareGPU {
   backend: string;
 }
 
+/**
+ * An engine exit the app did not ask for.
+ *
+ * Lives here rather than in `electron/` because both sides read it: the
+ * shell fills it in, the renderer renders it. `signal` is a plain string
+ * because the renderer is typed against `vite/client` alone and has no
+ * `NodeJS.Signals` to widen from.
+ */
+export interface EngineCrash {
+  /** Exit code, or null when a signal ended it. */
+  code: number | null;
+  signal: string | null;
+  /** The engine's last output lines, token-redacted, oldest first. */
+  tail: string[];
+  /** ISO 8601, so a pasted report says when. */
+  at: string;
+}
+
 export interface SystemInfo {
   hardware: {
     os: string;

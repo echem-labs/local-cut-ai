@@ -1,0 +1,18 @@
+{
+  "overlayImage": "Drop to add this image to your project",
+  "overlayAudio": "Drop to use this as a voice sample",
+  "overlayMixed": "Drop an image or an audio file",
+  "overlayAria": "Drop files here",
+  "needsProject": "Open a video first — a dropped file is added to the project you have open.",
+  "notAFile": "That looked like a folder. Drop the file itself.",
+  "unsupported": "{name} is not something this app can use. Drop an image or an audio file.",
+  "onlyFirst": "Added {name} — find it on the Flowchart. Only the first file in a drop is used.",
+  "addedImage": "Added {name}. It is on the Flowchart, where you can connect it to a scene to use as that shot's still.",
+  "consentTitle": "Use this voice sample",
+  "consentSubtitle": "{name}",
+  "consentBody": "A cloned voice is the voice of a real person. Confirm you have their permission — or that it is your own — before this sample is used.",
+  "consentCheck": "I have the speaker's permission to clone this voice.",
+  "consentConfirm": "Use this sample",
+  "consentCancel": "Cancel",
+  "voiceApplied": "{name} is now the voice for this project."
+}
