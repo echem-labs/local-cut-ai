@@ -48,7 +48,7 @@ describe("the dialog shell", () => {
 
   it("closes on Escape and on the backdrop, but not on the dialog itself", () => {
     const onClose = vi.fn();
-    const { container } = render(
+    render(
       <Modal title="Confirm" onClose={onClose}>
         <p>sure?</p>
       </Modal>,
@@ -56,7 +56,9 @@ describe("the dialog shell", () => {
     fireEvent.mouseDown(screen.getByRole("dialog"));
     expect(onClose).not.toHaveBeenCalled();
 
-    fireEvent.mouseDown(container.querySelector(".modal-backdrop")!);
+    // Queried from the document, not from the render container: the dialog
+    // is portaled to <body>, so it is not under the caller's node.
+    fireEvent.mouseDown(document.querySelector(".modal-backdrop")!);
     expect(onClose).toHaveBeenCalledTimes(1);
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -90,6 +92,30 @@ describe("the dialog shell", () => {
       </Modal>,
     );
     expect(document.activeElement).toBe(screen.getByLabelText("version"));
+  });
+
+  it("renders at the top level, not inside whatever opened it", () => {
+    // The rail's Help menu renders its dialog as a sibling of the ? button,
+    // which made the dialog a DOM descendant of `.rail` — and
+    // `.rail .tip-wrap { width: 100% }` then reached the close button's
+    // tooltip wrapper and stretched ✕ across the whole header. The title,
+    // a flex sibling with `min-width: 0` and `overflow-wrap: anywhere`,
+    // took the squeeze and rendered one letter per line.
+    //
+    // `position: fixed` takes a dialog out of the visual flow but NOT out
+    // of the selector tree, so only the portal makes a dialog independent
+    // of where it was opened from.
+    render(
+      <div className="rail">
+        <Modal title="Keyboard shortcuts" onClose={() => {}}>
+          <p>keys</p>
+        </Modal>
+      </div>,
+    );
+
+    const backdrop = document.querySelector(".modal-backdrop")!;
+    expect(backdrop.parentElement).toBe(document.body);
+    expect(backdrop.closest(".rail")).toBeNull();
   });
 
   it("hands focus back to whatever opened it", () => {

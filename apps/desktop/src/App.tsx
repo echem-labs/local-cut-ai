@@ -198,6 +198,14 @@ export default function App() {
     <Home />
   );
 
+  // The app-level bars sit ABOVE the screen rather than inside it, so
+  // nothing tells them how wide that screen's column is: Home centres a
+  // --content-col column, the Library fills --content-wide, and a project
+  // workspace uses the whole width. Left to itself a bar spans the window,
+  // which over a centred column reads as window chrome rather than as
+  // something this page is telling you.
+  const measure = !firstRunDone || currentProject ? "full" : libraryOpen ? "wide" : "col";
+
   // "NVIDIA GeForce RTX 3080" → "RTX 3080": the chip is narrow and the
   // vendor prefix says nothing the model number doesn't.
   const gpu = system?.hardware.gpus[0]?.name.replace(/^(NVIDIA|AMD|Intel)\s+(GeForce|Radeon|Arc)?\s*/i, "") ?? null;
@@ -395,14 +403,17 @@ export default function App() {
         </div>
       </nav>
       <main className={`content${workspaceMode ? " project-mode" : ""}`}>
-        {/* A crash outranks the generic bar: both describe an engine that is
-            not answering, and only one of them can do anything about it. */}
-        {engineCrash ? (
-          <EngineCrashBanner />
-        ) : (
-          engineError && <div className="banner error">{engineError}</div>
-        )}
-        <TemplateNotice />
+        <div className={`content-banners measure-${measure}`}>
+          {/* A crash outranks the generic bar: both describe an engine that
+              is not answering, and only one of them can do anything about
+              it. */}
+          {engineCrash ? (
+            <EngineCrashBanner />
+          ) : (
+            engineError && <div className="banner error">{engineError}</div>
+          )}
+          <TemplateNotice />
+        </div>
         {screen}
         {firstRunDone && settingsOpen && (
           <div className="settings-layer screen-enter">

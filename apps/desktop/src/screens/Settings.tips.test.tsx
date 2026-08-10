@@ -194,8 +194,14 @@ async function mount(tab: string, over: Record<string, unknown> = {}) {
   return view;
 }
 
-/** Buttons this dialog owns, in whatever state it is currently in. */
-const ownButtons = (root: HTMLElement) =>
+/** Buttons this dialog owns, in whatever state it is currently in.
+ *
+ * Scanned from the document rather than from the render container, because
+ * `Modal` portals to `<body>`: a dialog Settings opens is not inside the
+ * tree Settings rendered. Scoped to the container, the grant-dialog audits
+ * below would have found no buttons at all — and an empty list satisfies
+ * every assertion under it. */
+const ownButtons = (root: HTMLElement = document.body) =>
   [...root.querySelectorAll("button")].filter((button) => !button.closest('[role="tablist"]'));
 
 const describeButton = (button: HTMLButtonElement) =>
@@ -208,8 +214,8 @@ beforeEach(() => {
 describe("every action in Settings carries a tooltip", () => {
   for (const tab of OWN_TABS) {
     it(`explains every button on the ${tab} pane`, async () => {
-      const { container } = await mount(tab);
-      const buttons = ownButtons(container as HTMLElement);
+      await mount(tab);
+      const buttons = ownButtons();
       // A query that finds nothing passes every assertion under it. The
       // close button alone is on every pane, so one is the floor.
       expect(buttons.length).toBeGreaterThanOrEqual(1);
@@ -231,14 +237,14 @@ describe("every action in Settings carries a tooltip", () => {
       fingerprint: "ab:cd",
       keys: { anthropic: true, openai: false, gemini: false, fal: false, encrypted: true },
     }));
-    const { container } = await mount("engine", { inspectPairing });
+    await mount("engine", { inspectPairing });
     fireEvent.change(screen.getByLabelText(t("settings.remote.pairAria")), {
       target: { value: "code" },
     });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: t("settings.remote.pair") }));
     });
-    const buttons = ownButtons(container as HTMLElement);
+    const buttons = ownButtons();
     expect(buttons.some((button) => button.textContent === t("common.cancel"))).toBe(true);
     const bare = buttons
       .filter((button) => !button.closest(".tip-wrap"))
@@ -247,8 +253,8 @@ describe("every action in Settings carries a tooltip", () => {
   });
 
   it("explains disconnecting an engine that is already paired", async () => {
-    const { container } = await mount("engine", { remotePaired: true, remote: true });
-    const buttons = ownButtons(container as HTMLElement);
+    await mount("engine", { remotePaired: true, remote: true });
+    const buttons = ownButtons();
     expect(
       buttons.some((button) => button.textContent === t("settings.remote.disconnect")),
     ).toBe(true);
@@ -267,8 +273,8 @@ describe("every action in Settings carries a tooltip", () => {
         ? { ...row, downloading: true, progress: { done: 1_000_000_000, total: 4_000_000_000 } }
         : row,
     );
-    const { container } = await mount("models", { models: downloading });
-    const buttons = ownButtons(container as HTMLElement);
+    await mount("models", { models: downloading });
+    const buttons = ownButtons();
     expect(buttons.some((button) => button.textContent === t("common.cancel"))).toBe(true);
     const bare = buttons
       .filter((button) => !button.closest(".tip-wrap"))
@@ -281,7 +287,7 @@ describe("every action in Settings carries a tooltip", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: t("models.custom.addEntry") }));
     });
-    const buttons = ownButtons(container as HTMLElement);
+    const buttons = ownButtons();
     expect(buttons.some((button) => button.textContent === t("models.custom.add"))).toBe(true);
     // The imported-workflow chips are part of this form; the fixture has two,
     // so a form rendered without them would not be the form under test.
@@ -295,11 +301,11 @@ describe("every action in Settings carries a tooltip", () => {
   // The grant dialog is the most consequential surface in Settings: it is
   // where third-party Python is allowed to run unsandboxed.
   it("explains the node pack grant dialog", async () => {
-    const { container } = await mount("workflows");
+    await mount("workflows");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: t("settings.workflows.enable") }));
     });
-    const buttons = ownButtons(container as HTMLElement);
+    const buttons = ownButtons();
     expect(
       buttons.some((button) => button.textContent === t("settings.workflows.enableConfirm")),
     ).toBe(true);

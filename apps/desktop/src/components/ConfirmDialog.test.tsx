@@ -117,8 +117,10 @@ describe("ConfirmDialog", () => {
   it("cancels when the backdrop is clicked", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
-    const { container } = render(<Harness onCancel={onCancel} />);
-    await user.click(container.querySelector(".modal-backdrop") as HTMLElement);
+    render(<Harness onCancel={onCancel} />);
+    // From the document, not the render container: `Modal` portals to
+    // <body>, so the backdrop is not under the caller's node.
+    await user.click(document.querySelector(".modal-backdrop") as HTMLElement);
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
