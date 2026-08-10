@@ -90,10 +90,47 @@ def test_it_refuses_a_local_model_rather_than_answering_blind(client):
     project_id = _project(client)
     node_id = _asset(client, project_id)
 
-    response = _suggest(client, project_id, node_id, model=None)
+    response = _suggest(client, project_id, node_id, model="local:qwen3:14b")
 
     assert response.status_code == 422
     assert "cloud" in response.json()["detail"]
+
+
+def test_omitting_the_model_uses_a_provider_the_user_has_configured(client, monkeypatch):
+    # The desktop must not carry model names — they drift, and a renderer
+    # that hardcodes one ships a dead string until the next release. Asking
+    # without naming a model means "whichever vision provider I pay for".
+    project_id = _project(client)
+    node_id = _asset(client, project_id)
+    seen = {}
+
+    async def fake_describe(self, system, prompt, image, max_tokens=4096):
+        seen["model"] = self.model
+        return json.dumps({"narration": "n", "prompt": "p"})
+
+    monkeypatch.setattr(AnthropicTextGen, "describe", fake_describe)
+
+    response = _suggest(client, project_id, node_id, model=None)
+
+    assert response.status_code == 200, response.text
+    assert seen["model"].startswith("claude")
+
+
+def test_with_no_provider_at_all_it_says_what_is_missing(tmp_path):
+    # Not a 502: nothing failed. The user has no key, which they fix in
+    # Settings — and the message has to name that rather than blame a model.
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
+    with TestClient(create_app(config)) as bare:
+        bare.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        project_id = _project(bare)
+        node_id = _asset(bare, project_id)
+
+        response = bare.post(
+            f"/projects/{project_id}/suggest-scene", json={"node_id": node_id}
+        )
+
+    assert response.status_code == 400
+    assert "Settings" in response.json()["detail"]
 
 
 def test_it_refuses_when_the_caller_may_not_spend_the_key(client, monkeypatch):

@@ -75,7 +75,11 @@ from ..manifest.defaults import (
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
-from ..providers.registry import configured_providers, textgen_for_model
+from ..providers.registry import (
+    configured_providers,
+    default_vision_model,
+    textgen_for_model,
+)
 from ..providers.textgen import ProviderError
 from ..project.store import (
     PROJECT_ID_PATTERN,
@@ -1331,13 +1335,20 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         no mutation path and nothing here can edit a graph.
         """
         await _get_project(project_id)
-        if not body.model or not body.model.startswith("cloud:"):
+        if body.model is not None and not body.model.startswith("cloud:"):
             raise HTTPException(
                 status_code=422,
                 detail="suggesting a scene needs a cloud:* model that can read an image",
             )
+        # Omitted means "use whichever vision provider I have configured" —
+        # the desktop must not carry model names, which drift. Resolved
+        # BEFORE the spend gate so the refusal can say what it refused.
+        try:
+            model = body.model or default_vision_model(config)
+        except ProviderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         if not CLOUD_SPEND_ALLOWED.get():
-            raise cloud_text_refusal(body.model)
+            raise cloud_text_refusal(model)
         try:
             image = await asyncio.to_thread(service.asset_image_path, project_id, body.node_id)
         except KeyError:
@@ -1357,7 +1368,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # A client precondition (missing BYOK key, unroutable model) is 4xx,
         # distinct from the provider failing mid-call, which the 502 owns.
         try:
-            cloud_gen = textgen_for_model(config, body.model)
+            cloud_gen = textgen_for_model(config, model)
         except ProviderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
