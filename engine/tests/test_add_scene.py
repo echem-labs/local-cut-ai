@@ -9,7 +9,7 @@ an added scene lives until the script itself re-renders.
 import pytest
 
 from localcut_engine.events import EventBus
-from localcut_engine.graph.compiler import unready_nodes
+from localcut_engine.graph.compiler import orphaned_nodes, unready_nodes
 from localcut_engine.graph.model import KEYFRAME_PORT, Node, NodeKind
 from localcut_engine.graph.patch import PatchOp
 from localcut_engine.graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph
@@ -280,3 +280,54 @@ def test_wiring_the_keyframe_in_makes_the_added_clip_runnable(tmp_path):
 
     graph = service.store.load_graph(pid)
     assert "clip-1" not in unready_nodes(graph)
+
+
+def test_a_scene_built_on_an_uploaded_image_never_renders_a_keyframe(tmp_path):
+    """`src` wires the picture in as part of the SAME op that mints the scene.
+
+    Sending `add_scene` and then a `connect` is two patches, and the first
+    one ends in `_enqueue_dirty`: the generated keyframe still feeds the clip
+    at that moment, so it is queued, rendered and paid for before the second
+    patch displaces it. `orphaned_nodes` exists to stop exactly that waste
+    and cannot, because the node is not orphaned yet.
+
+    Doing it in one op also makes the whole thing atomic. Two patches can
+    half-succeed, leaving a wordless scene the user's next attempt duplicates.
+    """
+    service, pid = _service(tmp_path)
+    asset = service.add_asset(pid, "shot.png", b"\x89PNG\r\n\x1a\n" + b"x" * 32)
+
+    dirty = service.patch(
+        pid,
+        [
+            PatchOp(
+                op="add_scene",
+                src=asset["node_id"],
+                params={"prompt": "a slow push in", "narration": "the city wakes"},
+            )
+        ],
+    )
+
+    sid = next(n for n in dirty if n.endswith(".clip")).split(".")[0]
+    graph = service.store.load_graph(pid)
+    # The clip draws from the user's picture, not from a generated one.
+    assert [e.src for e in graph.inputs_of(f"{sid}.clip") if e.port == KEYFRAME_PORT] == [
+        asset["node_id"]
+    ]
+    # The generated node is still there for the flowchart to mark "not
+    # needed" — but it feeds nothing, so it is never enqueued.
+    assert f"{sid}.keyframe" in graph.nodes
+    assert f"{sid}.keyframe" in orphaned_nodes(graph)
+    assert all(job.spec.node_id != f"{sid}.keyframe" for job in service.queue.list(pid, 1000))
+
+
+def test_add_scene_refuses_a_keyframe_source_that_is_not_there(tmp_path):
+    """A `src` naming nothing must refuse the whole op rather than build a
+    scene wired to a node that does not exist."""
+    service, pid = _service(tmp_path)
+
+    with pytest.raises((KeyError, ValueError)):
+        service.patch(pid, [PatchOp(op="add_scene", src="asset-000000000000")])
+
+    graph = service.store.load_graph(pid)
+    assert not [n for n in graph.nodes if n.startswith("s2.")]

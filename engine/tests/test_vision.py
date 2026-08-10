@@ -131,9 +131,7 @@ async def test_a_refusal_from_the_provider_is_a_provider_error(monkeypatch, tmp_
     capture.install(monkeypatch)
 
     with pytest.raises(ProviderError):
-        await AnthropicTextGen("k", "claude-sonnet-5").describe(
-            system="s", prompt="p", image=image
-        )
+        await AnthropicTextGen("k", "claude-sonnet-5").describe(system="s", prompt="p", image=image)
 
 
 def test_the_text_providers_declare_vision():

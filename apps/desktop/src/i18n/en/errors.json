@@ -29,6 +29,5 @@
   "crashReportUnknown": "unknown",
   "templateLimit": "That's the {limit}-template limit. Delete one from \"Start from a template…\" first.",
   "templateSize": "This project's shape is too large to keep as a template.",
-  "templateMissing": "That template is no longer saved on this machine.",
-  "sceneNotAdded": "The scene was added but the engine did not say which one, so the image was not attached to it."
+  "templateMissing": "That template is no longer saved on this machine."
 }

@@ -125,9 +125,7 @@ def test_with_no_provider_at_all_it_says_what_is_missing(tmp_path):
         project_id = _project(bare)
         node_id = _asset(bare, project_id)
 
-        response = bare.post(
-            f"/projects/{project_id}/suggest-scene", json={"node_id": node_id}
-        )
+        response = bare.post(f"/projects/{project_id}/suggest-scene", json={"node_id": node_id})
 
     assert response.status_code == 400
     assert "Settings" in response.json()["detail"]

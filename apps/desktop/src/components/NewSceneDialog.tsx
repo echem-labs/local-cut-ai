@@ -29,7 +29,9 @@ export function NewSceneDialog({
   /** The asset already uploaded, which is what the model will look at. */
   nodeId: string;
   onClose: () => void;
-  onAdded: (message: string | null) => void;
+  /** The scene landed. Failure never reaches here — it stays in the dialog,
+   *  beside the fields the user would edit to retry. */
+  onAdded: () => void;
 }) {
   const { addSceneFromImage, suggestScene, client } = useApp();
   const [narration, setNarration] = useState("");
@@ -95,7 +97,7 @@ export function NewSceneDialog({
       setError(message);
       return;
     }
-    onAdded(null);
+    onAdded();
   };
 
   const ready = narration.trim().length > 0 && prompt.trim().length > 0;

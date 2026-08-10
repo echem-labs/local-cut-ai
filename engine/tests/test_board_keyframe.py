@@ -17,7 +17,7 @@ slots and would otherwise lose the generated node's "not needed".
 import pytest
 
 from localcut_engine.events import EventBus
-from localcut_engine.graph.model import KEYFRAME_PORT, Node, NodeKind
+from localcut_engine.graph.model import KEYFRAME_PORT
 from localcut_engine.graph.patch import PatchOp
 from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
 from localcut_engine.jobs.queue import JobQueue

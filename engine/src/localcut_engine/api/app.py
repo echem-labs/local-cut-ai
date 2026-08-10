@@ -1352,9 +1352,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         try:
             image = await asyncio.to_thread(service.asset_image_path, project_id, body.node_id)
         except KeyError:
-            raise HTTPException(
-                status_code=404, detail=f"unknown asset: {body.node_id}"
-            ) from None
+            raise HTTPException(status_code=404, detail=f"unknown asset: {body.node_id}") from None
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         # The project's own words, so the suggestion belongs to THIS video
