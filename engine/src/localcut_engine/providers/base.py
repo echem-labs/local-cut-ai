@@ -51,9 +51,7 @@ class TextGen(ABC):
     @abstractmethod
     async def complete(self, system: str, prompt: str, max_tokens: int = 4096) -> str: ...
 
-    async def describe(
-        self, system: str, prompt: str, image: Path, max_tokens: int = 4096
-    ) -> str:
+    async def describe(self, system: str, prompt: str, image: Path, max_tokens: int = 4096) -> str:
         """The same completion, with a picture the model can actually see.
 
         Concrete rather than abstract, and refusing by default: an adapter

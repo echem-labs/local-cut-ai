@@ -533,6 +533,24 @@ class ProjectService:
     ) -> list[PatchOp]:
         if "timeline" not in graph.nodes or "script" not in graph.nodes:
             raise ValueError("this project has no timeline to add a scene to")
+        # `src` names a picture to build the scene on, in place of the
+        # keyframe this op would otherwise generate — a scene made from an
+        # image the user dropped in.
+        #
+        # Part of THIS op rather than a `connect` in a second patch, for two
+        # reasons. The first patch ends in `_enqueue_dirty`, and until the
+        # asset is wired the generated keyframe still feeds the clip: it is
+        # queued, rendered and paid for, and only then displaced. That is the
+        # exact waste `orphaned_nodes` was written to prevent, and it cannot,
+        # because the node is not orphaned yet. Second, two patches can
+        # half-succeed — leaving a scene with no picture that the user's next
+        # attempt duplicates rather than repairs.
+        #
+        # Checked here because `connect` does not: it wires whatever id it is
+        # given, so a typo would build the whole subgraph around an edge from
+        # a node that does not exist.
+        if op.src is not None and op.src not in graph.nodes:
+            raise ValueError(f"unknown keyframe source: {op.src}")
         # This op reads its params before the add_node ops it compiles to
         # reach `stored_params`, and it reads them through `str(...)` with a
         # default written for an ABSENT key: `str(None)` is the string
@@ -628,7 +646,11 @@ class ProjectService:
             ),
             PatchOp(op="connect", node_id=kf_id, src="script", port="default"),
             PatchOp(op="connect", node_id=narr_id, src="script", port="default"),
-            PatchOp(op="connect", node_id=clip_id, src=kf_id, port=KEYFRAME_PORT),
+            # The user's picture when they supplied one, otherwise the node
+            # this op just minted. The generated keyframe is still ADDED
+            # either way: it is what the flowchart marks "not needed", and
+            # what the scene falls back to if the still is ever disconnected.
+            PatchOp(op="connect", node_id=clip_id, src=op.src or kf_id, port=KEYFRAME_PORT),
             PatchOp(op="connect", node_id="timeline", src=clip_id, port=sid),
             PatchOp(
                 op="connect",
@@ -1947,6 +1969,7 @@ class ProjectService:
         scenes = []
         raw_ids = {n.split(".")[0] for n in graph.nodes if "." in n and n.endswith(".clip")}
         scene_ids = sorted(raw_ids, key=scene_sort_key)
+
         def keyframe_source(sid: str) -> str | None:
             """The node actually feeding this scene's clip on the keyframe port.
 

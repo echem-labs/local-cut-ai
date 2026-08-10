@@ -2187,25 +2187,32 @@ export const useApp = create<AppState>((set, get) => {
       try {
         await flushPatches();
         const known = new Set((get().board?.scenes ?? []).map((scene) => scene.scene_id));
-        // The two fields in the SAME op that creates the scene: `add_scene`
-        // compiles them straight into the new keyframe and narration nodes,
-        // so the scene is never briefly blank — and blank is what the
-        // compiler reads as "not ready", which would enqueue nothing and
-        // then enqueue everything a moment later.
+        // One op, doing all three things: the words, the scene, and the
+        // picture it is built on.
+        //
+        // The words ride along because `add_scene` compiles them straight
+        // into the new keyframe and narration nodes, so the scene is never
+        // briefly blank — and blank is what the compiler reads as "not
+        // ready", which would enqueue nothing and then enqueue everything a
+        // moment later.
+        //
+        // The image rides along for a sharper reason: wiring it in a SECOND
+        // patch means the first one enqueues the generated keyframe — which
+        // still feeds the clip at that moment — and renders it in full
+        // before the connect displaces it. `src` on the op makes the engine
+        // wire the asset as it builds the scene, so that node is orphaned
+        // before anything is queued. It also makes this atomic: two patches
+        // can half-succeed, and a wordless pictureless scene is one the
+        // user's next attempt duplicates rather than repairs.
         const { dirty } = await client.patch(currentProject.id, [
-          { op: "add_scene", node_id: "", params: { ...fields } },
+          { op: "add_scene", node_id: "", src: nodeId, params: { ...fields } },
         ]);
+        // Best-effort selection only — the scene and its picture have landed
+        // either way, so failing to spot the new id is nothing to report.
         const added = dirty.find(
           (id) => id.endsWith(".keyframe") && !known.has(id.split(".")[0]),
         );
-        if (!added) return t("errors.sceneNotAdded");
-        const sceneId = added.split(".")[0]!;
-        // Wire the image in as a second patch: the clip's id is not knowable
-        // until the engine has expanded the scene.
-        await client.patch(currentProject.id, [
-          { op: "connect", node_id: `${sceneId}.clip`, src: nodeId, port: "keyframe" },
-        ]);
-        set({ selectedNode: added });
+        if (added) set({ selectedNode: added });
         await get().refreshBoard();
         return null;
       } catch (err) {
