@@ -53,7 +53,13 @@ export function PhotoThumb({
         // Outside the opening button, never inside it: ARIA specifies a
         // button's children as presentational, so a control nested in one
         // disappears from assistive tech however reachable it stays by Tab.
-        <Tip label={t("inspector.photoRemove")}>
+        // The CLASS goes on the tooltip wrapper, not the button: `.tip-wrap`
+        // is `position: relative`, so it becomes the button's containing
+        // block and an absolutely positioned button inside it anchors to the
+        // wrapper's own place in the flow — below the picture — rather than
+        // to the thumbnail's corner. `.ring-tip` and `.take-tip` style the
+        // wrapper for the same reason.
+        <Tip label={t("inspector.photoRemove")} className="photo-thumb-tip">
           <button
             type="button"
             className="photo-thumb-remove"
