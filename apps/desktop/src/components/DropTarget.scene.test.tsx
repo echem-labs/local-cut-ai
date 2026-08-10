@@ -275,6 +275,29 @@ describe("an image dropped anywhere else in a project", () => {
     expect(screen.getByLabelText(t("drop.scenePrompt"))).toHaveValue("P");
   });
 
+  it("does not promise the cloud for work that stays on the machine", async () => {
+    // The hint under the button is a privacy claim, and on the local path the
+    // old one was simply false: nothing is sent anywhere and no key is spent.
+    // Getting this wrong in a local-first app is worse than saying nothing.
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+
+    expect(screen.getByText(t("drop.sceneGenerateHintLocal"))).toBeInTheDocument();
+    expect(screen.queryByText(t("drop.sceneGenerateHintCloud"))).toBeNull();
+  });
+
+  it("says a cloud key is spent when that is what will happen", async () => {
+    visionModel.mockResolvedValueOnce({ model: "cloud:claude-sonnet-5", kind: "cloud" } as never);
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+
+    expect(screen.getByText(t("drop.sceneGenerateHintCloud"))).toBeInTheDocument();
+  });
+
   it("hides the offer on a machine with nothing that can see", async () => {
     // A button that can only fail is worse than no button: the engine's
     // refusal names Settings, which the user reads only after clicking.

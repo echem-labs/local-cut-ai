@@ -7,8 +7,8 @@ Rules enforced here, not by convention:
 - Version handshake on /health for frontend↔engine mismatch handling.
 """
 
-import functools
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -70,6 +70,7 @@ from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
 from ..manifest.defaults import (
     DEFAULTABLE_TASKS,
     DefaultsTooNew,
+    is_server_model_name,
     load_defaults,
     set_default,
 )
@@ -1326,6 +1327,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             model = await asyncio.to_thread(default_vision_model, config)
         except ProviderError as exc:
             return {"model": None, "kind": None, "reason": str(exc)}
+        except DefaultsTooNew as exc:
+            # Not a `reason`: that field says "you have no model, here is how
+            # to get one", which the user fixes in Settings. This says their
+            # engine cannot read the file — the same condition
+            # `/models/defaults` reports, answered the same way.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
             "model": model,
             "kind": "local" if model.startswith("local:") else "cloud",
@@ -1359,13 +1366,27 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 status_code=422,
                 detail="suggesting a scene needs a local:* or cloud:* model that can read an image",
             )
+        # This is the first route on which a CALLER names a local model —
+        # `/edit` takes only `cloud:*` or nothing, so every local name the
+        # engine has sent so far came through `set_default` and its bound.
+        # Re-established here rather than inherited, because nothing else on
+        # this path would refuse an unbounded string before it is sent.
+        if body.model is not None and body.model.startswith("local:"):
+            if not is_server_model_name(body.model):
+                raise HTTPException(
+                    status_code=422, detail=f"{body.model!r} is not a valid model name"
+                )
         # Omitted means "whichever model this machine can run" — the desktop
         # must not carry model names, which drift. Resolved BEFORE the spend
         # gate so the refusal can say what it refused.
+        # Off the loop: resolving it now reads the defaults file from disk,
+        # where it used to be a lookup in an in-memory provider table.
         try:
-            model = body.model or default_vision_model(config)
+            model = body.model or await asyncio.to_thread(default_vision_model, config)
         except ProviderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         # Only the cloud path can bill anyone. Refusing a local model here
         # would deny an agent with no spending rights a job that costs
         # nothing and never leaves the machine — the same distinction the
@@ -1393,7 +1414,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # or it is not, and "not" is a 502 like any other transport failure.
         if not local:
             try:
-                describe = functools.partial(textgen_for_model(config, model).describe)
+                describe = textgen_for_model(config, model).describe
             except ProviderError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         else:

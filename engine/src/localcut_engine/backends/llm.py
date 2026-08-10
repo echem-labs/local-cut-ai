@@ -14,8 +14,8 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
-from ..providers.images import data_url
 from ..notices import SCRIPT_SHORT_OF_TARGET
+from ..providers.images import data_url
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
 

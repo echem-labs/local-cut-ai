@@ -29,7 +29,8 @@ from localcut_engine.api.app import create_app
 from localcut_engine.backends.base import GenerationError
 from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
-from localcut_engine.manifest.defaults import set_default
+from localcut_engine.manifest.defaults import DEFAULTS_VERSION, set_default
+from localcut_engine.manifest.defaults import _path as _defaults_path
 from localcut_engine.providers.textgen import AnthropicTextGen, ProviderError
 
 TOKEN = "test-token"
@@ -123,6 +124,25 @@ def test_it_refuses_a_model_that_routes_nowhere(client):
 
     assert response.status_code == 422
     assert "local" in response.json()["detail"]
+
+
+def test_a_local_model_name_is_held_to_the_same_rule_as_a_saved_one(client):
+    """This is the first route that lets a CALLER name a local model.
+
+    `/edit` takes only `cloud:*` or nothing, so every local name the engine
+    has ever sent came from `set_default`, which bounds it at 128 characters
+    of `[\\w.:-]`. Forwarding an arbitrary string straight to the LLM server
+    because it happens to start with `local:` drops that check on the one
+    path that did not inherit it.
+    """
+    project_id = _project(client)
+    node_id = _asset(client, project_id)
+
+    assert _suggest(client, project_id, node_id, model="local:" + "x" * 200).status_code == 422
+    assert _suggest(client, project_id, node_id, model="local:has spaces").status_code == 422
+    # An empty name is "local:" and nothing else — not a model, and not the
+    # same thing as omitting the field.
+    assert _suggest(client, project_id, node_id, model="local:").status_code == 422
 
 
 def test_the_local_path_never_falls_back_to_the_model_that_cannot_see(tmp_path):
@@ -295,6 +315,41 @@ def test_a_caller_that_may_not_spend_can_still_use_the_local_model(tmp_path, mon
         )
 
     assert response.status_code == 200, response.text
+
+
+def test_defaults_from_a_newer_build_are_refused_with_a_reason(tmp_path):
+    """Asking which model can see now reads the defaults file, so both routes
+    inherited an exception neither of them catches.
+
+    `DefaultsTooNew` is a RuntimeError, not a ProviderError, and a 500 tells
+    the user nothing about a situation the engine understands exactly:
+    `/models/defaults` answers it with 409 and the message naming the format
+    version. These two must not be the pair that crashes instead.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock", anthropic_key="k")
+    path = _defaults_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": DEFAULTS_VERSION + 1, "defaults": {"vision.llm": "qwen2.5vl"}}),
+        encoding="utf-8",
+    )
+
+    with TestClient(create_app(config), raise_server_exceptions=False) as newer:
+        newer.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        # The convention these two are held to, asserted here so the day it
+        # changes this test says so rather than quietly agreeing with a 500.
+        assert newer.get("/models/defaults").status_code == 409
+
+        seen = newer.get("/vision")
+        project_id = _project(newer)
+        node_id = _asset(newer, project_id)
+        suggested = newer.post(f"/projects/{project_id}/suggest-scene", json={"node_id": node_id})
+
+    assert seen.status_code == 409, seen.text
+    assert suggested.status_code == 409, suggested.text
+    # Named, so the user knows it is their engine that is behind and that
+    # nothing was rewritten underneath them.
+    assert "newer version" in suggested.json()["detail"]
 
 
 def test_vision_reports_nothing_on_a_machine_that_cannot_see(tmp_path):
