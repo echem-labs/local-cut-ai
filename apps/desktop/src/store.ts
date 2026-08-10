@@ -2207,11 +2207,15 @@ export const useApp = create<AppState>((set, get) => {
         const { dirty } = await client.patch(currentProject.id, [
           { op: "add_scene", node_id: "", src: nodeId, params: { ...fields } },
         ]);
-        // Best-effort selection only — the scene and its picture have landed
-        // either way, so failing to spot the new id is nothing to report.
-        const added = dirty.find(
-          (id) => id.endsWith(".keyframe") && !known.has(id.split(".")[0]),
-        );
+        // The CLIP, unlike `addScene` above, which selects the keyframe so
+        // the Inspector opens on the prompt still to be written. Here that
+        // prompt has just been written, and the keyframe this op minted is
+        // the node `src` orphaned — so selecting it would open the panel on
+        // a tile marked "not needed" the moment the scene was created.
+        //
+        // Best-effort either way: the scene and its picture have landed, so
+        // failing to spot the new id is nothing to report.
+        const added = dirty.find((id) => id.endsWith(".clip") && !known.has(id.split(".")[0]));
         if (added) set({ selectedNode: added });
         await get().refreshBoard();
         return null;

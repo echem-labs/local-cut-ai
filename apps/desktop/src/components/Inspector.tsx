@@ -52,6 +52,13 @@ export function Inspector() {
   // it). The engine refuses with a reason; discarding it left the chip
   // looking simply dead.
   const [takeError, setTakeError] = useState<string | null>(null);
+  // Why "use my photo" needs its own: `conditionScene` reports a refusal by
+  // returning the message, and this caller used to `.catch` it — dead code
+  // against a promise that never rejects, so an upload the engine turned
+  // down said nothing at all here while the same failure through a drop
+  // showed a banner. Beside the input rather than in the shared banner far
+  // below, so the answer is where the question was asked.
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const sceneId = selectedNode?.includes(".") ? selectedNode.split(".")[0] : null;
   const scene = sceneId ? (board?.scenes.find((s) => s.scene_id === sceneId) ?? null) : null;
@@ -402,12 +409,16 @@ export function Inspector() {
                   const file = event.target.files?.[0];
                   event.target.value = ""; // same file re-selectable later
                   if (file) {
-                    void conditionScene(sceneId, file).catch((err) =>
-                      console.warn("asset conditioning failed:", err),
-                    );
+                    setPhotoError(null);
+                    void conditionScene(sceneId, file).then(setPhotoError);
                   }
                 }}
               />
+              {photoError && (
+                <div role="status" className="banner error">
+                  {photoError}
+                </div>
+              )}
               <div className="hint">{t("terms.tips.ownImage")}</div>
             </div>
           )}
