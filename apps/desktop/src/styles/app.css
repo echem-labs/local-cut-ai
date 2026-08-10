@@ -6217,38 +6217,65 @@ button.link:hover {
 
 /* The surface a dragged picture would actually land on.
  *
- * A ring on the thing itself, instead of a scrim over the window: the scrim
- * answers "where will this go?" with "everywhere", and it dims the one card
- * the answer is about. `outline` rather than `border` because the card's box
- * is already laid out — a border would resize it under the pointer, and a
- * target that moves while you aim at it is worse than no target at all. */
+ * One design for all three answers: a dimmed ground with a dashed card
+ * floating on it. The only difference is SCOPE. Over a scene, that scene
+ * rises through the window scrim and wears the treatment itself, so the dim
+ * and the words are about one card; over nothing in particular there is no
+ * target to raise, and the identical card sits on the whole window instead.
+ *
+ * `outline`, not `border`, because the card's box is already laid out: a
+ * border would resize it under the pointer, and a target that moves while
+ * you aim at it is worse than no target at all. */
 .scene-card.drop-target,
 .inspector.drop-target {
+  /* Above `.drop-overlay` (1000), so the scrim dims everything BUT this. */
+  z-index: 1001;
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface-1));
+  background: var(--surface-1);
 }
 
-/* The label sits over the surface it names. Pointer-transparent, or it
- * becomes the drop's target and the card stops being what
- * `closest("[data-scene]")` finds at the moment the user lets go. */
+/* The label, drawn exactly like `.drop-overlay-card` below — same dashed
+ * accent edge, same weight, same centring — so the three states read as one
+ * design rather than three. Pointer-transparent, or it becomes the drop's
+ * target and the card stops being what `closest("[data-scene]")` finds at
+ * the moment the user lets go. */
 .drop-here {
   position: absolute;
-  inset-inline: var(--space-2);
-  top: var(--space-2);
-  z-index: 3;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-s);
-  background: var(--accent);
-  /* Literal white, as `.btn-primary` does on the same accent: there is no
-     on-accent token, and an undefined custom property does not fall back —
-     it invalidates the whole declaration and the text draws in whatever it
-     inherited, which on this violet is unreadable. */
-  color: #fff;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--surface-0) 55%, transparent);
+  pointer-events: none;
+}
+
+.drop-here > * {
+  padding: var(--space-3) var(--space-4);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-m);
+  background: var(--surface-1);
+  color: var(--text-primary);
   font-size: var(--text-s);
   font-weight: 600;
   text-align: center;
-  pointer-events: none;
+}
+
+/* The panel scrolls, and an absolutely positioned label would scroll with
+ * its content — off the top of the very panel it is labelling. */
+.inspector.drop-target > .drop-here {
+  position: sticky;
+  inset: auto;
+  top: 0;
+  height: 0;
+  overflow: visible;
+  background: none;
+}
+
+.inspector.drop-target > .drop-here > * {
+  position: relative;
+  top: var(--space-4);
 }
 
 /* Both hosts have to establish a containing block for it, or the label
@@ -6256,6 +6283,75 @@ button.link:hover {
 .scene-card,
 .inspector {
   position: relative;
+}
+
+/* A picture the user supplied, inline.
+ *
+ * Capped hard. Rendered at its natural width it pushed the New scene dialog
+ * past the window and made the whole dialog scroll sideways to reach a
+ * field — so the inline job is to say WHICH picture, and the full view does
+ * the rest. */
+.photo-thumb {
+  position: relative;
+  display: inline-block;
+  margin: var(--space-2) 0;
+}
+
+.photo-thumb-open {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  cursor: zoom-in;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.photo-thumb-open:hover {
+  border-color: var(--border-hi);
+}
+
+.photo-thumb-open img {
+  display: block;
+  width: 128px;
+  height: 72px;
+  object-fit: cover;
+}
+
+/* The rail's tab-close geometry: a small circle riding the corner, off the
+ * button it belongs to rather than inside it — a control nested in a button
+ * is presentational to assistive tech however reachable it stays by Tab. */
+.photo-thumb-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.photo-thumb-remove:hover {
+  border-color: var(--status-failed);
+  color: var(--status-failed);
+}
+
+/* Bounded by the viewport, not by the image: a 4000px photo must not make
+ * the dialog itself scroll in either direction. */
+.photo-full {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: var(--radius-s);
 }
 
 .drop-overlay-card {

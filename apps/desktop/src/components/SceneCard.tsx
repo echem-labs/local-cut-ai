@@ -216,7 +216,7 @@ export function SceneCard({
         // `closest("[data-scene]")` — the card would stop being the answer at
         // the exact moment the user let go.
         <div className="drop-here" role="note">
-          {t("drop.overlayStill", { n: sceneNo })}
+          <span>{t("drop.overlayStill", { n: sceneNo })}</span>
         </div>
       )}
       <div
