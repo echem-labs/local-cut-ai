@@ -7,13 +7,12 @@ GPU-serial scheduler's single job slot.
 from __future__ import annotations
 
 import asyncio
-import base64
 from pathlib import Path
 
 import httpx
 
 from .base import PriceQuote, VideoGen
-from .images import IMAGE_MIME_TYPES
+from .images import data_url
 from .textgen import ProviderError
 
 _QUEUE_BASE = "https://queue.fal.run"
@@ -45,15 +44,10 @@ class FalVideoGen(VideoGen):
     ) -> bytes:
         payload: dict = {"prompt": prompt, "duration": round(duration_s)}
         if image_path:
-            source = Path(image_path)
-            data = base64.b64encode(source.read_bytes()).decode()
-            # From the artifact's own extension, not a hardcoded png. The
-            # keyframe port also accepts a USER asset — upload_asset takes
-            # .jpg/.jpeg/.webp and stores it under that suffix — so declaring
-            # every conditioning image as png mislabels the payload for every
-            # scene the user conditioned on their own photo.
-            mime = IMAGE_MIME_TYPES.get(source.suffix.lower(), "application/octet-stream")
-            payload["image_url"] = f"data:{mime};base64,{data}"
+            # Labelled from the artifact's own extension and encoded off the
+            # loop — both belong to `images.data_url`, which every adapter
+            # taking an inline picture shares.
+            payload["image_url"] = await data_url(Path(image_path))
 
         headers = {"Authorization": f"Key {self.api_key}"}
         try:
