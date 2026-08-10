@@ -6230,8 +6230,6 @@ button.link:hover {
 .inspector.drop-target {
   /* Above `.drop-overlay` (1000), so the scrim dims everything BUT this. */
   z-index: 1001;
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
   background: var(--surface-1);
 }
 
@@ -6253,6 +6251,13 @@ button.link:hover {
   padding: var(--space-4);
   background: color-mix(in srgb, var(--surface-0) 55%, transparent);
   pointer-events: none;
+  /* The ring lives HERE, not as an `outline` on the host, because a
+     descendant paints on top of its ancestor's outline — and `.monitor`
+     carries negative margins that exactly cancel the inspector's padding,
+     so the video bled over the top and both sides of the ring and ate it.
+     On this overlay it is above every child either host draws. */
+  border: 2px solid var(--accent);
+  border-radius: inherit;
 }
 
 .drop-here > * {
@@ -6274,6 +6279,12 @@ button.link:hover {
  * target and the overlay covers the frame exactly. */
 .inspector.drop-target {
   overflow: hidden;
+  /* And no reserved gutter with it. An absolutely positioned overlay is laid
+     out against its container's PADDING box, which `scrollbar-gutter: stable`
+     shortens by the scrollbar's width — so `inset: 0` stopped 10px short of
+     the panel's right edge and the ring hung in mid-air beside it. Nothing
+     scrolls while the panel is a drop target, so there is no gutter to keep. */
+  scrollbar-gutter: auto;
 }
 
 /* Both hosts have to establish a containing block for it, or the label
