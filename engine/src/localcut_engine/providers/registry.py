@@ -115,6 +115,29 @@ def default_vision_model(config: EngineConfig) -> str:
     )
 
 
+def cloud_vision_models(config: EngineConfig) -> list[str]:
+    """Every cloud vision model this machine holds a key for, in `PROVIDERS`
+    order — the same order `default_vision_model` picks from, so the head of
+    this list is the one it would choose.
+
+    Separate from that function rather than folded into it: choosing the
+    default and offering the alternatives are different questions, and a
+    picker that re-derived the set from its own copy of the rule would drift
+    from the answer the route actually honors.
+    """
+    models = []
+    for info in PROVIDERS:
+        model = VISION_MODELS.get(info.id)
+        if model is None or Capability.VISION not in info.capabilities:
+            continue
+        try:
+            _key_for(config, info.id)
+        except ProviderError:
+            continue
+        models.append(model)
+    return models
+
+
 def configured_providers(config: EngineConfig) -> list[dict]:
     """Provider slate + whether a key is present, for the settings UI."""
     keys = {

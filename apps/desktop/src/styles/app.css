@@ -4266,6 +4266,106 @@ button.link:hover {
   white-space: nowrap;
 }
 
+/* The New scene dialog's picture and its read controls, side by side.
+   Stacked, the button sat between the thumbnail and the two text areas the
+   dialog exists to fill, pushing them below the fold on a short window; the
+   space to the right of a ~100px thumbnail was empty the whole time.
+   Wraps rather than shrinks: below the breakpoint the controls drop under the
+   picture, which is the stacked layout again and still readable. */
+.scene-read {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* `.photo-thumb` carries `margin: var(--space-2) 0` for the stacked callers
+   that have no row to sit in. Here the row owns the spacing, and that 8px
+   pushed the picture down out of line with the button beside it — the two
+   things meant to share a top edge. */
+.scene-read .photo-thumb {
+  margin: 0;
+}
+
+.scene-read-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Enough to hold the button and the hint's first line without the column
+     collapsing to the button's width and wrapping the prose to one word. */
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.scene-read-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Label beside the control, not above it — the one short choice in a dialog
+   otherwise made of stacked text areas. Mirrors `.model-default-row`, which
+   is the same decision in Settings, rather than inventing a third shape. */
+.scene-read-model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Centred on the control rather than sitting on its own line box: the label
+   is 11px against a 30px trigger, so without an explicit height to centre it
+   inherited the row's baseline and rode high above the value it names. */
+.scene-read-model-label {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 30px;
+  flex-shrink: 0;
+}
+
+/* Left at its natural width. Stretched to fill the column, the trigger's
+   `space-between` pushed a long value hard against the caret with only the
+   flex gap between them — the value and the affordance to change it reading
+   as one crowded string. */
+.scene-read-model .dropdown {
+  min-width: 0;
+}
+
+/* The two prose lines under the row, spanning the dialog rather than the
+   column beside the picture. */
+.scene-read-note {
+  margin-top: var(--space-3);
+}
+
+/* Stage on the left, elapsed on the right — the shape a download row uses,
+   because it answers the same two questions: what is happening, and has it
+   stopped. */
+.scene-read-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.scene-read-elapsed {
+  flex-shrink: 0;
+  /* Tabular, so a counter ticking every second does not shuffle the line it
+     sits on. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* `Alert` carries no margin of its own — it assumes a gapped flex column, and
+   the modal body is not one. */
+.scene-read-error {
+  margin-top: var(--space-4);
+}
+
 /* ---- shared small bits ---- */
 .hint {
   color: var(--text-tertiary);
