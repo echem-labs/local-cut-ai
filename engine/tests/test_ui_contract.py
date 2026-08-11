@@ -531,3 +531,25 @@ def test_the_settings_picker_agrees_on_which_tasks_the_llm_server_serves():
         f"the picker's server-task list drifted from the engine's: "
         f"UI {mirrored}, engine {_SERVER_TASKS}"
     )
+
+
+def test_the_vision_timeout_matches_the_engines():
+    """`/suggest-scene` is the one interactive route that waits on a vision
+    model, and a model that is not resident yet loads several GB before it
+    answers — minutes, on a contended GPU.
+
+    The renderer bounds every request at 120s, which is generous for a route
+    that only touches disk and far too short for this one. A client budget
+    below the engine's makes the app give up on work the engine then finishes
+    anyway: the user is told it failed, nothing is shown, and the read they
+    paid the wait for is discarded at the moment it was about to land. Above
+    the engine's it is dead patience — the engine has already given up.
+    """
+    from localcut_engine.config import EngineConfig
+
+    client = (_FORMATS.parent.parent / "api" / "client.ts").read_text(encoding="utf-8")
+    match = re.search(r"VISION_TIMEOUT_MS = ([\d_]+)", client)
+    assert match, "client.ts no longer declares VISION_TIMEOUT_MS — update this test with it"
+    assert int(match.group(1).replace("_", "")) == EngineConfig().llm_timeout_s * 1000, (
+        "the renderer's vision budget drifted from the engine's llm_timeout_s"
+    )

@@ -78,6 +78,7 @@ from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import (
+    cloud_vision_models,
     configured_providers,
     default_vision_model,
     textgen_for_model,
@@ -1338,6 +1339,85 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             "kind": "local" if model.startswith("local:") else "cloud",
             "reason": None,
         }
+
+    @app.get("/vision/models", dependencies=[Authed])
+    async def vision_models() -> dict:
+        """Every model this machine could read a picture with, for a picker.
+
+        Only models that can actually SEE. Building this from `/llm/models`
+        instead would offer the server's text-only names too, and
+        `/suggest-scene` validates the SHAPE of a `local:*` override rather
+        than its eyesight — so a picker that listed `llama3.2` would hand the
+        user a confident description of an image nothing ever looked at, at
+        HTTP 200, which is the exact failure this whole route exists to
+        refuse.
+
+        `local_known` is false when the LLM server does not serve Ollama's
+        native `/api/show`: the names cannot be filtered, so the client offers
+        none of them rather than guessing. Their own `vision.llm` choice still
+        appears — the user vouched for that one themselves in Settings.
+        """
+        chosen: str | None = None
+        try:
+            chosen = await asyncio.to_thread(default_vision_model, config)
+        except ProviderError:
+            pass
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        backend = LLMScriptBackend(
+            base_url=config.llm_url,
+            model=config.llm_model,
+            timeout_s=config.llm_timeout_s,
+        )
+        try:
+            seeing = await backend.list_vision_models()
+        except httpx.HTTPError:
+            seeing = None
+        local = [f"local:{name}" for name in seeing or []]
+        # The persisted choice always belongs in the list, even when the
+        # server is down or cannot be asked — a picker that silently drops the
+        # model the engine would actually use shows the user something other
+        # than the truth.
+        if chosen and chosen.startswith("local:") and chosen not in local:
+            local.insert(0, chosen)
+        return {
+            "models": local + cloud_vision_models(config),
+            "default": chosen,
+            "local_known": seeing is not None,
+        }
+
+    @app.get("/vision/residency", dependencies=[Authed])
+    async def vision_residency(model: str = "") -> dict:
+        """Whether a local model is loaded yet — the read's only real stage.
+
+        `/suggest-scene` is one opaque POST: it answers when the whole
+        description is ready and says nothing on the way. But the minutes go
+        into loading the weights, not into looking at the picture, so a client
+        polling this can tell the user which of the two it is waiting on
+        instead of showing a spinner that means nothing.
+
+        Deliberately not part of the read itself. Ollama answers `/api/ps`
+        while a generation is in flight, so this stays responsive exactly when
+        the chat endpoint does not — which is the moment the answer matters.
+        """
+        if not model.startswith("local:"):
+            # A cloud read has no local residency to report, and neither does
+            # a name this engine would refuse to send.
+            return {"loaded": None}
+        if not is_server_model_name(model):
+            raise HTTPException(status_code=422, detail=f"{model!r} is not a valid model name")
+        backend = LLMScriptBackend(
+            base_url=config.llm_url,
+            model=config.llm_model,
+            timeout_s=config.llm_timeout_s,
+        )
+        resident = await backend.resident_models()
+        # None, not False, when the server cannot say: "not loaded yet" and
+        # "I cannot tell" send the client to different sentences, and guessing
+        # the first would promise a stage change that never arrives.
+        if resident is None:
+            return {"loaded": None}
+        return {"loaded": model.removeprefix("local:") in resident}
 
     class SuggestSceneBody(BaseModel):
         # The uploaded image to look at.
