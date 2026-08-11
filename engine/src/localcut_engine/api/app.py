@@ -57,10 +57,12 @@ from ..graph.editor import (
     EditPlan,
     parse_edit_plan,
     parse_scene_suggestion,
+    suggest_scene_prompt,
 )
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..graph.template_io import TemplateError, cloud_models, from_template
+from ..graph.templates import DEFAULT_CLIP_S
 from ..hardware.probe import probe_hardware
 from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
@@ -1483,11 +1485,13 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # The project's own words, so the suggestion belongs to THIS video
         # rather than describing a photograph in isolation.
         view = await asyncio.to_thread(service.edit_view, project_id, "project")
-        prompt = (
-            f"Project so far:\n{json.dumps(view)}\n\n"
-            "Write the narration and the visual prompt for one new scene built "
-            "on the attached image."
-        )
+        # Written out rather than dumped as JSON: the graph view is a machine
+        # format, and asking a small local model to mine it for the video's
+        # subject and the voice to continue is a job it does badly on top of
+        # the one actually being asked. The length matters most — narration is
+        # what a scene's runtime IS, and with nothing said about it the model
+        # wrote a five-word fragment for a five-second shot.
+        prompt = suggest_scene_prompt(view, DEFAULT_CLIP_S)
         # A client precondition (missing BYOK key, unroutable model) is 4xx,
         # distinct from the provider failing mid-call, which the 502 owns.
         # The local server has no such precondition — it is either answering

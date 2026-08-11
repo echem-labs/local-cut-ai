@@ -526,3 +526,72 @@ def test_a_server_that_cannot_say_is_not_reported_as_not_loaded(tmp_path, monkey
         assert live.get("/vision/residency", params={"model": "local:qwen2.5vl"}).json() == {
             "loaded": None
         }
+
+
+def test_the_ask_carries_the_length_the_scene_will_actually_run():
+    """Narration IS the scene's runtime — the clip runs as long as the speech.
+
+    Told nothing about length, a small local model wrote a five-word fragment
+    for a five-second shot, which assembles to a scene over before it is seen.
+    The budget has to be derived from the same default `_compile_add_scene`
+    mints the clip with, or the words are measured against a length the clip
+    does not have.
+    """
+    from localcut_engine.backends.llm import narration_word_budget
+    from localcut_engine.graph.editor import suggest_scene_prompt
+    from localcut_engine.graph.templates import DEFAULT_CLIP_S
+
+    prompt = suggest_scene_prompt({}, DEFAULT_CLIP_S)
+
+    assert f"{narration_word_budget(DEFAULT_CLIP_S)} words" in prompt
+    assert "5 seconds" in prompt
+    # A fragment is the specific failure, so the ask names it.
+    assert "fragment" in prompt
+
+
+def test_the_ask_spells_out_the_project_rather_than_dumping_its_graph():
+    """The subject, the style and the voice already written, in prose.
+
+    A JSON view asked the model to parse a machine format AND infer the
+    video's subject from a key inside it, before it got to the job. The
+    smaller local models this path exists to use did that badly — which is
+    how narration came back continuing a sentence from a scene it half-read.
+    """
+    from localcut_engine.graph.editor import suggest_scene_prompt
+
+    view = {
+        "brief": {"prompt": "a city of glass", "style_preset": "cinematic"},
+        "scenes": [
+            {
+                "scene_id": "s1",
+                "nodes": [{"kind": "narration", "params": {"text": "The towers wake at dawn."}}],
+            },
+            {
+                "scene_id": "s2",
+                "nodes": [{"kind": "narration", "params": {"text": "Light runs down every face."}}],
+            },
+        ],
+    }
+
+    prompt = suggest_scene_prompt(view, 5.0)
+
+    assert "a city of glass" in prompt
+    assert "cinematic" in prompt
+    # The lines already spoken, so the new one continues a voice.
+    assert "The towers wake at dawn." in prompt
+    assert "Light runs down every face." in prompt
+    # And no raw graph: node ids and param envelopes are noise to the model
+    # and crowd out the picture, which is the thing being described.
+    assert "scene_id" not in prompt
+    assert "node_id" not in prompt
+
+
+def test_a_project_with_no_narration_yet_is_told_so():
+    """An empty quote block would read as "the scenes before this say
+    nothing", which invites a model to write a continuation of silence."""
+    from localcut_engine.graph.editor import suggest_scene_prompt
+
+    prompt = suggest_scene_prompt({"brief": {"prompt": "a city of glass"}}, 5.0)
+
+    assert "first scene with words" in prompt
+    assert "The scenes before this one say" not in prompt
