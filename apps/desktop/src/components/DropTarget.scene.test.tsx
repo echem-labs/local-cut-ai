@@ -27,8 +27,18 @@ const conditionScene = vi.fn(async (_id: string, _file: File) => null as string 
 const addSceneFromImage = vi.fn(
   async (_id: string, _fields: { narration: string; prompt: string }) => null as string | null,
 );
-const suggestScene = vi.fn(async (_id: string) => ({ narration: "N", prompt: "P" }));
+const suggestScene = vi.fn(
+  async (_id: string, _model?: string, _signal?: AbortSignal) => ({ narration: "N", prompt: "P" }),
+);
 const visionModel = vi.fn(async () => ({ model: "local:qwen2.5vl", kind: "local" as const }));
+// One offer by default, so the picker stays out of the way of the tests that
+// are about the button — it appears only where there is a real choice.
+const visionModels = vi.fn(async () => ({
+  models: ["local:qwen2.5vl"],
+  default: "local:qwen2.5vl" as string | null,
+  local_known: true,
+}));
+const visionResidency = vi.fn(async (_model: string) => ({ loaded: null as boolean | null }));
 
 const node = (id: string, hash: string | null): NodeState =>
   ({ node_id: id, status: "draft", progress: 1, error: null, artifact_hash: hash, params: {}, seed: 0, model: null, pinned: false }) as NodeState;
@@ -59,7 +69,7 @@ function mount(scenes: SceneCardModel[] = [scene()], project: unknown = { id: "p
     conditionScene,
     addSceneFromImage,
     suggestScene,
-    client: { visionModel },
+    client: { visionModel, visionModels, visionResidency },
     board: { scenes, aux: {} },
     currentProject: project,
   } as never);
@@ -270,7 +280,13 @@ describe("an image dropped anywhere else in a project", () => {
       fireEvent.click(screen.getByText(t("drop.sceneGenerate")));
     });
 
-    expect(suggestScene).toHaveBeenCalledWith("asset-abc");
+    // The model the engine offered rides along, so a read the user redirected
+    // in the picker goes where they pointed it rather than to the default.
+    expect(suggestScene).toHaveBeenCalledWith(
+      "asset-abc",
+      "local:qwen2.5vl",
+      expect.any(AbortSignal),
+    );
     expect(screen.getByLabelText(t("drop.sceneNarration"))).toHaveValue("N");
     expect(screen.getByLabelText(t("drop.scenePrompt"))).toHaveValue("P");
   });
@@ -289,7 +305,16 @@ describe("an image dropped anywhere else in a project", () => {
   });
 
   it("says a cloud key is spent when that is what will happen", async () => {
+    // Both routes answer from the engine's one `default_vision_model`, so
+    // they agree in life and have to agree here — a fixture where the gate
+    // says cloud and the picker says local tests a state the engine cannot
+    // produce.
     visionModel.mockResolvedValueOnce({ model: "cloud:claude-sonnet-5", kind: "cloud" } as never);
+    visionModels.mockResolvedValueOnce({
+      models: ["cloud:claude-sonnet-5"],
+      default: "cloud:claude-sonnet-5",
+      local_known: true,
+    });
     mount();
 
     await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
@@ -313,5 +338,154 @@ describe("an image dropped anywhere else in a project", () => {
     await waitFor(() => screen.getByRole("dialog"));
 
     expect(screen.queryByText(t("drop.sceneGenerate"))).toBeNull();
+  });
+
+  it("offers no picker when there is only one place the read can go", async () => {
+    // A select with one option is a control that cannot do anything, taking
+    // space in a dialog whose two text areas are the point.
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+
+    expect(screen.queryByLabelText(t("drop.sceneModelLabel"))).toBeNull();
+  });
+
+  it("sends the read to the model the user picked, and stops promising privacy for it", async () => {
+    // The hint is a privacy claim. Tracking the engine's ORIGINAL pick rather
+    // than the current one leaves "nothing is sent anywhere" on screen under
+    // a read the user has just redirected to a cloud provider.
+    visionModels.mockResolvedValueOnce({
+      models: ["local:qwen2.5vl", "cloud:claude-sonnet-5"],
+      default: "local:qwen2.5vl",
+      local_known: true,
+    });
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+    expect(screen.getByText(t("drop.sceneGenerateHintLocal"))).toBeInTheDocument();
+
+    // Driven the way every other Dropdown is: open the trigger, pick the
+    // option. A `fireEvent.change` here would pass against a bare <select>
+    // and prove nothing about the control the dialog actually renders.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("drop.sceneModelLabel")) }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("option", { name: /claude-sonnet-5/ }));
+    });
+    expect(screen.getByText(t("drop.sceneGenerateHintCloud"))).toBeInTheDocument();
+
+    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneGenerate"))));
+    expect(suggestScene).toHaveBeenCalledWith(
+      "asset-abc",
+      "cloud:claude-sonnet-5",
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("keeps a text-only model out of the picker even when it is installed", async () => {
+    // The engine filters by what a model can SEE, and the renderer must not
+    // widen that. `/suggest-scene` validates the SHAPE of a local name, not
+    // its eyesight, so a text model offered here would come back with a
+    // confident description of a picture nothing ever looked at, at HTTP 200.
+    visionModels.mockResolvedValueOnce({
+      models: ["local:qwen2.5vl", "cloud:claude-sonnet-5"],
+      default: "local:qwen2.5vl",
+      local_known: true,
+    });
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("drop.sceneModelLabel")) }));
+    });
+
+    const offered = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(offered).toEqual(["qwen2.5vl", "claude-sonnet-5"]);
+  });
+
+  it("lets a read that is taking too long be given up on, without calling it a failure", async () => {
+    // Aborting is the user's decision, not an error to report back at them —
+    // and the dialog they are still looking at keeps its fields.
+    let release: (value: { narration: string; prompt: string }) => void = () => {};
+    suggestScene.mockImplementationOnce(
+      (_id: string, _model?: string, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          release = resolve;
+          signal?.addEventListener("abort", () => resolve({ narration: "", prompt: "" }));
+        }),
+    );
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneGenerate"))));
+
+    expect(screen.getByText(t("drop.sceneGenerating"))).toBeInTheDocument();
+    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneStop"))));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(t("drop.sceneGenerate"))).toBeInTheDocument();
+    release({ narration: "N", prompt: "P" });
+  });
+  it("names the stage the wait is actually spent in", async () => {
+    // The read is one opaque POST that says nothing until the whole answer is
+    // ready, and the minutes in it go to LOADING the model rather than to
+    // looking at the picture. A bare spinner for that whole time is
+    // indistinguishable from a hang — which is exactly what it looked like.
+    let release: (value: { narration: string; prompt: string }) => void = () => {};
+    suggestScene.mockImplementationOnce(
+      (_id: string, _model?: string, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          release = resolve;
+          signal?.addEventListener("abort", () => resolve({ narration: "", prompt: "" }));
+        }),
+    );
+    visionResidency.mockResolvedValue({ loaded: false });
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneGenerate"))));
+
+    await waitFor(() =>
+      screen.getByText(t("drop.sceneStageLoading", { name: "qwen2.5vl" })),
+    );
+
+    // Loaded now: the same wait, but the honest account of it has changed.
+    visionResidency.mockResolvedValue({ loaded: true });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+    expect(screen.getByText(t("drop.sceneStageReading"))).toBeInTheDocument();
+
+    release({ narration: "N", prompt: "P" });
+  });
+
+  it("does not claim a stage a server could not report", async () => {
+    // `null` is "I cannot tell", and rendering it as "still loading" promises
+    // a change to "reading" that will never arrive.
+    let release: (value: { narration: string; prompt: string }) => void = () => {};
+    suggestScene.mockImplementationOnce(
+      (_id: string, _model?: string, signal?: AbortSignal) =>
+        new Promise((resolve) => {
+          release = resolve;
+          signal?.addEventListener("abort", () => resolve({ narration: "", prompt: "" }));
+        }),
+    );
+    visionResidency.mockResolvedValue({ loaded: null });
+    mount();
+
+    await act(async () => void dropOn(null, [file("shot.png", "image/png")]));
+    await waitFor(() => screen.getByText(t("drop.sceneGenerate")));
+    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneGenerate"))));
+
+    expect(screen.getByText(t("drop.sceneStageWorking"))).toBeInTheDocument();
+    expect(screen.queryByText(t("drop.sceneStageLoading", { name: "qwen2.5vl" }))).toBeNull();
+
+    release({ narration: "N", prompt: "P" });
   });
 });

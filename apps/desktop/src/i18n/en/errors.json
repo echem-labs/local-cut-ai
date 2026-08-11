@@ -2,6 +2,7 @@
   "somethingWrong": "Something went wrong: {message}",
   "engineUnreachable": "The engine could not be reached ({detail}) — it may still be starting, or it stopped. The status light in the sidebar shows its current state.",
   "engineLost": "connection to engine lost — reconnecting…",
+  "engineTimeout": "This took longer than {seconds} seconds, so the app stopped waiting. The engine may still be working — if a model had to load first, trying again is usually much quicker.",
   "engineUnavailable": "engine unavailable",
   "pairingFailed": "pairing failed",
   "disconnectFailed": "disconnect failed",

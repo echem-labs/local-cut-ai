@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -381,3 +382,147 @@ def test_vision_falls_back_to_a_cloud_key(client):
 
     assert body["kind"] == "cloud"
     assert body["model"].startswith("cloud:")
+
+
+def test_the_picker_is_offered_only_models_that_can_actually_see(tmp_path, monkeypatch):
+    """A vision picker built from the server's model list would offer text-only
+    models, and this route validates the SHAPE of a `local:*` name rather than
+    its eyesight — so choosing one returns a confident description of a picture
+    nothing looked at, at HTTP 200. That is the exact failure the route exists
+    to refuse, reintroduced by the control meant to make it convenient.
+
+    Ollama's native `/api/show` is the only trustworthy signal: the
+    OpenAI-compatible `/models` surface both servers share reports names alone.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock", anthropic_key="k")
+    set_default(config, "vision.llm", "qwen2.5vl")
+    seeing = {"qwen2.5vl", "llava"}
+
+    async def list_models(self):
+        return ["llama3.2", "llava", "nomic-embed-text", "qwen2.5vl"]
+
+    async def show(self, url, json=None, **kw):
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                caps = ["completion"] + (["vision"] if json["model"] in seeing else [])
+                return {"capabilities": caps}
+
+        return Response()
+
+    monkeypatch.setattr(LLMScriptBackend, "list_models", list_models)
+    monkeypatch.setattr("httpx.AsyncClient.post", show)
+
+    with TestClient(create_app(config)) as live:
+        live.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        answer = live.get("/vision/models")
+
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert body["local_known"] is True
+    # The text-only names are gone; the cloud key the user holds is offered
+    # beside the local ones, because switching where a read happens is the
+    # whole point of the control.
+    assert body["models"] == ["local:llava", "local:qwen2.5vl", "cloud:claude-sonnet-5"]
+    assert body["default"] == "local:qwen2.5vl"
+
+
+def test_a_server_that_cannot_say_which_models_see_offers_none_of_them(tmp_path, monkeypatch):
+    """llama.cpp serves the OpenAI-compatible surface but not Ollama's
+    `/api/show`, so its names cannot be filtered.
+
+    "I cannot tell which of these can see" and "none of these can see" are
+    different answers, and the picker must not render the second when it has
+    the first — every name it offered would be a guess. The user's OWN choice
+    still appears: they vouched for that one in Settings, and a picker that
+    silently dropped the model the engine is about to use would be showing
+    them something other than the truth.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
+    set_default(config, "vision.llm", "qwen2.5vl")
+
+    async def list_models(self):
+        return ["llama3.2", "qwen2.5vl"]
+
+    async def no_show(self, url, json=None, **kw):
+        class Response:
+            status_code = 404
+
+            @staticmethod
+            def json():  # pragma: no cover - never read on a 404
+                return {}
+
+        return Response()
+
+    monkeypatch.setattr(LLMScriptBackend, "list_models", list_models)
+    monkeypatch.setattr("httpx.AsyncClient.post", no_show)
+
+    with TestClient(create_app(config)) as live:
+        live.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        body = live.get("/vision/models").json()
+
+    assert body["local_known"] is False
+    assert body["models"] == ["local:qwen2.5vl"]
+
+
+def test_the_picker_says_nothing_can_see_rather_than_guessing(tmp_path, monkeypatch):
+    """No local model chosen and no key: the list is empty and the desktop
+    shows no picker, which agrees with `/vision` hiding the button."""
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
+
+    async def unreachable(self):
+        raise httpx.HTTPError("no server")
+
+    monkeypatch.setattr(LLMScriptBackend, "list_models", unreachable)
+
+    with TestClient(create_app(config)) as bare:
+        bare.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        body = bare.get("/vision/models").json()
+
+    assert body == {"models": [], "default": None, "local_known": False}
+
+
+def test_residency_reports_the_stage_a_spinner_cannot(tmp_path, monkeypatch):
+    """The read is one opaque POST, and the minutes in it are the model
+    loading rather than the picture being looked at. Without this the client
+    has nothing truthful to say for the whole wait.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
+
+    async def resident(self):
+        return {"gemma3:4b"}
+
+    monkeypatch.setattr(LLMScriptBackend, "resident_models", resident)
+
+    with TestClient(create_app(config)) as live:
+        live.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        assert live.get("/vision/residency", params={"model": "local:gemma3:4b"}).json() == {
+            "loaded": True
+        }
+        assert live.get("/vision/residency", params={"model": "local:qwen2.5vl"}).json() == {
+            "loaded": False
+        }
+        # A cloud read has no local stage to report, and an unbounded string
+        # is refused here exactly as it is on the read itself.
+        assert live.get("/vision/residency", params={"model": "cloud:x"}).json() == {"loaded": None}
+        assert live.get("/vision/residency", params={"model": "local:bad name!"}).status_code == 422
+
+
+def test_a_server_that_cannot_say_is_not_reported_as_not_loaded(tmp_path, monkeypatch):
+    """`None` and `False` send the client to different sentences: "still
+    loading" promises a stage change, and a server that cannot answer will
+    never deliver one — leaving the dialog claiming progress forever."""
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock")
+
+    async def cannot_say(self):
+        return None
+
+    monkeypatch.setattr(LLMScriptBackend, "resident_models", cannot_say)
+
+    with TestClient(create_app(config)) as live:
+        live.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        assert live.get("/vision/residency", params={"model": "local:qwen2.5vl"}).json() == {
+            "loaded": None
+        }
