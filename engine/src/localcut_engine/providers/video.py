@@ -7,6 +7,7 @@ GPU-serial scheduler's single job slot.
 from __future__ import annotations
 
 import asyncio
+import ssl
 from pathlib import Path
 
 import httpx
@@ -26,6 +27,23 @@ FAL_MODELS: dict[str, tuple[str, float]] = {
     "veo-3.1-fast": ("fal-ai/veo3/fast/image-to-video", 0.15),
     "wan-2.2-cloud": ("fal-ai/wan-i2v", 0.05),
 }
+
+_ssl_context: ssl.SSLContext | None = None
+
+
+async def _shared_ssl_context() -> ssl.SSLContext:
+    """One TLS context for every fal request, built off the loop.
+
+    `httpx.AsyncClient()` builds its own otherwise, and that reads the CA
+    bundle from disk and parses it — measured at ~175ms the first time and
+    ~20ms on every clip after, all of it on the event loop, for the same
+    reason the encode was: it is a C call that holds the GIL throughout. A
+    context is read-only once configured, so one serves every client.
+    """
+    global _ssl_context
+    if _ssl_context is None:
+        _ssl_context = await asyncio.to_thread(httpx.create_ssl_context)
+    return _ssl_context
 
 
 class FalVideoGen(VideoGen):
@@ -47,16 +65,31 @@ class FalVideoGen(VideoGen):
             # Labelled from the artifact's own extension and encoded off the
             # loop — both belong to `images.data_url`, which every adapter
             # taking an inline picture shares.
-            payload["image_url"] = await data_url(Path(image_path))
+            try:
+                payload["image_url"] = await data_url(Path(image_path))
+            except OSError as exc:
+                # A keyframe can be swept or moved between compile and
+                # render. Everything else this adapter can fail on reaches
+                # the backend as a ProviderError; an errno escaping raw is
+                # classified by nothing and reaches the board as an absolute
+                # host path with no cause the user can act on.
+                raise ProviderError(f"fal could not read the conditioning image: {exc}") from exc
 
         headers = {"Authorization": f"Key {self.api_key}"}
         try:
             # The read timeout bounds each poll/download call; the overall
             # job is bounded separately by self.deadline_s below.
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60, read=300)) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(60, read=300), verify=await _shared_ssl_context()
+            ) as client:
                 submit = await client.post(
                     f"{_QUEUE_BASE}/{self.path}", headers=headers, json={"input": payload}
                 )
+                # An inline conditioning image makes this dict the largest
+                # thing the coroutine holds — ~4/3 the asset — and nothing
+                # below reads it, while the poll loop runs on for up to
+                # self.deadline_s.
+                payload.clear()
                 if submit.status_code not in (200, 201):
                     raise ProviderError(f"fal submit: {submit.text[:300]}")
                 job = submit.json()
