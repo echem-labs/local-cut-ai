@@ -20,6 +20,7 @@ import websockets
 from ..aspects import DEFAULT_ASPECT, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
 from ..graph.model import KEYFRAME_PORT, NodeKind
+from ..providers.images import mime_type
 from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError
 
 _OOM_MARKERS = ("out of memory", "cuda oom", "allocation failed")
@@ -220,7 +221,11 @@ class ComfyUIBackend(ExecutionBackend):
         payload_bytes = await asyncio.to_thread(path.read_bytes)
         response = await client.post(
             f"{self.base_url}/upload/image",
-            files={"image": (path.name, payload_bytes, "image/png")},
+            # The artifact's own type, not a hardcoded png: this is the same
+            # KEYFRAME_PORT that carries a user's .jpg/.jpeg/.webp asset, so
+            # a literal here mislabels every scene conditioned on their own
+            # photo — the mislabel `images.mime_type` exists to prevent.
+            files={"image": (path.name, payload_bytes, mime_type(path))},
             data={"overwrite": "true"},
         )
         if response.status_code != 200:
