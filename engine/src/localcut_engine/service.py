@@ -44,7 +44,13 @@ from .graph.patch import (
     without_nulls,
 )
 from .graph.template_io import GraphTemplate, build_graph, to_template
-from .graph.templates import MAX_CLIP_S, expand_screenplay, prompt_template_graph, tool_graph
+from .graph.templates import (
+    DEFAULT_CLIP_S,
+    MAX_CLIP_S,
+    expand_screenplay,
+    prompt_template_graph,
+    tool_graph,
+)
 from .jobs.models import Job, JobStatus
 from .jobs.queue import JobQueue
 from .jobs.scheduler import Scheduler
@@ -562,9 +568,9 @@ class ProjectService:
         prompt = str(params.get("prompt", ""))
         narration = str(params.get("narration", ""))
         try:
-            duration_s = float(params.get("duration_s", 5.0))
+            duration_s = float(params.get("duration_s", DEFAULT_CLIP_S))
         except (TypeError, ValueError):
-            duration_s = 5.0
+            duration_s = DEFAULT_CLIP_S
         # One clip only: past MAX_CLIP_S a scene splits into sequential
         # takes, which is expansion's job to construct, not a patch op's.
         duration_s = min(max(duration_s, 1.0), MAX_CLIP_S)

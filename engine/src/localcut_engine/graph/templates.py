@@ -158,6 +158,14 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
 # retime bound on whatever length actually renders).
 MAX_CLIP_S = 8.0
 
+# What a scene added on its own runs for when nobody said otherwise — a scene
+# built from a dropped picture, most of all. Named rather than written at the
+# two places that need it: `_compile_add_scene` mints the clip with it, and
+# the suggest-scene prompt turns it into the word budget the narration is
+# written to. A drift between those two produces narration measured against a
+# length the clip does not have.
+DEFAULT_CLIP_S = 5.0
+
 # Music is a loopable bed, not a full score: cap what we ask the generator
 # for. ACE-Step's own node refuses more than 1000s, and a multi-minute
 # request is a slow, VRAM-hungry way to produce something assembly would

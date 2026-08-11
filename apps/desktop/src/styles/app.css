@@ -4345,6 +4345,16 @@ button.link:hover {
   padding: var(--space-1) var(--space-3);
 }
 
+/* The icon's own margin rather than the flex `gap`. `Dropdown` renders the
+   selected label as a BARE TEXT NODE between two icon elements, so it is an
+   anonymous flex item — and the row gap does not survive the trip to one,
+   which is why the icon sat welded to the first letter of the model name
+   while the caret (which carries a real margin) breathed. Excluding the
+   caret keeps this off the no-icon case, where the caret is first child. */
+.scene-read-model .dropdown-trigger.field > svg:first-child:not(.dropdown-caret) {
+  margin-right: var(--space-2);
+}
+
 .scene-read-model .dropdown-caret {
   margin-left: var(--space-3);
 }
