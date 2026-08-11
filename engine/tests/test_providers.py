@@ -1,6 +1,7 @@
 """BYOK cloud routing: model-prefix dispatch, key errors, and the registry's
 cloud override. No real API calls — adapters are exercised at the seam."""
 
+import httpx
 import pytest
 
 from localcut_engine.backends.base import BackendRegistry, ExecutionBackend
@@ -193,6 +194,29 @@ def test_cloud_model_never_falls_back_to_local():
     assert registry.resolve(NodeKind.KEYFRAME, "local:sdxl").name == "local"
 
 
+class _RejectedSubmit:
+    """Stands in for fal's submit endpoint: keeps the input that was posted
+    and refuses it, so a test stops before the poll loop."""
+
+    def __init__(self) -> None:
+        self.inputs: list[dict] = []
+
+    def install(self, monkeypatch) -> None:
+        keep = self
+
+        async def post(self_client, url, headers=None, json=None):  # noqa: A002
+            # A copy, not the adapter's own dict: `generate` drops the
+            # payload once it has been sent, so an alias would read empty.
+            keep.inputs.append(dict((json or {}).get("input", {})))
+            return httpx.Response(500, text="stop before the poll loop")
+
+        monkeypatch.setattr(httpx.AsyncClient, "post", post)
+
+    @property
+    def last(self) -> dict:
+        return self.inputs[-1]
+
+
 async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, monkeypatch):
     """The keyframe port also accepts a USER asset, and upload_asset stores
     .jpg/.jpeg/.webp under that suffix. Every conditioning image went out as
@@ -200,21 +224,10 @@ async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, mon
     photo submitted a payload whose declared type contradicted its bytes."""
     import base64
 
-    import httpx
-
     from localcut_engine.providers.images import IMAGE_MIME_TYPES as _IMAGE_MIME_TYPES
 
-    sent: list[dict] = []
-
-    class _Rejected:
-        status_code = 500
-        text = "stop before the poll loop"
-
-    async def capture(self, url, headers=None, json=None):
-        sent.append(json["input"])
-        return _Rejected()
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", capture)
+    fal = _RejectedSubmit()
+    fal.install(monkeypatch)
     gen = FalVideoGen("k", "kling-2.5")
 
     for suffix, expected in sorted(_IMAGE_MIME_TYPES.items()):
@@ -222,10 +235,57 @@ async def test_a_conditioning_image_is_labelled_with_its_real_type(tmp_path, mon
         image.write_bytes(b"\x89PNG\r\n")
         with pytest.raises(ProviderError):
             await gen.generate("p", 4.0, str(image))
-        payload = sent[-1]["image_url"]
+        payload = fal.last["image_url"]
         assert payload.startswith(f"data:{expected};base64,"), payload
         # The bytes are unchanged — only the label was ever wrong.
         assert payload.endswith(base64.b64encode(b"\x89PNG\r\n").decode())
+
+
+async def test_encoding_the_conditioning_image_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    """A keyframe reaching fal may be a user asset of up to `_ASSET_MAX_BYTES`,
+    and encoding one inline stalls the loop for the whole read - during which
+    no other request advances and no progress frame reaches the `/ws` fan-out.
+
+    Bounding the WORST stall, not counting turns: `base64.b64encode` is a
+    single C call that never releases the GIL, so handing a whole asset to
+    one call freezes the loop just as thoroughly from a worker thread as
+    from the loop itself - while still letting a tally rise, because the
+    read either side of it does yield. A tick count is green for both; only
+    the gap between ticks tells them apart.
+    """
+    from conftest import MAX_STALLED, watch_the_loop
+
+    big = tmp_path / "big.png"
+    big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
+
+    _RejectedSubmit().install(monkeypatch)
+    gen = FalVideoGen("k", "kling-2.5")
+
+    # One warm-up submit first. The first cloud clip in a process pays
+    # one-time costs that have nothing to do with the picture - chiefly
+    # building the TLS context, which reads and parses the CA bundle - and
+    # they would otherwise swamp the stall this test is about.
+    tiny = tmp_path / "tiny.png"
+    tiny.write_bytes(b"\x89PNG\r\n")
+    with pytest.raises(ProviderError):
+        await gen.generate("p", 4.0, str(tiny))
+
+    async with watch_the_loop() as watch:
+        with pytest.raises(ProviderError):
+            await gen.generate("p", 4.0, str(big))
+
+    assert watch.stalled < MAX_STALLED, str(watch)
+
+
+async def test_a_keyframe_that_vanished_is_a_provider_error(tmp_path):
+    """An artifact can be swept or moved between compile and render. Every
+    other failure here reaches the backend as a ProviderError, which is what
+    CloudBackend classifies; a bare errno is classified by nothing and lands
+    on the board as an absolute host path with no cause to act on."""
+    gen = FalVideoGen("k", "kling-2.5")
+
+    with pytest.raises(ProviderError, match="could not read the conditioning image"):
+        await gen.generate("p", 4.0, str(tmp_path / "swept.png"))
 
 
 def test_the_mime_table_covers_every_image_asset_the_api_accepts():

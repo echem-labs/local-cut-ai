@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections.abc import Iterator
 from pathlib import Path
 
 IMAGE_MIME_TYPES = {
@@ -33,8 +34,36 @@ def mime_type(path: Path) -> str:
     return IMAGE_MIME_TYPES.get(path.suffix.lower(), "application/octet-stream")
 
 
+# A multiple of 3, so every block but the last encodes to a whole number of
+# base64 quads and the concatenation is byte-identical to encoding the file
+# in one call. 768 KiB costs about 8ms a block, which is the granularity at
+# which the loop gets to run.
+_BLOCK_BYTES = 3 * 256 * 1024
+
+
+def _blocks(path: Path) -> Iterator[str]:
+    """The file's base64, a block at a time.
+
+    Block by block rather than in one `b64encode`, because that is a single
+    C call that never releases the GIL: handed a 50 MiB asset it pins the
+    interpreter for its whole duration, and putting it in a thread then buys
+    nothing at all — the loop thread cannot run a bytecode until it returns.
+    Between blocks the GIL is released, so the loop actually advances.
+    """
+    with path.open("rb") as handle:
+        while block := handle.read(_BLOCK_BYTES):
+            yield base64.b64encode(block).decode()
+
+
 def _encode(path: Path) -> str:
-    return base64.b64encode(path.read_bytes()).decode()
+    return "".join(_blocks(path))
+
+
+def _data_url(path: Path) -> str:
+    # The prefix joins in the same pass, so the caller's thread does the
+    # whole assembly: prepending it after the fact would copy the entire
+    # encoded string again, on the event loop.
+    return "".join([f"data:{mime_type(path)};base64,", *_blocks(path)])
 
 
 async def encoded(path: Path) -> str:
@@ -52,4 +81,4 @@ async def encoded(path: Path) -> str:
 
 async def data_url(path: Path) -> str:
     """`data:<mime>;base64,<bytes>` — the form every inline-image API takes."""
-    return f"data:{mime_type(path)};base64,{await encoded(path)}"
+    return await asyncio.to_thread(_data_url, path)
