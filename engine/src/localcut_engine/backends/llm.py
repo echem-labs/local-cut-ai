@@ -368,23 +368,42 @@ class LLMScriptBackend(ExecutionBackend):
         max_tokens: int = _SCRIPT_TOKENS_MAX,
     ) -> str:
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            response = await client.post(
-                f"{self.chat_base}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.7,
-                    # Explicit, matching the cloud path. Sending no cap left
-                    # the server's own default in charge, so an over-long
-                    # screenplay came back truncated with no way to tell that
-                    # apart from a model that emits bad JSON.
-                    "max_tokens": max_tokens,
-                },
-            )
+            try:
+                response = await client.post(
+                    f"{self.chat_base}/chat/completions",
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.7,
+                        # Explicit, matching the cloud path. Sending no cap left
+                        # the server's own default in charge, so an over-long
+                        # screenplay came back truncated with no way to tell that
+                        # apart from a model that emits bad JSON.
+                        "max_tokens": max_tokens,
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                # The ceiling above is generous precisely because a cold load
+                # on a modest GPU is slow, so reaching it means the server
+                # took the request and never answered — a wedged Ollama
+                # runner does exactly this, and every later request queues
+                # behind it. httpx's timeouts stringify to "", so without
+                # this the job is recorded as failed with no reason at all.
+                raise GenerationError(
+                    f"the local LLM server took the request for {model!r} and did not answer "
+                    f"within {self.timeout_s}s. It may be busy loading another model, or "
+                    "stuck - restarting it clears a wedged one."
+                ) from exc
+            except httpx.HTTPError as exc:
+                # Connect errors carry an address at best and "" at worst.
+                raise GenerationError(
+                    f"could not reach the local LLM server at {self.chat_base}: "
+                    f"{exc or type(exc).__name__}"
+                ) from exc
             if response.status_code != 200:
                 raise GenerationError(f"local LLM error: {response.text[:500]}")
             # A 200 with an unexpected shape (empty choices, error object) must
