@@ -4317,13 +4317,21 @@ button.link:hover {
   min-width: 0;
 }
 
-/* `inline-flex`, not an inline span with a hand-set line height. A bare
-   11px label in a 32px row resolves its own line box and rides above the
-   value it names; a flex box has a height to be centred by. This is what
-   `.model-default-label` does, and it is why that row lines up. */
+/* `inline-flex`, not an inline span with a hand-set line height: a flex box
+   has a height to be centred by, which is what `.model-default-label` does
+   and why that row lines up.
+
+   The height is stated rather than left to the text, because centring two
+   boxes only lines up their CONTENTS when the boxes agree. An 11px label
+   resolves a ~13px line box against the trigger's 32px (its 30px floor plus
+   a border each side), and the row centred those two honestly — leaving the
+   word a few pixels above the value it names, which is exactly the amount
+   the eye reads as broken. Matching the control's height makes the two
+   centre lines the same line. */
 .scene-read-model-label {
   display: inline-flex;
   align-items: center;
+  min-height: 32px;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   flex-shrink: 0;
