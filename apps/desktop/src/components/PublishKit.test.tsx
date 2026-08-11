@@ -100,6 +100,54 @@ describe("while the kit is rendering", () => {
   });
 });
 
+/**
+ * A node that failed is not a node that is still working, and the dialog
+ * said it was: a metadata job that died on "model 'qwen3:14b' not found"
+ * left "Writing the title, description and hashtags from your script..."
+ * on screen forever, with the engine's reason recorded and never shown.
+ * The kit's two halves fail independently, so each says its own piece.
+ */
+describe("when the engine could not write the kit", () => {
+  const failedNode = (id: string, error: string): NodeState => ({
+    ...node(id, "failed"),
+    error,
+  });
+
+  it("shows why the text could not be written, instead of claiming to be writing it", async () => {
+    mount({
+      metadata: failedNode("metadata", "local LLM error: model 'qwen3:14b' not found"),
+      thumbnail: node("thumbnail", "final", "t".repeat(64)),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/qwen3:14b/);
+    expect(screen.queryByText(/writing the title/i)).toBeNull();
+  });
+
+  it("says the thumbnail failed rather than leaving an empty frame", async () => {
+    mount({
+      metadata: node("metadata", "final", "m".repeat(64)),
+      thumbnail: failedNode("thumbnail", "out of memory after 2 fallback attempts"),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/out of memory/i);
+    // The half that DID work is still usable.
+    expect(await screen.findByLabelText(/^title$/i)).toHaveValue(KIT.title);
+  });
+
+  it("says so when the metadata rendered but could not be read back", async () => {
+    // The fetch used to fail into console.warn alone, which is the same
+    // permanent "writing..." with nothing on screen to explain it.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
+    mount({
+      metadata: node("metadata", "final", "m".repeat(64)),
+      thumbnail: node("thumbnail", "final", "t".repeat(64)),
+    });
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/writing the title/i)).toBeNull();
+  });
+});
+
 describe("once the kit has rendered", () => {
   const done = {
     metadata: node("metadata", "final", "m".repeat(64)),

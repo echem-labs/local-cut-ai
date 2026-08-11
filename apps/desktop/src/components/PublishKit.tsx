@@ -7,6 +7,7 @@ import { loadDraft, mergeDraft, saveDraft } from "../lib/publishDraft";
 import { isDone } from "../lib/status";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
+import { FailureCard } from "./FailureCard";
 import { MediaThumb } from "./MediaThumb";
 import { Modal } from "./Modal";
 import { Tip } from "./Tooltip";
@@ -46,7 +47,7 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
     metadata?.artifact_hash && client && currentProject && ready
       ? client.artifactUrl(currentProject.id, metadata.artifact_hash)
       : null;
-  const engineKit = usePublishKit(kitUrl);
+  const { kit: engineKit, unreadable } = usePublishKit(kitUrl);
 
   // Hand edits, over whatever the engine last wrote. Kept separate rather
   // than merged into one editable blob: a regenerate has to be able to
@@ -68,6 +69,14 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
 
   const kit = engineKit ? mergeDraft(engineKit, draft) : null;
   const asked = !!metadata || !!thumbnail;
+
+  // The two halves fail independently — a thumbnail that ran out of VRAM
+  // says nothing about the title — so each reports for itself. Without
+  // this the dialog kept saying it was writing text no job was writing:
+  // the metadata node had died on a model that is not installed, and the
+  // engine's reason sat in `error` with nothing on screen reading it.
+  const metaFailed = metadata?.status === "failed";
+  const thumbFailed = thumbnail?.status === "failed";
 
   const build = () => {
     setError(null);
@@ -148,6 +157,14 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
             alt={t("publish.thumbAlt")}
             fallback={<span className="publish-thumb empty" aria-hidden="true" />}
           />
+          {thumbFailed && thumbnail && (
+            <>
+              <p className="hint">{t("publish.thumbFailed")}</p>
+              {/* The OOM ladder's chips apply here as they do on a scene:
+                  a title-safe 16:9 render is the same kind of job. */}
+              <FailureCard node={thumbnail} />
+            </>
+          )}
           {kit ? (
             <>
               <Field
@@ -180,6 +197,18 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
               />
               <p className="hint">{t("publish.editNote")}</p>
             </>
+          ) : metaFailed && metadata ? (
+            // The job died. "Write them again" in the footer is the way
+            // back, once whatever the message names has been dealt with.
+            <>
+              <p className="hint">{t("publish.metaFailed")}</p>
+              <FailureCard node={metadata} />
+            </>
+          ) : unreadable ? (
+            // Rendered, but the artifact would not come back over HTTP.
+            // Reported rather than warned to the console: the symptom is
+            // identical to still-rendering, and it never resolves.
+            <Alert message={t("publish.unreadable")} />
           ) : (
             // Asked for, still rendering. Said plainly rather than shown
             // as empty fields: two model runs is not instant, and a blank
@@ -280,12 +309,21 @@ function Field({
 }
 
 /** The metadata artifact, fetched like the screenplay is. Its own hook so
- * the null-URL case (not packaged, or still rendering) is one branch. */
-function usePublishKit(url: string | null): PublishKitData | null {
+ * the null-URL case (not packaged, or still rendering) is one branch.
+ *
+ * `unreadable` is the third state, and it used to be invisible: a fetch that
+ * threw logged to the console and left `kit` null, which the dialog reads as
+ * "still rendering" — a message that would never change. */
+function usePublishKit(url: string | null): {
+  kit: PublishKitData | null;
+  unreadable: boolean;
+} {
   const [kit, setKit] = useState<PublishKitData | null>(null);
+  const [unreadable, setUnreadable] = useState(false);
 
   useEffect(() => {
     setKit(null);
+    setUnreadable(false);
     if (!url) return;
     let stale = false;
     fetch(url)
@@ -293,11 +331,14 @@ function usePublishKit(url: string | null): PublishKitData | null {
       .then((data) => {
         if (!stale) setKit(data as PublishKitData);
       })
-      .catch((err) => console.warn("publish kit fetch failed:", err));
+      .catch((err) => {
+        console.warn("publish kit fetch failed:", err);
+        if (!stale) setUnreadable(true);
+      });
     return () => {
       stale = true;
     };
   }, [url]);
 
-  return kit;
+  return { kit, unreadable };
 }
