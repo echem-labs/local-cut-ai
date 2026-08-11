@@ -13,7 +13,6 @@ is labelled with its real type.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 
 import httpx
@@ -76,27 +75,21 @@ async def test_reading_the_picture_does_not_block_the_event_loop(tmp_path):
     progress frame for the length of the read — so it belongs in a thread,
     like the route's own file work.
 
-    Asserted by watching the loop rather than by inspecting the call: a
-    ticker that keeps counting through the encode is the property that
-    matters, and it stays true however the offload is spelled.
+    Asserted by watching the loop rather than by inspecting the call, and by
+    bounding the worst stall rather than counting turns: `base64.b64encode`
+    never releases the GIL, so a thread handed the whole asset in one call
+    freezes the loop exactly as an inline encode does — while a tick tally
+    still rises, because the read either side of it yields.
     """
+    from conftest import MAX_STALLED, watch_the_loop
+
     big = tmp_path / "big.png"
     big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
 
-    ticks = 0
+    async with watch_the_loop() as watch:
+        await encoded(big)
 
-    async def ticker() -> None:
-        nonlocal ticks
-        while True:
-            ticks += 1
-            await asyncio.sleep(0)
-
-    beat = asyncio.create_task(ticker())
-    await asyncio.sleep(0)
-    await encoded(big)
-    beat.cancel()
-
-    assert ticks > 1, "the loop stopped while the image was being encoded"
+    assert watch.stalled < MAX_STALLED, str(watch)
 
 
 async def test_anthropic_sends_the_image_as_a_content_block(monkeypatch, tmp_path):
