@@ -731,6 +731,18 @@ textarea {
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tab-close-icon-color: var(--text-tertiary);
   --dv-floating-box-shadow: var(--shadow-2);
+
+  /* Keep dockview's z-indices inside dockview. Its sashes ship at z-index
+     99, which is a perfectly sensible number inside a docking library and
+     a wrong one in this app: nothing between here and .app opens a
+     stacking context, so 99 competed directly with our own scale, where
+     the Settings overlay is --z-drawer (40). A 4px sash from the workspace
+     behind was therefore painted ON TOP of Settings and took the clicks
+     for whatever control it crossed — found by the U8 sweep hit-testing
+     Storage's delete button and landing on `div.dv-sash`. `isolation`
+     rather than a z-index of our own: this needs a stacking context, not
+     a position in the scale, and it moves nothing on screen. */
+  isolation: isolate;
 }
 
 /* the tab's close ✕ ships oversized next to 12px tab text — shrink it */
