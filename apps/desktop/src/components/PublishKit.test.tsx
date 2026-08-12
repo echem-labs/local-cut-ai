@@ -10,7 +10,7 @@
  * worth pinning: asked-for-but-rendering is a real and slow state (two model
  * runs), and a blank card during it reads as broken.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -92,11 +92,88 @@ describe("before anything has been packaged", () => {
 });
 
 describe("while the kit is rendering", () => {
+  const rendering = {
+    metadata: node("metadata", "rendering"),
+    thumbnail: node("thumbnail", "rendering"),
+  };
+
   it("says so rather than showing an empty card", () => {
     // Two model runs. A card with three blank fields is indistinguishable
     // from one that failed.
-    mount({ metadata: node("metadata", "rendering"), thumbnail: node("thumbnail", "rendering") });
+    mount(rendering);
     expect(screen.getByRole("status")).toHaveTextContent(/writing the title/i);
+  });
+
+  it("turns something, so the wait does not read as a freeze", () => {
+    // A sentence that never changes is what a hung dialog looks like, and
+    // this one showed exactly that for minutes at a time. `.spin` is the
+    // app's own busy mark, the one the generate buttons already wear.
+    mount(rendering);
+    expect(screen.getByRole("status").querySelector(".spin")).not.toBeNull();
+  });
+
+  it("says how long it has been working, once the wait is a real one", () => {
+    // Elapsed rather than a percentage: two local model runs report no
+    // progress, and "is this still going" is the question actually being
+    // asked. Held back a few seconds so a fast kit never flashes a timer.
+    vi.useFakeTimers();
+    try {
+      mount(rendering);
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(screen.getByRole("status")).not.toHaveTextContent(/\ds/);
+      act(() => void vi.advanceTimersByTime(6000));
+      expect(screen.getByRole("status")).toHaveTextContent(/8s/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+/**
+ * A node that failed is not a node that is still working, and the dialog
+ * said it was: a metadata job that died on "model 'qwen3:14b' not found"
+ * left "Writing the title, description and hashtags from your script..."
+ * on screen forever, with the engine's reason recorded and never shown.
+ * The kit's two halves fail independently, so each says its own piece.
+ */
+describe("when the engine could not write the kit", () => {
+  const failedNode = (id: string, error: string): NodeState => ({
+    ...node(id, "failed"),
+    error,
+  });
+
+  it("shows why the text could not be written, instead of claiming to be writing it", async () => {
+    mount({
+      metadata: failedNode("metadata", "local LLM error: model 'qwen3:14b' not found"),
+      thumbnail: node("thumbnail", "final", "t".repeat(64)),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/qwen3:14b/);
+    expect(screen.queryByText(/writing the title/i)).toBeNull();
+  });
+
+  it("says the thumbnail failed rather than leaving an empty frame", async () => {
+    mount({
+      metadata: node("metadata", "final", "m".repeat(64)),
+      thumbnail: failedNode("thumbnail", "out of memory after 2 fallback attempts"),
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/out of memory/i);
+    // The half that DID work is still usable.
+    expect(await screen.findByLabelText(/^title$/i)).toHaveValue(KIT.title);
+  });
+
+  it("says so when the metadata rendered but could not be read back", async () => {
+    // The fetch used to fail into console.warn alone, which is the same
+    // permanent "writing..." with nothing on screen to explain it.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")));
+    mount({
+      metadata: node("metadata", "final", "m".repeat(64)),
+      thumbnail: node("thumbnail", "final", "t".repeat(64)),
+    });
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/writing the title/i)).toBeNull();
   });
 });
 
