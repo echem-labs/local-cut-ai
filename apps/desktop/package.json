@@ -36,7 +36,9 @@
     "rig:parity:canvas": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-canvas.mjs",
     "rig:parity:u5": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-u5.mjs",
     "rig:parity:u6": "node scripts/rig/retry.mjs 6 node scripts/rig/parity-u6.mjs",
-    "rig:u7": "node scripts/rig/u7.mjs"
+    "rig:u7": "node scripts/rig/u7.mjs",
+    "rig:sweep": "node scripts/rig/sweep.mjs",
+    "rig:sweep:x11": "node scripts/rig/sweep.mjs --ozone=x11"
   },
   "dependencies": {
     "dockview-react": "^7.0.2",
