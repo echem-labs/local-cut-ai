@@ -119,6 +119,14 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
   cloud: "settings.backends.names.cloud",
 };
 
+/** Tasks whose default names a model on the LLM SERVER (Ollama-style, e.g.
+ *  `qwen3:14b`) rather than a manifest entry with weights on disk — so their
+ *  choices come from the server's own list, not from what has been
+ *  downloaded. Mirrors `_SERVER_TASKS` in `manifest/defaults.py`; the engine
+ *  validates against its copy, and a task missing from this one would offer
+ *  the user an empty picker for a knob the engine does honor. */
+const SERVER_TASKS = ["text.llm", "vision.llm"];
+
 /** Per-task default models (engine-persisted): what renders each kind of
  * work when a node names no model. Rows come from the engine's own list of
  * defaultable tasks, so a task the engine cannot honor never grows a knob;
@@ -161,7 +169,7 @@ function ModelDefaultsPanel() {
       const auto = { value: "", label: t("settings.models.defaultsAuto") };
       const current = modelDefaults.defaults[task] ?? "";
       let choices: { value: string; label: string }[];
-      if (task === "text.llm") {
+      if (SERVER_TASKS.includes(task)) {
         // Ollama-served names, plus the stored one even when the server is
         // down — the picker must show the truth, not silently blank it.
         const names = current && !llmNames.includes(current) ? [current, ...llmNames] : llmNames;

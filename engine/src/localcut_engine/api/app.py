@@ -8,6 +8,7 @@ Rules enforced here, not by convention:
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -56,6 +57,7 @@ from ..graph.editor import (
     EditPlan,
     parse_edit_plan,
     parse_scene_suggestion,
+    suggest_scene_prompt,
 )
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
@@ -69,6 +71,7 @@ from ..manifest.custom import TASK_DESTS, add_custom_model, remove_custom_model
 from ..manifest.defaults import (
     DEFAULTABLE_TASKS,
     DefaultsTooNew,
+    is_server_model_name,
     load_defaults,
     set_default,
 )
@@ -76,6 +79,7 @@ from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
 from ..providers.registry import (
+    cloud_vision_models,
     configured_providers,
     default_vision_model,
     textgen_for_model,
@@ -1311,15 +1315,118 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"dirty": sorted(dirty)}
 
+    @app.get("/vision", dependencies=[Authed])
+    async def vision() -> dict:
+        """Whether anything on this machine can read a picture, and what.
+
+        One question with one answer, because the desktop was deriving it
+        from the provider slate — the same rule written twice, in two
+        languages, and the copy in the renderer could not see a LOCAL model
+        at all. The client shows its "write these from the image" button
+        exactly when `model` is not null.
+        """
+        try:
+            model = await asyncio.to_thread(default_vision_model, config)
+        except ProviderError as exc:
+            return {"model": None, "kind": None, "reason": str(exc)}
+        except DefaultsTooNew as exc:
+            # Not a `reason`: that field says "you have no model, here is how
+            # to get one", which the user fixes in Settings. This says their
+            # engine cannot read the file — the same condition
+            # `/models/defaults` reports, answered the same way.
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "model": model,
+            "kind": "local" if model.startswith("local:") else "cloud",
+            "reason": None,
+        }
+
+    @app.get("/vision/models", dependencies=[Authed])
+    async def vision_models() -> dict:
+        """Every model this machine could read a picture with, for a picker.
+
+        Only models that can actually SEE. Building this from `/llm/models`
+        instead would offer the server's text-only names too, and
+        `/suggest-scene` validates the SHAPE of a `local:*` override rather
+        than its eyesight — so a picker that listed `llama3.2` would hand the
+        user a confident description of an image nothing ever looked at, at
+        HTTP 200, which is the exact failure this whole route exists to
+        refuse.
+
+        `local_known` is false when the LLM server does not serve Ollama's
+        native `/api/show`: the names cannot be filtered, so the client offers
+        none of them rather than guessing. Their own `vision.llm` choice still
+        appears — the user vouched for that one themselves in Settings.
+        """
+        chosen: str | None = None
+        try:
+            chosen = await asyncio.to_thread(default_vision_model, config)
+        except ProviderError:
+            pass
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        backend = LLMScriptBackend(
+            base_url=config.llm_url,
+            model=config.llm_model,
+            timeout_s=config.llm_timeout_s,
+        )
+        try:
+            seeing = await backend.list_vision_models()
+        except httpx.HTTPError:
+            seeing = None
+        local = [f"local:{name}" for name in seeing or []]
+        # The persisted choice always belongs in the list, even when the
+        # server is down or cannot be asked — a picker that silently drops the
+        # model the engine would actually use shows the user something other
+        # than the truth.
+        if chosen and chosen.startswith("local:") and chosen not in local:
+            local.insert(0, chosen)
+        return {
+            "models": local + cloud_vision_models(config),
+            "default": chosen,
+            "local_known": seeing is not None,
+        }
+
+    @app.get("/vision/residency", dependencies=[Authed])
+    async def vision_residency(model: str = "") -> dict:
+        """Whether a local model is loaded yet — the read's only real stage.
+
+        `/suggest-scene` is one opaque POST: it answers when the whole
+        description is ready and says nothing on the way. But the minutes go
+        into loading the weights, not into looking at the picture, so a client
+        polling this can tell the user which of the two it is waiting on
+        instead of showing a spinner that means nothing.
+
+        Deliberately not part of the read itself. Ollama answers `/api/ps`
+        while a generation is in flight, so this stays responsive exactly when
+        the chat endpoint does not — which is the moment the answer matters.
+        """
+        if not model.startswith("local:"):
+            # A cloud read has no local residency to report, and neither does
+            # a name this engine would refuse to send.
+            return {"loaded": None}
+        if not is_server_model_name(model):
+            raise HTTPException(status_code=422, detail=f"{model!r} is not a valid model name")
+        backend = LLMScriptBackend(
+            base_url=config.llm_url,
+            model=config.llm_model,
+            timeout_s=config.llm_timeout_s,
+        )
+        resident = await backend.resident_models()
+        # None, not False, when the server cannot say: "not loaded yet" and
+        # "I cannot tell" send the client to different sentences, and guessing
+        # the first would promise a stage change that never arrives.
+        if resident is None:
+            return {"loaded": None}
+        return {"loaded": model.removeprefix("local:") in resident}
+
     class SuggestSceneBody(BaseModel):
         # The uploaded image to look at.
         node_id: str = Field(pattern=NODE_ID_PATTERN)
-        # Cloud-only, unlike /edit's optional override: there is no local
-        # vision model in the manifest, so there is nothing to fall back TO.
-        # Answering from the project's text alone would return a confident
-        # description of a picture nothing ever looked at. Optional in the
-        # SHAPE so that omitting it earns the explanation below rather than a
-        # bare "field required".
+        # `local:*` (a vision model on the LLM server) or `cloud:*`. Optional
+        # in the SHAPE so that omitting it means "whichever this machine can
+        # run", and so a machine that can run none earns the explanation
+        # `default_vision_model` raises rather than a bare "field required".
         model: str | None = None
 
     @app.post("/projects/{project_id}/suggest-scene", dependencies=[Authed])
@@ -1335,19 +1442,38 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         no mutation path and nothing here can edit a graph.
         """
         await _get_project(project_id)
-        if body.model is not None and not body.model.startswith("cloud:"):
+        if body.model is not None and not body.model.startswith(("cloud:", "local:")):
             raise HTTPException(
                 status_code=422,
-                detail="suggesting a scene needs a cloud:* model that can read an image",
+                detail="suggesting a scene needs a local:* or cloud:* model that can read an image",
             )
-        # Omitted means "use whichever vision provider I have configured" —
-        # the desktop must not carry model names, which drift. Resolved
-        # BEFORE the spend gate so the refusal can say what it refused.
+        # This is the first route on which a CALLER names a local model —
+        # `/edit` takes only `cloud:*` or nothing, so every local name the
+        # engine has sent so far came through `set_default` and its bound.
+        # Re-established here rather than inherited, because nothing else on
+        # this path would refuse an unbounded string before it is sent.
+        if body.model is not None and body.model.startswith("local:"):
+            if not is_server_model_name(body.model):
+                raise HTTPException(
+                    status_code=422, detail=f"{body.model!r} is not a valid model name"
+                )
+        # Omitted means "whichever model this machine can run" — the desktop
+        # must not carry model names, which drift. Resolved BEFORE the spend
+        # gate so the refusal can say what it refused.
+        # Off the loop: resolving it now reads the defaults file from disk,
+        # where it used to be a lookup in an in-memory provider table.
         try:
-            model = body.model or default_vision_model(config)
+            model = body.model or await asyncio.to_thread(default_vision_model, config)
         except ProviderError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if not CLOUD_SPEND_ALLOWED.get():
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # Only the cloud path can bill anyone. Refusing a local model here
+        # would deny an agent with no spending rights a job that costs
+        # nothing and never leaves the machine — the same distinction the
+        # queue's own refusal draws on `CLOUD_PREFIX`.
+        local = model.startswith("local:")
+        if not local and not CLOUD_SPEND_ALLOWED.get():
             raise cloud_text_refusal(model)
         try:
             image = await asyncio.to_thread(service.asset_image_path, project_id, body.node_id)
@@ -1358,19 +1484,35 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # The project's own words, so the suggestion belongs to THIS video
         # rather than describing a photograph in isolation.
         view = await asyncio.to_thread(service.edit_view, project_id, "project")
-        prompt = (
-            f"Project so far:\n{json.dumps(view)}\n\n"
-            "Write the narration and the visual prompt for one new scene built "
-            "on the attached image."
-        )
+        # Written out rather than dumped as JSON: the graph view is a machine
+        # format, and asking a small local model to mine it for the video's
+        # subject and the voice to continue is a job it does badly on top of
+        # the one actually being asked. The length matters most — narration is
+        # what a scene's runtime IS, and with nothing said about it the model
+        # wrote a five-word fragment for a five-second shot.
+        prompt = suggest_scene_prompt(view)
         # A client precondition (missing BYOK key, unroutable model) is 4xx,
         # distinct from the provider failing mid-call, which the 502 owns.
+        # The local server has no such precondition — it is either answering
+        # or it is not, and "not" is a 502 like any other transport failure.
+        if not local:
+            try:
+                describe = textgen_for_model(config, model).describe
+            except ProviderError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            # The same interactive path onto the same local server as `/edit`,
+            # with the same VRAM-yield discipline afterwards.
+            describe = functools.partial(
+                LLMScriptBackend(
+                    base_url=config.llm_url,
+                    model=config.llm_model,
+                    timeout_s=config.llm_timeout_s,
+                ).describe,
+                model=model,
+            )
         try:
-            cloud_gen = textgen_for_model(config, model)
-        except ProviderError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            raw = await cloud_gen.describe(
+            raw = await describe(
                 system=SUGGEST_SCENE_SYSTEM_PROMPT,
                 prompt=prompt,
                 image=image,

@@ -480,3 +480,76 @@ def test_no_dialog_picks_its_own_width():
     assert rogue == [], (
         f"these selectors size a dialog themselves; use the shell's size prop instead: {rogue}"
     )
+
+
+def test_every_defaultable_task_has_a_label_and_a_hint():
+    """The Settings picker renders one row per task the engine says it
+    honors, and titles each from the models catalog. A task added to
+    DEFAULTABLE_TASKS without a catalog entry therefore renders a row with a
+    blank name and a blank explanation — a knob for something unnamed. The
+    reverse is dead copy: a label for a task the engine will not accept.
+    """
+    import json
+
+    from localcut_engine.manifest.defaults import DEFAULTABLE_TASKS
+
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "models.json").read_text(encoding="utf-8")
+    )
+    tasks = set(DEFAULTABLE_TASKS)
+    labels = set(catalog.get("taskLabels", {}))
+    hints = set(catalog.get("taskHints", {}))
+    # The catalog also names tasks that are not user-defaultable (speech.tts,
+    # transcribe) because the same labels title the model library, so it may
+    # be a superset — but never a subset.
+    assert tasks <= labels, f"defaultable tasks with no label: {sorted(tasks - labels)}"
+    assert tasks <= hints, f"defaultable tasks with no hint: {sorted(tasks - hints)}"
+    assert labels == hints, (
+        f"taskLabels and taskHints disagree: only labelled {sorted(labels - hints)}, "
+        f"only hinted {sorted(hints - labels)}"
+    )
+
+
+def test_the_settings_picker_agrees_on_which_tasks_the_llm_server_serves():
+    """Two kinds of default live in one list. Most name a manifest entry with
+    weights on disk; `text.llm` and `vision.llm` name a model on the LLM
+    server, so their choices come from the server rather than from what has
+    been downloaded.
+
+    The desktop keeps its own copy of that split to build the picker. Drift
+    is silent and one-directional: a server task missing from the UI's list
+    is offered as a list of installed manifest models — which is empty for it
+    — so the row filters itself out and the knob simply never appears.
+    """
+    from localcut_engine.manifest.defaults import _SERVER_TASKS
+
+    settings = (_FORMATS.parent.parent / "screens" / "Settings.tsx").read_text(encoding="utf-8")
+    match = re.search(r"const SERVER_TASKS = \[(.*?)\]", settings, re.S)
+    assert match, "Settings.tsx no longer declares SERVER_TASKS — update this test with it"
+    mirrored = tuple(re.findall(r'"([^"]+)"', match.group(1)))
+    assert mirrored == _SERVER_TASKS, (
+        f"the picker's server-task list drifted from the engine's: "
+        f"UI {mirrored}, engine {_SERVER_TASKS}"
+    )
+
+
+def test_the_vision_timeout_matches_the_engines():
+    """`/suggest-scene` is the one interactive route that waits on a vision
+    model, and a model that is not resident yet loads several GB before it
+    answers — minutes, on a contended GPU.
+
+    The renderer bounds every request at 120s, which is generous for a route
+    that only touches disk and far too short for this one. A client budget
+    below the engine's makes the app give up on work the engine then finishes
+    anyway: the user is told it failed, nothing is shown, and the read they
+    paid the wait for is discarded at the moment it was about to land. Above
+    the engine's it is dead patience — the engine has already given up.
+    """
+    from localcut_engine.config import EngineConfig
+
+    client = (_FORMATS.parent.parent / "api" / "client.ts").read_text(encoding="utf-8")
+    match = re.search(r"VISION_TIMEOUT_MS = ([\d_]+)", client)
+    assert match, "client.ts no longer declares VISION_TIMEOUT_MS — update this test with it"
+    assert int(match.group(1).replace("_", "")) == EngineConfig().llm_timeout_s * 1000, (
+        "the renderer's vision budget drifted from the engine's llm_timeout_s"
+    )

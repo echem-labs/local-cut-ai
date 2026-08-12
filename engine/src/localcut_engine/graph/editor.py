@@ -32,6 +32,7 @@ from ..aspects import (
     EXPORT_VIDEO_KBPS_BOUNDS,
 )
 from .model import NodeKind, StoryGraph, scene_sort_key
+from .templates import DEFAULT_CLIP_S, MAX_CLIP_S
 from .patch import PatchOp
 
 # Params the LLM may see and set, per node kind. Aspect and format params are
@@ -59,21 +60,132 @@ _CLIP_MIN_S, _CLIP_MAX_S = 1.0, 15.0
 _SPEED_MIN, _SPEED_MAX = 0.5, 1.5
 
 SUGGEST_SCENE_SYSTEM_PROMPT = """You are helping build one scene of a short video from a \
-picture the user just supplied. You receive a JSON view of the project so far and the image \
-itself. Respond with JSON only (no markdown fences), in this exact shape:
+picture the user just supplied. You are told what the video is about, what the scenes before \
+this one say, and how long this scene runs; you are also shown the image itself. Respond with \
+JSON only (no markdown fences), in this exact shape:
 {"narration": str, "prompt": str}
 Rules:
 - "narration" is what the voice says over this scene. Write it to be spoken aloud, in the \
 voice and tense the project's existing narration already uses.
+- Write narration to the word count you are given. That count IS the scene's length: the \
+narration is spoken and the clip runs as long as the speech, so a handful of words makes a \
+scene that is over before it is seen.
+- Write a complete sentence. Never continue or complete a sentence from an earlier scene.
 - "prompt" describes the shot for a video model that will ANIMATE this exact image. Describe \
 what is in the picture and how it should move; do not invent a different subject.
-- Keep the narration to one or two sentences: scene length follows narration length.
 - Match the established visual style of the project's other scenes.
 - Return the two keys and nothing else."""
 
 # Two short strings. A cap this size is generous for them and still bounds a
 # model that decides to explain itself at length on the user's key.
 SUGGEST_SCENE_MAX_TOKENS = 1024
+
+# How many of the preceding scenes' lines to quote. Enough to establish a
+# voice and to show where the script had got to; not so many that a long
+# project buries the picture, which is the thing actually being described.
+_SUGGEST_SCENE_RECENT = 3
+
+
+def typical_clip_s(durations: list[float]) -> float:
+    """How long a scene added on its own should run, from what the project
+    already does.
+
+    A flat constant writes a line measured against a scene the project would
+    never have made: a 30s explainer cut from six 5s beats and a 90s piece
+    built from 12s ones want different lengths from a picture dropped into
+    them. Median rather than mean — one deliberately long establishing shot
+    should not stretch every scene added after it.
+    """
+    if not durations:
+        return DEFAULT_CLIP_S
+    ordered = sorted(durations)
+    return min(MAX_CLIP_S, max(1.0, ordered[len(ordered) // 2]))
+
+
+def suggest_scene_prompt(view: dict, seconds: float | None = None) -> str:
+    """What to ask for one new scene built on a picture.
+
+    A JSON dump of the whole graph was what this used to send, and it asked a
+    model to do three jobs at once: parse a machine format, infer the video's
+    subject from a `brief` key buried in it, and guess how much to write. The
+    smaller local models the vision path exists to use did the first badly and
+    the third not at all — the narration came back as a five-word fragment
+    continuing a sentence from a scene it had half-read.
+
+    So the context is spelled out instead: what the video is about, the last
+    few lines in the voice the new one has to match, and a word budget derived
+    from the length this scene will actually run. Narration is what sets that
+    length (the clip runs as long as the speech), so the budget is not a style
+    note — it is the scene's duration, stated in the only unit the model can
+    act on.
+    """
+    parts: list[str] = []
+    brief = view.get("brief") or {}
+    topic = brief.get("prompt")
+    if topic:
+        parts.append(f"The video is about: {topic}")
+    style = brief.get("style_preset")
+    if style:
+        parts.append(f"Visual style: {style}")
+    total = brief.get("target_duration_s")
+    if total:
+        parts.append(f"The finished video runs about {total} seconds.")
+
+    nodes = [node for scene in view.get("scenes") or [] for node in scene.get("nodes") or []]
+    if seconds is None:
+        seconds = typical_clip_s(
+            [
+                float(value)
+                for node in nodes
+                if node.get("kind") == "clip"
+                for value in [node.get("params", {}).get("duration_s")]
+                if isinstance(value, int | float)
+            ]
+        )
+
+    # The narration already written, in order, so the new line continues a
+    # voice rather than inventing one.
+    said = [
+        text
+        for node in nodes
+        if node.get("kind") == "narration"
+        for text in [str(node.get("params", {}).get("text") or "").strip()]
+        if text
+    ]
+    if said:
+        recent = said[-_SUGGEST_SCENE_RECENT:]
+        lines = "\n".join(f"- {line}" for line in recent)
+        parts.append(f"The scenes before this one say:\n{lines}")
+        parts.append("Your new scene comes after those. Do not repeat what they already said.")
+    else:
+        parts.append("This is the first scene with words, so the narration sets the voice.")
+
+    # Imported here, not at module scope: `backends.llm` pulls httpx and the
+    # ffmpeg timing constants, which a graph module has no business loading
+    # to reach one arithmetic helper. The helper is the point — it is the
+    # same words-per-second the script writer is held to, so a scene added
+    # this way is measured the way every other scene is.
+    from ..backends.llm import narration_word_budget
+
+    # The length the scene needs, floored by what this project actually
+    # writes. A five-second default asks for eighteen words, which next to
+    # scenes carrying forty reads as a caption dropped into a script — and
+    # narration is what sets a scene's runtime, so matching the project's own
+    # density is what makes the new scene sit at the same pace as the rest.
+    words = narration_word_budget(seconds)
+    if said:
+        lengths = sorted(len(line.split()) for line in said)
+        words = max(words, lengths[len(lengths) // 2])
+    parts.append(
+        f"This scene runs about {seconds:.0f} seconds. Write about {words} words of narration "
+        f"— complete sentences, the same length and depth as the lines above."
+    )
+    parts.append(
+        "Start a new sentence with its own subject. Do not begin with a word that only makes "
+        "sense as the continuation of the previous scene's line."
+    )
+    parts.append("Write the narration and the visual prompt for one new scene built on the image.")
+    return "\n\n".join(parts)
 
 
 class SceneSuggestion(BaseModel):
