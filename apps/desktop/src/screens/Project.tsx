@@ -22,6 +22,7 @@ import { PromotedFrom } from "../components/Provenance";
 import { PublishKit } from "../components/PublishKit";
 import { Tip } from "../components/Tooltip";
 import { Workspace } from "../components/Workspace";
+import { Elapsed, Spinner, useElapsed } from "../components/Working";
 import { m, t } from "../i18n";
 import { pendingCheckpoint } from "../lib/checkpoints";
 import { EXPORT_FPS_CHOICES, EXPORT_SHORT_SIDE_CHOICES } from "../lib/formats";
@@ -459,17 +460,13 @@ function BoardMenu() {
  * This banner IS the screen — there is no board behind it yet — and with a
  * local model writing a screenplay it is the screen for minutes. Static prose
  * for that long is indistinguishable from an app that has stopped, so it gets
- * the pair NewSceneDialog settled on for the same wait: a spinner saying the
- * work is live, and a counter saying it is still moving.
+ * the pair every wait in the app uses: a spinner saying the work is live, and
+ * a counter saying it is still moving. Both come from `Working` — the shape
+ * of the wait is this screen's, the mark and the clock are the app's.
  *
  * No percentage, deliberately. The script backend reports exactly one
  * fraction, 0.9, and only once the screenplay is already written — a number
  * pinned at 0% for the entire read is a worse lie than no number at all.
- *
- * Elapsed is timed here rather than from the job's `started_at`, because that
- * is the ENGINE's clock and this is the desktop's; on a remote engine the two
- * need not agree. The counter only has to answer "has this stopped", which a
- * local stopwatch answers honestly.
  *
  * The spinner is gated on work actually being in flight. A script that was
  * cancelled leaves an empty board too, and spinning over a job nobody is
@@ -480,14 +477,7 @@ function ScriptWait({ node, onRetry }: { node: NodeState | null | undefined; onR
   // No node at all is the first moment of a new project — the graph is
   // written before the queue has anything to say about it. Work in flight.
   const working = !node || node.status === "queued" || node.status === "rendering";
-  const [elapsed, setElapsed] = useState(0);
-
-  useEffect(() => {
-    if (!working) return;
-    const started = Date.now();
-    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(tick);
-  }, [working]);
+  const elapsed = useElapsed(working);
 
   if (!working) {
     return (
@@ -507,29 +497,14 @@ function ScriptWait({ node, onRetry }: { node: NodeState | null | undefined; onR
 
   return (
     // role="status" so the headline is announced when it changes from waiting
-    // to writing; the counter is aria-hidden because an atomic live region
-    // re-reads its whole contents, and doing that once a second is not
-    // information.
+    // to writing.
     <div className="banner script-wait" role="status">
       <div className="row">
-        {/* A quarter arc on a track, in the queue tray's ring geometry — the
-            two "something is running" marks on screen should be one shape.
-            Not the icon set's loader, which is a ~300° ring: turning that at
-            16px moves only its own small gap, and it reads as a circle
-            sitting still. `pathLength` normalises the circumference to 100 so
-            the dash pattern is a plain quarter, with no copy of 2πr to keep
-            in step with the tray's. */}
-        <svg className="wait-ring spin" viewBox="0 0 18 18" aria-hidden="true">
-          <circle className="track" cx="9" cy="9" r="7" />
-          <circle className="arc" cx="9" cy="9" r="7" pathLength={100} strokeDasharray="25 75" />
-        </svg>
+        <Spinner />
         <b>
           {node?.status === "rendering" ? t("project.scriptWriting") : t("project.scriptQueued")}
         </b>
-        <span className="spacer" />
-        <span className="elapsed" aria-hidden>
-          {t("project.scriptElapsed", { seconds: elapsed })}
-        </span>
+        <Elapsed seconds={elapsed} />
       </div>
       <p>{t("project.writingScript")}</p>
     </div>
