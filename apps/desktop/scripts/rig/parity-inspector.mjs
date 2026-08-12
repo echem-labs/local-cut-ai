@@ -16,7 +16,7 @@
  * "Use X" chip names is a function of what is installed, and a reference
  * frame must not depend on this machine's library.
  *
- * Usage: node parity-u5.mjs --refs <dir>  (dir holds inspector-failure.png + masks.json)
+ * Usage: node parity-inspector.mjs --refs <dir>  (dir holds inspector-failure.png + masks.json)
  */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -39,12 +39,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
 const refsDir = refsArg >= 0 ? path.resolve(process.argv[refsArg + 1]) : null;
 if (!refsDir) {
-  console.error("usage: node parity-u5.mjs --refs <dir>");
+  console.error("usage: node parity-inspector.mjs --refs <dir>");
   process.exit(2);
 }
 
 const FRAME_NAME = "inspector-failure.png";
-const dir = shotsDir("parity-u5");
+const dir = shotsDir("parity-inspector");
 const check = makeCheck();
 const masks = JSON.parse(readFileSync(path.join(refsDir, "masks.json"), "utf8"));
 const MASK_PAD = 6;
@@ -58,8 +58,8 @@ const FRAME = { width: reference.width, height: reference.height };
  * status ring are lucide/SVG here and unicode in the mock. */
 const MASKED_AS = [".failure-head svg"];
 
-const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-u5-"));
-const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-u5-engine-"));
+const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-inspector-"));
+const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-inspector-engine-"));
 let scaleHeld = true;
 
 const rig = await startRigTrueToScale({
@@ -89,7 +89,13 @@ try {
   await evalInApp(`
     await page.addStyleTag({ content: [
       "::-webkit-scrollbar { width: 0 !important; height: 0 !important; }",
-      ".banner.error { display: none !important; }",
+      // The WRAPPER, not just the banner inside it. content-banners
+      // collapses through :empty, and an element hidden with display
+      // none is still a child - so hiding only the banner left the
+      // wrapper laid out, and its 24px bottom margin pushed every frame
+      // down by that much. Which reads as "the app has drifted from the
+      // mock", in every frame at once, and is what it did.
+      ".content-banners { display: none !important; }",
       ".queue-tray { display: none !important; }",
       ".notice-bar { display: none !important; }",
     ].join("\\n") });
