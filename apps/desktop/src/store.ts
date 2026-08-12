@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { EngineClient } from "./api/client";
+import { EngineClient, EngineTimeoutError } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
 import { forgetPublishDraft } from "./lib/publishDraft";
@@ -443,9 +443,13 @@ interface AppState {
    *  look at it, and the user may still cancel. A cancelled drop leaves an
    *  unwired asset behind, which is what the flowchart is for. */
   uploadSceneImage: (file: File) => Promise<{ nodeId?: string; error?: string }>;
-  /** Ask a cloud model to write this scene's words from the image. */
+  /** Ask a vision model — local or cloud — to write this scene's words from
+   *  the image. `model` names one the engine offered; omitted lets it choose.
+   *  `signal` aborts the wait without reporting a failure. */
   suggestScene: (
     nodeId: string,
+    model?: string,
+    signal?: AbortSignal,
   ) => Promise<{ narration?: string; prompt?: string; error?: string }>;
   /** Append a scene built on an already-uploaded image. Null means applied. */
   addSceneFromImage: (
@@ -727,6 +731,11 @@ const messageOf = (err: unknown): string => {
   // fetch") names neither the engine nor a next step — say what it means
   // here, the one place every action's error passes through.
   if (err instanceof TypeError) return t("errors.engineUnreachable", { detail: err.message });
+  // The platform's own wording for an aborted fetch is "signal timed out",
+  // which names no actor and no next step. Say which side gave up, and that
+  // the work may not have been wasted — the engine is still going.
+  if (err instanceof EngineTimeoutError)
+    return t("errors.engineTimeout", { seconds: Math.round(err.timeoutMs / 1000) });
   return err instanceof Error ? err.message : String(err);
 };
 
@@ -2209,12 +2218,16 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    suggestScene: async (nodeId) => {
+    suggestScene: async (nodeId, model, signal) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return { error: t("errors.engineUnavailable") };
       try {
-        return await client.suggestScene(currentProject.id, nodeId);
+        return await client.suggestScene(currentProject.id, nodeId, model, signal);
       } catch (err) {
+        // A caller-aborted read is not a failure with something to say: the
+        // user cancelled, and the dialog they cancelled from is still open
+        // with its fields intact.
+        if (signal?.aborted) return {};
         return { error: messageOf(err) };
       }
     },
