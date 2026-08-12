@@ -13,7 +13,7 @@
  * reports whichever it chose. A machine that can do neither never sees the
  * button at all.
  */
-import { Cloud, Laptop, Loader2, Sparkles } from "lucide-react";
+import { Cloud, Laptop, Loader2, Sparkles, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { t } from "../i18n";
@@ -22,6 +22,7 @@ import { Alert } from "./Alert";
 import { Dropdown } from "./Dropdown";
 import { Modal } from "./Modal";
 import { PhotoThumb } from "./PhotoThumb";
+import { Tip } from "./Tooltip";
 
 /** How often to ask whether the model is in memory yet. Cheap (Ollama answers
  *  it while generating) but not free, and the stage it reports changes once
@@ -280,14 +281,24 @@ export function NewSceneDialog({
                 {writing ? t("drop.sceneGenerating") : t("drop.sceneGenerate")}
               </button>
               {writing && (
-                // Cancel belongs beside the thing it cancels, not in the
-                // footer: the footer's buttons act on the SCENE, and a read
-                // the user has given up on should not look like one of them.
-                // The same pairing the model library uses for a download in
-                // flight — outline action, ghost cancel.
-                <button className="btn-ghost" onClick={() => abort.current?.abort()}>
-                  {t("drop.sceneStop")}
-                </button>
+                // Beside the thing it stops, not in the footer: the footer's
+                // buttons act on the SCENE, and a read the user has given up
+                // on must not look like one of them.
+                //
+                // An icon button, so it reads as a control ON the running
+                // action rather than a second choice with equal weight to
+                // it — a word-for-word button next to "Reading the image…"
+                // gave a two-second interruption the same size as the work.
+                // The label survives as `aria-label` and in the tip.
+                <Tip label={t("drop.sceneStop")} hint={t("drop.sceneStopHint")}>
+                  <button
+                    className="icon-btn"
+                    aria-label={t("drop.sceneStop")}
+                    onClick={() => abort.current?.abort()}
+                  >
+                    <Square size={13} strokeWidth={2} aria-hidden />
+                  </button>
+                </Tip>
               )}
             </div>
 

@@ -3781,6 +3781,53 @@ button.link:hover {
   border-color: var(--status-failed);
 }
 
+/* The one thing on the screen while the script is written, so it is padded
+   like a panel rather than a strip above something: spinner and headline on
+   the first line, elapsed pinned right, the payoff sentence under both. */
+.script-wait {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-6);
+}
+
+.script-wait .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.script-wait .spacer {
+  flex: 1;
+}
+
+.script-wait b {
+  color: var(--text-primary);
+  font-size: var(--text-m);
+  font-weight: 600;
+}
+
+/* The same accent the pipeline header's working dot carries — one colour
+   means "this is live" across the screen. */
+.script-wait .spin {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.script-wait .elapsed {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  /* Tabular, so a counter ticking every second does not shuffle the line it
+     sits on. */
+  font-variant-numeric: tabular-nums;
+}
+
+.script-wait p {
+  margin: 0;
+  font-size: var(--text-s);
+}
+
 .banner.checkpoint {
   border-color: var(--accent);
   margin-bottom: var(--space-4);
@@ -4337,6 +4384,14 @@ button.link:hover {
   flex-shrink: 0;
 }
 
+/* Hug the control and centre on it.
+   Measured, because three attempts at this by eye all missed: the row was
+   centring a `.dropdown` 46px tall around a trigger only 30px tall, so the
+   control sat 8px below the middle of its own box while the label sat exactly
+   on it. `Tip` wraps the trigger in a `.tip-wrap` span, and that span
+   stretched to the flex line instead of hugging the button — `align-self`
+   stops the stretch, `align-items` centres what is left, and both wrappers
+   need it because the height came through the pair of them. */
 .scene-read-model .dropdown {
   min-width: 0;
 }
@@ -7611,7 +7666,18 @@ button.link:hover {
 
 /* ---- template dialogs ---- */
 
-.modal .field {
+/* `.field` is a LAYOUT class here — a labelled block in a dialog's stack.
+   `Dropdown` also puts `field` on its trigger for the settings-row variant,
+   a different meaning of the same word, and until a dialog contained one the
+   two never met. When they did, the trigger inherited a 16px top margin and
+   `display: block`, which pushed the button 16px down inside its own wrapper
+   and left the row centring a 46px box around a 30px control. Nothing in the
+   row could correct that, because the row was measuring honestly.
+
+   Excluded rather than renamed: the variant name is public API on a control
+   used across four screens, and a layout rule has no business reaching a
+   button in the first place. */
+.modal .field:not(.dropdown-trigger) {
   display: block;
   margin-top: var(--space-4);
 }

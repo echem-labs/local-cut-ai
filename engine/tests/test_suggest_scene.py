@@ -545,8 +545,9 @@ def test_the_ask_carries_the_length_the_scene_will_actually_run():
 
     assert f"{narration_word_budget(DEFAULT_CLIP_S)} words" in prompt
     assert "5 seconds" in prompt
-    # A fragment is the specific failure, so the ask names it.
-    assert "fragment" in prompt
+    # Starting mid-clause is the specific failure observed, so the ask
+    # forbids it in the terms the model can act on.
+    assert "continuation of the previous scene" in prompt
 
 
 def test_the_ask_spells_out_the_project_rather_than_dumping_its_graph():

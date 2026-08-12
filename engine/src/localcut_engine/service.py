@@ -25,7 +25,7 @@ from .graph.compiler import (
     orphaned_nodes,
     unready_nodes,
 )
-from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view
+from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view, typical_clip_s
 from .graph.model import (
     KEYFRAME_PORT,
     OPTIONAL_PORTS,
@@ -45,7 +45,6 @@ from .graph.patch import (
 )
 from .graph.template_io import GraphTemplate, build_graph, to_template
 from .graph.templates import (
-    DEFAULT_CLIP_S,
     MAX_CLIP_S,
     expand_screenplay,
     prompt_template_graph,
@@ -567,10 +566,22 @@ class ProjectService:
         params = stored_params(op.params or {})
         prompt = str(params.get("prompt", ""))
         narration = str(params.get("narration", ""))
+        # Absent means "whatever this project's scenes run for" — the same
+        # rule the suggestion's word budget is derived from, so the narration
+        # written for the scene is measured against the length the scene
+        # actually gets.
+        default_s = typical_clip_s(
+            [
+                float(node.params["duration_s"])
+                for node in graph.nodes.values()
+                if node.kind is NodeKind.CLIP
+                and isinstance(node.params.get("duration_s"), int | float)
+            ]
+        )
         try:
-            duration_s = float(params.get("duration_s", DEFAULT_CLIP_S))
+            duration_s = float(params.get("duration_s", default_s))
         except (TypeError, ValueError):
-            duration_s = DEFAULT_CLIP_S
+            duration_s = default_s
         # One clip only: past MAX_CLIP_S a scene splits into sequential
         # takes, which is expansion's job to construct, not a patch op's.
         duration_s = min(max(duration_s, 1.0), MAX_CLIP_S)
