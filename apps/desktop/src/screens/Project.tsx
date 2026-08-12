@@ -697,6 +697,13 @@ export function Project() {
   // a full finalize before the app would even suggest a title. A draft cut is
   // still a cut to publish.
   const hasCut = !!exportNode && isDone(exportNode.status) && !!exportNode.artifact_hash;
+  // A kit that has already been written stays reachable even after the cut
+  // it was written beside goes stale. Anything that invalidates the export —
+  // an edited scene, a re-render, a machine whose backends have changed —
+  // used to take the door with it, and behind that door were the title, the
+  // description and the user's own edits to them. None of that went stale:
+  // the kit is written from the SCRIPT, and its artifact is still on disk.
+  const hasKit = isDone(board.aux.metadata?.status ?? "queued");
   // "~9 min", from renders observed this session — absent until we've
   // actually watched one (honest ETA, review 3).
   const eta = finalizeEta(board);
@@ -791,7 +798,7 @@ export function Project() {
             after the cut, so it belongs where the end of the job is rather
             than in a band above the storyboard that has to be scrolled past
             on the way to everything earlier. */}
-        {hasCut && !checkpointPending && (
+        {(hasCut || hasKit) && !checkpointPending && (
           <Tip label={t("publish.open")} hint={t("terms.tips.publishKit")}>
             <button className="btn-ghost" onClick={() => setPublishOpen(true)}>
               <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
