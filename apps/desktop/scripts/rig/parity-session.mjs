@@ -415,7 +415,13 @@ try {
   const CAPTURE_CSS = `
     await page.addStyleTag({ content: [
       "::-webkit-scrollbar { width: 0 !important; height: 0 !important; }",
-      ".banner.error { display: none !important; }",
+      // The WRAPPER, not just the banner inside it. content-banners
+      // collapses through :empty, and an element hidden with display
+      // none is still a child - so hiding only the banner left the
+      // wrapper laid out, and its 24px bottom margin pushed every frame
+      // down by that much. Which reads as "the app has drifted from the
+      // mock", in every frame at once, and is what it did.
+      ".content-banners { display: none !important; }",
       ".queue-tray { display: none !important; }",
       ".notice-bar { display: none !important; }",
     ].join("\\n") });
