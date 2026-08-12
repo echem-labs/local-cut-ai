@@ -9,7 +9,8 @@
  * at the sizes it happened to choose, in the theme it happened to be in.
  *
  * So this file is a matrix rather than a script. It drives to every surface
- * in turn and runs ONE assertion set at each of six window sizes, in both
+ * in turn and runs ONE assertion set at each of eight window sizes — six
+ * fixed, plus the two halves this display snaps to — in both
  * themes, and at three zoom levels on the stops that sit near a breakpoint.
  * The assertions live in `probe()` and know nothing about which screen they
  * are on; what each screen declares (its reading column, its grids, whether
@@ -63,6 +64,27 @@ const SIZES = [
 /** The eyeball pass wants the extremes of each screen, and 90 screenshots
  * is not a pass anyone performs. Shoot the narrowest and the widest. */
 const SHOT_SIZES = new Set(["1000x700", "1920x1080"]);
+
+/** Snap-left and snap-right, measured from the display rather than guessed.
+ *
+ * The plan reserved snapping as a manual line, on the grounds that it is the
+ * window manager's behavior rather than the app's. Half of that is true: the
+ * GESTURE is the compositor's, and on Wayland nothing this rig can reach will
+ * perform it (there is no injection tool here, and gnome-shell's Eval is
+ * off). What the app has to cope with is not the gesture, though — it is the
+ * GEOMETRY the gesture leaves behind, and that is ordinary window bounds.
+ *
+ * Worth having as a size of its own rather than as an approximation of
+ * 980x800: half of a 1920 display is 960, which is the app's minimum width
+ * exactly, and a snapped window is the one shape a user reaches every day
+ * that is simultaneously at the floor and full height. */
+const snapSizes = (work) => {
+  const width = Math.floor(work.width / 2);
+  return [
+    { label: "snap-left", width, height: work.height, x: work.x, y: work.y },
+    { label: "snap-right", width, height: work.height, x: work.x + width, y: work.y },
+  ];
+};
 
 /** Zoom is a second viewport: Ctrl +/- changes the CSS-pixel width, so it
  * crosses the same breakpoints a resize does. Run it where a step actually
@@ -725,6 +747,9 @@ const rig = await startRig({
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7932",
   LOCALCUT_BACKEND: "mock",
   LOCALCUT_SEED_HOOK: "1",
+  // Boot at interface zoom 1, so a window sized 1000x700 lays out at
+  // 1000x700 CSS pixels — see setSize below for what this cost before.
+  GSETTINGS_BACKEND: "memory",
   ...(ozone ? { RIG_OZONE: ozone } : {}),
 });
 
@@ -750,20 +775,26 @@ try {
    *
    * Every rule in this file is written in CSS pixels — the rail compacts at
    * 1000, the reading column caps at 840, the window floor is 960x640 — and
-   * on a fractionally scaled display a window's bounds are not CSS pixels.
-   * On this dev box (scale 1.3) a 1000px content bounds lays out at 769,
-   * so the stop labelled "just above the 960 minimum" was measuring a
-   * viewport a fifth BELOW it and every size in the matrix was really some
-   * other size. Forcing the scale off is not available:
-   * `--force-device-scale-factor=1` is ignored under both Wayland and
-   * XWayland here, which is why this does not use `startRigTrueToScale`.
+   * a window's bounds need not be CSS pixels. On this dev box a 1000px
+   * content bounds laid out at 769, so the stop labelled "just above the
+   * 960 minimum" was measuring a viewport a fifth BELOW it and every size
+   * in the matrix was really some other size.
    *
-   * So convert instead, and VERIFY: ask for size x dpr, measure what the
-   * renderer got, and correct once — the scale factor itself can change
-   * with the window, so one conversion is a guess and two is an answer. A
-   * size the display cannot provide (1920 CSS pixels needs 2496 device
-   * pixels on a 1920-wide screen) comes back unreached rather than
-   * silently short, and the run says so at the end.
+   * The cause was NOT the display: the monitor runs at scale 1. It was the
+   * app scaling itself. GNOME's text-scaling-factor is 1.3 here and the
+   * renderer folds it into its zoom baseline on purpose (lib/zoom.ts), so
+   * the layout viewport is the window divided by 1.3 and no Chromium switch
+   * touches it — `--force-device-scale-factor` was the wrong lever, and for
+   * a while the conclusion drawn from its not working was that this box
+   * could not be made true to scale at all. The rig boots with
+   * `GSETTINGS_BACKEND=memory` above, so the app's own `gsettings` read
+   * returns the schema default and the baseline is 1.
+   *
+   * The conversion below stays anyway, and is the identity at zoom 1: ask
+   * for size x dpr, measure what the renderer got, correct once. It is the
+   * VERIFY half that earns its keep — a size that did not take comes back
+   * unreached rather than silently short, and the run says so at the end,
+   * whatever the reason the renderer had for refusing it.
    */
   const setSize = async (size) => {
     if (size.maximize) {
@@ -775,7 +806,16 @@ try {
       return { ok: true };
     }
     let inner = null;
-    for (let pass = 0; pass < 2; pass += 1) {
+    // Four passes, not two. The ratio is read from the renderer and applied
+    // by the main process, and the two are not in step for a moment after
+    // anything changes the zoom: a pass that reads 1.25 while the renderer
+    // has already gone back to 1 asks for a 1500px window and gets a 1500px
+    // viewport. It is self-correcting — the next pass reads the ratio that
+    // is now true — but with two passes a single mistimed read used up half
+    // the budget, and one did, three thousand checks into an otherwise
+    // green run. The extra passes cost nothing when the first one is right,
+    // which is every time nothing has just been zoomed.
+    for (let pass = 0; pass < 4; pass += 1) {
       const dpr = await evalInApp("return page.evaluate(() => window.devicePixelRatio);");
       const width = Math.round(size.width * dpr);
       const height = Math.round(size.height * dpr);
@@ -783,8 +823,8 @@ try {
         await app.evaluate(({ BrowserWindow }, size) => {
           const w = BrowserWindow.getAllWindows()[0];
           if (w.isMaximized()) w.unmaximize();
-          w.setContentBounds({ x: 40, y: 40, width: size[0], height: size[1] });
-        }, [${width}, ${height}]);
+          w.setContentBounds({ x: size[2], y: size[3], width: size[0], height: size[1] });
+        }, [${width}, ${height}, ${size.x ?? 40}, ${size.y ?? 40}]);
         await page.waitForTimeout(600);
         return page.evaluate(() => [window.innerWidth, window.innerHeight]);
       `);
@@ -937,6 +977,18 @@ try {
     }
   };
 
+  // Asked of the display rather than assumed: the work area is what a snap
+  // actually fills (it is the screen minus the shell's own bars), and it is
+  // the only size in the matrix this machine gets a vote on.
+  const workArea = await evalInApp(
+    "return app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);",
+  );
+  const sizes = [...SIZES, ...snapSizes(workArea)];
+  console.log(
+    `work area ${workArea.width}x${workArea.height} at ${workArea.x},${workArea.y} - ` +
+      `snapping to ${Math.floor(workArea.width / 2)}x${workArea.height}`,
+  );
+
   for (const stop of STOPS) {
     // Marked BEFORE driving, not after: mounting the workspace is what
     // fires the peaks requests, so a count taken once `go` returns is
@@ -955,14 +1007,20 @@ try {
 
     for (const theme of THEMES) {
       await setTheme(theme);
-      for (const size of SIZES) {
+      for (const size of sizes) {
         const sized = await setSize(size);
         if (!sized.ok) {
           // Measured at the wrong width, every assertion below would be
           // about a viewport nobody asked for — and a pass at 1477 read as
           // a pass at 1920 is exactly the skipped check that must not look
           // green. Recorded, skipped, and answered for at the end.
-          unreached.set(size.label, sized.inner ? sized.inner.join("x") : "unknown");
+          // Keyed by size and STOP: the same label is asked for at every
+          // stop, and "1200x800 came back 1500x1000" without one does not
+          // say where to look.
+          unreached.set(
+            `${size.label} at ${stop.id}`,
+            sized.inner ? sized.inner.join("x") : "unknown",
+          );
           continue;
         }
         const where = `${stop.id} ${theme} ${size.label}`;
@@ -1057,7 +1115,16 @@ try {
       // Zoom crosses the same breakpoints a resize does, at a fixed window
       // size — so the rail rule is being asked about the CSS width, which
       // is the width the rule is actually written against.
-      await setSize(ZOOM_SIZE);
+      // Checked, not just called: this one shares a size LABEL with the
+      // matrix, so a silent failure here surfaced at the end of the run as
+      // "1200x800 was never measured" with nothing to say which of the
+      // twenty places that ask for it had missed.
+      const zoomSized = await setSize(ZOOM_SIZE);
+      check(
+        `${stop.id}: the window took the zoom stop's size`,
+        zoomSized.ok,
+        zoomSized.inner ? `came back ${zoomSized.inner.join("x")}` : "",
+      );
       for (const factor of ZOOM_STEPS) {
         await setZoom(factor);
         const report = await evalInApp(probe(stop));
