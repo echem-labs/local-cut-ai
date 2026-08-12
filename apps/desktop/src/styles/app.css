@@ -622,6 +622,16 @@ textarea {
   margin-bottom: var(--space-3);
 }
 
+/* Every banner in this column stands off what follows it, rather than each
+   variant remembering to. The shell is a flex column with no gap and the
+   header spaces itself, so a banner without a margin of its own sat flush
+   against the workspace below and read as a caption on the storyboard
+   instead of a notice above it. Checkpoint and notice-bar already carried
+   this margin privately; stalled, warning and error did not. */
+.project-shell > .banner {
+  margin-bottom: var(--space-4);
+}
+
 .workspace-root {
   flex: 1;
   min-height: 0;
@@ -4758,9 +4768,20 @@ button.link:hover {
   flex-wrap: wrap;
 }
 
-.banner.stalled > span {
+/* The sentence takes the free space so the action lands on the far edge,
+   inside the banner's own padding. Named, not `> span`: `Tip` wraps its
+   child in a `.tip-wrap` span, so the child selector this replaces matched
+   the button's wrapper as well and grew both — which put the action halfway
+   across the banner, beside the text it should have been pushed away from. */
+.banner.stalled > .stalled-text {
   flex: 1;
   min-width: 220px;
+}
+
+/* A refusal from the resume gets the whole width rather than a slice of the
+   row: it is a sentence, and the row it would share is already full. */
+.banner.stalled > .alert {
+  flex-basis: 100%;
 }
 
 /* The out-of-memory failure card. Same restraint as `.alert` - the failed
