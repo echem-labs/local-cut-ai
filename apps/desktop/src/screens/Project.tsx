@@ -176,7 +176,11 @@ function StalledNotice() {
   if (!isStalled(board, jobs)) return null;
   return (
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
-      <span>{t("project.stalled")}</span>
+      {/* Classed, not just `> span`. `Tip` wraps its child in a `.tip-wrap`
+          SPAN, so a child selector matched the button's wrapper too and gave
+          both halves `flex: 1` — the row split down the middle and the
+          button sat against the sentence rather than at the far edge. */}
+      <span className="stalled-text">{t("project.stalled")}</span>
       <Tip label={t("project.resume")} hint={t("terms.tips.resume")}>
         <button
           className="btn-ghost"
