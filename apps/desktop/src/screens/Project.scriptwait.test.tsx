@@ -49,14 +49,16 @@ describe("the empty board while the script is written", () => {
 
     expect(container.querySelector(".wait-ring.spin")).not.toBeNull();
     expect(screen.getByText(t("project.scriptWriting"))).toBeInTheDocument();
-    expect(screen.getByText(t("project.scriptElapsed", { seconds: 0 }))).toBeInTheDocument();
+    // Nothing yet: a wait that ends quickly must not flash a timer and take
+    // it away again (ELAPSED_AFTER_S).
+    expect(screen.queryByText(/^\d+s$/)).toBeNull();
 
     // The counter is the half a spinner cannot supply: a spinner alone spins
     // exactly the same way over a request that will never answer.
     await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await new Promise((resolve) => setTimeout(resolve, 4200));
     });
-    expect(screen.getByText(t("project.scriptElapsed", { seconds: 1 }))).toBeInTheDocument();
+    expect(screen.getByText(t("common.elapsedSeconds", { seconds: 4 }))).toBeInTheDocument();
   });
 
   it("waits before the queue has picked the script up", () => {
