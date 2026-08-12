@@ -3807,11 +3807,29 @@ button.link:hover {
   font-weight: 600;
 }
 
-/* The same accent the pipeline header's working dot carries — one colour
-   means "this is live" across the screen. */
-.script-wait .spin {
-  color: var(--accent);
+/* The queue tray's ring, drawn as an indeterminate arc rather than a
+   progress one: same radius, same stroke, same two colours, because both
+   marks mean "something is running" and there is no reason for them to be
+   different shapes. The arc is a quarter — a near-closed ring turning at
+   this size moves nothing the eye can follow. */
+.script-wait .wait-ring {
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
+}
+
+.script-wait .wait-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.script-wait .wait-ring .track {
+  stroke: var(--border-hi);
+}
+
+.script-wait .wait-ring .arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
 }
 
 .script-wait .elapsed {
