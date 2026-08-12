@@ -506,6 +506,34 @@ async def test_package_generates_thumbnail_and_publish_kit(rig):
     assert len([n for n in store.load_graph(project.id).nodes if n == "thumbnail"]) == 1
 
 
+async def test_package_queues_its_own_two_nodes_and_nothing_else(rig):
+    """Asking for a title must not re-render the video.
+
+    `_plan` describes the whole graph, so packaging a project that has
+    drifted since its last render - an edited scene, or a machine whose
+    backends have changed and no longer reproduce the cached hashes - also
+    queued every stale node. Opening the publish kit then re-rendered the
+    project underneath the user, and an assembly that failed under the new
+    backends took the finished cut away with it.
+    """
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools", target_duration_s=12)
+    await wait_for(
+        lambda: bool(service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash"))
+    )
+
+    # Dirty a scene the way drift does, without going through a route that
+    # would enqueue it: the graph on disk no longer matches what rendered.
+    graph = store.load_graph(project.id)
+    graph.nodes["s1.clip"].params["motion"] = "a slow push in, after the fact"
+    store.save_graph(project.id, graph)
+
+    before = {job.id for job in queue.list(project.id, 1000)}
+    service.package(project.id)
+    queued = [job for job in queue.list(project.id, 1000) if job.id not in before]
+    assert {job.spec.node_id for job in queued} == {"thumbnail", "metadata"}
+
+
 async def test_package_thumbnail_runs_after_script_approval_in_beginner_mode(rig):
     """Packaging is script-derived: once the script checkpoint passes, the
     thumbnail must render without waiting for the storyboard gate — it used
