@@ -4285,22 +4285,46 @@ button.link:hover {
   margin-top: 2px;
 }
 
-/* The session composer: the one "change it" surface, stuck to the bottom
-   of the scroll the way an editor's input is (sticky, not fixed, so it
-   never covers content that fits on screen). It wears .prompt-box — same
-   textarea, same bottom row, same focus glow as Home's — so this block
-   adds only the docking. */
-.tool-composer {
+/* The session's dock: the actions, whatever they opened, and the composer,
+   stuck to the bottom of the scroll the way an editor's input is (sticky,
+   not fixed, so it never covers content that fits on screen).
+
+   The composer used to carry the sticky itself, and that was the bug: a
+   sticky box is lifted out of the flow it belongs to, so on a window short
+   enough to scroll it was pulled up over the action row flowing just above
+   it — four buttons drawn where the layout put them and answering no
+   click. A sticky box cannot cover what it shares a sticky box with, so
+   the dock is drawn around the whole run instead of around one end of it.
+
+   It repeats .tool-session's own column — same gap, same alignment — so at
+   rest, when there is nothing to scroll, the wrapper changes no geometry
+   at all: that is what keeps the U3 parity frames true. */
+.tool-dock {
   position: sticky;
   /* Zero, not --space-3: the scroller's own 32px bottom padding is where
-     the composer rests, and an offset on top of it is one sticky spends
-     MOVING the box whenever the content ends closer to the scrollport's
-     edge than the offset asks for. It did — the composer was drawn 4px
-     above where the column put it, on a session that does not even scroll,
-     so the gap above it depended on how tall that session happened to be.
-     A resting offset must be smaller than the clearance the layout
-     guarantees, and the only value that always is, is none. */
+     the dock rests, and an offset on top of it is one sticky spends MOVING
+     the box whenever the content ends closer to the scrollport's edge than
+     the offset asks for. It did — the composer was drawn 4px above where
+     the column put it, on a session that does not even scroll, so the gap
+     above it depended on how tall that session happened to be. A resting
+     offset must be smaller than the clearance the layout guarantees, and
+     the only value that always is, is none. */
   bottom: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  /* The page's own colour, so a docked run is opaque over what scrolls
+     beneath it. .prompt-box brings its own surface; the action row does
+     not, and buttons with the table showing through them read as a
+     rendering fault. Same value as the page, so nothing shows at rest. */
+  background: var(--surface-0);
+}
+
+/* The composer wears .prompt-box — same textarea, same bottom row, same
+   focus glow as Home's — so this block adds only its place in the dock. */
+.tool-composer {
   align-self: stretch;
   margin-top: var(--space-3);
 }
