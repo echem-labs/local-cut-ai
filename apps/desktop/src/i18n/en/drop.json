@@ -30,6 +30,7 @@
   "sceneStageWorking": "Working. Reading a picture takes longer the first time.",
   "sceneElapsed": "{seconds}s",
   "sceneStop": "Stop",
+  "sceneStopHint": "The picture and anything already typed are kept.",
   "sceneModelLabel": "Read with",
   "sceneModelTip": "Which model reads this picture",
   "sceneModelTipHint": "Models on this machine are free and private. A cloud model spends your key.",
