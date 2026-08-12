@@ -3,7 +3,6 @@ import {
   Grid2x2,
   Grid3x3,
   LayoutGrid,
-  Loader2,
   Megaphone,
   MonitorPlay,
   MoreHorizontal,
@@ -513,7 +512,17 @@ function ScriptWait({ node, onRetry }: { node: NodeState | null | undefined; onR
     // information.
     <div className="banner script-wait" role="status">
       <div className="row">
-        <Loader2 size={16} strokeWidth={2} className="spin" aria-hidden />
+        {/* A quarter arc on a track, in the queue tray's ring geometry — the
+            two "something is running" marks on screen should be one shape.
+            Not the icon set's loader, which is a ~300° ring: turning that at
+            16px moves only its own small gap, and it reads as a circle
+            sitting still. `pathLength` normalises the circumference to 100 so
+            the dash pattern is a plain quarter, with no copy of 2πr to keep
+            in step with the tray's. */}
+        <svg className="wait-ring spin" viewBox="0 0 18 18" aria-hidden="true">
+          <circle className="track" cx="9" cy="9" r="7" />
+          <circle className="arc" cx="9" cy="9" r="7" pathLength={100} strokeDasharray="25 75" />
+        </svg>
         <b>
           {node?.status === "rendering" ? t("project.scriptWriting") : t("project.scriptQueued")}
         </b>
