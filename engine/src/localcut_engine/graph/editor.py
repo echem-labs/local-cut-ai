@@ -32,6 +32,7 @@ from ..aspects import (
     EXPORT_VIDEO_KBPS_BOUNDS,
 )
 from .model import NodeKind, StoryGraph, scene_sort_key
+from .templates import DEFAULT_CLIP_S, MAX_CLIP_S
 from .patch import PatchOp
 
 # Params the LLM may see and set, per node kind. Aspect and format params are
@@ -85,7 +86,23 @@ SUGGEST_SCENE_MAX_TOKENS = 1024
 _SUGGEST_SCENE_RECENT = 3
 
 
-def suggest_scene_prompt(view: dict, seconds: float) -> str:
+def typical_clip_s(durations: list[float]) -> float:
+    """How long a scene added on its own should run, from what the project
+    already does.
+
+    A flat constant writes a line measured against a scene the project would
+    never have made: a 30s explainer cut from six 5s beats and a 90s piece
+    built from 12s ones want different lengths from a picture dropped into
+    them. Median rather than mean — one deliberately long establishing shot
+    should not stretch every scene added after it.
+    """
+    if not durations:
+        return DEFAULT_CLIP_S
+    ordered = sorted(durations)
+    return min(MAX_CLIP_S, max(1.0, ordered[len(ordered) // 2]))
+
+
+def suggest_scene_prompt(view: dict, seconds: float | None = None) -> str:
     """What to ask for one new scene built on a picture.
 
     A JSON dump of the whole graph was what this used to send, and it asked a
@@ -110,13 +127,27 @@ def suggest_scene_prompt(view: dict, seconds: float) -> str:
     style = brief.get("style_preset")
     if style:
         parts.append(f"Visual style: {style}")
+    total = brief.get("target_duration_s")
+    if total:
+        parts.append(f"The finished video runs about {total} seconds.")
+
+    nodes = [node for scene in view.get("scenes") or [] for node in scene.get("nodes") or []]
+    if seconds is None:
+        seconds = typical_clip_s(
+            [
+                float(value)
+                for node in nodes
+                if node.get("kind") == "clip"
+                for value in [node.get("params", {}).get("duration_s")]
+                if isinstance(value, int | float)
+            ]
+        )
 
     # The narration already written, in order, so the new line continues a
     # voice rather than inventing one.
     said = [
         text
-        for scene in view.get("scenes") or []
-        for node in scene.get("nodes") or []
+        for node in nodes
         if node.get("kind") == "narration"
         for text in [str(node.get("params", {}).get("text") or "").strip()]
         if text
@@ -136,10 +167,22 @@ def suggest_scene_prompt(view: dict, seconds: float) -> str:
     # this way is measured the way every other scene is.
     from ..backends.llm import narration_word_budget
 
+    # The length the scene needs, floored by what this project actually
+    # writes. A five-second default asks for eighteen words, which next to
+    # scenes carrying forty reads as a caption dropped into a script — and
+    # narration is what sets a scene's runtime, so matching the project's own
+    # density is what makes the new scene sit at the same pace as the rest.
     words = narration_word_budget(seconds)
+    if said:
+        lengths = sorted(len(line.split()) for line in said)
+        words = max(words, lengths[len(lengths) // 2])
     parts.append(
-        f"This scene runs about {seconds:.0f} seconds, so write about {words} words of "
-        f"narration — a complete sentence or two, not a fragment."
+        f"This scene runs about {seconds:.0f} seconds. Write about {words} words of narration "
+        f"— complete sentences, the same length and depth as the lines above."
+    )
+    parts.append(
+        "Start a new sentence with its own subject. Do not begin with a word that only makes "
+        "sense as the continuation of the previous scene's line."
     )
     parts.append("Write the narration and the visual prompt for one new scene built on the image.")
     return "\n\n".join(parts)

@@ -425,7 +425,12 @@ describe("an image dropped anywhere else in a project", () => {
     await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneGenerate"))));
 
     expect(screen.getByText(t("drop.sceneGenerating"))).toBeInTheDocument();
-    await act(async () => void fireEvent.click(screen.getByText(t("drop.sceneStop"))));
+    // By its accessible name, not its text: Stop is an icon button, so the
+    // label lives in `aria-label` — and that is the thing a keyboard or
+    // screen-reader user actually reaches it by.
+    await act(async () =>
+      void fireEvent.click(screen.getByRole("button", { name: t("drop.sceneStop") })),
+    );
 
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(t("drop.sceneGenerate"))).toBeInTheDocument();
