@@ -4352,6 +4352,39 @@ button.link:hover {
   flex-wrap: wrap;
 }
 
+/* Stop wears the chrome of the button it sits beside. `.icon-btn` is drawn
+   for panel corners and toolbars, where surrounding chrome supplies the
+   edges; standing next to a bordered button with none of its own it read as
+   a loose glyph rather than a control.
+
+   Neutral border, not the accent one — the app's pairing for an action and
+   the thing that abandons it is outline + ghost, which is what the model
+   library does for a download in flight.
+
+   `align-self: stretch` rather than a height: the read button's height comes
+   from its own padding and text, and a number copied from it here is a number
+   that drifts the first time either changes. */
+.scene-read-actions .icon-btn {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  /* No `aspect-ratio`: it resolves a height from the width and so overrode
+     the stretch, leaving the pair a pixel apart. `.icon-btn`'s own 32px
+     minimum keeps it square enough for a single glyph. */
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition:
+    border-color var(--motion-fast),
+    color var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.scene-read-actions .icon-btn:hover {
+  border-color: var(--border-hi);
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
 /* Label beside the control, not above it — the one short choice in a dialog
    otherwise made of stacked text areas. Mirrors `.model-default-row`, which
    is the same decision in Settings, rather than inventing a third shape. */
