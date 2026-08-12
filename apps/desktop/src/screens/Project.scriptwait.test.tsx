@@ -47,7 +47,7 @@ describe("the empty board while the script is written", () => {
   it("spins, names the stage, and counts the wait out", async () => {
     const { container } = mount(scriptNode("rendering"));
 
-    expect(container.querySelector(".spin")).not.toBeNull();
+    expect(container.querySelector(".wait-ring.spin")).not.toBeNull();
     expect(screen.getByText(t("project.scriptWriting"))).toBeInTheDocument();
     expect(screen.getByText(t("project.scriptElapsed", { seconds: 0 }))).toBeInTheDocument();
 
@@ -65,7 +65,7 @@ describe("the empty board while the script is written", () => {
     // work in flight too, and naming it "writing" would be a guess.
     const { container } = mount(undefined);
 
-    expect(container.querySelector(".spin")).not.toBeNull();
+    expect(container.querySelector(".wait-ring.spin")).not.toBeNull();
     expect(screen.getByText(t("project.scriptQueued"))).toBeInTheDocument();
   });
 
@@ -76,7 +76,7 @@ describe("the empty board while the script is written", () => {
     // the banner has to carry the retry itself.
     const { container, regenerate } = mount(scriptNode("cancelled"));
 
-    expect(container.querySelector(".spin")).toBeNull();
+    expect(container.querySelector(".wait-ring.spin")).toBeNull();
     expect(screen.getByText(t("project.scriptStopped"))).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: t("project.retryScript") }));
