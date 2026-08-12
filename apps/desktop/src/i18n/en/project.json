@@ -65,7 +65,6 @@
   "retryScript": "Try again",
   "scriptQueued": "Setting your project up",
   "scriptWriting": "Writing your script",
-  "scriptElapsed": "{seconds}s",
   "scriptStopped": "Script generation was stopped",
   "scriptStoppedHint": "Nothing was written, so there are no scenes yet. Start it again to pick this project back up.",
   "writingScript": "Splitting it into scenes as it goes — each scene gets a still image you can review before any video renders.",
