@@ -3781,6 +3781,53 @@ button.link:hover {
   border-color: var(--status-failed);
 }
 
+/* The one thing on the screen while the script is written, so it is padded
+   like a panel rather than a strip above something: spinner and headline on
+   the first line, elapsed pinned right, the payoff sentence under both. */
+.script-wait {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-6);
+}
+
+.script-wait .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.script-wait .spacer {
+  flex: 1;
+}
+
+.script-wait b {
+  color: var(--text-primary);
+  font-size: var(--text-m);
+  font-weight: 600;
+}
+
+/* The same accent the pipeline header's working dot carries — one colour
+   means "this is live" across the screen. */
+.script-wait .spin {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.script-wait .elapsed {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  /* Tabular, so a counter ticking every second does not shuffle the line it
+     sits on. */
+  font-variant-numeric: tabular-nums;
+}
+
+.script-wait p {
+  margin: 0;
+  font-size: var(--text-s);
+}
+
 .banner.checkpoint {
   border-color: var(--accent);
   margin-bottom: var(--space-4);
@@ -4264,6 +4311,181 @@ button.link:hover {
 .script-table td:last-child {
   color: var(--text-tertiary);
   white-space: nowrap;
+}
+
+/* The New scene dialog's picture and its read controls, side by side.
+   Stacked, the button sat between the thumbnail and the two text areas the
+   dialog exists to fill, pushing them below the fold on a short window; the
+   space to the right of a ~100px thumbnail was empty the whole time.
+   Wraps rather than shrinks: below the breakpoint the controls drop under the
+   picture, which is the stacked layout again and still readable. */
+.scene-read {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+/* `.photo-thumb` carries `margin: var(--space-2) 0` for the stacked callers
+   that have no row to sit in. Here the row owns the spacing, and that 8px
+   pushed the picture down out of line with the button beside it — the two
+   things meant to share a top edge. */
+.scene-read .photo-thumb {
+  margin: 0;
+}
+
+.scene-read-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Enough to hold the button and the hint's first line without the column
+     collapsing to the button's width and wrapping the prose to one word. */
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.scene-read-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Stop wears the chrome of the button it sits beside. `.icon-btn` is drawn
+   for panel corners and toolbars, where surrounding chrome supplies the
+   edges; standing next to a bordered button with none of its own it read as
+   a loose glyph rather than a control.
+
+   Neutral border, not the accent one — the app's pairing for an action and
+   the thing that abandons it is outline + ghost, which is what the model
+   library does for a download in flight.
+
+   `align-self: stretch` rather than a height: the read button's height comes
+   from its own padding and text, and a number copied from it here is a number
+   that drifts the first time either changes. */
+.scene-read-actions .icon-btn {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  /* No `aspect-ratio`: it resolves a height from the width and so overrode
+     the stretch, leaving the pair a pixel apart. `.icon-btn`'s own 32px
+     minimum keeps it square enough for a single glyph. */
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  transition:
+    border-color var(--motion-fast),
+    color var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.scene-read-actions .icon-btn:hover {
+  border-color: var(--border-hi);
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* Label beside the control, not above it — the one short choice in a dialog
+   otherwise made of stacked text areas. Mirrors `.model-default-row`, which
+   is the same decision in Settings, rather than inventing a third shape. */
+/* The same geometry as Settings' own `.model-default-row`: a label column
+   beside the control, both centred on each other. */
+.scene-read-model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* `inline-flex`, not an inline span with a hand-set line height: a flex box
+   has a height to be centred by, which is what `.model-default-label` does
+   and why that row lines up.
+
+   The height is stated rather than left to the text, because centring two
+   boxes only lines up their CONTENTS when the boxes agree. An 11px label
+   resolves a ~13px line box against the trigger's 32px (its 30px floor plus
+   a border each side), and the row centred those two honestly — leaving the
+   word a few pixels above the value it names, which is exactly the amount
+   the eye reads as broken. Matching the control's height makes the two
+   centre lines the same line. */
+.scene-read-model-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+
+/* Hug the control and centre on it.
+   Measured, because three attempts at this by eye all missed: the row was
+   centring a `.dropdown` 46px tall around a trigger only 30px tall, so the
+   control sat 8px below the middle of its own box while the label sat exactly
+   on it. `Tip` wraps the trigger in a `.tip-wrap` span, and that span
+   stretched to the flex line instead of hugging the button — `align-self`
+   stops the stretch, `align-items` centres what is left, and both wrappers
+   need it because the height came through the pair of them. */
+.scene-read-model .dropdown {
+  min-width: 0;
+}
+
+/* The field variant was drawn for a value with no icon: `space-between` over
+   a 148px floor spreads icon, value and caret to the corners, which with an
+   icon reads as three loose things rather than one control. Packed to the
+   left instead, sized by its content, with the caret given its own margin so
+   the value and the affordance to change it stop touching. */
+.scene-read-model .dropdown-trigger.field {
+  min-width: 0;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* The icon's own margin rather than the flex `gap`. `Dropdown` renders the
+   selected label as a BARE TEXT NODE between two icon elements, so it is an
+   anonymous flex item — and the row gap does not survive the trip to one,
+   which is why the icon sat welded to the first letter of the model name
+   while the caret (which carries a real margin) breathed. Excluding the
+   caret keeps this off the no-icon case, where the caret is first child. */
+.scene-read-model .dropdown-trigger.field > svg:first-child:not(.dropdown-caret) {
+  margin-right: var(--space-2);
+}
+
+.scene-read-model .dropdown-caret {
+  margin-left: var(--space-3);
+}
+
+/* The two prose lines under the row, spanning the dialog rather than the
+   column beside the picture. */
+.scene-read-note {
+  margin-top: var(--space-3);
+}
+
+/* Stage on the left, elapsed on the right — the shape a download row uses,
+   because it answers the same two questions: what is happening, and has it
+   stopped. */
+.scene-read-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.scene-read-elapsed {
+  flex-shrink: 0;
+  /* Tabular, so a counter ticking every second does not shuffle the line it
+     sits on. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* `Alert` carries no margin of its own — it assumes a gapped flex column, and
+   the modal body is not one. */
+.scene-read-error {
+  margin-top: var(--space-4);
 }
 
 /* ---- shared small bits ---- */
@@ -7477,7 +7699,18 @@ button.link:hover {
 
 /* ---- template dialogs ---- */
 
-.modal .field {
+/* `.field` is a LAYOUT class here — a labelled block in a dialog's stack.
+   `Dropdown` also puts `field` on its trigger for the settings-row variant,
+   a different meaning of the same word, and until a dialog contained one the
+   two never met. When they did, the trigger inherited a 16px top margin and
+   `display: block`, which pushed the button 16px down inside its own wrapper
+   and left the row centring a 46px box around a 30px control. Nothing in the
+   row could correct that, because the row was measuring honestly.
+
+   Excluded rather than renamed: the variant name is public API on a control
+   used across four screens, and a layout rule has no business reaching a
+   button in the first place. */
+.modal .field:not(.dropdown-trigger) {
   display: block;
   margin-top: var(--space-4);
 }
