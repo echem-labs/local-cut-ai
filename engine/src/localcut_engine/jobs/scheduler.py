@@ -47,6 +47,24 @@ def _relative_artifact(artifact: Path, output_dir: Path) -> str:
         return str(artifact)
 
 
+def failure_text(exc: BaseException) -> str:
+    """What `Job.error` records for a render that raised.
+
+    `str(exc)` alone is not enough, and the hole is not theoretical: httpx's
+    timeout exceptions carry their message in the type name and stringify to
+    "", so a publish-kit job that waited out the full LLM ceiling was stored
+    as `failed` with an empty reason. Every surface reads that field — the
+    node tile, the failure card, the CLI — so the node was marked failed and
+    said nothing about why, which on screen is indistinguishable from one
+    still rendering.
+
+    Backends name their own failures (that is what `GenerationError` is for);
+    this is the backstop for the exception nobody has met yet. The type name
+    is a poor sentence and an infinitely better answer than none.
+    """
+    return str(exc).strip() or type(exc).__name__
+
+
 class Scheduler:
     def __init__(
         self,
@@ -303,7 +321,7 @@ class Scheduler:
             return
         except Exception as exc:  # noqa: BLE001 — job isolation boundary
             job.status = JobStatus.FAILED
-            job.error = str(exc)
+            job.error = failure_text(exc)
             job.finished_at = time.time()
             if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
                 # The user's cancel outranks whatever the render died of — bail
@@ -316,7 +334,7 @@ class Scheduler:
                 "job.failed",
                 job_id=job.id,
                 node_id=job.spec.node_id,
-                error=str(exc),
+                error=job.error,
                 project_id=job.project_id,
             )
             return

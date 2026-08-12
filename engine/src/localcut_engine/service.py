@@ -12,6 +12,7 @@ import logging
 import shutil
 import threading
 import time
+from collections.abc import Collection
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -1208,7 +1209,11 @@ class ProjectService:
                     node.params = params  # re-package follows the current script
             self._refuse_cloud_spend(project_id, graph)
             self.store.save_graph(project_id, graph)
-            self._enqueue_dirty(project_id, graph)
+            # Only the two nodes this route owns. Both are written from the
+            # screenplay and take no upstream port, so this is the whole of
+            # what a publish kit needs — and re-rendering the rest of the
+            # project is not something "write me a title" may decide to do.
+            self._enqueue_dirty(project_id, graph, only=("thumbnail", "metadata"))
             return ["thumbnail", "metadata"]
 
     def _exportable_edl(self, project_id: str) -> tuple[dict, Path, str]:
@@ -1482,9 +1487,34 @@ class ProjectService:
         if billed:
             raise self._refusal(billed, "nothing was created")
 
-    def _enqueue_dirty(self, project_id: str, graph: StoryGraph, quality: str = "draft") -> int:
+    def _enqueue_dirty(
+        self,
+        project_id: str,
+        graph: StoryGraph,
+        quality: str = "draft",
+        only: Collection[str] | None = None,
+    ) -> int:
         history = self.queue.list(project_id, 1000)
         plan = self._plan(project_id, graph, history, quality)
+
+        # A route that adds its own nodes queues those and nothing else.
+        #
+        # `_plan` always describes the WHOLE graph, which is right for every
+        # caller that means "render this project" and wrong for `/package`,
+        # which means "write me a title". On a graph that had drifted since
+        # its last render — an edited scene, or a machine whose backends no
+        # longer reproduce the cached hashes — opening the publish kit
+        # re-rendered the project underneath the user, and an assembly that
+        # then failed under those backends took the finished cut with it.
+        #
+        # Restricted here rather than at the call site because everything
+        # below reads `plan.jobs`: the supersede sweep must not cancel work
+        # for nodes this call is not responsible for, and the spend refusal
+        # must judge what is actually being queued.
+        if only is not None:
+            plan = plan.model_copy(
+                update={"jobs": [spec for spec in plan.jobs if spec.node_id in only]}
+            )
 
         # Before anything is queued or superseded: a caller that may not
         # spend gets nothing enqueued at all, rather than a partial render
