@@ -4665,6 +4665,27 @@ button.link:hover {
   margin-top: var(--space-4);
 }
 
+/* The busy line, under the thumbnail. It sat flush against the picture above
+   it with the dialog's default leading, which read as a caption on the
+   thumbnail rather than a report on the work — hence the space, and the
+   baseline the spinner shares with the sentence it belongs to. */
+.publish-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* Pushed to the far end rather than trailing the sentence: it changes every
+   second, and a number that reflows the text beside it draws the eye to the
+   wrong thing. Tabular figures so it does not jitter as the digits change. */
+.publish-elapsed {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
 /* Control and copy button on one row. The button is a SIBLING of the input,
    never wrapping it: a control inside a control is unreachable to a screen
    reader, and a field you cannot click into is not editable at all.

@@ -28,7 +28,7 @@ const node = (id: string, status: string, hash: string | null = null): NodeState
     pinned: false,
   }) as NodeState;
 
-const mount = (exportNode: NodeState) => {
+const mount = (exportNode: NodeState, extraAux: Record<string, NodeState> = {}) => {
   useApp.setState({
     client: null,
     currentProject: { id: "p1", title: "t", mode: "auto", approvals: [] },
@@ -41,7 +41,7 @@ const mount = (exportNode: NodeState) => {
           narration: node("s1.narration", "draft"),
         },
       ],
-      aux: { script: node("script", "draft"), export: exportNode },
+      aux: { script: node("script", "draft"), export: exportNode, ...extraAux },
       assembled_durations: {},
     } as unknown as Board,
     jobs: [],
@@ -81,6 +81,24 @@ describe("offering the publish kit", () => {
     // A status without a hash is a render that has not landed - offering to
     // package it would name a file that does not exist.
     mount(node("export", "draft", null));
+    expect(prepare()).toBeNull();
+  });
+
+  it("keeps offering it once a kit exists, even after the cut goes stale", () => {
+    // The door out of the dialog must not close behind the user. Anything
+    // that invalidates the export — an edited scene, a re-render, a machine
+    // whose backends have changed — took the written title, description and
+    // the user's own edits to them out of reach, none of which that edit
+    // touched: the kit is written from the SCRIPT.
+    mount(node("export", "queued"), { metadata: node("metadata", "final", "m".repeat(64)) });
+    expect(prepare()).toBeInTheDocument();
+  });
+
+  it("still stays away when a kit was asked for but the project has no cut", () => {
+    // The rule is "a kit exists", not "packaging was attempted once" — a
+    // failed first package on a project with no video is still nothing to
+    // publish.
+    mount(node("export", "queued"), { metadata: node("metadata", "failed") });
     expect(prepare()).toBeNull();
   });
 });
