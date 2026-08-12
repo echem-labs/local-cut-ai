@@ -24,12 +24,41 @@ logger = logging.getLogger(__name__)
 
 DEFAULTS_VERSION = 1
 
-DEFAULTABLE_TASKS = ("text.llm", "image.gen", "video.i2v", "video.t2v", "music.gen")
+DEFAULTABLE_TASKS = (
+    "text.llm",
+    # An LLM that can SEE — the same local server, a model with a vision
+    # tower. Its own task rather than a flag on text.llm because the two are
+    # different models on almost every machine, and because setting it is the
+    # only honest signal that a local model can read a picture: nothing in an
+    # OpenAI-compatible `/models` list says whether a name has eyes, and
+    # guessing wrong means a confident description of an image nothing looked
+    # at. No engine-config fallback for the same reason — unset means "this
+    # machine cannot see", which is a true answer.
+    "vision.llm",
+    "image.gen",
+    "video.i2v",
+    "video.t2v",
+    "music.gen",
+)
 
-# Ollama-style names ("llama3.2", "qwen3:14b") — text.llm defaults name a
-# server-side model, not a manifest entry. Checked with fullmatch: Python's
-# `$` also matches before a trailing newline.
+# Tasks whose default names a model on the local LLM server rather than a
+# manifest entry — Ollama-style ("llama3.2", "qwen3:14b", "qwen2.5vl").
+_SERVER_TASKS = ("text.llm", "vision.llm")
+
+# Checked with fullmatch: Python's `$` also matches before a trailing newline.
 _LLM_NAME = re.compile(r"^[\w.:\-]{1,128}$")
+
+
+def is_server_model_name(model: str) -> bool:
+    """Whether a string is shaped like a model on the LLM server.
+
+    Public because `set_default` is no longer the only way one of these
+    reaches the server: `/suggest-scene` takes a `local:*` override from the
+    caller, and a name good enough to save is exactly the bar a name good
+    enough to send has to clear. One rule, one place — a second copy of the
+    pattern is a second thing to forget to bound.
+    """
+    return bool(_LLM_NAME.fullmatch(model.removeprefix("local:")))
 
 
 class DefaultsTooNew(RuntimeError):
@@ -81,8 +110,8 @@ def set_default(config: EngineConfig, task: str, model: str | None) -> dict[str,
         defaults.pop(task, None)
     else:
         model = model.removeprefix("local:")
-        if task == "text.llm":
-            if not _LLM_NAME.fullmatch(model):
+        if task in _SERVER_TASKS:
+            if not is_server_model_name(model):
                 raise ValueError(f"{model!r} is not a valid model name")
         else:
             entry = next((m for m in load_manifest(config).models if m.id == model), None)
