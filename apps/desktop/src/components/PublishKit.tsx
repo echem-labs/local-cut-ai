@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, RotateCw } from "lucide-react";
+import { Check, Copy, Loader2, RotateCw } from "lucide-react";
 
 import type { PublishKit as PublishKitData } from "../api/types";
 import { t } from "../i18n";
@@ -140,9 +140,7 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
         // repeating the one that opened this — only a way back in when the
         // engine said no.
         <>
-          <p className="hint" role="status">
-            {busy ? t("publish.preparing") : t("publish.pending")}
-          </p>
+          <Working label={busy ? t("publish.preparing") : t("publish.pending")} />
           {error && <Alert message={error} onDismiss={() => setError(null)} />}
         </>
       ) : (
@@ -213,14 +211,51 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
             // Asked for, still rendering. Said plainly rather than shown
             // as empty fields: two model runs is not instant, and a blank
             // form reads as broken.
-            <p className="hint" role="status">
-              {t("publish.pending")}
-            </p>
+            <Working label={t("publish.pending")} />
           )}
           {error && <Alert message={error} onDismiss={() => setError(null)} />}
         </>
       )}
     </Modal>
+  );
+}
+
+/** How long a wait has to last before it is worth putting a number on. Below
+ * this a kit that arrives quickly would flash a timer and take it away. */
+const ELAPSED_AFTER_S = 4;
+
+/**
+ * The busy line: a spinner, what is being waited on, and how long it has
+ * been.
+ *
+ * A static sentence was all this state had, and it is what a hung dialog
+ * looks like — the same words for a job three seconds in and a job that has
+ * been stuck for ten minutes. The spinner is the app's own `.spin` mark
+ * (it stops under `prefers-reduced-motion`, where the seconds carry the
+ * whole answer).
+ *
+ * Elapsed seconds, not a percentage. Both halves are local model runs that
+ * report no progress, so a bar here would be a drawing of a guess; "how long
+ * has this been going" is the question a waiting user actually has, and it
+ * is one the client can answer honestly.
+ */
+function Working({ label }: { label: string }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed((seconds) => seconds + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <p className="hint publish-status" role="status">
+      <Loader2 size={14} strokeWidth={2} className="spin" aria-hidden="true" />
+      <span>{label}</span>
+      {elapsed >= ELAPSED_AFTER_S && (
+        <span className="publish-elapsed">
+          {t("publish.elapsed", { seconds: String(elapsed) })}
+        </span>
+      )}
+    </p>
   );
 }
 

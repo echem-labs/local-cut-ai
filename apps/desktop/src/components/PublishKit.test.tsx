@@ -10,7 +10,7 @@
  * worth pinning: asked-for-but-rendering is a real and slow state (two model
  * runs), and a blank card during it reads as broken.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -92,11 +92,40 @@ describe("before anything has been packaged", () => {
 });
 
 describe("while the kit is rendering", () => {
+  const rendering = {
+    metadata: node("metadata", "rendering"),
+    thumbnail: node("thumbnail", "rendering"),
+  };
+
   it("says so rather than showing an empty card", () => {
     // Two model runs. A card with three blank fields is indistinguishable
     // from one that failed.
-    mount({ metadata: node("metadata", "rendering"), thumbnail: node("thumbnail", "rendering") });
+    mount(rendering);
     expect(screen.getByRole("status")).toHaveTextContent(/writing the title/i);
+  });
+
+  it("turns something, so the wait does not read as a freeze", () => {
+    // A sentence that never changes is what a hung dialog looks like, and
+    // this one showed exactly that for minutes at a time. `.spin` is the
+    // app's own busy mark, the one the generate buttons already wear.
+    mount(rendering);
+    expect(screen.getByRole("status").querySelector(".spin")).not.toBeNull();
+  });
+
+  it("says how long it has been working, once the wait is a real one", () => {
+    // Elapsed rather than a percentage: two local model runs report no
+    // progress, and "is this still going" is the question actually being
+    // asked. Held back a few seconds so a fast kit never flashes a timer.
+    vi.useFakeTimers();
+    try {
+      mount(rendering);
+      act(() => void vi.advanceTimersByTime(2000));
+      expect(screen.getByRole("status")).not.toHaveTextContent(/\ds/);
+      act(() => void vi.advanceTimersByTime(6000));
+      expect(screen.getByRole("status")).toHaveTextContent(/8s/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

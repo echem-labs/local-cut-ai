@@ -10,6 +10,7 @@
   "open": "Publish kit",
   "hint": "A title, description and hashtags written from your script, and a thumbnail to go with them. Nothing is uploaded anywhere - this is what you paste.",
   "regenerate": "Write them again",
+  "elapsed": "{seconds}s",
   "metaFailed": "The title, description and hashtags could not be written.",
   "thumbFailed": "The thumbnail could not be rendered.",
   "unreadable": "The engine wrote the kit, but it could not be read back.",
