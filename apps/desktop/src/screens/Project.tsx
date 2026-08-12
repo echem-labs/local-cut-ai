@@ -454,6 +454,88 @@ function BoardMenu() {
   );
 }
 
+/** The empty board, while the first script is being written.
+ *
+ * This banner IS the screen — there is no board behind it yet — and with a
+ * local model writing a screenplay it is the screen for minutes. Static prose
+ * for that long is indistinguishable from an app that has stopped, so it gets
+ * the pair NewSceneDialog settled on for the same wait: a spinner saying the
+ * work is live, and a counter saying it is still moving.
+ *
+ * No percentage, deliberately. The script backend reports exactly one
+ * fraction, 0.9, and only once the screenplay is already written — a number
+ * pinned at 0% for the entire read is a worse lie than no number at all.
+ *
+ * Elapsed is timed here rather than from the job's `started_at`, because that
+ * is the ENGINE's clock and this is the desktop's; on a remote engine the two
+ * need not agree. The counter only has to answer "has this stopped", which a
+ * local stopwatch answers honestly.
+ *
+ * The spinner is gated on work actually being in flight. A script that was
+ * cancelled leaves an empty board too, and spinning over a job nobody is
+ * running is the same lie as a green tick — that arm says so, and carries a
+ * retry for the reason the failure banner does: with no scenes there is no
+ * board, composer or inspector to restart from. */
+function ScriptWait({ node, onRetry }: { node: NodeState | null | undefined; onRetry: () => void }) {
+  // No node at all is the first moment of a new project — the graph is
+  // written before the queue has anything to say about it. Work in flight.
+  const working = !node || node.status === "queued" || node.status === "rendering";
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!working) return;
+    const started = Date.now();
+    const tick = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(tick);
+  }, [working]);
+
+  if (!working) {
+    return (
+      <div className="banner script-wait">
+        <div className="row">
+          <b>{t("project.scriptStopped")}</b>
+        </div>
+        <p>{t("project.scriptStoppedHint")}</p>
+        <div className="row">
+          <button className="btn-outline" onClick={onRetry}>
+            {t("project.retryScript")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    // role="status" so the headline is announced when it changes from waiting
+    // to writing; the counter is aria-hidden because an atomic live region
+    // re-reads its whole contents, and doing that once a second is not
+    // information.
+    <div className="banner script-wait" role="status">
+      <div className="row">
+        {/* A quarter arc on a track, in the queue tray's ring geometry — the
+            two "something is running" marks on screen should be one shape.
+            Not the icon set's loader, which is a ~300° ring: turning that at
+            16px moves only its own small gap, and it reads as a circle
+            sitting still. `pathLength` normalises the circumference to 100 so
+            the dash pattern is a plain quarter, with no copy of 2πr to keep
+            in step with the tray's. */}
+        <svg className="wait-ring spin" viewBox="0 0 18 18" aria-hidden="true">
+          <circle className="track" cx="9" cy="9" r="7" />
+          <circle className="arc" cx="9" cy="9" r="7" pathLength={100} strokeDasharray="25 75" />
+        </svg>
+        <b>
+          {node?.status === "rendering" ? t("project.scriptWriting") : t("project.scriptQueued")}
+        </b>
+        <span className="spacer" />
+        <span className="elapsed" aria-hidden>
+          {t("project.scriptElapsed", { seconds: elapsed })}
+        </span>
+      </div>
+      <p>{t("project.writingScript")}</p>
+    </div>
+  );
+}
+
 /** Project window: header chrome over the dockable workspace (board,
  * monitor, details, timeline). Tool sessions get a focused single panel. */
 export function Project() {
@@ -900,21 +982,19 @@ export function Project() {
       )}
 
       {board.scenes.length === 0 ? (
-        <div className="banner">
-          {script?.status === "failed" ? (
-            <>
-              {t("project.scriptFailed", { error: script.error ?? "" })}
-              {/* With no scenes there is no board, composer or inspector to
-                  regenerate from — the banner is the only surface left, so
-                  it carries the retry itself. */}
-              <button className="btn-outline" onClick={() => void regenerate("script")}>
-                {t("project.retryScript")}
-              </button>
-            </>
-          ) : (
-            t("project.writingScript")
-          )}
-        </div>
+        script?.status === "failed" ? (
+          <div className="banner">
+            {t("project.scriptFailed", { error: script.error ?? "" })}
+            {/* With no scenes there is no board, composer or inspector to
+                regenerate from — the banner is the only surface left, so
+                it carries the retry itself. */}
+            <button className="btn-outline" onClick={() => void regenerate("script")}>
+              {t("project.retryScript")}
+            </button>
+          </div>
+        ) : (
+          <ScriptWait node={script} onRetry={() => void regenerate("script")} />
+        )
       ) : (
         <>
           <PipelineIntro stages={stages} />

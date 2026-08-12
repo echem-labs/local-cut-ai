@@ -63,7 +63,12 @@
   },
   "scriptFailed": "Script generation failed: {error}",
   "retryScript": "Try again",
-  "writingScript": "Writing the script and splitting it into scenes — each scene gets a still image you can review before any video renders.",
+  "scriptQueued": "Setting your project up",
+  "scriptWriting": "Writing your script",
+  "scriptElapsed": "{seconds}s",
+  "scriptStopped": "Script generation was stopped",
+  "scriptStoppedHint": "Nothing was written, so there are no scenes yet. Start it again to pick this project back up.",
+  "writingScript": "Splitting it into scenes as it goes — each scene gets a still image you can review before any video renders.",
   "noticesAria": "Render notices",
   "fromSession": "From the script session",
   "savepoints": {
