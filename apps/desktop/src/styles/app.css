@@ -1699,6 +1699,9 @@ button.link:hover {
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-6);
+  /* Two items, so this is a choice between one line and two rather than a
+     row that breaks anywhere. See .board-title for what it is for. */
+  flex-wrap: wrap;
 }
 
 .board-header h1 {
@@ -7325,13 +7328,37 @@ button.link:hover {
   white-space: nowrap;
 }
 
-/* Title + provenance stack; the header row itself stays horizontal. */
+/* Title + provenance stack; the header row itself stays horizontal until it
+   cannot.
+
+   `flex: 1` with the implied `0%` basis was the bug: the toolbar beside it
+   sets `white-space: nowrap` and so has a floor, the title had none, and a
+   flex item with a zero basis and something unshrinkable next to it takes
+   whatever is left over — which at 1000px was ten pixels. The project's name
+   was one clipped glyph, drawn over the checklist, on the app's own minimum
+   width. Nothing errored and no control was covered, so the sweep passed it;
+   it is the eyeball pass that found it.
+
+   A real basis is both halves of the fix: it gives the title a width worth
+   reading before anything shrinks, and it is what lets the row WRAP rather
+   than crush, because an item with a zero basis contributes nothing to the
+   line and so can never be the one that overflows it. */
 .board-title {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* The rest of the header, as one item — see the note in Project.tsx. Pushed
+   right so that on the line of its own it takes when the two do not fit, it
+   still ends where it ends on a single line. */
+.board-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
 }
 
 .board-header .board-title h1 {
