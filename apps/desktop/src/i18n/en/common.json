@@ -12,6 +12,7 @@
   "gotItTitle": "Got it — don't show again",
   "dismiss": "Dismiss",
   "retry": "Retry",
+  "elapsedSeconds": "{seconds}s",
   "continue": "Continue",
   "generate": "Generate",
   "starting": "Starting…",

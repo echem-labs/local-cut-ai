@@ -64,6 +64,20 @@ describe("a project waiting on a queue that is gone", () => {
     expect(screen.getByRole("button", { name: /resume rendering/i })).toBeEnabled();
   });
 
+  it("keeps the sentence as the only part of the row that grows", () => {
+    // The stylesheet pushes the action to the far edge by giving the SENTENCE
+    // the free space. `Tip` wraps the button in a `.tip-wrap` span, so the
+    // `> span` selector this class replaced grew that too and split the row
+    // in half. Nothing here can see the stylesheet, so what is pinned is the
+    // hook it hangs on: exactly one growing element, and it is the text.
+    mount("rendering", []);
+    const notice = screen.getByRole("note", { name: /rendering stopped/i });
+    const growing = notice.querySelectorAll(":scope > .stalled-text");
+
+    expect(growing).toHaveLength(1);
+    expect(growing[0]).toHaveTextContent(/no longer queued/i);
+  });
+
   it("stays quiet while the queue still holds the work", () => {
     mount("rendering", [
       // A real job always carries its spec; a fixture that omits one is

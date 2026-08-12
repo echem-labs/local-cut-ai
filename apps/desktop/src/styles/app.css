@@ -622,6 +622,16 @@ textarea {
   margin-bottom: var(--space-3);
 }
 
+/* Every banner in this column stands off what follows it, rather than each
+   variant remembering to. The shell is a flex column with no gap and the
+   header spaces itself, so a banner without a margin of its own sat flush
+   against the workspace below and read as a caption on the storyboard
+   instead of a notice above it. Checkpoint and notice-bar already carried
+   this margin privately; stalled, warning and error did not. */
+.project-shell > .banner {
+  margin-bottom: var(--space-4);
+}
+
 .workspace-root {
   flex: 1;
   min-height: 0;
@@ -952,6 +962,42 @@ textarea {
 
 .spin {
   animation: spin 800ms linear infinite;
+}
+
+/* The app's "something is running" mark (components/Working.tsx), in the
+   queue tray's ring geometry — same radius, same stroke, same two colours,
+   because both marks mean the same thing. The arc the component draws is a
+   quarter: a near-closed ring turning at this size moves nothing the eye can
+   follow, which is how a correctly rotating spinner read as a static circle.
+   Sized by the element's own width/height attributes so one rule serves the
+   panel's 18px and an inline line's 16px. */
+.wait-ring {
+  flex-shrink: 0;
+}
+
+.wait-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.wait-ring .track {
+  stroke: var(--border-hi);
+}
+
+.wait-ring .arc {
+  stroke: var(--accent);
+  stroke-linecap: round;
+}
+
+/* Pushed to the far end rather than trailing the sentence: it changes every
+   second, and a number that reflows the text beside it draws the eye to the
+   wrong thing. Tabular figures so it does not jitter as the digits change. */
+.wait-elapsed {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3797,48 +3843,10 @@ button.link:hover {
   gap: var(--space-3);
 }
 
-.script-wait .spacer {
-  flex: 1;
-}
-
 .script-wait b {
   color: var(--text-primary);
   font-size: var(--text-m);
   font-weight: 600;
-}
-
-/* The queue tray's ring, drawn as an indeterminate arc rather than a
-   progress one: same radius, same stroke, same two colours, because both
-   marks mean "something is running" and there is no reason for them to be
-   different shapes. The arc is a quarter — a near-closed ring turning at
-   this size moves nothing the eye can follow. */
-.script-wait .wait-ring {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-}
-
-.script-wait .wait-ring circle {
-  fill: none;
-  stroke-width: 2.5;
-}
-
-.script-wait .wait-ring .track {
-  stroke: var(--border-hi);
-}
-
-.script-wait .wait-ring .arc {
-  stroke: var(--accent);
-  stroke-linecap: round;
-}
-
-.script-wait .elapsed {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  /* Tabular, so a counter ticking every second does not shuffle the line it
-     sits on. */
-  font-variant-numeric: tabular-nums;
 }
 
 .script-wait p {
@@ -4694,16 +4702,6 @@ button.link:hover {
   margin-top: var(--space-3);
 }
 
-/* Pushed to the far end rather than trailing the sentence: it changes every
-   second, and a number that reflows the text beside it draws the eye to the
-   wrong thing. Tabular figures so it does not jitter as the digits change. */
-.publish-elapsed {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-}
-
 /* Control and copy button on one row. The button is a SIBLING of the input,
    never wrapping it: a control inside a control is unreachable to a screen
    reader, and a field you cannot click into is not editable at all.
@@ -4770,9 +4768,20 @@ button.link:hover {
   flex-wrap: wrap;
 }
 
-.banner.stalled > span {
+/* The sentence takes the free space so the action lands on the far edge,
+   inside the banner's own padding. Named, not `> span`: `Tip` wraps its
+   child in a `.tip-wrap` span, so the child selector this replaces matched
+   the button's wrapper as well and grew both — which put the action halfway
+   across the banner, beside the text it should have been pushed away from. */
+.banner.stalled > .stalled-text {
   flex: 1;
   min-width: 220px;
+}
+
+/* A refusal from the resume gets the whole width rather than a slice of the
+   row: it is a sentence, and the row it would share is already full. */
+.banner.stalled > .alert {
+  flex-basis: 100%;
 }
 
 /* The out-of-memory failure card. Same restraint as `.alert` - the failed
