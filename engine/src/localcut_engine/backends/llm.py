@@ -5,6 +5,7 @@ structured screenplay (schema-enforced JSON).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -15,6 +16,7 @@ import httpx
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from ..notices import SCRIPT_SHORT_OF_TARGET
+from ..providers.images import data_url
 from ..schema import Screenplay
 from .base import ExecutionBackend, ExecutionContext, GenerationError, ServiceProbe
 
@@ -297,6 +299,79 @@ class LLMScriptBackend(ExecutionBackend):
                 return []
         return sorted(str(row["id"]) for row in data if isinstance(row, dict) and row.get("id"))
 
+    async def resident_models(self) -> set[str] | None:
+        """Model names currently held in memory by the server, or None when it
+        cannot say.
+
+        The one honest progress signal available for a local read. The chat
+        request is a single opaque POST that returns when the whole answer is
+        ready, so the client has nothing to show between "sent" and "done" —
+        but the slow part is almost never the reading. It is the loading:
+        several GB off disk and onto the GPU, minutes on a contended one,
+        during which a spinner alone is indistinguishable from a hang.
+
+        Cheap and, importantly, INDEPENDENT of the chat endpoint — Ollama
+        answers `/api/ps` immediately even while a generation is in flight, so
+        polling this cannot itself be blocked by the read it is reporting on.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(f"{self.root_url}/api/ps")
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        try:
+            models = response.json().get("models") or []
+        except ValueError:
+            return None
+        return {str(row["name"]) for row in models if isinstance(row, dict) and row.get("name")}
+
+    async def list_vision_models(self) -> list[str] | None:
+        """Installed model names that can actually SEE, or None when the
+        server cannot say.
+
+        Ollama's native `/api/show` reports a `capabilities` list, and
+        `"vision"` in it is the only trustworthy signal available: the
+        OpenAI-compatible `/models` surface both servers share reports names
+        and nothing else, so a picker built from that would offer text-only
+        models for a job whose whole contract is that nothing guesses about a
+        picture. A text model named here answers from the prompt alone, at
+        HTTP 200, indistinguishable from a real reading.
+
+        None rather than [] for a server that does not serve `/api/show`
+        (llama.cpp and friends): "I cannot tell which of these can see" and
+        "none of these can see" are different answers, and the caller must
+        not render the second when it has the first.
+        """
+        try:
+            names = await self.list_models()
+        except httpx.HTTPError:
+            return None
+        if not names:
+            return None
+        async with httpx.AsyncClient(timeout=10) as client:
+
+            async def sees(name: str) -> tuple[str, bool | None]:
+                try:
+                    response = await client.post(f"{self.root_url}/api/show", json={"model": name})
+                except httpx.HTTPError:
+                    return name, None
+                if response.status_code != 200:
+                    return name, None
+                try:
+                    caps = response.json().get("capabilities") or []
+                except ValueError:
+                    return name, None
+                return name, "vision" in caps
+
+            answers = await asyncio.gather(*(sees(name) for name in names))
+        # Every probe failing means the server does not speak Ollama's native
+        # API at all — unknown, not empty.
+        if all(seen is None for _, seen in answers):
+            return None
+        return [name for name, seen in answers if seen]
+
     def resolve_model(self, requested: str | None) -> str:
         """The Ollama model a node's `model` choice lands on: an explicit
         request wins (with the `local:` routing prefix stripped — the server
@@ -360,31 +435,92 @@ class LLMScriptBackend(ExecutionBackend):
             await self._unload(model)
         return raw
 
+    async def describe(
+        self,
+        system: str,
+        prompt: str,
+        image: Path,
+        max_tokens: int = 4096,
+        model: str | None = None,
+    ) -> str:
+        """The same completion, with a picture the model can actually see.
+
+        The OpenAI-compatible `image_url` part, which is what Ollama and
+        llama.cpp serve for a vision model — the same shape
+        `OpenAICompatTextGen.describe` sends to a cloud endpoint, so one
+        request body serves both and there is no second spelling to drift.
+
+        `model` is required in practice and never falls back to the script
+        model: `resolve_model` would hand back a text-only default that
+        cannot see, and the server would answer from the prompt alone with a
+        confident description of a picture nothing looked at. That is the
+        trap `TextGen.describe` refuses by default, and it must not be
+        reachable here either.
+        """
+        if not model:
+            raise GenerationError(
+                "no local vision model is set — choose one under Settings > Models"
+            )
+        model = model.removeprefix("local:")
+        # Image first, for the same reason the cloud adapters do it: a picture
+        # placed after the question is attended to less.
+        raw = await self._local_complete(
+            [
+                {"type": "image_url", "image_url": {"url": await data_url(image)}},
+                {"type": "text", "text": prompt},
+            ],
+            model,
+            system=system,
+            max_tokens=max_tokens,
+        )
+        if self.unload_after:
+            await self._unload(model)
+        return raw
+
     async def _local_complete(
         self,
-        prompt: str,
+        content: str | list,
         model: str,
         system: str = _SYSTEM_PROMPT,
         max_tokens: int = _SCRIPT_TOKENS_MAX,
     ) -> str:
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
-            response = await client.post(
-                f"{self.chat_base}/chat/completions",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.7,
-                    # Explicit, matching the cloud path. Sending no cap left
-                    # the server's own default in charge, so an over-long
-                    # screenplay came back truncated with no way to tell that
-                    # apart from a model that emits bad JSON.
-                    "max_tokens": max_tokens,
-                },
-            )
+            try:
+                response = await client.post(
+                    f"{self.chat_base}/chat/completions",
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": content},
+                        ],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.7,
+                        # Explicit, matching the cloud path. Sending no cap left
+                        # the server's own default in charge, so an over-long
+                        # screenplay came back truncated with no way to tell that
+                        # apart from a model that emits bad JSON.
+                        "max_tokens": max_tokens,
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                # The ceiling above is generous precisely because a cold load
+                # on a modest GPU is slow, so reaching it means the server
+                # took the request and never answered — a wedged Ollama
+                # runner does exactly this, and every later request queues
+                # behind it. httpx's timeouts stringify to "", so without
+                # this the job is recorded as failed with no reason at all.
+                raise GenerationError(
+                    f"the local LLM server took the request for {model!r} and did not answer "
+                    f"within {self.timeout_s}s. It may be busy loading another model, or "
+                    "stuck - restarting it clears a wedged one."
+                ) from exc
+            except httpx.HTTPError as exc:
+                # Connect errors carry an address at best and "" at worst.
+                raise GenerationError(
+                    f"could not reach the local LLM server at {self.chat_base}: "
+                    f"{exc or type(exc).__name__}"
+                ) from exc
             if response.status_code != 200:
                 raise GenerationError(f"local LLM error: {response.text[:500]}")
             # A 200 with an unexpected shape (empty choices, error object) must

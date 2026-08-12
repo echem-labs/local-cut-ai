@@ -36,6 +36,35 @@ import type {
 const WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1";
 
 /**
+ * How long a route that waits on a local LLM may take.
+ *
+ * Matches `EngineConfig.llm_timeout_s` (600s), and must: the default 120s
+ * budget below is generous for a route that only touches disk, but reading a
+ * picture waits on a vision model that may have to load several GB of weights
+ * first. On a busy GPU that is minutes, and the shorter budget made the
+ * RENDERER give up while the engine was still working — the user saw a raw
+ * "signal timed out" for a request that would have succeeded.
+ * (`test_ui_contract.py::test_the_vision_timeout_matches_the_engines`)
+ */
+export const VISION_TIMEOUT_MS = 600_000;
+
+/**
+ * The request outlived its budget with the engine never answering.
+ *
+ * Distinct from `EngineError`, which carries an answer the engine chose to
+ * give: there is no status and no detail here, so a caller that shows
+ * `messageOf(err)` would otherwise print the platform's own
+ * `DOMException: signal timed out` — four words of jargon, in no language the
+ * app speaks, describing nothing the user can act on.
+ */
+export class EngineTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`engine request timed out after ${timeoutMs}ms`);
+    this.name = "EngineTimeoutError";
+  }
+}
+
+/**
  * A non-2xx answer from the engine, carrying the status alongside the
  * message.
  *
@@ -69,15 +98,25 @@ export class EngineClient {
     // establish/reconnect state machine with no recovery but an app restart.
     const timeout = AbortSignal.timeout(timeoutMs);
     const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
-    const response = await fetch(`${this.connection.url}${path}`, {
-      ...init,
-      signal,
-      headers: {
-        Authorization: `Bearer ${this.connection.token}`,
-        ...(init?.body ? { "Content-Type": "application/json" } : {}),
-        ...init?.headers,
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.connection.url}${path}`, {
+        ...init,
+        signal,
+        headers: {
+          Authorization: `Bearer ${this.connection.token}`,
+          ...(init?.body ? { "Content-Type": "application/json" } : {}),
+          ...init?.headers,
+        },
+      });
+    } catch (err) {
+      // Only OUR budget running out is a timeout. A caller's own signal
+      // aborting is a cancel — the user closed the dialog or navigated away —
+      // and reporting that as "the engine took too long" would blame the
+      // engine for something the user did.
+      if (timeout.aborted && !init?.signal?.aborted) throw new EngineTimeoutError(timeoutMs);
+      throw err;
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       let detail = text;
@@ -256,20 +295,69 @@ export class EngineClient {
    *
    * Read-only: this lands nothing. The caller applies the two strings with
    * an ordinary `add_scene` patch, so a suggestion the user rejects has left
-   * no trace on the graph. Cloud-only by the engine's contract — there is no
-   * local vision model — so this is the one call that always spends a key.
+   * no trace on the graph. Reading happens locally or in the cloud — the
+   * engine decides, unless the caller names a model the engine offered.
    */
   suggestScene(
     projectId: string,
     nodeId: string,
+    model?: string,
+    signal?: AbortSignal,
   ): Promise<{ narration: string; prompt: string }> {
-    // No model named: the engine picks whichever vision provider the user
-    // has a key for. Model names drift, and a renderer that hardcodes one
-    // ships a dead string to everybody until the next release.
-    return this.request(`/projects/${projectId}/suggest-scene`, {
-      method: "POST",
-      body: JSON.stringify({ node_id: nodeId }),
-    });
+    // Omitted means "whichever this machine can run": the engine picks. A
+    // NAME only ever comes back from `visionModels()` — model names drift,
+    // and a renderer that hardcodes one ships a dead string to everybody
+    // until the next release.
+    return this.request(
+      `/projects/${projectId}/suggest-scene`,
+      {
+        method: "POST",
+        body: JSON.stringify(model ? { node_id: nodeId, model } : { node_id: nodeId }),
+        signal,
+      },
+      VISION_TIMEOUT_MS,
+    );
+  }
+
+  /**
+   * Every model this machine could read a picture with, for a picker.
+   *
+   * Only models that can actually see — `local_known` is false when the LLM
+   * server cannot be asked which of its names have eyes, and the caller must
+   * then offer none of them rather than guess. Never assembled here from
+   * `llmModels()`: that list is every installed model, and a text-only one
+   * sent to this route answers from the prompt alone.
+   */
+  visionModels(): Promise<{ models: string[]; default: string | null; local_known: boolean }> {
+    return this.request("/vision/models");
+  }
+
+  /**
+   * Whether a local model is loaded yet — the one real stage a read has.
+   *
+   * `loaded: null` means the question does not apply (a cloud read) or the
+   * server cannot answer it; only `false` may be shown as "still loading",
+   * because only `false` will ever become `true`.
+   *
+   * Safe to poll DURING a read: it hits Ollama's `/api/ps`, which answers
+   * while a generation is in flight, so it stays live exactly when the chat
+   * endpoint is busy.
+   */
+  visionResidency(model: string): Promise<{ loaded: boolean | null }> {
+    return this.request(`/vision/residency?model=${encodeURIComponent(model)}`);
+  }
+
+  /**
+   * Whether anything on this machine can read a picture, and what.
+   *
+   * One question, one answer. The renderer used to derive this from the
+   * provider slate — the same rule written twice, in two languages — and its
+   * copy could not see a LOCAL vision model at all, so a machine set up to
+   * describe images for free still hid the button and told the user to add a
+   * cloud key.
+   */
+  visionModel(): Promise<{ model: string | null; kind: "local" | "cloud" | null }> {
+    return this.request("/vision");
   }
 
   /** Undo/redo stack depths, next-step descriptors and save points. */

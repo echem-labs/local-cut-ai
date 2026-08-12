@@ -1,6 +1,7 @@
 {
   "taskLabels": {
     "text.llm": "Script writing",
+    "vision.llm": "Reading images",
     "image.gen": "Keyframes",
     "video.i2v": "Video clips",
     "video.t2v": "Video clips (text-to-video)",
@@ -10,6 +11,7 @@
   },
   "taskHints": {
     "text.llm": "Turns your prompt into a scene-by-scene script.",
+    "vision.llm": "Looks at a picture you drop in and writes the scene from it. Needs a vision model on your LLM server.",
     "image.gen": "Draws the still frame each clip is animated from.",
     "video.i2v": "Animates a keyframe into a moving clip.",
     "video.t2v": "Renders a clip straight from the text, with no keyframe.",
