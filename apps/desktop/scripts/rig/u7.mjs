@@ -41,7 +41,14 @@ function listenersOn(port) {
         ),
       ];
     }
-    const out = execFileSync("lsof", ["-ti", `tcp:${port}`], {
+    // -sTCP:LISTEN, or this returns the app as well as the engine. `lsof`
+    // reports every process holding a socket on the port, and the app holds
+    // one: it is the engine's client. Without the filter the SIGKILL below
+    // takes the window with it, and the crash banner cannot be checked
+    // because there is nothing left to check it in — "Target page, context
+    // or browser has been closed", three checks after the kill. The Windows
+    // branch above has always filtered for LISTENING; this one had not.
+    const out = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], {
       encoding: "utf8",
     });
     return out.split("\n").filter(Boolean);

@@ -793,141 +793,152 @@ export function Project() {
           <h1 title={currentProject.title}>{currentProject.title}</h1>
           <PromotedFrom project={currentProject} />
         </div>
-        <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
-          {stages.map((stage) => {
-            const inner = (
-              <>
-                <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
-                {t(`project.stages.${stage.id}`)}
-                {stage.detail ? <small>{stage.detail}</small> : null}
-              </>
-            );
-            return stage.onClick ? (
-              <Tip
-                key={stage.id}
-                label={t(`project.stages.${stage.id}`)}
-                hint={stage.hint}
-                side="bottom"
-              >
-                <button className={`st ${stage.state}`} onClick={stage.onClick}>
+        {/* Everything that is not the title, as one item.
+
+            The header wraps, and wrapping is per ITEM: left loose, the
+            seven controls broke wherever they happened to run out of
+            room, which put the two primary buttons on a second line and
+            left the title short beside a half-empty first one. Grouped,
+            there are two things to place and only one place they can
+            go — the title takes the line it needs, the toolbar takes
+            the next, and at any width that fits both nothing moves. */}
+        <div className="board-tools">
+          <div className="pipeline" role="status" aria-label={t("project.progressAria")}>
+            {stages.map((stage) => {
+              const inner = (
+                <>
+                  <i aria-hidden="true">{STAGE_GLYPH[stage.state]}</i>
+                  {t(`project.stages.${stage.id}`)}
+                  {stage.detail ? <small>{stage.detail}</small> : null}
+                </>
+              );
+              return stage.onClick ? (
+                <Tip
+                  key={stage.id}
+                  label={t(`project.stages.${stage.id}`)}
+                  hint={stage.hint}
+                  side="bottom"
+                >
+                  <button className={`st ${stage.state}`} onClick={stage.onClick}>
+                    {inner}
+                  </button>
+                </Tip>
+              ) : (
+                <span key={stage.id} className={`st ${stage.state}`}>
                   {inner}
+                </span>
+              );
+            })}
+          </div>
+          {board.scenes.length > 0 && (
+            <>
+              {/* One picker, not three buttons: the views are mutually
+                  exclusive and only one can be current, which is what a
+                  dropdown says and a row of toggles only implies. It also
+                  stops the header growing a segment every time a view is
+                  added, beside the tile-size picker that already works this
+                  way. */}
+              <Dropdown
+                value={view}
+                ariaLabel={t("project.viewAria")}
+                options={[
+                  {
+                    value: "storyboard",
+                    label: t("project.view.storyboard"),
+                    icon: LayoutGrid,
+                  },
+                  { value: "player", label: t("project.view.player"), icon: MonitorPlay },
+                  { value: "flowchart", label: t("project.view.flowchart"), icon: Workflow },
+                ]}
+                onChange={setView}
+              />
+              <Dropdown
+                value={density}
+                ariaLabel={t("project.tileSize.aria")}
+                options={[
+                  { value: "s", label: t("project.tileSize.small"), icon: Grid3x3 },
+                  { value: "m", label: t("project.tileSize.medium"), icon: Grid2x2 },
+                  { value: "l", label: t("project.tileSize.large"), icon: Square },
+                ]}
+                onChange={setDensity}
+              />
+            </>
+          )}
+          <BoardMenu />
+          {/* Before the final-video CTA, and beside it: the kit is the step
+              after the cut, so it belongs where the end of the job is rather
+              than in a band above the storyboard that has to be scrolled past
+              on the way to everything earlier. */}
+          {(hasCut || hasKit) && !checkpointPending && (
+            <Tip label={t("publish.open")} hint={t("terms.tips.publishKit")}>
+              <button className="btn-ghost" onClick={() => setPublishOpen(true)}>
+                <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
+                {t("publish.open")}
+              </button>
+            </Tip>
+          )}
+          {!checkpointPending &&
+            (exported && client ? (
+              <a
+                className="btn-primary"
+                style={{ textDecoration: "none" }}
+                href={client.artifactUrl(currentProject.id, exportNode.artifact_hash!)}
+                download
+              >
+                <Download size={14} strokeWidth={2} />
+                {t("project.cta.download")}
+              </a>
+            ) : finalizing || finalInFlight ? (
+              /* The render outlives the request that started it, so this holds
+                 from the click until the last final-quality job lands — not
+                 just while the HTTP call is open. */
+              /* The bubble hangs on the WRAPPER, which is why it still appears
+                 on the disabled states below: Chromium suppresses pointer
+                 events on a disabled control, so `title` on one of these
+                 showed nothing at all — the very buttons whose whole job is to
+                 explain why they cannot be pressed. */
+              <Tip label={t("project.cta.creating")} hint={t("terms.tips.createFinal")}>
+                <button className="btn-primary" disabled>
+                  <Sparkles size={14} strokeWidth={2} />
+                  {t("project.cta.creating")}
                 </button>
               </Tip>
-            ) : (
-              <span key={stage.id} className={`st ${stage.state}`}>
-                {inner}
-              </span>
-            );
-          })}
+            ) : allReady && active.length === 0 ? (
+              <Tip label={t("project.cta.create")} hint={t("terms.tips.createFinal")}>
+                <button className="btn-primary" onClick={() => void runFinalize()}>
+                  <Sparkles size={14} strokeWidth={2} />
+                  {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
+                </button>
+              </Tip>
+            ) : allReady ? (
+              /* Every clip is done and something else is not — a draft
+                 timeline or export still assembling. Says what the button
+                 does, and why it cannot do it yet: the count the branch below
+                 shows would read "7/7" and explain nothing. No ETA either,
+                 which on an unpressable button is noise. */
+              <Tip label={t("project.cta.create")} hint={t("project.cta.busyTitle")}>
+                <button className="btn-primary" disabled>
+                  <Sparkles size={14} strokeWidth={2} />
+                  {t("project.cta.create")}
+                </button>
+              </Tip>
+            ) : scenes.length > 0 ? (
+              /* Present but not pressable, rather than absent. The screen's
+                 one primary action used to vanish while the videos rendered
+                 and reappear when they finished, which reads as the app
+                 having lost it — and left nothing on screen to say what the
+                 final cut is waiting for. */
+              <Tip
+                label={t("project.cta.create")}
+                hint={t("project.cta.pendingTitle", { done: clipDone, total: scenes.length })}
+              >
+                <button className="btn-primary" disabled>
+                  <Sparkles size={14} strokeWidth={2} />
+                  {t("project.cta.pending", { done: clipDone, total: scenes.length })}
+                </button>
+              </Tip>
+            ) : null)}
         </div>
-        {board.scenes.length > 0 && (
-          <>
-            {/* One picker, not three buttons: the views are mutually
-                exclusive and only one can be current, which is what a
-                dropdown says and a row of toggles only implies. It also
-                stops the header growing a segment every time a view is
-                added, beside the tile-size picker that already works this
-                way. */}
-            <Dropdown
-              value={view}
-              ariaLabel={t("project.viewAria")}
-              options={[
-                {
-                  value: "storyboard",
-                  label: t("project.view.storyboard"),
-                  icon: LayoutGrid,
-                },
-                { value: "player", label: t("project.view.player"), icon: MonitorPlay },
-                { value: "flowchart", label: t("project.view.flowchart"), icon: Workflow },
-              ]}
-              onChange={setView}
-            />
-            <Dropdown
-              value={density}
-              ariaLabel={t("project.tileSize.aria")}
-              options={[
-                { value: "s", label: t("project.tileSize.small"), icon: Grid3x3 },
-                { value: "m", label: t("project.tileSize.medium"), icon: Grid2x2 },
-                { value: "l", label: t("project.tileSize.large"), icon: Square },
-              ]}
-              onChange={setDensity}
-            />
-          </>
-        )}
-        <BoardMenu />
-        {/* Before the final-video CTA, and beside it: the kit is the step
-            after the cut, so it belongs where the end of the job is rather
-            than in a band above the storyboard that has to be scrolled past
-            on the way to everything earlier. */}
-        {(hasCut || hasKit) && !checkpointPending && (
-          <Tip label={t("publish.open")} hint={t("terms.tips.publishKit")}>
-            <button className="btn-ghost" onClick={() => setPublishOpen(true)}>
-              <Megaphone size={14} strokeWidth={2} aria-hidden="true" />
-              {t("publish.open")}
-            </button>
-          </Tip>
-        )}
-        {!checkpointPending &&
-          (exported && client ? (
-            <a
-              className="btn-primary"
-              style={{ textDecoration: "none" }}
-              href={client.artifactUrl(currentProject.id, exportNode.artifact_hash!)}
-              download
-            >
-              <Download size={14} strokeWidth={2} />
-              {t("project.cta.download")}
-            </a>
-          ) : finalizing || finalInFlight ? (
-            /* The render outlives the request that started it, so this holds
-               from the click until the last final-quality job lands — not
-               just while the HTTP call is open. */
-            /* The bubble hangs on the WRAPPER, which is why it still appears
-               on the disabled states below: Chromium suppresses pointer
-               events on a disabled control, so `title` on one of these
-               showed nothing at all — the very buttons whose whole job is to
-               explain why they cannot be pressed. */
-            <Tip label={t("project.cta.creating")} hint={t("terms.tips.createFinal")}>
-              <button className="btn-primary" disabled>
-                <Sparkles size={14} strokeWidth={2} />
-                {t("project.cta.creating")}
-              </button>
-            </Tip>
-          ) : allReady && active.length === 0 ? (
-            <Tip label={t("project.cta.create")} hint={t("terms.tips.createFinal")}>
-              <button className="btn-primary" onClick={() => void runFinalize()}>
-                <Sparkles size={14} strokeWidth={2} />
-                {eta ? t("project.cta.createWithEta", { eta }) : t("project.cta.create")}
-              </button>
-            </Tip>
-          ) : allReady ? (
-            /* Every clip is done and something else is not — a draft
-               timeline or export still assembling. Says what the button
-               does, and why it cannot do it yet: the count the branch below
-               shows would read "7/7" and explain nothing. No ETA either,
-               which on an unpressable button is noise. */
-            <Tip label={t("project.cta.create")} hint={t("project.cta.busyTitle")}>
-              <button className="btn-primary" disabled>
-                <Sparkles size={14} strokeWidth={2} />
-                {t("project.cta.create")}
-              </button>
-            </Tip>
-          ) : scenes.length > 0 ? (
-            /* Present but not pressable, rather than absent. The screen's
-               one primary action used to vanish while the videos rendered
-               and reappear when they finished, which reads as the app
-               having lost it — and left nothing on screen to say what the
-               final cut is waiting for. */
-            <Tip
-              label={t("project.cta.create")}
-              hint={t("project.cta.pendingTitle", { done: clipDone, total: scenes.length })}
-            >
-              <button className="btn-primary" disabled>
-                <Sparkles size={14} strokeWidth={2} />
-                {t("project.cta.pending", { done: clipDone, total: scenes.length })}
-              </button>
-            </Tip>
-          ) : null)}
       </div>
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}

@@ -557,225 +557,238 @@ export function ToolSession() {
               {takeError}
             </p>
           )}
-          {/* Every action here re-renders, records, or copies something
-              somewhere else — the verb alone doesn't say what it costs or
-              what it keeps, so each one carries its own explanation. */}
-          <div className="tool-actions">
-            <Tip label={t("common.download")} hint={t("toolSession.downloadHint")} side="top">
-              <a className="btn-ghost" href={artifactUrl} download>
-                {t("common.download")}
-              </a>
-            </Tip>
-            {tool === "script" && screenplay && (
-              <Tip label={t("common.copy")} hint={t("toolSession.copyHint")} side="top">
-                <button className="btn-ghost" onClick={() => void copyScript()}>
-                  {copied ? t("toolSession.copied") : t("common.copy")}
-                </button>
+          {/* The dock: the actions and the composer travel together.
+
+              The composer used to do the sticking on its own, and a sticky
+              box is lifted out of the flow it belongs to — so on a window
+              short enough to scroll it was pulled up OVER the action row
+              that flows just above it. At 1000x700 the four buttons ended
+              up under the textarea: drawn where the layout put them, and
+              answering no click, with "Turn into a video" — the whole
+              point of a script session — invisible until you scrolled. A
+              sticky box can only be trusted not to cover what it shares a
+              sticky box WITH, so the two travel as one. */}
+          <div className="tool-dock">
+            {/* Every action here re-renders, records, or copies something
+                somewhere else — the verb alone doesn't say what it costs or
+                what it keeps, so each one carries its own explanation. */}
+            <div className="tool-actions">
+              <Tip label={t("common.download")} hint={t("toolSession.downloadHint")} side="top">
+                <a className="btn-ghost" href={artifactUrl} download>
+                  {t("common.download")}
+                </a>
               </Tip>
-            )}
-            <Tip
-              label={t("toolSession.regenerate")}
-              hint={t("toolSession.regenerateHint")}
-              side="top"
-            >
-              <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
-                {t("toolSession.regenerate")}
-              </button>
-            </Tip>
-            {tool === "image" && (
-              <Tip label={t("toolSession.reroll")} hint={t("toolSession.rerollHint")} side="top">
-                <button
-                  className="btn-ghost"
-                  onClick={() =>
-                    // A fresh seed, pinned in the same call — RegenerateBody.seed.
-                    void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
-                  }
-                >
-                  <Dices size={13} strokeWidth={1.8} aria-hidden="true" />
-                  {t("toolSession.reroll")}
-                </button>
-              </Tip>
-            )}
-            {tool === "music" && (
-              <Tip label={t("toolSession.loopSeam")} hint={t("toolSession.loopSeamHint")} side="top">
-                <button
-                  className="btn-ghost"
-                  aria-label={t("toolSession.loopSeamAria")}
-                  onClick={toggleSeam}
-                >
-                  <Repeat size={13} strokeWidth={1.8} aria-hidden="true" />
-                  {seamPlaying ? t("toolSession.loopSeamPlaying") : t("toolSession.loopSeam")}
-                </button>
-              </Tip>
-            )}
-            {tool === "voiceover" && (
+              {tool === "script" && screenplay && (
+                <Tip label={t("common.copy")} hint={t("toolSession.copyHint")} side="top">
+                  <button className="btn-ghost" onClick={() => void copyScript()}>
+                    {copied ? t("toolSession.copied") : t("common.copy")}
+                  </button>
+                </Tip>
+              )}
               <Tip
-                label={t("toolSession.cloneVoiceTitle")}
-                hint={t("toolSession.cloneVoiceTipHint")}
+                label={t("toolSession.regenerate")}
+                hint={t("toolSession.regenerateHint")}
                 side="top"
               >
-                <button
-                  className="btn-ghost"
-                  onClick={() => setCloneOpen(!cloneOpen)}
-                  aria-expanded={cloneOpen}
-                >
-                  <Mic size={13} strokeWidth={1.8} aria-hidden="true" />
-                  {t("toolSession.cloneVoice")}
+                <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
+                  {t("toolSession.regenerate")}
                 </button>
               </Tip>
-            )}
-            {tool !== "script" && (
-              <span className="add-anchor">
+              {tool === "image" && (
+                <Tip label={t("toolSession.reroll")} hint={t("toolSession.rerollHint")} side="top">
+                  <button
+                    className="btn-ghost"
+                    onClick={() =>
+                      // A fresh seed, pinned in the same call — RegenerateBody.seed.
+                      void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
+                    }
+                  >
+                    <Dices size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {t("toolSession.reroll")}
+                  </button>
+                </Tip>
+              )}
+              {tool === "music" && (
+                <Tip label={t("toolSession.loopSeam")} hint={t("toolSession.loopSeamHint")} side="top">
+                  <button
+                    className="btn-ghost"
+                    aria-label={t("toolSession.loopSeamAria")}
+                    onClick={toggleSeam}
+                  >
+                    <Repeat size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {seamPlaying ? t("toolSession.loopSeamPlaying") : t("toolSession.loopSeam")}
+                  </button>
+                </Tip>
+              )}
+              {tool === "voiceover" && (
                 <Tip
-                  label={t("toolSession.addToProjectTitle")}
-                  hint={t("toolSession.addToProjectHint")}
+                  label={t("toolSession.cloneVoiceTitle")}
+                  hint={t("toolSession.cloneVoiceTipHint")}
                   side="top"
                 >
                   <button
                     className="btn-ghost"
-                    onClick={() => setAddOpen(!addOpen)}
-                    aria-expanded={addOpen}
-                    aria-label={t("toolSession.addToProjectAria")}
+                    onClick={() => setCloneOpen(!cloneOpen)}
+                    aria-expanded={cloneOpen}
                   >
-                    <FolderPlus size={13} strokeWidth={1.8} aria-hidden="true" />
-                    {t("toolSession.addToProject")}
+                    <Mic size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {t("toolSession.cloneVoice")}
                   </button>
                 </Tip>
-                {addOpen && (
-                  <div className="menu-pop" role="menu" ref={fit} aria-label={t("toolSession.addToProjectTitle")}>
-                    <span className="hint">{t("toolSession.addToProjectHint")}</span>
-                    {targets.length === 0 && (
-                      <span className="hint">{t("toolSession.addToProjectEmpty")}</span>
-                    )}
-                    {targets.map((project) => (
-                      <button
-                        key={project.id}
-                        role="menuitem"
-                        onClick={() => void addTo(project.id, project.title)}
-                      >
-                        {project.title}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </span>
-            )}
-            {tool === "script" && (
-              <Tip
-                label={t("toolSession.turnIntoVideo")}
-                hint={t("toolSession.turnIntoVideoHint")}
-                side="top"
-              >
-                <button
-                  className="btn-primary"
-                  onClick={() => void turnIntoVideo()}
-                  disabled={promoting}
+              )}
+              {tool !== "script" && (
+                <span className="add-anchor">
+                  <Tip
+                    label={t("toolSession.addToProjectTitle")}
+                    hint={t("toolSession.addToProjectHint")}
+                    side="top"
+                  >
+                    <button
+                      className="btn-ghost"
+                      onClick={() => setAddOpen(!addOpen)}
+                      aria-expanded={addOpen}
+                      aria-label={t("toolSession.addToProjectAria")}
+                    >
+                      <FolderPlus size={13} strokeWidth={1.8} aria-hidden="true" />
+                      {t("toolSession.addToProject")}
+                    </button>
+                  </Tip>
+                  {addOpen && (
+                    <div className="menu-pop" role="menu" ref={fit} aria-label={t("toolSession.addToProjectTitle")}>
+                      <span className="hint">{t("toolSession.addToProjectHint")}</span>
+                      {targets.length === 0 && (
+                        <span className="hint">{t("toolSession.addToProjectEmpty")}</span>
+                      )}
+                      {targets.map((project) => (
+                        <button
+                          key={project.id}
+                          role="menuitem"
+                          onClick={() => void addTo(project.id, project.title)}
+                        >
+                          {project.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </span>
+              )}
+              {tool === "script" && (
+                <Tip
+                  label={t("toolSession.turnIntoVideo")}
+                  hint={t("toolSession.turnIntoVideoHint")}
+                  side="top"
                 >
-                  {promoting ? t("toolSession.creatingProject") : t("toolSession.turnIntoVideo")}
-                </button>
-              </Tip>
-            )}
-          </div>
-          {addResult && (
-            <p className="hint" role="status">
-              {addResult}
-            </p>
-          )}
-          {cloneOpen && tool === "voiceover" && (
-            <div className="clone-panel">
-              <b>{t("toolSession.cloneVoiceTitle")}</b>
-              <span className="hint">{t("toolSession.cloneVoiceHint")}</span>
-              <label className="consent">
-                <input
-                  type="checkbox"
-                  checked={cloneConsent}
-                  onChange={(event) => setCloneConsent(event.target.checked)}
-                />
-                {t("toolSession.cloneConsent")}
-              </label>
-              <input
-                ref={cloneFileRef}
-                type="file"
-                accept="audio/wav,audio/mpeg,audio/flac,audio/mp4"
-                style={{ display: "none" }}
-                aria-label={t("toolSession.cloneUploadAria")}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void cloneFrom(file);
-                }}
-              />
-              <button
-                className="btn-ghost"
-                disabled={!cloneConsent}
-                onClick={() => cloneFileRef.current?.click()}
-              >
-                {t("toolSession.cloneUpload")}
-              </button>
-            </div>
-          )}
-          {cloneResult && (
-            <p className="hint" role="status">
-              {cloneResult}
-            </p>
-          )}
-          {/* The composer: the session's one "change it" surface, stuck to
-              the bottom the way an editor's input is, wearing the same
-              prompt-box dress as Home's. Script sessions take free-form
-              notes (the LLM rewrite); every other tool holds an editable
-              working copy of its own prompt/text/brief, sent back through
-              /patch as update-and-re-render. */}
-          <div className="prompt-box tool-composer">
-            {tool === "script" ? (
-              <textarea
-                value={notes}
-                placeholder={t("toolSession.enhancePlaceholder")}
-                aria-label={t("toolSession.enhanceAria")}
-                onChange={(event) => setNotes(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
-                    void sendEnhance();
-                }}
-              />
-            ) : (
-              <textarea
-                value={refineDraft}
-                placeholder={t("toolSession.refinePlaceholder")}
-                aria-label={t("toolSession.refineAria")}
-                onChange={(event) => setRefineDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
-                    void sendRefine();
-                }}
-              />
-            )}
-            <div className="row">
-              <div className="spacer" />
-              {/* The same readiness popover Home's box carries — opening
-                  up so the bottom-docked card never clips it. */}
-              <ModelsPopover opens="up" />
-              {tool === "script" ? (
-                <button
-                  className="btn-primary"
-                  onClick={() => void sendEnhance()}
-                  disabled={enhancing || !notes.trim()}
-                >
-                  {enhancing ? t("toolSession.enhancing") : t("toolSession.enhance")}
-                </button>
-              ) : (
-                <button
-                  className="btn-primary"
-                  onClick={() => void sendRefine()}
-                  disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
-                >
-                  {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
-                </button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => void turnIntoVideo()}
+                    disabled={promoting}
+                  >
+                    {promoting ? t("toolSession.creatingProject") : t("toolSession.turnIntoVideo")}
+                  </button>
+                </Tip>
               )}
             </div>
-            {refineError && (
-              <p className="hint error-text" role="alert">
-                {refineError}
+            {addResult && (
+              <p className="hint" role="status">
+                {addResult}
               </p>
             )}
+            {cloneOpen && tool === "voiceover" && (
+              <div className="clone-panel">
+                <b>{t("toolSession.cloneVoiceTitle")}</b>
+                <span className="hint">{t("toolSession.cloneVoiceHint")}</span>
+                <label className="consent">
+                  <input
+                    type="checkbox"
+                    checked={cloneConsent}
+                    onChange={(event) => setCloneConsent(event.target.checked)}
+                  />
+                  {t("toolSession.cloneConsent")}
+                </label>
+                <input
+                  ref={cloneFileRef}
+                  type="file"
+                  accept="audio/wav,audio/mpeg,audio/flac,audio/mp4"
+                  style={{ display: "none" }}
+                  aria-label={t("toolSession.cloneUploadAria")}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void cloneFrom(file);
+                  }}
+                />
+                <button
+                  className="btn-ghost"
+                  disabled={!cloneConsent}
+                  onClick={() => cloneFileRef.current?.click()}
+                >
+                  {t("toolSession.cloneUpload")}
+                </button>
+              </div>
+            )}
+            {cloneResult && (
+              <p className="hint" role="status">
+                {cloneResult}
+              </p>
+            )}
+            {/* The composer: the session's one "change it" surface, stuck to
+                the bottom the way an editor's input is, wearing the same
+                prompt-box dress as Home's. Script sessions take free-form
+                notes (the LLM rewrite); every other tool holds an editable
+                working copy of its own prompt/text/brief, sent back through
+                /patch as update-and-re-render. */}
+            <div className="prompt-box tool-composer">
+              {tool === "script" ? (
+                <textarea
+                  value={notes}
+                  placeholder={t("toolSession.enhancePlaceholder")}
+                  aria-label={t("toolSession.enhanceAria")}
+                  onChange={(event) => setNotes(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                      void sendEnhance();
+                  }}
+                />
+              ) : (
+                <textarea
+                  value={refineDraft}
+                  placeholder={t("toolSession.refinePlaceholder")}
+                  aria-label={t("toolSession.refineAria")}
+                  onChange={(event) => setRefineDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                      void sendRefine();
+                  }}
+                />
+              )}
+              <div className="row">
+                <div className="spacer" />
+                {/* The same readiness popover Home's box carries — opening
+                    up so the bottom-docked card never clips it. */}
+                <ModelsPopover opens="up" />
+                {tool === "script" ? (
+                  <button
+                    className="btn-primary"
+                    onClick={() => void sendEnhance()}
+                    disabled={enhancing || !notes.trim()}
+                  >
+                    {enhancing ? t("toolSession.enhancing") : t("toolSession.enhance")}
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary"
+                    onClick={() => void sendRefine()}
+                    disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
+                  >
+                    {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
+                  </button>
+                )}
+              </div>
+              {refineError && (
+                <p className="hint error-text" role="alert">
+                  {refineError}
+                </p>
+              )}
+            </div>
           </div>
           {(actionError?.scope === "promote" || actionError?.scope === "enhance") && (
             <p className="hint error-text" role="alert">
