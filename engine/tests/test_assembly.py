@@ -153,6 +153,10 @@ async def test_export_skips_placeholder_music(tmp_path, media):
         export_ctx,
     )
     assert (await backend._probe_duration(out)) is not None  # still a valid video
+    # The skip must not stay silent: the export says it dropped the bed.
+    from localcut_engine.notices import EXPORT_MUSIC_BED_DROPPED
+
+    assert [notice.code for notice in export_ctx.notices] == [EXPORT_MUSIC_BED_DROPPED]
 
 
 async def test_reorder_trim_and_transitions(tmp_path, media):
