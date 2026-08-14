@@ -15,6 +15,7 @@
   "engineCrashedAria": "The engine stopped unexpectedly",
   "engineRestart": "Start the engine",
   "engineRestarting": "Starting…",
+  "engineRestartSlow": "Still going. After a crash the engine's port can stay reserved by the system for up to a minute — the app keeps trying until it frees up.",
   "engineRestartFailed": "Could not start the engine: {detail}",
   "engineCopyReport": "Copy report",
   "engineCopyReportHint": "Versions, this machine, and the engine's last output. Copied to your clipboard — nothing is sent anywhere.",

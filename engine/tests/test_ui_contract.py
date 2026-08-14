@@ -82,6 +82,23 @@ def test_the_ws_token_subprotocol_matches_on_both_sides():
     assert match.group(1) == WS_TOKEN_SUBPROTOCOL
 
 
+def test_the_desktop_can_recognise_a_bind_the_engine_refused():
+    """The one line that separates two failures the app must answer opposite
+    ways: a port whose last socket has not been released (wait ~60s and the
+    engine comes back on its own) and an engine that fell over at startup for
+    its own reasons (say so now). The desktop reads it off stderr, so a
+    reworded message would silently turn the first into the second — the app
+    would report a crashed engine as unrecoverable a minute too early."""
+    from localcut_engine.cli import BIND_REFUSED
+
+    engine_ts = _FORMATS.parents[2] / "electron" / "engine.ts"
+    match = re.search(
+        r'export const BIND_REFUSED = "([^"]+)"', engine_ts.read_text(encoding="utf-8")
+    )
+    assert match, "engine.ts no longer declares BIND_REFUSED"
+    assert match.group(1) == BIND_REFUSED
+
+
 def test_every_board_status_has_a_ui_case_and_a_label():
     """A status the desktop does not know renders with no colour and no
     label — the tile silently loses its meaning rather than failing. Three

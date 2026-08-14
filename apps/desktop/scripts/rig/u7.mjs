@@ -16,7 +16,7 @@
  * Usage: node u7.mjs
  */
 import { execFileSync } from "node:child_process";
-import { evalInApp, makeCheck, startRig, stopRig } from "./rig.mjs";
+import { evalInApp, health, makeCheck, startRig, stopRig } from "./rig.mjs";
 
 const check = makeCheck();
 const ENGINE_PORT = Number(process.env.LOCALCUT_ENGINE_PORT || 7830);
@@ -452,20 +452,51 @@ try {
   );
 
   // And the way back actually works — the whole claim of "crash-safe".
+  //
+  // The budget is minutes, not seconds, and that is the finding rather than a
+  // slow test. The engine we just SIGKILLed had this app's WebSocket open, so
+  // its accepted sockets sit in TIME_WAIT holding the port for 61s (measured;
+  // TCP_TIMEWAIT_LEN is compiled into Linux), and `serve` does not set
+  // SO_REUSEADDR. The restart cannot bind until the kernel lets go — so what
+  // is under test is that the app OUTLASTS that rather than failing at the
+  // first attempt, which is what it used to do. Timed from the click, which
+  // is already a few seconds into the window.
+  const clickedAt = Date.now();
   const recovered = await evalInApp(`
     await page.evaluate(() => {
       const el = document.querySelector(".engine-crash");
       [...el.querySelectorAll("button")][0]?.click();
     });
     return page
-      .waitForFunction(() => document.querySelector(".engine-crash") === null, { timeout: 60000 })
+      .waitForFunction(
+        () => document.querySelector(".engine-crash") === null,
+        // The arg slot, not the options. waitForFunction takes (fn, arg,
+        // options), so the timeout this check has carried since it was
+        // written was silently the 30s default - which is shorter than the
+        // wait it is here to measure, and is what made a working restart
+        // read as a broken one.
+        null,
+        { timeout: 180000 },
+      )
       .then(() => true)
       .catch(() => false);
   `);
+  const took = Math.round((Date.now() - clickedAt) / 1000);
   check(
     "and restarting from the banner brings the engine back",
     recovered === true,
+    `${took}s after the click`,
   );
+  // Whether the kernel actually made this app wait is not ours to decide —
+  // TIME_WAIT only forms if the dying engine's sockets closed with a FIN
+  // rather than a RST, which depends on what was in flight when it was
+  // killed. So the wait is reported rather than required, and the check that
+  // it is worth reporting is asserted instead: every refused bind on the way
+  // must have been outlived, not surfaced to the user as a failed restart.
+  const refused = ((await health()).mainLog ?? []).filter((line) =>
+    line.includes("cannot bind "),
+  ).length;
+  console.log(`  note ${took}s to recover, over ${refused} refused bind(s)`);
 } finally {
   await stopRig(rig);
 }

@@ -19,6 +19,14 @@ import uvicorn
 from . import __version__
 from .config import EngineConfig
 
+#: The words `serve` leads with when it could not claim the port.
+#:
+#: The desktop reads this off the engine's stderr (engine.ts, BIND_REFUSED) to
+#: tell "the port is not free yet" from "the engine died for some other
+#: reason" — the first is worth waiting out, the second is not. Nothing
+#: reconciles the two spellings at build time, so `test_ui_contract.py` does.
+BIND_REFUSED = "cannot bind "
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="localcut")
@@ -150,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         sockets = [_bind(config.host, config.port)]
     except OSError as exc:
         print(
-            f"cannot bind {config.host}:{config.port}: {exc}\n"
+            f"{BIND_REFUSED}{config.host}:{config.port}: {exc}\n"
             "Another engine is probably already running - quit it, or pass a different --port.",
             file=sys.stderr,
         )
