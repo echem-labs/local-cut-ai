@@ -84,8 +84,17 @@ export class EnginePortBusyError extends Error {}
 const conflictMessage = (url: string): string =>
   `another engine is already running on ${url} — quit it or set LOCALCUT_ENGINE_PORT`;
 
+/**
+ * A sleep whose timer cannot hold the app open.
+ *
+ * `unref()` for the reason `killTree`'s backstop carries it: the rebind loop
+ * sleeps two seconds at a time for up to a minute and a half, and the output
+ * grace below leaves a losing timer behind on every failed attempt. Quit
+ * already knows about both — `stop()` cancels the loop — and must not then
+ * wait on the timer it just made pointless.
+ */
 const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+  new Promise((resolve) => void setTimeout(resolve, ms).unref());
 
 /** How much unterminated output is buffered before it is logged anyway. */
 const MAX_PENDING_LINE = 8192;
@@ -288,8 +297,20 @@ export class EngineManager {
    * orphaned it, we are also the ones who can clean it up.
    */
   private async startWithOrphanRecovery(waitForPort: boolean): Promise<EngineConnection> {
+    // Read once, for BOTH attempts. The reclaim below polls for up to
+    // PORT_RELEASE_MS, and a `stop()` that lands inside it belongs to this
+    // start as much as one that lands in the loop — but a generation read
+    // afterwards is already the bumped one, so the retry would compare it
+    // against itself and spawn an engine into an app on its way out.
+    const generation = this.stopGeneration;
+    // And the budget with it, for the same reason. A deadline read again
+    // after the reclaim hands the retry a second full REBIND_TIMEOUT_MS, so
+    // one press of the banner's button could spend three minutes (five on
+    // Windows) while every sentence about it — the log line, the banner's
+    // hint, u7's 180s budget — promises one wait, not two.
+    const deadline = Date.now() + (waitForPort ? REBIND_TIMEOUT_MS : 0);
     try {
-      return await this.spawnUntilThePortIsFree(waitForPort);
+      return await this.spawnUntilThePortIsFree(waitForPort, generation, deadline);
     } catch (error) {
       if (!(error instanceof EngineConflictError)) throw error;
       const port = Number(enginePort());
@@ -300,11 +321,15 @@ export class EngineManager {
       // most certain to meet them. `reclaimPort` only waits for /health to
       // fall silent, which happens the moment the process dies — a minute
       // before its accepted sockets let go of the port.
-      return this.spawnUntilThePortIsFree(waitForPort);
+      return this.spawnUntilThePortIsFree(waitForPort, generation, deadline);
     }
   }
 
-  /** Set while the loop below is between attempts. See the crash handler. */
+  /**
+   * Set for the whole of a start that will wait a held port out. See the
+   * crash handler, and `spawnAndWait`'s catch, which is where the crash it
+   * holds back is reported when the wait ends in a real failure.
+   */
   private rebinding = false;
   /**
    * Bumped by `stop()`. A loop that was sleeping when the app asked the engine
@@ -324,11 +349,28 @@ export class EngineManager {
    * import torch would otherwise take REBIND_TIMEOUT_MS to say so, and say it
    * in words about a port.
    */
-  private async spawnUntilThePortIsFree(waitForPort: boolean): Promise<EngineConnection> {
-    const deadline = Date.now() + (waitForPort ? REBIND_TIMEOUT_MS : 0);
-    const generation = this.stopGeneration;
+  private async spawnUntilThePortIsFree(
+    waitForPort: boolean,
+    generation: number,
+    deadline: number,
+  ): Promise<EngineConnection> {
+    // Before the FIRST attempt, not after it fails. A refused bind kills the
+    // child while `spawnAndWait` is still in its health loop, so setting this
+    // in the catch below left attempt 1's exit reaching the crash listeners —
+    // and one is all it takes to replace the banner's pasteable report with
+    // the engine's own "another engine is probably already running", the one
+    // explanation that is not true here. A start that will NOT retry (launch)
+    // leaves it false, because there the crash is the only thing that puts a
+    // banner on screen at all.
+    this.rebinding = waitForPort;
+    /** Whether the line below has been said once, for this whole wait. */
+    let said = false;
     try {
       for (;;) {
+        // Before the spawn, not only after it: everything this start awaited
+        // to get here — a health timeout, an orphan reclaim, the sleep below
+        // — is time the app had to ask for the engine to go away in.
+        if (this.stopGeneration !== generation) throw new Error("engine start cancelled");
         try {
           const connection = await this.spawnAndWait();
           // Asked once more on the way out: a stop that landed while this
@@ -341,8 +383,8 @@ export class EngineManager {
           return connection;
         } catch (error) {
           if (!(error instanceof EnginePortBusyError) || Date.now() >= deadline) throw error;
-          if (!this.rebinding) {
-            this.rebinding = true;
+          if (!said) {
+            said = true;
             console.warn(
               `[engine] port ${enginePort()} is still held by a closed socket; ` +
                 `retrying for up to ${Math.round(REBIND_TIMEOUT_MS / 1000)}s`,
@@ -399,6 +441,15 @@ export class EngineManager {
     // fires when the process ends, with the pipes possibly still draining —
     // and what is draining is the one line that says why it ended.
     const drained = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    /**
+     * The exit this attempt ended on, if the app did not ask for it.
+     *
+     * Written by the handler below and read by the catch, which reports the
+     * crash the handler holds back during a wait. A property rather than a
+     * `let`, because a `let` assigned only inside a callback stays narrowed
+     * to its initialiser for every reader after it.
+     */
+    const ended: { at?: { code: number | null; signal: NodeJS.Signals | null } } = {};
     mirrorEngineOutput(child.stdout, connection.token, (line) => {
       remember(line);
       console.log(line);
@@ -425,22 +476,38 @@ export class EngineManager {
         // Only for the engine currently in service: a replaced child dying
         // late would otherwise raise a banner over an engine answering fine.
         //
-        // `rebinding` excludes the attempts made while waiting out a held
-        // port. Those are one restart in the user's eyes, and reporting each
-        // as its own crash would rewrite the banner's report thirty times
-        // over — ending on "another engine is probably already running", the
-        // one explanation that is not true.
+        // `rebinding` excludes every attempt of a start that is waiting a
+        // held port out. Those are one restart in the user's eyes, and
+        // reporting each as its own crash would rewrite the banner's report
+        // thirty times over — ending on "another engine is probably already
+        // running", the one explanation that is not true. Held back rather
+        // than dropped: `ended` carries it to the catch below, which knows
+        // whether the wait is over and whether a port was even involved.
+        if (current) ended.at = { code, signal };
         if (current && !this.rebinding) {
           const crash: EngineCrash = {
             code,
             signal,
-            tail: [...this.tail],
+            // The local array, for the reason its declaration gives: a
+            // report's whole value is belonging to the engine that just
+            // died, and `this.tail` is whoever spawned last.
+            tail: [...tail],
             at: new Date().toISOString(),
           };
           for (const listener of this.crashListeners) listener(crash);
         }
       }
-      if (current) this.child = null;
+      if (current) {
+        this.child = null;
+        // The connection goes with the child. A dead engine's url and token
+        // are a dead url and token — the invariant `discardChild` already
+        // keeps for a start that failed, and that `start()` reads to decide
+        // there is nothing to hand back. Left standing, `main.ts` reads it
+        // as "an engine is answering" and withholds the crash from the next
+        // renderer that asks, so a window created after the engine died came
+        // up with no banner and a client pointed at nothing.
+        this.connection = null;
+      }
     });
     try {
       await this.waitHealthy(connection);
@@ -457,6 +524,22 @@ export class EngineManager {
       // whose pipes never close must not hold startup open.
       await Promise.race([drained, delay(OUTPUT_GRACE_MS)]);
       if (bindRefused) throw await this.whoHasThePort(connection);
+      // Not a refused bind, so the wait is over however many attempts are
+      // left in the budget — and this is the failure that ended it. The exit
+      // handler held its crash back because a wait was in progress (see
+      // `rebinding`); without this it would be dropped outright, and an
+      // engine that died of a missing dependency on the fifth attempt would
+      // leave the banner still describing whatever crash came before it.
+      // Reported from here, after the drain, its tail is whole.
+      if (this.rebinding && ended.at) {
+        const crash: EngineCrash = {
+          code: ended.at.code,
+          signal: ended.at.signal,
+          tail: [...tail],
+          at: new Date().toISOString(),
+        };
+        for (const listener of this.crashListeners) listener(crash);
+      }
       throw err;
     }
     this.connection = connection;
@@ -464,21 +547,38 @@ export class EngineManager {
   }
 
   /**
-   * The bind was refused — decide which of the two refusals it was.
+   * The bind was refused — decide which of the three refusals it was.
    *
    * Asked of the port rather than read off the engine's own guess: `serve`
    * prints "another engine is probably already running", which is the right
    * thing to tell an operator at a terminal and the wrong thing to act on
    * here, because the far more common cause in the app is the engine it just
-   * lost. Something answering /health is a live rival the user has to deal
-   * with; silence means the only thing holding the port is a socket.
+   * lost. Silence means the only thing holding the port is a socket, and
+   * waiting is the whole fix.
+   *
+   * An answer, though, is not enough to name a rival ENGINE — and that
+   * distinction has teeth, because `EngineConflictError` is what sends
+   * `startWithOrphanRecovery` to SIGKILL whatever is listening. `/health` is
+   * unauthenticated, so answering it proves only that some program is on the
+   * port; a 401 from an authenticated route is what says it is one of ours
+   * with a token we no longer have. Anything else is a stranger — the user's
+   * own dev server, a proxy, whatever LOCALCUT_ENGINE_PORT was pointed at —
+   * and killing it would be a far worse outcome than the failed start.
    */
   private async whoHasThePort(connection: EngineConnection): Promise<Error> {
     const port = Number(enginePort());
-    if (await portIsHeld(port)) return new EngineConflictError(conflictMessage(connection.url));
-    return new EnginePortBusyError(
-      `port ${port} is still held by a socket the kernel has not released`,
-    );
+    switch (await whoAnswersOn(connection)) {
+      case "our-kind-of-engine":
+        return new EngineConflictError(conflictMessage(connection.url));
+      case "a-stranger":
+        return new Error(
+          `port ${port} is held by another program — quit it or set LOCALCUT_ENGINE_PORT`,
+        );
+      default:
+        return new EnginePortBusyError(
+          `port ${port} is still held by a socket the kernel has not released`,
+        );
+    }
   }
 
   private async waitHealthy(connection: EngineConnection): Promise<void> {
@@ -495,11 +595,7 @@ export class EngineManager {
         if (response.ok) {
           // /health is unauthenticated — make sure this is OUR engine, not
           // a stale instance from a crashed session still holding the port.
-          const authed = await fetch(`${connection.url}/projects`, {
-            headers: { Authorization: `Bearer ${connection.token}` },
-            signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
-          });
-          if (authed.status === 401) {
+          if (await refusesOurToken(connection)) {
             throw new EngineConflictError(conflictMessage(connection.url));
           }
           return;
@@ -508,7 +604,7 @@ export class EngineManager {
         if (error instanceof EngineConflictError) throw error;
         /* not up yet */
       }
-      await new Promise((resolve) => setTimeout(resolve, HEALTH_INTERVAL_MS));
+      await delay(HEALTH_INTERVAL_MS);
     }
     throw new Error("engine did not become healthy in time");
   }
@@ -655,7 +751,7 @@ async function reclaimPort(port: number): Promise<boolean> {
   const deadline = Date.now() + PORT_RELEASE_MS;
   while (Date.now() < deadline) {
     if (!(await portIsHeld(port))) return true;
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await delay(200);
   }
   return !(await portIsHeld(port));
 }
@@ -668,6 +764,59 @@ async function portIsHeld(port: number): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Who is answering on the port, to the only precision that matters here.
+ *
+ * The same two requests `waitHealthy` makes, and for the same reason: /health
+ * is unauthenticated, so an answer there is any program at all, and a 401 on
+ * an authenticated route is what identifies a LocalCut engine holding a token
+ * that is not ours. `reclaimPort` SIGKILLs what this names an engine, so the
+ * bar has to be the one the 401 already sets — nothing weaker.
+ */
+async function whoAnswersOn(
+  connection: EngineConnection,
+): Promise<"nobody" | "our-kind-of-engine" | "a-stranger"> {
+  try {
+    const health = await fetch(`${connection.url}/health`, {
+      signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
+    });
+    if (!health.ok) return "a-stranger";
+  } catch {
+    // Nothing accepted the connection: the port is spoken for by a socket
+    // winding down, which is the case worth waiting out.
+    return "nobody";
+  }
+  // A separate catch on purpose. Once /health has answered, SOMETHING is on
+  // the port, and "nobody" is provably false — but one try block around both
+  // requests said it anyway whenever the second one timed out or was reset,
+  // which is the ordinary behaviour of a busy engine and of a server that
+  // does not know the route. That answer sends the start to spend a minute
+  // and a half waiting out a socket that is not there, and to explain the
+  // failure afterwards in terms of a port nobody is holding.
+  try {
+    return (await refusesOurToken(connection)) ? "our-kind-of-engine" : "a-stranger";
+  } catch {
+    return "a-stranger";
+  }
+}
+
+/**
+ * Whether whatever is on the port refuses OUR token.
+ *
+ * /health is unauthenticated, so an answer there is any program at all; a 401
+ * on an authenticated route is what says this is a LocalCut engine holding a
+ * token we no longer have. One definition, because `reclaimPort` SIGKILLs
+ * what this identifies: a second, hand-copied bar is a second chance to set
+ * it lower than the kill deserves.
+ */
+async function refusesOurToken(connection: EngineConnection): Promise<boolean> {
+  const authed = await fetch(`${connection.url}/projects`, {
+    headers: { Authorization: `Bearer ${connection.token}` },
+    signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
+  });
+  return authed.status === 401;
 }
 
 /**

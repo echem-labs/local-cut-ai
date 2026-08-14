@@ -1049,6 +1049,13 @@ export const useApp = create<AppState>((set, get) => {
     set({
       client,
       engineError: null,
+      // The crash goes with the error it came in beside. `restartEngine`
+      // clears it on the way back up, but that is only the button's path —
+      // an engine that returned through the reconnect timer, or a pairing
+      // that moved the work to a GPU box, left the banner standing over a
+      // connection that answers. The shell only ever reports a crash while
+      // there is nothing to connect to, so a connection is the end of it.
+      engineCrash: null,
       remoteEngine: remote === true,
       remotePaired: remotePaired === true,
       remoteKeysArmed: keysArmed !== false,
