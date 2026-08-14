@@ -10,6 +10,7 @@ import { useMenuFit } from "../lib/useMenuFit";
 import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
 import { ModelsPopover } from "./ModelsPopover";
+import { ReadinessBanner, useReadinessGuard } from "./Readiness";
 import { StatusRing } from "./StatusRing";
 import { Tip } from "./Tooltip";
 import { PromotedTo } from "./Provenance";
@@ -233,6 +234,11 @@ export function ToolSession() {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  // Project-scoped on purpose: a tool session's graph holds exactly the
+  // tool's nodes, so the project report is the precise preflight.
+  const { guard: readinessGuard, dialog: readinessDialog } = useReadinessGuard(
+    currentProject?.id ?? "home",
+  );
   const tool = currentProject?.mode.startsWith("tool:")
     ? currentProject.mode.slice("tool:".length)
     : null;
@@ -420,6 +426,8 @@ export function ToolSession() {
   const stageLabel = shown === upstream ? m().terms.kinds.keyframe : toolLabel(tool);
   return (
     <div className="tool-session">
+      <ReadinessBanner />
+      {readinessDialog}
       {/* What was asked for, then what answered it: the run's inputs as
           badges, then the render's provenance as muted meta. */}
       <div className="tool-status">
@@ -590,7 +598,10 @@ export function ToolSession() {
                 hint={t("toolSession.regenerateHint")}
                 side="top"
               >
-                <button className="btn-ghost" onClick={() => void regenerate(node.node_id)}>
+                <button
+                  className="btn-ghost"
+                  onClick={() => void readinessGuard(() => void regenerate(node.node_id))}
+                >
                   {t("toolSession.regenerate")}
                 </button>
               </Tip>
@@ -599,8 +610,10 @@ export function ToolSession() {
                   <button
                     className="btn-ghost"
                     onClick={() =>
-                      // A fresh seed, pinned in the same call — RegenerateBody.seed.
-                      void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31))
+                      void readinessGuard(() =>
+                        // A fresh seed, pinned in the same call — RegenerateBody.seed.
+                        void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31)),
+                      )
                     }
                   >
                     <Dices size={13} strokeWidth={1.8} aria-hidden="true" />

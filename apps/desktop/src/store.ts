@@ -30,6 +30,7 @@ import type {
   NodeState,
   OomFallback,
   Project,
+  ReadinessRow,
   StorageInfo,
   StoryGraph,
   SystemInfo,
@@ -245,6 +246,17 @@ interface AppState {
   /** Whether a finished render may raise an OS notification. On by default,
    * and only ever shown while the window is unfocused. */
   notifyOnDone: boolean;
+  /** Whether an explicit render click warns first when a needed model is
+   * missing (the readiness gate). On by default; "Always" in the dialog and
+   * the Settings row both flip this one flag. */
+  warnMissingModels: boolean;
+  /** Machine-scoped readiness: which tier serves each job kind right now.
+   * Facts for Home's notes, the models popover and the honest-Auto labels —
+   * suppression never touches these. */
+  readiness: ReadinessRow[] | null;
+  /** The open project's readiness, per-node model overrides included.
+   * Cleared with the project; the workspace banner reads it. */
+  projectReadiness: ReadinessRow[] | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -329,6 +341,23 @@ interface AppState {
   restartEngine: () => Promise<string | null>;
   noteEngineCrash: (crash: EngineCrash | null) => void;
   setNotifyOnDone: (on: boolean) => void;
+  setWarnMissingModels: (on: boolean) => void;
+  /** Refetch both readiness slices (project one only while a project is
+   * open). Facts only — never gated, never suppressed. */
+  refreshReadiness: () => Promise<void>;
+  /** The rows an explicit render click should warn about, or null to
+   * proceed silently — fetched fresh, filtered to placeholder/will_fail,
+   * then checked against the master switch and the session/project
+   * suppressions. `scopeKey` is the project id, or "home" for Home. */
+  readinessGaps: (scopeKey: string, kinds?: string[]) => Promise<ReadinessRow[] | null>;
+  /** Record a dialog dismissal. "session" dies with the window; "project"
+   * persists per scopeKey and re-warns when the gap set changes; "always"
+   * flips `warnMissingModels` itself. */
+  suppressReadiness: (
+    scopeKey: string,
+    rows: ReadinessRow[],
+    scope: "session" | "project" | "always",
+  ) => void;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -543,6 +572,8 @@ const DEFAULTS_KEY = "localcut.defaults.v1";
 const DRAFT_KEY = "localcut.home.draft";
 const OPEN_TABS_KEY = "localcut.openTabs";
 const NOTIFY_KEY = "localcut.notifyOnDone";
+const WARN_MODELS_KEY = "localcut.warnMissingModels";
+const READINESS_SKIP_KEY = "localcut.readinessSkip.v1";
 
 /** Rail tabs survive a restart (ids only — titles rehydrate from /projects;
  * refreshHome prunes ids whose projects no longer exist, which also empties
@@ -646,6 +677,47 @@ function readFlagDefaultOn(key: string): boolean {
 // A stale /models snapshot can lag a terminal download event — refetch
 // once more after the engine has settled.
 const DOWNLOAD_SETTLE_MS = 1500;
+
+/** The verdicts the readiness gate warns about. `degraded` (the still-clip
+ * tier) is a supported mode on low-VRAM machines, never a dialog. */
+function readinessGapsOf(rows: ReadinessRow[]): ReadinessRow[] {
+  return rows.filter((row) => row.verdict === "placeholder" || row.verdict === "will_fail");
+}
+
+/** A dismissal covers exactly this set of gaps: fix one model but lose
+ * another and the fingerprint changes, so the dialog returns. */
+function readinessFingerprint(rows: ReadinessRow[]): string {
+  return [...new Set(rows.map((row) => `${row.kind}:${row.reason}`))].sort().join(";");
+}
+
+/** "Don't warn again for this session": in memory only, gone on reload. */
+const sessionReadinessSkips = new Map<string, string>();
+
+function readReadinessSkips(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(READINESS_SKIP_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, value]) => typeof value === "string",
+      ),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function writeReadinessSkip(scopeKey: string, fingerprint: string): void {
+  try {
+    localStorage.setItem(
+      READINESS_SKIP_KEY,
+      JSON.stringify({ ...readReadinessSkips(), [scopeKey]: fingerprint }),
+    );
+  } catch {
+    /* blocked storage — the dismissal just does not survive a restart */
+  }
+}
 
 interface PendingPatch {
   projectId: string;
@@ -1105,9 +1177,12 @@ export const useApp = create<AppState>((set, get) => {
           else delete errors[event.model];
           set({ downloadErrors: errors });
           const refetch = () =>
-            get()
-              .refreshModels()
-              .catch((err) => console.warn("models refresh failed:", err));
+            Promise.all([
+              get().refreshModels(),
+              // Verdicts flip the moment weights land (capability is probed
+              // live) — the banner must clear without a restart.
+              get().refreshReadiness(),
+            ]).catch((err) => console.warn("models refresh failed:", err));
           void refetch();
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
@@ -1221,6 +1296,11 @@ export const useApp = create<AppState>((set, get) => {
     void get()
       .refreshModels()
       .catch((err) => console.warn("models refresh failed:", err));
+    // And readiness, so Home's notes and the workspace banner have facts
+    // from the first paint, not from the first download event.
+    void get()
+      .refreshReadiness()
+      .catch((err) => console.warn("readiness refresh failed:", err));
     if (get().currentProject) {
       try {
         await get().refreshBoard();
@@ -1312,6 +1392,10 @@ export const useApp = create<AppState>((set, get) => {
       // (establish repopulates it, or leaves it null if the new engine's
       // /system errors — better blank than another box's specs).
       system: null,
+      // Readiness is a claim about the ENGINE's backends and weights —
+      // another box's report is wrong the moment the switch lands.
+      readiness: null,
+      projectReadiness: null,
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1361,6 +1445,9 @@ export const useApp = create<AppState>((set, get) => {
     remoteKeysArmed: true,
     engineCrash: null,
     notifyOnDone: readFlagDefaultOn(NOTIFY_KEY),
+    warnMissingModels: readFlagDefaultOn(WARN_MODELS_KEY),
+    readiness: null,
+    projectReadiness: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1413,6 +1500,67 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         /* blocked storage — the preference just does not survive a restart */
       }
+    },
+
+    setWarnMissingModels: (on) => {
+      set({ warnMissingModels: on });
+      try {
+        localStorage.setItem(WARN_MODELS_KEY, on ? "1" : "0");
+      } catch {
+        /* blocked storage — the preference just does not survive a restart */
+      }
+    },
+
+    refreshReadiness: async () => {
+      const { client, currentProject } = get();
+      if (!client || seedFrozen) return;
+      const [machine, project] = await Promise.all([
+        client.readiness(),
+        currentProject ? client.projectReadiness(currentProject.id) : Promise.resolve(null),
+      ]);
+      // Guard the write like refreshModels: a switchEngine mid-flight
+      // already blanked these, and another engine's report must not land.
+      if (get().client !== client || seedFrozen) return;
+      set({
+        readiness: machine.rows,
+        // Only meaningful while the SAME project is still open.
+        ...(project && get().currentProject?.id === currentProject?.id
+          ? { projectReadiness: project.rows }
+          : {}),
+      });
+    },
+
+    readinessGaps: async (scopeKey, kinds) => {
+      const { client, warnMissingModels } = get();
+      if (!client || !warnMissingModels) return null;
+      // Fetched fresh at the click, never from the cached slices: the gate
+      // guards a spend, and a stale "ready" is the one lie it must not tell.
+      let rows: ReadinessRow[];
+      try {
+        rows =
+          kinds || scopeKey === "home"
+            ? (await client.readiness(kinds)).rows
+            : (await client.projectReadiness(scopeKey)).rows;
+      } catch {
+        // No report is no reason to block a render the engine may well
+        // serve — the gate fails open, the job's own error stays the truth.
+        return null;
+      }
+      const gaps = readinessGapsOf(rows);
+      if (gaps.length === 0) return null;
+      const fingerprint = readinessFingerprint(gaps);
+      if (sessionReadinessSkips.get(scopeKey) === fingerprint) return null;
+      if (readReadinessSkips()[scopeKey] === fingerprint) return null;
+      return gaps;
+    },
+
+    suppressReadiness: (scopeKey, rows, scope) => {
+      const fingerprint = readinessFingerprint(rows);
+      // Every scope covers the session too — "this project" must not
+      // re-prompt on the very next click.
+      sessionReadinessSkips.set(scopeKey, fingerprint);
+      if (scope === "project") writeReadinessSkip(scopeKey, fingerprint);
+      if (scope === "always") get().setWarnMissingModels(false);
     },
 
     refreshHome: async () => {
@@ -1519,8 +1667,14 @@ export const useApp = create<AppState>((set, get) => {
         // OOM advice on this one's identically-named node.
         nodeFailures: {},
         nodeRetries: {},
+        // Cleared then fetched — the previous project's missing-model
+        // banner must not hang over this one's board.
+        projectReadiness: null,
       });
       void get().refreshHistory();
+      void get()
+        .refreshReadiness()
+        .catch((err) => console.warn("readiness refresh failed:", err));
     },
 
     closeProject: () => {
@@ -1537,6 +1691,7 @@ export const useApp = create<AppState>((set, get) => {
         graphError: null,
         nodeFailures: {},
         nodeRetries: {},
+        projectReadiness: null,
       });
     },
 

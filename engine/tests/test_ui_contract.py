@@ -153,6 +153,49 @@ def test_notice_codes_match_the_desktop_catalog():
     assert leaves(catalog) == set(NOTICE_CODES)
 
 
+def test_readiness_vocabulary_matches_the_desktop():
+    """Verdicts, reasons and fix types cross the wire as codes the desktop
+    switches on and translates. A value only the engine knows renders as a
+    silent skip (the reason catalog) or falls through a verdict branch —
+    the same drift the status and notice contracts exist to catch."""
+    import json
+
+    from localcut_engine.readiness import (
+        READINESS_FIX_TYPES,
+        READINESS_REASONS,
+        READINESS_VERDICTS,
+    )
+
+    text = re.sub(r"//[^\n]*", "", (_FORMATS.parent.parent / "api" / "types.ts").read_text("utf-8"))
+
+    def union(name: str) -> set[str]:
+        match = re.search(rf"export type {name} =(.*?);", text, re.S)
+        assert match, f"types.ts no longer declares {name}"
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    assert union("ReadinessVerdict") == set(READINESS_VERDICTS)
+    assert union("ReadinessReason") == set(READINESS_REASONS)
+    # The fix union is a discriminated one: each member names its type.
+    # Read to the next declaration, not to the next `;` — every member
+    # carries semicolons INSIDE its braces, so a non-greedy match to `;`
+    # stops after the first one and compares against a partial set.
+    fix = re.search(r"export type ReadinessFix =(.*?)\nexport ", text, re.S)
+    assert fix, "types.ts no longer declares ReadinessFix"
+    assert set(re.findall(r'type: "([^"]+)"', fix.group(1))) == set(READINESS_FIX_TYPES)
+
+    # Every reason needs a sentence, or the row renders as nothing. "ok" is
+    # the exception: a ready row is never described to anyone.
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "readiness.json").read_text("utf-8")
+    )
+    described = set(catalog["reasons"])
+    assert described == set(READINESS_REASONS) - {"ok"}, (
+        f"readiness.json and READINESS_REASONS disagree: "
+        f"only in catalog {sorted(described - set(READINESS_REASONS))}, "
+        f"only in engine {sorted(set(READINESS_REASONS) - described - {'ok'})}"
+    )
+
+
 def test_speech_timing_matches_the_narration_authority():
     """ToolSession shows per-scene lengths computed from narration words —
     the script model's own duration_s is a claim nothing downstream reads.

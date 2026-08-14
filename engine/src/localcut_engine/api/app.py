@@ -85,6 +85,7 @@ from ..providers.registry import (
     textgen_for_model,
 )
 from ..providers.textgen import ProviderError
+from ..readiness import readiness_rows
 from ..project.store import (
     PROJECT_ID_PATTERN,
     ProjectStore,
@@ -820,6 +821,43 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "freed_bytes": freed}
+
+    @app.get("/readiness", dependencies=[Authed])
+    async def readiness(kinds: str | None = None) -> dict:
+        """Which tier serves each job kind right now — verdict, stable
+        reason code, and a machine-actionable fix where one exists. The
+        preflight the chain's deliberate degradation otherwise hides
+        (spec doc 12); `kinds` is a CSV filter over the job kinds."""
+        requested = list(_TASK_KINDS)
+        if kinds:
+            requested = []
+            for raw in kinds.split(","):
+                name = raw.strip()
+                try:
+                    kind = NodeKind(name)
+                except ValueError:
+                    kind = None
+                if kind is None or kind not in _TASK_KINDS:
+                    raise HTTPException(status_code=422, detail=f"unknown kind: {name!r}")
+                requested.append(kind)
+        pairs = [(kind, None) for kind in requested]
+        return {"rows": await readiness_rows(config, backends, pairs)}
+
+    @app.get("/projects/{project_id}/readiness", dependencies=[Authed])
+    async def project_readiness(project_id: ProjectId) -> dict:
+        """The machine-scoped report, narrowed to what THIS project's graph
+        would actually enqueue: one row per distinct (kind, model) pair, so
+        a per-node override is judged as itself, not as the default."""
+        await _get_project(project_id)
+        graph = await asyncio.to_thread(store.load_graph, project_id)
+        pairs: list[tuple[NodeKind, str | None]] = []
+        seen: set[tuple[NodeKind, str | None]] = set()
+        for kind in _TASK_KINDS:
+            for node in graph.nodes.values():
+                if node.kind is kind and (kind, node.model) not in seen:
+                    seen.add((kind, node.model))
+                    pairs.append((kind, node.model))
+        return {"rows": await readiness_rows(config, backends, pairs)}
 
     class CustomModelBody(BaseModel):
         """Review 4's "Add custom model": registers a user model outside the
