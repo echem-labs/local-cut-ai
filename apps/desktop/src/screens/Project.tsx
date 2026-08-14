@@ -174,9 +174,15 @@ function StalledNotice() {
   const [error, setError] = useState<string | null>(null);
   const { guard, dialog } = useReadinessGuard(currentProject?.id ?? "home");
 
-  if (pendingCheckpoint(currentProject, board) !== null) return null;
-  if (!isStalled(board, jobs)) return null;
+  // The notice can stop applying while the dialog it opened is still on
+  // screen — a board refresh landing mid-read. The dialog therefore lives
+  // outside the condition: unmounting it would drop the held resume with
+  // nothing said, which is the failure this whole feature is against.
+  const stalled =
+    pendingCheckpoint(currentProject, board) === null && isStalled(board, jobs);
+  if (!stalled) return <>{dialog}</>;
   return (
+    <>
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
       {/* Classed, not just `> span`. `Tip` wraps its child in a `.tip-wrap`
           SPAN, so a child selector matched the button's wrapper too and gave
@@ -201,8 +207,9 @@ function StalledNotice() {
         </button>
       </Tip>
       {error && <Alert message={error} onDismiss={() => setError(null)} />}
-      {dialog}
     </div>
+    {dialog}
+    </>
   );
 }
 

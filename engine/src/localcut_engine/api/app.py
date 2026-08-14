@@ -85,7 +85,7 @@ from ..providers.registry import (
     textgen_for_model,
 )
 from ..providers.textgen import ProviderError
-from ..readiness import readiness_rows
+from ..readiness import PIPELINE_ORDER, project_pairs, readiness_rows
 from ..project.store import (
     PROJECT_ID_PATTERN,
     ProjectStore,
@@ -204,17 +204,9 @@ ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
 
 # Node kinds that render as jobs, in pipeline order — the Settings backend
 # panel shows this list verbatim (scene/asset nodes never reach a backend).
-_TASK_KINDS = (
-    NodeKind.SCRIPT,
-    NodeKind.KEYFRAME,
-    NodeKind.THUMBNAIL,
-    NodeKind.CLIP,
-    NodeKind.NARRATION,
-    NodeKind.CAPTIONS,
-    NodeKind.MUSIC,
-    NodeKind.TIMELINE,
-    NodeKind.EXPORT,
-)
+# Defined next to the readiness report, which walks the same list: two
+# copies would let /system and the preflight disagree about what a job is.
+_TASK_KINDS = PIPELINE_ORDER
 
 
 # Newest completed renders considered per (kind, quality) when computing the
@@ -822,6 +814,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "freed_bytes": freed}
 
+    async def _readiness(pairs: list[tuple[NodeKind, str | None]]) -> dict:
+        """Both readiness routes' tail: the manifest failures map the way
+        every sibling route maps them rather than degrading into a row that
+        blames a missing model for a corrupt file."""
+        try:
+            return {"rows": await readiness_rows(config, backends, pairs)}
+        except DefaultsTooNew as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503, detail=f"model manifest unreadable: {exc}"
+            ) from exc
+
     @app.get("/readiness", dependencies=[Authed])
     async def readiness(kinds: str | None = None) -> dict:
         """Which tier serves each job kind right now — verdict, stable
@@ -839,25 +844,23 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                     kind = None
                 if kind is None or kind not in _TASK_KINDS:
                     raise HTTPException(status_code=422, detail=f"unknown kind: {name!r}")
-                requested.append(kind)
-        pairs = [(kind, None) for kind in requested]
-        return {"rows": await readiness_rows(config, backends, pairs)}
+                # Deduped: a repeated kind is one question, and answering it
+                # twice costs a manifest scan and (for scripts) an HTTP call
+                # to the LLM server per copy.
+                if kind not in requested:
+                    requested.append(kind)
+        return await _readiness([(kind, None) for kind in requested])
 
     @app.get("/projects/{project_id}/readiness", dependencies=[Authed])
     async def project_readiness(project_id: ProjectId) -> dict:
         """The machine-scoped report, narrowed to what THIS project's graph
         would actually enqueue: one row per distinct (kind, model) pair, so
-        a per-node override is judged as itself, not as the default."""
-        await _get_project(project_id)
+        a per-node override is judged as itself, not as the default. See
+        `readiness.project_pairs` for the two-stage-graph rule."""
+        project = await _get_project(project_id)
         graph = await asyncio.to_thread(store.load_graph, project_id)
-        pairs: list[tuple[NodeKind, str | None]] = []
-        seen: set[tuple[NodeKind, str | None]] = set()
-        for kind in _TASK_KINDS:
-            for node in graph.nodes.values():
-                if node.kind is kind and (kind, node.model) not in seen:
-                    seen.add((kind, node.model))
-                    pairs.append((kind, node.model))
-        return {"rows": await readiness_rows(config, backends, pairs)}
+        pairs = project_pairs(graph, is_tool_session=project.mode.startswith("tool:"))
+        return await _readiness(pairs)
 
     class CustomModelBody(BaseModel):
         """Review 4's "Add custom model": registers a user model outside the
