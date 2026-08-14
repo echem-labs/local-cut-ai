@@ -579,6 +579,47 @@ describe("waiting out a port the kernel still holds", () => {
     );
   });
 
+  it("does not make launch wait, because launch has no window to wait in", async () => {
+    // `whenReady` awaits the engine BEFORE it creates the window, so a launch
+    // that lands inside the minute would sit here with nothing on screen at
+    // all — a worse failure than the one the waiting fixes, and one that
+    // reads as a hung app. The wait belongs to the banner, which is on screen
+    // and can say what it is doing.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const caught = manager.start({ waitForPort: false }).catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await caught).toBeInstanceOf(EnginePortBusyError);
+    expect(engineSpawns()).toHaveLength(1);
+  });
+
+  it("does not spawn an engine into an app that asked it to stop", async () => {
+    // `before-quit` awaits stopAndWait(), which has nothing to wait for while
+    // this loop is between attempts — so an engine spawned a second later
+    // outlives the app, holding the data dir and the very port this loop was
+    // waiting on. Quitting mid-restart is the ordinary way to meet it: the
+    // banner's button is pressed, nothing appears to happen for half a
+    // minute, and the window gets closed.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const promise = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    const spawnedByThen = engineSpawns().length;
+    expect(spawnedByThen).toBeGreaterThan(1);
+
+    manager.stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(engineSpawns()).toHaveLength(spawnedByThen);
+    expect(manager.connection).toBeNull();
+    await promise;
+  });
+
   it("is one restart to the user, not one crash report per attempt", async () => {
     // Every failed attempt reaching the crash listeners would rewrite the
     // banner's pasteable report each time, and settle on the engine's own
