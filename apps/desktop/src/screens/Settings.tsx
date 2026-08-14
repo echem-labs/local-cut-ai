@@ -173,10 +173,19 @@ function ModelDefaultsPanel() {
   for (const row of readiness ?? []) {
     const task = String(row.data.task ?? "");
     if (!task || resolvedByTask.has(task)) continue;
-    resolvedByTask.set(task, row.verdict === "ready" ? row.model : null);
+    // Only "the weights are not here" earns the bleak label. A model that
+    // is installed but momentarily unservable (ComfyUI stopped) is not
+    // "nothing installed yet", and saying so sends people to re-download.
+    const missing = row.reason === "no_model_installed" || row.reason === "still_clip_tier";
+    resolvedByTask.set(task, missing ? null : row.model);
   }
   const autoLabel = (task: string): string => {
-    if (!resolvedByTask.has(task)) return t("settings.models.defaultsAuto");
+    // A task with a default STORED resolves to that default, so naming it
+    // here would advertise the stored pick as what Auto falls back to —
+    // and choosing Auto is precisely what discards it.
+    if (!resolvedByTask.has(task) || modelDefaults.defaults[task]) {
+      return t("settings.models.defaultsAuto");
+    }
     const resolved = resolvedByTask.get(task);
     const entry = resolved ? models.find((row) => row.id === resolved) : null;
     const name = entry ? displayModelName(entry.family, entry.version) : resolved;

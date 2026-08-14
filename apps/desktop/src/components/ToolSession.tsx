@@ -283,7 +283,17 @@ export function ToolSession() {
     setRefineError(null);
   }, [recipe]);
 
-  if (!tool || !node) return <div className="banner">{t("toolSession.preparing")}</div>;
+  if (!tool || !node)
+    // The dialog rides along: a board poll can drop the aux node while the
+    // gate is open, and unmounting it there would discard the held
+    // regenerate with nothing said — the same reason StalledNotice keeps
+    // its dialog outside its own condition.
+    return (
+      <>
+        <div className="banner">{t("toolSession.preparing")}</div>
+        {readinessDialog}
+      </>
+    );
 
   // The job that produced what's on screen — its model and wall time are the
   // render's provenance. Newest DONE job for the tool node wins (a stale

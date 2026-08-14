@@ -819,7 +819,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         every sibling route maps them rather than degrading into a row that
         blames a missing model for a corrupt file."""
         try:
-            return {"rows": await readiness_rows(config, backends, pairs)}
+            # The hardware profile only if /system already probed it: the
+            # preflight narrows its download suggestion to what this box can
+            # run, but must not pay for a probe of its own to do it.
+            profile = getattr(app.state, "hardware_profile", None)
+            return {"rows": await readiness_rows(config, backends, pairs, profile)}
         except DefaultsTooNew as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (OSError, ValueError) as exc:

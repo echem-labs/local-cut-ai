@@ -40,17 +40,19 @@ export function ModelsPopover({ opens = "down" }: { opens?: "up" | "down" }) {
     if (!task || seen.has(task)) return [];
     seen.add(task);
     const entry = row.model ? models.find((candidate) => candidate.id === row.model) : null;
+    // "Not installed" means the weights are absent — nothing else. A model
+    // sitting on disk behind a stopped ComfyUI, or one this engine will
+    // ignore, is a different sentence, and badging it "not installed" sent
+    // people to re-download tens of gigabytes to fix a server.
+    const installed = row.reason !== "no_model_installed" && row.reason !== "still_clip_tier";
+    const named = entry ? displayModelName(entry.family, entry.version) : row.model;
     return [
       {
         task,
         label: taskLabels[task] ?? task,
-        // The still-clip tier and mock placeholders both read as "not
-        // installed": this surface answers "what will render this", and
-        // for either the honest answer is "not a model you chose".
-        name:
-          row.verdict === "ready"
-            ? (entry ? displayModelName(entry.family, entry.version) : row.model)
-            : null,
+        // A backend that binds its model at construction (kokoro, whisper)
+        // reports ready with no id to name; ready is still the answer.
+        name: installed ? (named ?? t("home.modelsReady")) : null,
       },
     ];
   });
