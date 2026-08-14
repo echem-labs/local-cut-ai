@@ -224,6 +224,18 @@ class BackendRegistry:
         whose model is `cloud:*` routes here regardless of the chain."""
         self._cloud = backend
 
+    def find(self, name: str) -> ExecutionBackend | None:
+        """The registered backend of that name, or None when the chain does
+        not carry one.
+
+        For the readiness preflight, which has to answer *why* a job will
+        land where it will: "a lesser tier served this kind" has completely
+        different causes depending on whether the better one is even in the
+        chain (a server that is down, weights that are missing, or a backend
+        nobody configured), and guessing from the winner's name alone gets
+        two of those three wrong."""
+        return next((backend for backend in self._backends if backend.name == name), None)
+
     def resolve(self, kind: NodeKind, model: str | None = None) -> ExecutionBackend:
         if model and model.startswith("cloud:"):
             # A cloud:* model is an explicit provider choice. It must route to

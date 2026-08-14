@@ -38,7 +38,23 @@ import {
   isToolSession,
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
-import { describeGap, hardGaps, useReadinessGuard } from "../components/Readiness";
+import { describeGap, useReadinessGuard } from "../components/Readiness";
+import { distinctGaps, noteworthyGaps } from "../lib/readiness";
+
+/** The engine kinds a full video renders. Everything but the thumbnail,
+ * which only the publish kit and the thumbnail tool ever build — warning
+ * about a thumbnail model before a video is a warning about nothing.
+ * Mirrors readiness.PIPELINE_KINDS, compared by test_ui_contract. */
+const VIDEO_KINDS = [
+  "script",
+  "keyframe",
+  "clip",
+  "narration",
+  "captions",
+  "music",
+  "timeline",
+  "export",
+];
 import { EMPTY_TOOL_OPTIONS, useApp } from "../store";
 
 /** The bundled 2-second samples the voice swatches play. Resolved at build
@@ -199,11 +215,11 @@ export function Home() {
   }, []);
 
   // The readiness facts, standing — not a snapshot taken after a click.
-  // The prompt box notes the first hard gap for a full video; a tool panel
+  // The prompt box notes the first gap a VIDEO would hit; a tool panel
   // notes only the kinds that tool renders. Both read the same engine
   // report the workspace banner and the gate dialog read.
-  const machineGaps = hardGaps(readiness);
-  const promptGap = machineGaps[0] ?? null;
+  const machineGaps = distinctGaps(noteworthyGaps(readiness));
+  const promptGap = machineGaps.find((row) => VIDEO_KINDS.includes(row.kind)) ?? null;
   const toolGaps = tool
     ? machineGaps.filter((row) => TOOL_ENGINE_KINDS[tool].includes(row.kind))
     : [];
@@ -212,6 +228,8 @@ export function Home() {
     if (!prompt.trim() || busy) return;
     // The gate holds the click when a needed model is missing — warned,
     // suppressible, never blocking ("Render anyway" always proceeds).
+    // Scoped to what a video renders: a thumbnail model it will never
+    // touch is not a reason to interrupt.
     await guard(async () => {
       setBusy(true);
       try {
@@ -224,7 +242,7 @@ export function Home() {
       } finally {
         setBusy(false);
       }
-    });
+    }, VIDEO_KINDS);
   };
 
   const runTool = async () => {
