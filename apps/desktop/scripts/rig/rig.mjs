@@ -213,6 +213,45 @@ export async function layoutTrue() {
   return Math.abs(state.bounds - state.layout) <= 2;
 }
 
+/**
+ * Put the LAYOUT viewport at `width` x `height` CSS pixels, and prove it.
+ *
+ * `setContentBounds` is a request, not a result. A window manager may serve
+ * it late, clamp it, or ignore it outright while the window is still being
+ * mapped — and the gates asked once, waited a fixed moment and believed the
+ * answer. The cost is not a failed resize but a plausible one: a canvas gate
+ * measured its flowchart panel inside a window still at its 960x640 default
+ * and reported the panel had changed size, which sent the mock to be redrawn
+ * to a number that was never the app's.
+ *
+ * Four passes, for the reason sweep.mjs's setSize documents: the ratio is
+ * read from the renderer and applied by the main process, and the two are
+ * briefly out of step after anything touches the zoom. A pass that reads a
+ * stale ratio asks for the wrong window and corrects itself on the next one.
+ *
+ * Returns { ok, inner: [w, h] } — `ok` false means it never took, and a gate
+ * that measures geometry should stop rather than report what it found.
+ */
+export async function sizeWindowTo(width, height, { x = 40, y = 40 } = {}) {
+  let inner = null;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const dpr = await evalInApp("return page.evaluate(() => window.devicePixelRatio);");
+    inner = await evalInApp(`
+      await app.evaluate(({ BrowserWindow }, size) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        if (w.isMaximized()) w.unmaximize();
+        w.setContentBounds({ x: size[2], y: size[3], width: size[0], height: size[1] });
+      }, [${Math.round(width * dpr)}, ${Math.round(height * dpr)}, ${x}, ${y}]);
+      await page.waitForTimeout(600);
+      return page.evaluate(() => [window.innerWidth, window.innerHeight]);
+    `);
+    if (Math.abs(inner[0] - width) <= 2 && Math.abs(inner[1] - height) <= 2) {
+      return { ok: true, inner };
+    }
+  }
+  return { ok: false, inner };
+}
+
 /** Exit code contract for the retry runner (retry.mjs): a gate that finds
  * itself off-scale exits with this instead of failing its checks — the
  * run is invalid, not red. */
