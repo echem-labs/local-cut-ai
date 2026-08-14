@@ -731,6 +731,18 @@ textarea {
   --dv-paneview-active-outline-color: var(--accent);
   --dv-tab-close-icon-color: var(--text-tertiary);
   --dv-floating-box-shadow: var(--shadow-2);
+
+  /* Keep dockview's z-indices inside dockview. Its sashes ship at z-index
+     99, which is a perfectly sensible number inside a docking library and
+     a wrong one in this app: nothing between here and .app opens a
+     stacking context, so 99 competed directly with our own scale, where
+     the Settings overlay is --z-drawer (40). A 4px sash from the workspace
+     behind was therefore painted ON TOP of Settings and took the clicks
+     for whatever control it crossed — found by the U8 sweep hit-testing
+     Storage's delete button and landing on `div.dv-sash`. `isolation`
+     rather than a z-index of our own: this needs a stacking context, not
+     a position in the scale, and it moves nothing on screen. */
+  isolation: isolate;
 }
 
 /* the tab's close ✕ ships oversized next to 12px tab text — shrink it */
@@ -1687,6 +1699,9 @@ button.link:hover {
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-6);
+  /* Two items, so this is a choice between one line and two rather than a
+     row that breaks anywhere. See .board-title for what it is for. */
+  flex-wrap: wrap;
 }
 
 .board-header h1 {
@@ -4273,22 +4288,46 @@ button.link:hover {
   margin-top: 2px;
 }
 
-/* The session composer: the one "change it" surface, stuck to the bottom
-   of the scroll the way an editor's input is (sticky, not fixed, so it
-   never covers content that fits on screen). It wears .prompt-box — same
-   textarea, same bottom row, same focus glow as Home's — so this block
-   adds only the docking. */
-.tool-composer {
+/* The session's dock: the actions, whatever they opened, and the composer,
+   stuck to the bottom of the scroll the way an editor's input is (sticky,
+   not fixed, so it never covers content that fits on screen).
+
+   The composer used to carry the sticky itself, and that was the bug: a
+   sticky box is lifted out of the flow it belongs to, so on a window short
+   enough to scroll it was pulled up over the action row flowing just above
+   it — four buttons drawn where the layout put them and answering no
+   click. A sticky box cannot cover what it shares a sticky box with, so
+   the dock is drawn around the whole run instead of around one end of it.
+
+   It repeats .tool-session's own column — same gap, same alignment — so at
+   rest, when there is nothing to scroll, the wrapper changes no geometry
+   at all: that is what keeps the U3 parity frames true. */
+.tool-dock {
   position: sticky;
   /* Zero, not --space-3: the scroller's own 32px bottom padding is where
-     the composer rests, and an offset on top of it is one sticky spends
-     MOVING the box whenever the content ends closer to the scrollport's
-     edge than the offset asks for. It did — the composer was drawn 4px
-     above where the column put it, on a session that does not even scroll,
-     so the gap above it depended on how tall that session happened to be.
-     A resting offset must be smaller than the clearance the layout
-     guarantees, and the only value that always is, is none. */
+     the dock rests, and an offset on top of it is one sticky spends MOVING
+     the box whenever the content ends closer to the scrollport's edge than
+     the offset asks for. It did — the composer was drawn 4px above where
+     the column put it, on a session that does not even scroll, so the gap
+     above it depended on how tall that session happened to be. A resting
+     offset must be smaller than the clearance the layout guarantees, and
+     the only value that always is, is none. */
   bottom: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  /* The page's own colour, so a docked run is opaque over what scrolls
+     beneath it. .prompt-box brings its own surface; the action row does
+     not, and buttons with the table showing through them read as a
+     rendering fault. Same value as the page, so nothing shows at rest. */
+  background: var(--surface-0);
+}
+
+/* The composer wears .prompt-box — same textarea, same bottom row, same
+   focus glow as Home's — so this block adds only its place in the dock. */
+.tool-composer {
   align-self: stretch;
   margin-top: var(--space-3);
 }
@@ -7289,13 +7328,37 @@ button.link:hover {
   white-space: nowrap;
 }
 
-/* Title + provenance stack; the header row itself stays horizontal. */
+/* Title + provenance stack; the header row itself stays horizontal until it
+   cannot.
+
+   `flex: 1` with the implied `0%` basis was the bug: the toolbar beside it
+   sets `white-space: nowrap` and so has a floor, the title had none, and a
+   flex item with a zero basis and something unshrinkable next to it takes
+   whatever is left over — which at 1000px was ten pixels. The project's name
+   was one clipped glyph, drawn over the checklist, on the app's own minimum
+   width. Nothing errored and no control was covered, so the sweep passed it;
+   it is the eyeball pass that found it.
+
+   A real basis is both halves of the fix: it gives the title a width worth
+   reading before anything shrinks, and it is what lets the row WRAP rather
+   than crush, because an item with a zero basis contributes nothing to the
+   line and so can never be the one that overflows it. */
 .board-title {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* The rest of the header, as one item — see the note in Project.tsx. Pushed
+   right so that on the line of its own it takes when the two do not fit, it
+   still ends where it ends on a single line. */
+.board-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
 }
 
 .board-header .board-title h1 {

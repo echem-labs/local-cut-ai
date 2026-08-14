@@ -140,7 +140,24 @@ export async function startRigTrueToScale(extraEnv = {}) {
   // pixel of drift makes every glyph below it a difference. launch.cjs has
   // carried the switch since the first gate ("parity: 1") and nothing ever
   // set it.
-  const env = { RIG_SCALE: "1", ...extraEnv };
+  //
+  // Forcing the DEVICE scale is only half of it, and on a GNOME desktop it
+  // is the half that does nothing. The app reads GNOME's
+  // text-scaling-factor at startup and folds it into its own zoom baseline
+  // (lib/zoom.ts) — deliberately, so it matches the GTK apps beside it. A
+  // desktop set to 1.3 therefore lays the app out at 1/1.3 CSS pixels no
+  // matter what Chromium was told about the display, the boot check below
+  // sees bounds and layout 30% apart, and the gate retries six times and
+  // gives up. That looked for a while like "this box cannot run the pixel
+  // gates".
+  //
+  // `GSETTINGS_BACKEND=memory` makes the app's `gsettings get` read the
+  // schema default (1.0) instead of the user's dconf: the renderer boots at
+  // zoom 1 for the life of the run, and nothing on the real desktop
+  // changes. Scoped to the pixel gates, where CSS pixels have to equal the
+  // reference's — the walk and the sweep want the app at the zoom a real
+  // user has.
+  const env = { RIG_SCALE: "1", GSETTINGS_BACKEND: "memory", ...extraEnv };
   for (let attempt = 0; attempt < 6; attempt++) {
     const child = await startRig(env);
     try {

@@ -16,7 +16,7 @@
  * up-to-date row the mock shows. Posing it in the store instead would gate
  * a state the app cannot actually reach.
  *
- * Usage: node parity-u6.mjs --refs <dir>   (dir holds about.png + masks.json)
+ * Usage: node parity-about.mjs --refs <dir>   (dir holds about.png + masks.json)
  */
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -38,12 +38,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const refsArg = process.argv.indexOf("--refs");
 const refsDir = refsArg >= 0 ? path.resolve(process.argv[refsArg + 1]) : null;
 if (!refsDir) {
-  console.error("usage: node parity-u6.mjs --refs <dir>");
+  console.error("usage: node parity-about.mjs --refs <dir>");
   process.exit(2);
 }
 
 const FRAME_NAME = "about.png";
-const dir = shotsDir("parity-u6");
+const dir = shotsDir("parity-about");
 const check = makeCheck();
 const reference = PNG.sync.read(readFileSync(path.join(refsDir, FRAME_NAME)));
 const FRAME = { width: reference.width, height: reference.height };
@@ -317,4 +317,4 @@ if (check.failures() > 0) {
   console.error(`${check.failures()} check(s) failed`);
   process.exit(1);
 }
-console.log("parity-u6: all checks passed");
+console.log("parity-about: all checks passed");
