@@ -24,6 +24,17 @@ const spawned = vi.hoisted(() => ({
       kill: () => void;
     };
   }[],
+  /**
+   * How a test answers each engine spawn.
+   *
+   * Called on the next tick rather than inside `spawn`, because the manager
+   * attaches its 'exit' and stream listeners to the returned child — a
+   * synchronous emit would land before anything was listening. Tests that
+   * need several attempts in a row (the rebind loop) cannot reach for
+   * `spawned.calls[n].child` to do it by hand: the attempts are made by a
+   * loop nothing in the test is awaiting between iterations.
+   */
+  answer: null as null | ((child: { stderr: import("node:events").EventEmitter } & import("node:events").EventEmitter) => void),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -41,15 +52,20 @@ vi.mock("node:child_process", async () => {
       child.stderr = new EventEmitter();
       child.kill = () => {};
       spawned.calls.push({ cmd, args, options, child });
-      // `run()` (netstat / lsof / taskkill) waits for 'close'; the engine child
-      // itself only listens for 'error' and 'exit', so this is inert for it.
-      setTimeout(() => child.emit("close", 0), 0);
+      // `run()` (netstat / lsof / taskkill) waits for 'close'; the engine
+      // child watches it too, as the point by which its pipes have drained.
+      setTimeout(() => {
+        if (args.includes("serve")) spawned.answer?.(child);
+        child.emit("close", 0);
+      }, 0);
       return child;
     },
   };
 });
 
-const { EngineConflictError, EngineManager } = await import("./engine");
+const { BIND_REFUSED, EngineConflictError, EngineManager, EnginePortBusyError } = await import(
+  "./engine"
+);
 
 /** /health answers, and /projects accepts our token. */
 const healthyEngine = () =>
@@ -77,6 +93,7 @@ const errored = (): string => errorSpy.mock.calls.map((call) => call.join(" ")).
 
 beforeEach(() => {
   spawned.calls.length = 0;
+  spawned.answer = null;
   savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
   for (const key of envKeys) delete process.env[key];
   // killTree signals a process GROUP by negative pid. The fake child reports
@@ -430,6 +447,156 @@ describe("when startup does not work out", () => {
     await manager.start();
     expect(engineSpawns()).toHaveLength(2);
     expect(manager.connection).not.toBeNull();
+  });
+});
+
+/**
+ * The minute after a crash, when the port belongs to nobody.
+ *
+ * An engine that dies with the app's WebSocket open leaves that connection in
+ * TIME_WAIT with the ENGINE's port as its local port, and `serve` does not set
+ * SO_REUSEADDR — so for the next 61 seconds (measured; TCP_TIMEWAIT_LEN is a
+ * compile-time constant on Linux) nothing can bind it. The banner's Restart
+ * button therefore failed instantly, and so did quitting and relaunching the
+ * whole app, which is what made the crash look permanent.
+ *
+ * There is nothing to fix on either side of that: the app has to outlast it.
+ */
+describe("waiting out a port the kernel still holds", () => {
+  /** Nothing is on the port — no rival engine, only a socket winding down. */
+  const nothingServing = (): void => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+  };
+
+  /** Every engine spawn dies the way `serve` does when its bind is refused. */
+  const refuseTheBind = (): void => {
+    spawned.answer = (child) => {
+      child.stderr.emit(
+        "data",
+        Buffer.from(
+          `${BIND_REFUSED}127.0.0.1:7830: [Errno 98] Address already in use\n` +
+            "Another engine is probably already running - quit it, or pass a different --port.\n",
+        ),
+      );
+      child.emit("exit", 1, null);
+    };
+  };
+
+  // The wait is a minute of wall clock by design; the point of the tests is
+  // what it does with that minute, not how long they take to watch it.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps trying until the socket is released, instead of failing at once", async () => {
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const promise = manager.start();
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    const whileHeld = engineSpawns().length;
+    expect(whileHeld).toBeGreaterThan(1);
+
+    // The kernel lets go: the next child binds and answers for itself.
+    spawned.answer = null;
+    vi.stubGlobal("fetch", healthyEngine());
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    await expect(promise).resolves.toMatchObject({ url: "http://127.0.0.1:7830" });
+    expect(engineSpawns().length).toBeGreaterThan(whileHeld);
+  });
+
+  it("gives up in the end rather than retrying forever", async () => {
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(await caught).toBeInstanceOf(EnginePortBusyError);
+    // And says which of the two port failures it was: there is no process for
+    // the user to go and quit, so "another engine is running" would send them
+    // hunting for one that does not exist.
+    expect(String(await caught)).toMatch(/has not released/);
+    expect(manager.connection).toBeNull();
+  });
+
+  it("does not wait out an engine that died for its own reasons", async () => {
+    // The whole minute is only owed to a bind that was refused. Spending it on
+    // an engine with a missing dependency would bury the one line that says so
+    // under a wait, and then explain the failure in terms of a port.
+    nothingServing();
+    spawned.answer = (child) => {
+      child.stderr.emit("data", Buffer.from("ModuleNotFoundError: No module named 'torch'\n"));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await caught).not.toBeInstanceOf(EnginePortBusyError);
+    expect(engineSpawns()).toHaveLength(1);
+  });
+
+  it("still calls a live engine on the port a conflict, not a wait", async () => {
+    // Same refused bind, opposite cause and opposite answer: something IS
+    // serving, so waiting would never end and the user is the only one who
+    // can resolve it. Posed with the engine dying before the health loop's
+    // first request lands, which is the ordering that used to reach the
+    // generic "exited during startup" and skip orphan recovery entirely.
+    let dead = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (!dead) throw new Error("ECONNREFUSED");
+        return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
+      }),
+    );
+    spawned.answer = (child) => {
+      dead = true;
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await caught).toBeInstanceOf(EngineConflictError);
+    expect(spawned.calls.map((call) => call.cmd)).toContain(
+      process.platform === "win32" ? "netstat" : "lsof",
+    );
+  });
+
+  it("is one restart to the user, not one crash report per attempt", async () => {
+    // Every failed attempt reaching the crash listeners would rewrite the
+    // banner's pasteable report each time, and settle on the engine's own
+    // guess — "another engine is probably already running" — which is the one
+    // explanation that is not true here.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const crashes: unknown[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(engineSpawns().length).toBeGreaterThan(5);
+    expect(crashes).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    await caught;
   });
 });
 
