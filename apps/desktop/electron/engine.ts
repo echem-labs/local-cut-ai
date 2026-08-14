@@ -253,12 +253,25 @@ export class EngineManager {
 
   private starting: Promise<EngineConnection> | null = null;
 
-  async start(): Promise<EngineConnection> {
+  /**
+   * @param waitForPort Whether to keep trying while the only thing wrong is a
+   * port the kernel has not released — up to a minute of it (see
+   * REBIND_TIMEOUT_MS).
+   *
+   * The default is to wait, because for every start a user asked for, waiting
+   * is what makes the difference between recovering and not. **Launch must
+   * pass false**: `whenReady` awaits this BEFORE it creates the window, so a
+   * minute spent here is a minute with nothing on screen at all — which is a
+   * worse failure than the one the waiting fixes, and reads as a hung app.
+   * Launch fails fast instead and the crash banner offers the wait, on screen,
+   * where it can say what it is doing.
+   */
+  async start({ waitForPort = true }: { waitForPort?: boolean } = {}): Promise<EngineConnection> {
     if (this.connection && this.child) return this.connection;
     // Dedup concurrent starts: during startup `connection` is still null, so a
     // second caller (e.g. whenReady racing engine:unpair) would otherwise
     // spawn a second engine and orphan the first.
-    this.starting ??= this.startWithOrphanRecovery().finally(() => {
+    this.starting ??= this.startWithOrphanRecovery(waitForPort).finally(() => {
       this.starting = null;
     });
     return this.starting;
@@ -274,9 +287,9 @@ export class EngineManager {
    * close, so recovery meant opening Task Manager. Since we are the ones who
    * orphaned it, we are also the ones who can clean it up.
    */
-  private async startWithOrphanRecovery(): Promise<EngineConnection> {
+  private async startWithOrphanRecovery(waitForPort: boolean): Promise<EngineConnection> {
     try {
-      return await this.spawnUntilThePortIsFree();
+      return await this.spawnUntilThePortIsFree(waitForPort);
     } catch (error) {
       if (!(error instanceof EngineConflictError)) throw error;
       const port = Number(enginePort());
@@ -287,12 +300,21 @@ export class EngineManager {
       // most certain to meet them. `reclaimPort` only waits for /health to
       // fall silent, which happens the moment the process dies — a minute
       // before its accepted sockets let go of the port.
-      return this.spawnUntilThePortIsFree();
+      return this.spawnUntilThePortIsFree(waitForPort);
     }
   }
 
   /** Set while the loop below is between attempts. See the crash handler. */
   private rebinding = false;
+  /**
+   * Bumped by `stop()`. A loop that was sleeping when the app asked the engine
+   * to stop must not wake up and spawn one: `before-quit` awaits
+   * `stopAndWait()`, which has nothing to wait for yet, and the engine that
+   * appears a second later outlives the app holding the data dir and the
+   * port. Not bumped by the internal cleanup a failed attempt does — that one
+   * is part of the start, not a cancellation of it.
+   */
+  private stopGeneration = 0;
 
   /**
    * Start the engine, and keep trying for as long as the only thing wrong is
@@ -302,12 +324,21 @@ export class EngineManager {
    * import torch would otherwise take REBIND_TIMEOUT_MS to say so, and say it
    * in words about a port.
    */
-  private async spawnUntilThePortIsFree(): Promise<EngineConnection> {
-    const deadline = Date.now() + REBIND_TIMEOUT_MS;
+  private async spawnUntilThePortIsFree(waitForPort: boolean): Promise<EngineConnection> {
+    const deadline = Date.now() + (waitForPort ? REBIND_TIMEOUT_MS : 0);
+    const generation = this.stopGeneration;
     try {
       for (;;) {
         try {
-          return await this.spawnAndWait();
+          const connection = await this.spawnAndWait();
+          // Asked once more on the way out: a stop that landed while this
+          // attempt was in flight read `this.child` before the spawn set it,
+          // so it killed nothing and this engine would be the survivor.
+          if (this.stopGeneration !== generation) {
+            this.discardChild();
+            throw new Error("engine start cancelled");
+          }
+          return connection;
         } catch (error) {
           if (!(error instanceof EnginePortBusyError) || Date.now() >= deadline) throw error;
           if (!this.rebinding) {
@@ -318,6 +349,7 @@ export class EngineManager {
             );
           }
           await delay(REBIND_INTERVAL_MS);
+          if (this.stopGeneration !== generation) throw error; // the app is stopping
         }
       }
     } finally {
@@ -415,8 +447,10 @@ export class EngineManager {
     } catch (err) {
       // A failed startup must not leak a running engine: kill the child (and
       // clear the connection) so a later retry starts clean instead of
-      // stacking orphaned processes that still hold VRAM.
-      this.stop();
+      // stacking orphaned processes that still hold VRAM. `discardChild`, not
+      // `stop`: this is one attempt cleaning up after itself, and must not
+      // cancel the rebind loop that is about to make the next one.
+      this.discardChild();
       // The health loop gives up the moment the child is gone, which can be
       // before its stderr has been read. Give the pipes their moment before
       // deciding what kind of failure this was — bounded, because a child
@@ -485,6 +519,15 @@ export class EngineManager {
   }
 
   stop(): void {
+    // Cancels a rebind loop as well as killing the child: see stopGeneration.
+    this.stopGeneration += 1;
+    this.discardChild();
+  }
+
+  /** Kill the current child, without cancelling a start that is in progress —
+   * a failed attempt cleans up after itself through this, and must not read
+   * as the app having asked for the engine to go away. */
+  private discardChild(): void {
     if (this.child) {
       // Before the kill, not after: the exit can land in the same tick, and
       // an unmarked child reads as a crash to everything downstream.

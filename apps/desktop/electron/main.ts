@@ -15,6 +15,7 @@ import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { EngineCrash } from "../src/api/types";
 import { EngineManager } from "./engine";
 import {
   type KeyPresence,
@@ -76,6 +77,11 @@ const engine = new EngineManager();
  */
 engine.onCrash((crash) => {
   engineError = `engine exited with ${crash.signal ? `signal ${crash.signal}` : `code ${crash.code}`}`;
+  // Kept as well as pushed. A crash during LAUNCH has no window to be pushed
+  // to — `whenReady` connects the engine before it creates one — so the send
+  // below reached nobody and the app came up with the plain error bar, which
+  // carries no way back. The renderer asks for this with the connection.
+  lastCrash = crash;
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send("engine:crashed", crash);
   }
@@ -83,6 +89,8 @@ engine.onCrash((crash) => {
 const keyStore = new ProviderKeyStore();
 const remoteStore = new RemoteEngineStore();
 let engineError: string | null = null;
+/** The last crash, for a renderer that was not alive to be told about it. */
+let lastCrash: EngineCrash | null = null;
 // Set only after the remote engine answered a pinned, authed request.
 let remoteConnection: RemotePairing | null = null;
 
@@ -415,7 +423,7 @@ async function verifyPairing(pairing: RemotePairing): Promise<void> {
 /** Remote pairing (when present and healthy) wins; otherwise the local
  * auto-spawned engine. A dead remote is an error, not a silent local
  * fallback — the user picked the GPU box for a reason. */
-async function connectEngine(): Promise<void> {
+async function connectEngine({ waitForPort = true } = {}): Promise<void> {
   engineError = null;
   remoteConnection = null;
   const pairing = remoteStore.load();
@@ -425,7 +433,7 @@ async function connectEngine(): Promise<void> {
     remoteConnection = pairing;
     return;
   }
-  await engine.start();
+  await engine.start({ waitForPort });
 }
 
 /** PUT key fields to the engine, which holds them in memory only. An empty
@@ -621,6 +629,7 @@ ipcMain.handle("engine:connection", (event) => {
     return {
       connection: null,
       error: "untrusted sender",
+      crash: null,
       remote: false,
       remotePaired: false,
       keysArmed: false,
@@ -628,6 +637,10 @@ ipcMain.handle("engine:connection", (event) => {
   return {
     connection: activeConnection(),
     error: engineError,
+    // Only while there is nothing to connect to. A crash the app recovered
+    // from is history, and a banner about it over a working engine is the
+    // same lie the late-exit guards in engine.ts exist to prevent.
+    crash: activeConnection() ? null : lastCrash,
     remote: remoteConnection !== null,
     // A pairing on disk even if the remote is currently unreachable — so the
     // UI can always offer Disconnect and isn't stranded on a dead box.
@@ -959,7 +972,12 @@ app.whenReady().then(async () => {
     callback(-3); // anything else: Chromium's own verdict stands
   });
   try {
-    await connectEngine();
+    // waitForPort: false — nothing is on screen yet. A launch that lands
+    // inside the minute a crashed engine's port stays reserved would
+    // otherwise sit here with no window at all, which reads as a hung app.
+    // Fail fast, put the window up, and let the crash banner do the waiting
+    // where it can say what it is doing.
+    await connectEngine({ waitForPort: false });
     await armStoredKeys();
   } catch (error) {
     engineError = error instanceof Error ? error.message : String(error);

@@ -338,6 +338,7 @@ describe("who may call the IPC handlers", () => {
     expect(electron.invokeIpc("engine:connection", trusted("https://evil.example/"))).toEqual({
       connection: null,
       error: "untrusted sender",
+      crash: null,
       remote: false,
       remotePaired: false,
       keysArmed: false,
@@ -349,6 +350,8 @@ describe("who may call the IPC handlers", () => {
     expect(electron.invokeIpc("engine:connection", trusted())).toEqual({
       connection: { url: engineUrl, token: "local-token" },
       error: null,
+      // A working engine is not a crash, whatever happened earlier.
+      crash: null,
       remote: false,
       remotePaired: false,
       // The local engine is this machine; the keys are already on it.
@@ -1376,6 +1379,35 @@ describe("when the engine stops on its own", () => {
 
     const window = electron.BrowserWindow.instances[0]!;
     expect(window.sent).toEqual([{ channel: "engine:crashed", args: [crash] }]);
+  });
+
+  it("still has the crash for a renderer that was not there to be told", async () => {
+    // A crash during LAUNCH reaches no window: whenReady connects the engine
+    // before it creates one, so the push above goes to nobody and the app
+    // came up with the plain error bar — which offers nothing. The renderer
+    // asks for the connection as its first act; the crash rides along with
+    // it, and the difference on screen is a banner with a button on it.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] cannot bind"], at: "2026-08-09T00:00:00Z" };
+    engineMock.instance!.connection = null;
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({ crash });
+  });
+
+  it("withholds it again once there is an engine answering", async () => {
+    // A crash the app recovered from is history. Reporting it beside a live
+    // connection would raise a banner over a working engine — the same lie
+    // the late-exit guards in engine.ts exist to prevent.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({
+      crash: null,
+    });
   });
 
   it("re-arms the stored provider keys against the engine it just started", async () => {

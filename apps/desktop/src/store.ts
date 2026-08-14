@@ -76,6 +76,8 @@ declare global {
       getEngineConnection: () => Promise<{
         connection: { url: string; token: string } | null;
         error: string | null;
+        /** A crash this renderer was not alive to be told about. */
+        crash?: EngineCrash | null;
         remote?: boolean;
         remotePaired?: boolean;
         keysArmed?: boolean;
@@ -1023,7 +1025,7 @@ export const useApp = create<AppState>((set, get) => {
     const gen = ++establishGen;
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
-    const { connection, error, remote, remotePaired, keysArmed } =
+    const { connection, error, crash, remote, remotePaired, keysArmed } =
       await window.localcut.getEngineConnection();
     // A newer establish (an engine switch) superseded us while we awaited —
     // bail so we never point the store back at the old engine.
@@ -1032,6 +1034,11 @@ export const useApp = create<AppState>((set, get) => {
       set({
         client: null,
         engineError: error ?? t("errors.engineUnavailable"),
+        // A crash raised before this renderer existed — the engine died
+        // during launch, so `engine:crashed` was pushed to no windows. It is
+        // the difference between the plain bar, which offers nothing, and the
+        // banner, which offers the one button that brings the engine back.
+        ...(crash ? { engineCrash: crash } : {}),
         remoteEngine: false,
         remotePaired: remotePaired === true,
         remoteKeysArmed: keysArmed !== false,

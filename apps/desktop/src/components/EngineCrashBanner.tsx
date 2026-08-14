@@ -78,14 +78,13 @@ export function EngineCrashBanner() {
       <p>
         <strong>{t("errors.engineCrashed")}</strong> {t("errors.engineCrashedDetail")}
       </p>
-      {slow && (
-        // role="status": it appears while the user is watching the button they
-        // just pressed, so it has to reach a screen reader without stealing
-        // focus the way the alert around it already did once.
-        <p className="hint engine-crash-slow" role="status">
-          {t("errors.engineRestartSlow")}
-        </p>
-      )}
+      {/* No role of its own, like the failure line below it. This sits inside
+          a role="alert", which is already a live region — a second one nested
+          in the first is announced by whichever an implementation decides
+          owns it, and by both in the ones that get it wrong. The alert is not
+          atomic, so the added line is what gets read, which is exactly the
+          wanted behaviour and needs nothing declaring it. */}
+      {slow && <p className="hint engine-crash-slow">{t("errors.engineRestartSlow")}</p>}
       {failed && <p className="hint engine-crash-failed">{failed}</p>}
       <div className="engine-crash-actions">
         <button className="btn-outline" onClick={() => void restart()} disabled={busy}>
