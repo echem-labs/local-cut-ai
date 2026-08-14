@@ -330,6 +330,12 @@ export type ReadinessReason =
   | "ok"
   | "still_clip_tier"
   | "no_model_installed"
+  /** Weights (or a server) are fine — nothing in this engine's backend
+   * chain can use them, so a download would change nothing. */
+  | "backend_not_configured"
+  /** The node names a model ComfyUI will not run; something else renders
+   * it instead. */
+  | "model_ignored"
   | "llm_server_down"
   | "llm_model_missing"
   | "cloud_key_missing"

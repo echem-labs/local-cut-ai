@@ -14,15 +14,24 @@ readiness.json catalog and mirrors the three closed sets below as TS
 unions; test_ui_contract.py compares them, so adding a verdict, reason or
 fix type is a two-sided change that cannot silently render as nothing.
 
-Rows are computed from the same primitives the scheduler resolves with
-(BackendRegistry.resolve, the capability probes, the persisted defaults),
-never from a second copy of the routing rules — a readiness report that
-drifted from what the scheduler actually does would be worse than none.
+WHERE a job lands is asked, never re-derived: `BackendRegistry.resolve` is
+the same call the scheduler makes. WHY it landed there is this module's own
+work, and the rule is to ask the registry what it holds
+(`BackendRegistry.find`) rather than infer a cause from the winner's name —
+"mock served the script" means the LLM server is down only if an `llm`
+backend is in the chain at all, and "ffmpeg served the clip" means ComfyUI
+is down only if ComfyUI is there to be down. Inferring from the name got
+both of those wrong for real configurations.
+
+Every row carries the task id in `data` and the model that would actually
+render it, on ready rows too: the desktop's model picker reads the resolved
+model to say what "Auto" means, and its per-task surfaces key on the task.
+A row that omits either is a row those surfaces silently drop.
 
 Known limitation, on purpose: a `local:chatterbox` narration row reports
-ready without import-probing the chatterbox package — that import pulls
-torch, far too heavy for a preflight. Clone failures stay execute-time and
-loud (backends/chatterbox.py never falls back to a stock voice).
+ready without probing for the chatterbox package — the import pulls torch,
+far too heavy for a preflight. Clone failures stay execute-time and loud
+(backends/chatterbox.py never falls back to a stock voice).
 """
 
 from __future__ import annotations
@@ -36,10 +45,10 @@ from .backends.base import BackendRegistry, GenerationError
 from .config import EngineConfig
 from .graph.model import NodeKind
 from .manifest.capability import COMFY_TASKS, installed_comfy_models
-from .manifest.defaults import DefaultsTooNew, load_defaults
+from .manifest.defaults import load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
-from .providers.registry import configured_providers, provider_for_model
+from .providers.registry import PROVIDERS, Capability, configured_providers, provider_for_model
 from .providers.textgen import ProviderError
 
 READINESS_VERDICTS = ("ready", "degraded", "placeholder", "will_fail")
@@ -48,6 +57,12 @@ READINESS_REASONS = (
     "ok",
     "still_clip_tier",
     "no_model_installed",
+    # The weights (or server) are fine — nothing in this engine's backend
+    # chain can use them. A download would change nothing, so no fix.
+    "backend_not_configured",
+    # The node names a model ComfyUI will not run: unknown to the manifest,
+    # or carrying no workflow template. Something else renders it instead.
+    "model_ignored",
     "llm_server_down",
     "llm_model_missing",
     "cloud_key_missing",
@@ -58,38 +73,125 @@ READINESS_REASONS = (
 
 READINESS_FIX_TYPES = ("download", "pick_model", "configure_provider", "install_ffmpeg")
 
-# Manifest tasks whose entries can serve each kind, for the download fix.
-# The ComfyUI kinds come from the capability table; the constructor-bound
-# backends (kokoro, align) get theirs here because nothing else needs it.
+# Kinds that assemble the deliverable. Mock declines these in any hybrid
+# chain (a placeholder MP4 named "your export" is worse than a failure), so
+# reaching mock here means an explicit all-mock chain.
+_ASSEMBLY_KINDS = (NodeKind.TIMELINE, NodeKind.EXPORT)
+
+# Manifest tasks whose entries can serve each kind, and the backend that
+# would consume them. The ComfyUI kinds come from the capability table; the
+# constructor-bound backends declare theirs here.
 _DOWNLOAD_TASKS: dict[NodeKind, tuple[str, ...]] = {
-    **{kind: tasks for kind, tasks in COMFY_TASKS.items()},
+    **COMFY_TASKS,
     NodeKind.NARRATION: ("speech.tts",),
     NodeKind.CAPTIONS: ("transcribe",),
 }
 
+# What a prompt project's graph expands into once the screenplay lands
+# (templates.py::expand_screenplay). The project route reports an
+# unexpanded graph against these, because a script-only graph is a stage
+# rather than the whole job. Thumbnail is absent on purpose: it exists only
+# in the publish kit and the thumbnail tool.
+# test_readiness.py compares this against a real expansion, so it cannot
+# drift from what the compiler actually builds.
+PIPELINE_KINDS = (
+    NodeKind.SCRIPT,
+    NodeKind.KEYFRAME,
+    NodeKind.CLIP,
+    NodeKind.NARRATION,
+    NodeKind.CAPTIONS,
+    NodeKind.MUSIC,
+    NodeKind.TIMELINE,
+    NodeKind.EXPORT,
+)
+
+# Every job-producing kind, in pipeline order — PIPELINE_KINDS plus the
+# thumbnail, which only the publish kit and the thumbnail tool build.
+PIPELINE_ORDER = (
+    NodeKind.SCRIPT,
+    NodeKind.KEYFRAME,
+    NodeKind.THUMBNAIL,
+    NodeKind.CLIP,
+    NodeKind.NARRATION,
+    NodeKind.CAPTIONS,
+    NodeKind.MUSIC,
+    NodeKind.TIMELINE,
+    NodeKind.EXPORT,
+)
+
+_CONSUMING_BACKEND: dict[NodeKind, str] = {
+    **{kind: "comfyui" for kind in COMFY_TASKS},
+    NodeKind.NARRATION: "kokoro",
+    NodeKind.CAPTIONS: "align",
+}
+
+
+def task_of(kind: NodeKind) -> str | None:
+    """The manifest task a kind renders from, or None for the assembly
+    kinds, which have no model at all."""
+    tasks = _DOWNLOAD_TASKS.get(kind)
+    if tasks:
+        return tasks[0]
+    return "text.llm" if kind is NodeKind.SCRIPT else None
+
+
+def project_pairs(graph, *, is_tool_session: bool) -> list[tuple[NodeKind, str | None]]:
+    """The (kind, model) pairs a project should be judged on.
+
+    One per distinct pair in the graph, in pipeline order, so a per-node
+    model override is judged as itself rather than as the default.
+
+    A prompt project's graph is two-stage (graph/templates.py): until the
+    screenplay lands it holds the script node ALONE. Judging only that told
+    a user with nothing installed that their project was one script away
+    from fine, while every job the expansion was about to queue fell to a
+    placeholder — so an unexpanded graph is judged against the kinds the
+    expansion will create.
+
+    A tool session is exempt: its graph is complete on creation (the script
+    tool really does render nothing but a script), so padding it would warn
+    about models it will never use.
+    """
+    pairs: list[tuple[NodeKind, str | None]] = []
+    seen: set[tuple[NodeKind, str | None]] = set()
+    for kind in PIPELINE_ORDER:
+        for node in graph.nodes.values():
+            if node.kind is kind and (kind, node.model) not in seen:
+                seen.add((kind, node.model))
+                pairs.append((kind, node.model))
+    unexpanded = not any(kind is NodeKind.CLIP for kind, _ in pairs)
+    if unexpanded and not is_tool_session:
+        pairs += [(kind, None) for kind in PIPELINE_KINDS if (kind, None) not in seen]
+    return pairs
+
 
 @dataclass
 class _Snapshot:
-    """One blocking read of everything row-building consults, so a
-    multi-row report costs one manifest scan, not one per row."""
+    """Per-request state: the manifest reads that would otherwise repeat
+    once per row, plus the LLM server's model list, memoized because a
+    report can hold several script rows and each listing is an HTTP call.
+
+    It deliberately does NOT try to save the capability probes inside
+    `resolve()` — those are recomputed per call by design (capability.py),
+    which is what lets a finishing download flip a verdict mid-report.
+    """
 
     entries: list = field(default_factory=list)
     defaults: dict[str, str] = field(default_factory=dict)
     installed: dict[NodeKind, list[str]] = field(default_factory=dict)
+    llm_names: list[str] | None = None
+    llm_listed: bool = False
 
 
 def _load_snapshot(config: EngineConfig) -> _Snapshot:
+    """Raises OSError/ValueError for an unreadable manifest and
+    DefaultsTooNew for a defaults file from a newer build — the routes map
+    both the way every sibling route does (503/409). Swallowing them here
+    would answer "no model installed, no fix" to a user whose actual
+    problem is a corrupt file, which is the one message that fixes it."""
     snap = _Snapshot()
-    try:
-        snap.entries = list(load_manifest(config).models)
-    except (OSError, ValueError):
-        # A broken override manifest already surfaces on /models; readiness
-        # keeps reporting with no download fixes rather than failing.
-        snap.entries = []
-    try:
-        snap.defaults = load_defaults(config)
-    except DefaultsTooNew:
-        snap.defaults = {}
+    snap.entries = list(load_manifest(config).models)
+    snap.defaults = load_defaults(config)
     snap.installed = installed_comfy_models(config)
     return snap
 
@@ -101,29 +203,50 @@ def _row(
     reason: str,
     backend: str | None = None,
     model: str | None = None,
-    data: dict | None = None,
+    extra: dict | None = None,
     fix: dict | None = None,
 ) -> dict:
+    """`data` always carries the task (when the kind has one) — the
+    desktop's per-task surfaces key on it, including for ready rows."""
+    task = task_of(kind)
+    data = {**({"task": task} if task else {}), **(extra or {})}
     return {
         "kind": kind.value,
         "model": model,
         "backend": backend,
         "verdict": verdict,
         "reason": reason,
-        "data": data or {},
+        "data": data,
         "fix": fix,
     }
 
 
-def _download_fix(snap: _Snapshot, config: EngineConfig, kind: NodeKind) -> dict | None:
+def _fix_for(entry) -> dict:  # noqa: ANN001 — ModelEntry, typed at the manifest
+    # size_bytes can legitimately be 0: a custom model registered from a URL
+    # declares no size until it is fetched. The desktop renders the size
+    # only when it has one.
+    return {
+        "type": "download",
+        "model_id": entry.id,
+        "size_bytes": sum(file.size for file in entry.files),
+    }
+
+
+def _download_fix(snap: _Snapshot, kind: NodeKind, *, consumable: bool) -> dict | None:
     """The manifest's best downloadable candidate for a kind: the stored
     per-task default when it is downloadable, else the first entry for the
     kind's tasks with files (and, for ComfyUI kinds, a workflow template —
-    weights with no graph to run them are not a capability)."""
+    weights with no graph to run them are not a capability).
+
+    `consumable=False` returns nothing: with no backend in the chain able to
+    load the weights, the download would finish and change no verdict, and
+    offering it as the fix is worse than offering none."""
+    if not consumable:
+        return None
     tasks = _DOWNLOAD_TASKS.get(kind, ())
     need_template = kind in COMFY_TASKS
 
-    def usable(entry) -> bool:  # noqa: ANN001 — ModelEntry, typed at the manifest
+    def usable(entry) -> bool:  # noqa: ANN001 — ModelEntry
         return bool(entry.files) and (bool(entry.comfy_graph_template) or not need_template)
 
     by_id = {entry.id: entry for entry in snap.entries}
@@ -138,36 +261,30 @@ def _download_fix(snap: _Snapshot, config: EngineConfig, kind: NodeKind) -> dict
     return None
 
 
-def _fix_for(entry) -> dict:  # noqa: ANN001 — ModelEntry
-    return {
-        "type": "download",
-        "model_id": entry.id,
-        "size_bytes": sum(file.size for file in entry.files),
-    }
-
-
-def _task_of(kind: NodeKind) -> str | None:
-    tasks = _DOWNLOAD_TASKS.get(kind)
-    if tasks:
-        return tasks[0]
-    return "text.llm" if kind is NodeKind.SCRIPT else None
-
-
 def _cloud_row(config: EngineConfig, backends: BackendRegistry, kind: NodeKind, model: str) -> dict:
     """cloud:* is an explicit provider choice that routes by model, never by
-    chain — so the row checks what execute would die on: the key, and
-    whether the cloud backend serves this kind/model at all."""
+    chain — so the row checks what execute would die on: the provider's key,
+    and whether that provider has the capability this kind needs."""
+    unknown = _row(
+        kind,
+        verdict="will_fail",
+        reason="cloud_model_unknown",
+        backend="cloud",
+        model=model,
+        extra={"model": model},
+    )
     try:
         provider = provider_for_model(model)
     except ProviderError:
-        return _row(
-            kind,
-            verdict="will_fail",
-            reason="cloud_model_unknown",
-            backend="cloud",
-            model=model,
-            data={"model": model},
-        )
+        return unknown
+    # CloudBackend.supports() claims SCRIPT and CLIP for ANY cloud model, so
+    # resolve() alone cannot tell a text model on a clip from a real pairing;
+    # execute then dies in textgen_for_model/videogen_for_model. The provider
+    # table already knows which way round it is.
+    needed = Capability.VIDEO if kind is NodeKind.CLIP else Capability.TEXT
+    info = next((entry for entry in PROVIDERS if entry.id == provider), None)
+    if info is None or needed not in info.capabilities:
+        return unknown
     configured = {row["id"]: row["configured"] for row in configured_providers(config)}
     if not configured.get(provider):
         return _row(
@@ -176,21 +293,112 @@ def _cloud_row(config: EngineConfig, backends: BackendRegistry, kind: NodeKind, 
             reason="cloud_key_missing",
             backend="cloud",
             model=model,
-            data={"provider": provider, "model": model},
+            extra={"provider": provider, "model": model},
             fix={"type": "configure_provider", "provider": provider},
         )
     try:
         resolved = backends.resolve(kind, model)
     except GenerationError:
+        return unknown
+    return _row(kind, verdict="ready", reason="ok", backend=resolved.name, model=model)
+
+
+def _comfy_claims(backends: BackendRegistry, kind: NodeKind) -> bool:
+    """Whether a ComfyUI backend is in the chain AND configured to serve
+    this kind — the question `comfyui_down` is only allowed to answer yes
+    to."""
+    comfy = backends.find("comfyui")
+    return comfy is not None and kind in getattr(comfy, "kinds", set())
+
+
+def _missing_model_row(
+    snap: _Snapshot,
+    backends: BackendRegistry,
+    kind: NodeKind,
+    *,
+    verdict: str,
+    backend: str | None,
+    model: str | None = None,
+) -> dict:
+    """The row for "a real backend did not serve this kind", with the cause
+    established from what the chain actually holds rather than guessed.
+
+    `model` is the model the NODE asked for, carried through even though
+    nothing resolved it: it is what makes two rows for the same kind
+    distinguishable when scenes pin different models."""
+    consumer = _CONSUMING_BACKEND.get(kind)
+    in_chain = consumer is not None and backends.find(consumer) is not None
+    if kind in COMFY_TASKS:
+        # Weights are installed and ComfyUI is configured for this kind, so
+        # the only thing left that can have declined it is the server probe.
+        if snap.installed.get(kind) and _comfy_claims(backends, kind):
+            return _row(kind, verdict=verdict, reason="comfyui_down", backend=backend, model=model)
+        in_chain = in_chain and _comfy_claims(backends, kind)
+    if not in_chain:
+        return _row(
+            kind, verdict=verdict, reason="backend_not_configured", backend=backend, model=model
+        )
+    return _row(
+        kind,
+        verdict=verdict,
+        reason="no_model_installed",
+        backend=backend,
+        model=model,
+        fix=_download_fix(snap, kind, consumable=True),
+    )
+
+
+def _comfy_row(snap: _Snapshot, config: EngineConfig, kind: NodeKind, model: str | None) -> dict:
+    """ComfyUI won the kind. What it will actually load depends on the
+    node's model and on `_template_path`'s fallback chain, not on the fact
+    that ComfyUI answered."""
+    bare = (model or "").removeprefix("local:")
+    installed = snap.installed.get(kind) or []
+    if not bare:
+        if not installed:
+            # An explicit (non-"auto") comfy_kinds claims the kind whatever
+            # is on disk, so this is reachable: the workflow would load a
+            # checkpoint nobody installed and fail inside ComfyUI.
+            return _row(
+                kind,
+                verdict="will_fail",
+                reason="no_model_installed",
+                backend="comfyui",
+                fix=_download_fix(snap, kind, consumable=True),
+            )
+        # Named even on Auto: the Settings picker reads this to say what
+        # "Auto" resolves to on this machine.
+        return _row(kind, verdict="ready", reason="ok", backend="comfyui", model=installed[0])
+
+    entry = next((candidate for candidate in snap.entries if candidate.id == bare), None)
+    if entry is None or not entry.comfy_graph_template:
+        # `_template_path` maps a model to a workflow through the manifest's
+        # template map, which holds only entries that declare one. Anything
+        # else falls through to the first INSTALLED model's template — the
+        # job succeeds, rendering a model the node did not ask for. Reachable
+        # from the shipped "Add custom model" flow, which defaults the
+        # template to empty.
+        return _row(
+            kind,
+            verdict="degraded",
+            reason="model_ignored",
+            backend="comfyui",
+            model=bare,
+            extra={"model": bare},
+            fix=_fix_for(entry) if entry is not None and entry.files else None,
+        )
+    if entry.files and not is_downloaded(entry, config.resolved_models_dir):
+        # The template exists, so ComfyUI runs it — against weights that are
+        # not there. It dies inside ComfyUI on a validation error.
         return _row(
             kind,
             verdict="will_fail",
-            reason="cloud_model_unknown",
-            backend="cloud",
-            model=model,
-            data={"model": model},
+            reason="no_model_installed",
+            backend="comfyui",
+            model=bare,
+            fix=_fix_for(entry),
         )
-    return _row(kind, verdict="ready", reason="ok", backend=resolved.name, model=model)
+    return _row(kind, verdict="ready", reason="ok", backend="comfyui", model=bare)
 
 
 def _local_row(
@@ -202,84 +410,57 @@ def _local_row(
 ) -> dict | tuple:
     """One row, or `(backend, resolved_model)` when the answer needs the LLM
     server's model list — the only async leg, finished by the caller."""
-    task = _task_of(kind)
-    data = {"task": task} if task else {}
     try:
         resolved = backends.resolve(kind, model)
     except GenerationError:
-        if kind in (NodeKind.TIMELINE, NodeKind.EXPORT):
+        if kind in _ASSEMBLY_KINDS:
+            return _row(
+                kind, verdict="will_fail", reason="no_ffmpeg", fix={"type": "install_ffmpeg"}
+            )
+        if kind is NodeKind.SCRIPT:
             return _row(
                 kind,
                 verdict="will_fail",
-                reason="no_ffmpeg",
-                fix={"type": "install_ffmpeg"},
+                reason=("llm_server_down" if backends.find("llm") else "backend_not_configured"),
+                model=model,
             )
-        return _row(
-            kind,
-            verdict="will_fail",
-            reason="no_model_installed",
-            model=model,
-            data=data,
-            fix=_download_fix(snap, config, kind),
+        return _missing_model_row(
+            snap, backends, kind, verdict="will_fail", backend=None, model=model
         )
 
     name = resolved.name
     if name == "llm":
         return (resolved, resolved.resolve_model(model))
-
     if name == "comfyui":
-        bare = (model or "").removeprefix("local:")
-        if bare:
-            entry = next((e for e in snap.entries if e.id == bare), None)
-            if (
-                entry is not None
-                and entry.files
-                and not is_downloaded(entry, config.resolved_models_dir)
-            ):
-                # Named-but-absent weights still route here (the kind is
-                # claimable on some OTHER model's weights) and die inside
-                # ComfyUI — say so first, with the download as the fix.
-                return _row(
-                    kind,
-                    verdict="will_fail",
-                    reason="no_model_installed",
-                    backend=name,
-                    model=bare,
-                    data=data,
-                    fix=_fix_for(entry),
-                )
-            return _row(kind, verdict="ready", reason="ok", backend=name, model=bare)
-        auto = (snap.installed.get(kind) or [None])[0]
-        # The resolved model is named even on Auto — the honest-Auto label
-        # in Settings reads it.
-        return _row(kind, verdict="ready", reason="ok", backend=name, model=auto)
-
+        return _comfy_row(snap, config, kind, model)
     if name == "ffmpeg" and kind is NodeKind.CLIP:
-        if snap.installed.get(kind):
-            return _row(kind, verdict="degraded", reason="comfyui_down", backend=name, data=data)
+        # The still-clip tier: a real render, one tier down. Which is only
+        # the *interesting* answer when a video model could have served it.
+        if snap.installed.get(kind) and _comfy_claims(backends, kind):
+            return _row(kind, verdict="degraded", reason="comfyui_down", backend=name, model=model)
         return _row(
             kind,
             verdict="degraded",
             reason="still_clip_tier",
             backend=name,
-            data=data,
-            fix=_download_fix(snap, config, kind),
+            model=model,
+            fix=_download_fix(snap, kind, consumable=_comfy_claims(backends, kind)),
         )
-
     if name == "mock":
+        if kind in _ASSEMBLY_KINDS:
+            # Only an explicit all-mock chain gets here (the demo/test
+            # configuration): no real assembly backend is configured.
+            return _row(kind, verdict="placeholder", reason="backend_not_configured", backend=name)
         if kind is NodeKind.SCRIPT:
             return _row(
-                kind, verdict="placeholder", reason="llm_server_down", backend=name, data=data
+                kind,
+                verdict="placeholder",
+                reason=("llm_server_down" if backends.find("llm") else "backend_not_configured"),
+                backend=name,
+                model=model,
             )
-        if kind in COMFY_TASKS and snap.installed.get(kind):
-            return _row(kind, verdict="placeholder", reason="comfyui_down", backend=name, data=data)
-        return _row(
-            kind,
-            verdict="placeholder",
-            reason="no_model_installed",
-            backend=name,
-            data=data,
-            fix=_download_fix(snap, config, kind),
+        return _missing_model_row(
+            snap, backends, kind, verdict="placeholder", backend=name, model=model
         )
 
     # kokoro, align, chatterbox, ffmpeg assembly, and any future tier that
@@ -287,30 +468,31 @@ def _local_row(
     return _row(kind, verdict="ready", reason="ok", backend=name, model=model)
 
 
-async def _finish_llm_row(kind: NodeKind, backend, resolved_model: str) -> dict:  # noqa: ANN001
-    try:
-        names = await backend.list_models()
-    except httpx.HTTPError:
-        # The server vanished between the probe and the listing — at
+async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: str) -> dict:  # noqa: ANN001
+    if not snap.llm_listed:
+        snap.llm_listed = True
+        try:
+            snap.llm_names = await backend.list_models()
+        except (httpx.HTTPError, AttributeError, ValueError):
+            # AttributeError/ValueError: a server whose /v1/models is not
+            # shaped the way the client expects. Unknown, not empty — and a
+            # diagnostic must never be the thing that 500s.
+            snap.llm_names = None
+    if snap.llm_names is None:
+        # The server answered the probe and then could not be listed. At
         # execute time supports() would decline and mock would serve.
-        return _row(
-            kind,
-            verdict="placeholder",
-            reason="llm_server_down",
-            backend="mock",
-            data={"task": "text.llm"},
-        )
-    if resolved_model not in names:
+        return _row(kind, verdict="placeholder", reason="llm_server_down", backend="mock")
+    if resolved not in snap.llm_names:
         return _row(
             kind,
             verdict="will_fail",
             reason="llm_model_missing",
             backend=backend.name,
-            model=resolved_model,
-            data={"model": resolved_model, "task": "text.llm"},
+            model=resolved,
+            extra={"model": resolved},
             fix={"type": "pick_model", "task": "text.llm"},
         )
-    return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved_model)
+    return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
 
 
 async def readiness_rows(
@@ -332,6 +514,6 @@ async def readiness_rows(
         result = await asyncio.to_thread(_local_row, snap, config, backends, kind, model)
         if isinstance(result, tuple):
             backend, resolved_model = result
-            result = await _finish_llm_row(kind, backend, resolved_model)
+            result = await _finish_llm_row(snap, kind, backend, resolved_model)
         rows.append(result)
     return rows
