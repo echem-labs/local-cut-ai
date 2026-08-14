@@ -9,6 +9,7 @@
  * model while losing another warns again rather than staying quiet.
  */
 import { render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -64,11 +65,25 @@ function seed(rows: ReadinessRow[], overrides: Record<string, unknown> = {}) {
   } as never);
 }
 
-function Harness({ onRun, scopeKey = "p1" }: { onRun: () => void; scopeKey?: string }) {
-  const { guard, dialog } = useReadinessGuard(scopeKey);
+// Every mount gets its own scope unless one is named. `sessionReadinessSkips`
+// is module state the store never exposes a reset for, so a shared default
+// key let one test's "Render anyway" satisfy the next test's assertion —
+// the master-switch test passed with the switch check deleted.
+let harnesses = 0;
+function Harness({
+  onRun,
+  scopeKey,
+  kinds,
+}: {
+  onRun: () => void;
+  scopeKey?: string;
+  kinds?: string[];
+}) {
+  const [key] = useState(() => scopeKey ?? `harness-${++harnesses}`);
+  const { guard, dialog } = useReadinessGuard(key);
   return (
     <>
-      <button onClick={() => void guard(onRun)}>Render</button>
+      <button onClick={() => void guard(onRun, kinds)}>Render</button>
       {dialog}
     </>
   );
@@ -217,6 +232,48 @@ describe("the render gate", () => {
     render(<Harness onRun={run} />);
     await userEvent.click(screen.getByRole("button", { name: "Render" }));
     await waitFor(() => expect(run).toHaveBeenCalled());
+    expect(renderAnyway()).toBeNull();
+  });
+
+  it("does not warn about a model whose bytes are already moving", async () => {
+    // First run hands over mid-download by design, and the engine calls a
+    // half-downloaded model missing (it counts completed files). Warning
+    // there interrupts the setup that is already fixing it.
+    const run = vi.fn();
+    seed([musicGap], {
+      models: [{ id: "ace-step-v1-3.5b", downloading: true, downloaded: false }],
+    });
+    render(<Harness onRun={run} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(run).toHaveBeenCalled());
+    expect(renderAnyway()).toBeNull();
+  });
+
+  it("keeps two differently-scoped dismissals on one surface apart", async () => {
+    // Home asks about a whole video from one control and a single tool
+    // kind from another, both under scope "home". With one dismissal
+    // between them each evicted the other and the dialog never stopped.
+    const run = vi.fn();
+    seed([musicGap, exportFails]);
+    const music = render(<Harness onRun={run} scopeKey="home" kinds={["music"]} />);
+    await userEvent.click(music.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(renderAnyway()).not.toBeNull());
+    await userEvent.click(renderAnyway()!);
+    await waitFor(() => expect(run).toHaveBeenCalled());
+    music.unmount();
+
+    // A different question under the same scope still gets asked...
+    const everything = render(<Harness onRun={vi.fn()} scopeKey="home" />);
+    await userEvent.click(everything.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(renderAnyway()).not.toBeNull());
+    await userEvent.click(renderAnyway()!);
+    everything.unmount();
+
+    // ...and answering it does not un-dismiss the first one.
+    const again = vi.fn();
+    const music2 = render(<Harness onRun={again} scopeKey="home" kinds={["music"]} />);
+    await userEvent.click(music2.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(again).toHaveBeenCalled());
     expect(renderAnyway()).toBeNull();
   });
 

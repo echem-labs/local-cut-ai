@@ -16,6 +16,7 @@
   "modelsAria": "Model readiness",
   "modelsPopTitle": "Models",
   "notInstalled": "not installed",
+  "modelsReady": "ready",
   "manageModels": "Manage models →",
   "getIt": "Get it →",
   "generateTool": "Generate {tool}",

@@ -48,6 +48,7 @@ from .manifest.capability import COMFY_TASKS, installed_comfy_models
 from .manifest.defaults import load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
+from .manifest.recommend import _fits
 from .providers.registry import PROVIDERS, Capability, configured_providers, provider_for_model
 from .providers.textgen import ProviderError
 
@@ -161,7 +162,13 @@ def project_pairs(graph, *, is_tool_session: bool) -> list[tuple[NodeKind, str |
                 pairs.append((kind, node.model))
     unexpanded = not any(kind is NodeKind.CLIP for kind, _ in pairs)
     if unexpanded and not is_tool_session:
-        pairs += [(kind, None) for kind in PIPELINE_KINDS if (kind, None) not in seen]
+        # Padded per KIND, not per (kind, model): a script node already
+        # pinned to a cloud model must not also gain a phantom Auto row
+        # judged against the local default it will never use — a row no
+        # node in the graph corresponds to, which the gate would then
+        # raise a dialog about.
+        covered = {kind for kind, _ in pairs}
+        pairs += [(kind, None) for kind in PIPELINE_KINDS if kind not in covered]
     return pairs
 
 
@@ -181,15 +188,20 @@ class _Snapshot:
     installed: dict[NodeKind, list[str]] = field(default_factory=dict)
     llm_names: list[str] | None = None
     llm_listed: bool = False
+    # This machine, when the caller already has it. Only used to keep the
+    # offered download to something the box can actually run; None means
+    # "not probed", and the fix is then offered unfiltered rather than the
+    # preflight paying for a hardware probe of its own.
+    profile: object | None = None
 
 
-def _load_snapshot(config: EngineConfig) -> _Snapshot:
+def _load_snapshot(config: EngineConfig, profile: object | None = None) -> _Snapshot:
     """Raises OSError/ValueError for an unreadable manifest and
     DefaultsTooNew for a defaults file from a newer build — the routes map
     both the way every sibling route does (503/409). Swallowing them here
     would answer "no model installed, no fix" to a user whose actual
     problem is a corrupt file, which is the one message that fixes it."""
-    snap = _Snapshot()
+    snap = _Snapshot(profile=profile)
     snap.entries = list(load_manifest(config).models)
     snap.defaults = load_defaults(config)
     snap.installed = installed_comfy_models(config)
@@ -247,7 +259,20 @@ def _download_fix(snap: _Snapshot, kind: NodeKind, *, consumable: bool) -> dict 
     need_template = kind in COMFY_TASKS
 
     def usable(entry) -> bool:  # noqa: ANN001 — ModelEntry
-        return bool(entry.files) and (bool(entry.comfy_graph_template) or not need_template)
+        # Commercial-only, the same bar `recommend_slate` holds the slate to
+        # (doc 04's licensing matrix, and `lint_defaults` is a CI gate on
+        # it). A custom entry is recorded `commercial=False` unverified, so
+        # this also keeps the banner from pushing one as THE fix.
+        return (
+            bool(entry.files)
+            and entry.license.commercial
+            and (bool(entry.comfy_graph_template) or not need_template)
+            # And it has to run here. Manifest order puts the 16 GB / 36 GB
+            # wan2.2 first for video, so without this the banner offered it
+            # as THE one-click fix on an 8 GB box while /system recommended
+            # LTX on the adjacent surface — two answers to one question.
+            and (snap.profile is None or _fits(entry, snap.profile))
+        )
 
     by_id = {entry.id: entry for entry in snap.entries}
     for task in tasks:
@@ -468,21 +493,39 @@ def _local_row(
     return _row(kind, verdict="ready", reason="ok", backend=name, model=model)
 
 
+def _lists_model(names: list[str], resolved: str) -> bool:
+    """Whether the server's list holds the resolved model.
+
+    Ollama reports a tagged name, so a perfectly good `LOCALCUT_LLM_MODEL=
+    llama3.2` has to match the `llama3.2:latest` it lists — an exact
+    membership test declares that machine broken.
+    """
+    wanted = resolved.removesuffix(":latest")
+    return any(name.removesuffix(":latest") == wanted for name in names)
+
+
 async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: str) -> dict:  # noqa: ANN001
     if not snap.llm_listed:
         snap.llm_listed = True
         try:
             snap.llm_names = await backend.list_models()
-        except (httpx.HTTPError, AttributeError, ValueError):
-            # AttributeError/ValueError: a server whose /v1/models is not
-            # shaped the way the client expects. Unknown, not empty — and a
+        except (httpx.HTTPError, AttributeError, TypeError, ValueError):
+            # A server whose /v1/models is missing, guarded, or not shaped
+            # the way the client expects. Unknown, not empty — and a
             # diagnostic must never be the thing that 500s.
             snap.llm_names = None
     if snap.llm_names is None:
         # The server answered the probe and then could not be listed. At
         # execute time supports() would decline and mock would serve.
         return _row(kind, verdict="placeholder", reason="llm_server_down", backend="mock")
-    if resolved not in snap.llm_names:
+    if not snap.llm_names:
+        # `list_models` flattens any non-200 to an empty list, and plenty of
+        # OpenAI-compatible servers serve chat completions without serving
+        # /v1/models at all (llama.cpp builds, anything behind an auth
+        # proxy). "I could not enumerate" is not "the model is absent", and
+        # blocking a render that would have worked is the worse error.
+        return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
+    if not _lists_model(snap.llm_names, resolved):
         return _row(
             kind,
             verdict="will_fail",
@@ -499,13 +542,17 @@ async def readiness_rows(
     config: EngineConfig,
     backends: BackendRegistry,
     pairs: list[tuple[NodeKind, str | None]],
+    profile: object | None = None,
 ) -> list[dict]:
     """One report row per (kind, model) pair, in the order given.
+
+    `profile` is this machine's hardware, when the caller already holds it
+    — it only narrows the offered download to something the box can run.
 
     Blocking work (manifest scans, resolve's capability probes) runs off
     the event loop; only the LLM server's model listing is awaited here.
     """
-    snap = await asyncio.to_thread(_load_snapshot, config)
+    snap = await asyncio.to_thread(_load_snapshot, config, profile)
     rows: list[dict] = []
     for kind, model in pairs:
         if model and model.startswith("cloud:"):

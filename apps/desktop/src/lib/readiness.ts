@@ -39,7 +39,10 @@ export function noteworthyGaps(rows: readonly ReadinessRow[] | null): ReadinessR
 export function distinctGaps(rows: readonly ReadinessRow[]): ReadinessRow[] {
   const seen = new Set<string>();
   return rows.filter((row) => {
-    const key = `${row.data.task ?? row.kind}:${row.reason}:${row.model ?? ""}`;
+    // Keyed on the task, NOT the kind — timeline and export share one
+    // missing ffmpeg and one sentence, exactly as keyframe and thumbnail
+    // share one missing image model. Neither has a task, hence the "".
+    const key = `${row.data.task ?? ""}:${row.reason}:${row.model ?? ""}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
