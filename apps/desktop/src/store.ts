@@ -76,6 +76,8 @@ declare global {
       getEngineConnection: () => Promise<{
         connection: { url: string; token: string } | null;
         error: string | null;
+        /** A crash this renderer was not alive to be told about. */
+        crash?: EngineCrash | null;
         remote?: boolean;
         remotePaired?: boolean;
         keysArmed?: boolean;
@@ -1023,7 +1025,7 @@ export const useApp = create<AppState>((set, get) => {
     const gen = ++establishGen;
     unsubscribe?.(); // never leak a previous subscription
     unsubscribe = null;
-    const { connection, error, remote, remotePaired, keysArmed } =
+    const { connection, error, crash, remote, remotePaired, keysArmed } =
       await window.localcut.getEngineConnection();
     // A newer establish (an engine switch) superseded us while we awaited —
     // bail so we never point the store back at the old engine.
@@ -1032,6 +1034,11 @@ export const useApp = create<AppState>((set, get) => {
       set({
         client: null,
         engineError: error ?? t("errors.engineUnavailable"),
+        // A crash raised before this renderer existed — the engine died
+        // during launch, so `engine:crashed` was pushed to no windows. It is
+        // the difference between the plain bar, which offers nothing, and the
+        // banner, which offers the one button that brings the engine back.
+        ...(crash ? { engineCrash: crash } : {}),
         remoteEngine: false,
         remotePaired: remotePaired === true,
         remoteKeysArmed: keysArmed !== false,
@@ -1042,6 +1049,13 @@ export const useApp = create<AppState>((set, get) => {
     set({
       client,
       engineError: null,
+      // The crash goes with the error it came in beside. `restartEngine`
+      // clears it on the way back up, but that is only the button's path —
+      // an engine that returned through the reconnect timer, or a pairing
+      // that moved the work to a GPU box, left the banner standing over a
+      // connection that answers. The shell only ever reports a crash while
+      // there is nothing to connect to, so a connection is the end of it.
+      engineCrash: null,
       remoteEngine: remote === true,
       remotePaired: remotePaired === true,
       remoteKeysArmed: keysArmed !== false,
