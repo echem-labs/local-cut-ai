@@ -66,6 +66,13 @@ const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7936",
+  // The app spawns its engine with `local,mock`, so on a machine running
+  // Ollama this gate reaches a REAL model - and if that model is not the
+  // one installed, generation fails, the project never gets what this gate
+  // poses on top of, and the failure reads as a layout defect. The gate is
+  // about pixels; pinning the chain gets it the same content everywhere.
+  // (sweep.mjs learned this first; its header carries the same note.)
+  LOCALCUT_BACKEND: "mock",
   LOCALCUT_SEED_HOOK: "1",
 });
 

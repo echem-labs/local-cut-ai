@@ -31,6 +31,7 @@ import {
   layoutTrue,
   makeCheck,
   shotsDir,
+  sizeWindowTo,
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
@@ -70,6 +71,14 @@ const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7935",
+  // The app spawns its engine with `local,mock`, so on a machine running
+  // Ollama the project created below reaches a REAL model — and if that
+  // model is not the engine's default, script generation fails and the
+  // project never gets a graph, so the workspace this gate measures a panel
+  // inside is never mounted at all. The gate is about geometry; pinning the
+  // chain gets it the same content on every machine. (sweep.mjs learned this
+  // first; its header carries the same note.)
+  LOCALCUT_BACKEND: "mock",
   LOCALCUT_SEED_HOOK: "1",
 });
 
@@ -230,22 +239,22 @@ try {
   // quarter of the height — so a panel of any chosen size would need a
   // window several times the display. Fixing the window instead makes the
   // frame reproducible anywhere that can show 1440x900, and the reference is
-  // drawn at whatever size that produces. setContentBounds does not speak
-  // the renderer's units on a scaled display, so the ratio between them is
-  // measured rather than assumed (see walk.mjs's boundsAgree).
-  const units = await evalInApp(`
-    const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
-    const bounds = await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].getContentBounds());
-    return { x: bounds.width / inner.w, y: bounds.height / inner.h };
-  `);
+  // drawn at whatever size that produces.
+  //
+  // Sized through rig.mjs's verified helper rather than one setContentBounds
+  // and a fixed wait: the window manager is entitled to serve that request
+  // late, clamp it, or ignore it while the window is still being mapped.
+  // This gate has measured its panel inside a window still at the 960x640
+  // default and reported the PANEL as having changed size - 458x70 on one
+  // run, 629x120 on the next - which is a message that sends the mock to be
+  // redrawn to a number the app never had.
   const WINDOW = { width: 1440, height: 900 };
-  await evalInApp(`
-    await app.evaluate(({ BrowserWindow }, [w, h]) => {
-      BrowserWindow.getAllWindows()[0].setContentBounds({ x: 0, y: 0, width: w, height: h });
-    }, [${Math.round(WINDOW.width * units.x)}, ${Math.round(WINDOW.height * units.y)}]);
-    return null;
-  `);
+  const sized = await sizeWindowTo(WINDOW.width, WINDOW.height);
+  check(
+    "the window took the size the reference was drawn at",
+    sized.ok,
+    `asked ${WINDOW.width}x${WINDOW.height}, got ${sized.inner?.join("x")} after 4 passes`,
+  );
 
   const readPanel = () =>
     evalInApp(`
