@@ -157,7 +157,24 @@ export async function startRigTrueToScale(extraEnv = {}) {
   // changes. Scoped to the pixel gates, where CSS pixels have to equal the
   // reference's — the walk and the sweep want the app at the zoom a real
   // user has.
-  const env = { RIG_SCALE: "1", GSETTINGS_BACKEND: "memory", ...extraEnv };
+  //
+  // `LOCALCUT_BACKEND=mock` belongs to the same family, and here rather than
+  // in each gate. The app spawns its engine with the default `local,mock`
+  // chain, so on a machine running Ollama a gate reaches a REAL model — and
+  // if that model is not the one installed, generation fails, the project
+  // never gets a graph, and the workspace the gate poses inside is never
+  // mounted at all. Every gate on this path is about geometry rather than
+  // about what any model wrote, so the content is pinned once for all of
+  // them; a gate that wants otherwise passes its own LOCALCUT_BACKEND, and
+  // so does a shell that exports one, since deliberately pointing a gate at
+  // a real backend is how the mock's fidelity gets checked at all.
+  // (sweep.mjs learned this first, and keeps its own note.)
+  const env = {
+    RIG_SCALE: "1",
+    GSETTINGS_BACKEND: "memory",
+    LOCALCUT_BACKEND: process.env.LOCALCUT_BACKEND || "mock",
+    ...extraEnv,
+  };
   for (let attempt = 0; attempt < 6; attempt++) {
     const child = await startRig(env);
     try {

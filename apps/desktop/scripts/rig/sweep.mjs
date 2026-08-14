@@ -41,7 +41,15 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { evalInApp, health, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import {
+  evalInApp,
+  health,
+  makeCheck,
+  shotsDir,
+  sizeWindowTo,
+  startRig,
+  stopRig,
+} from "./rig.mjs";
 
 const ozone = process.argv.find((arg) => arg.startsWith("--ozone="))?.slice(8);
 const only = process.argv.find((arg) => arg.startsWith("--only="))?.slice(7);
@@ -790,11 +798,13 @@ try {
    * `GSETTINGS_BACKEND=memory` above, so the app's own `gsettings` read
    * returns the schema default and the baseline is 1.
    *
-   * The conversion below stays anyway, and is the identity at zoom 1: ask
-   * for size x dpr, measure what the renderer got, correct once. It is the
+   * The conversion stays anyway, and is the identity at zoom 1: ask for
+   * size x dpr, measure what the renderer got, correct once. It is the
    * VERIFY half that earns its keep — a size that did not take comes back
    * unreached rather than silently short, and the run says so at the end,
-   * whatever the reason the renderer had for refusing it.
+   * whatever the reason the renderer had for refusing it. Both halves are
+   * `rig.mjs::sizeWindowTo` now, since the pixel gates need them too; only
+   * `maximize` is this sweep's own, because nothing else asks for one.
    */
   const setSize = async (size) => {
     if (size.maximize) {
@@ -805,34 +815,10 @@ try {
       `);
       return { ok: true };
     }
-    let inner = null;
-    // Four passes, not two. The ratio is read from the renderer and applied
-    // by the main process, and the two are not in step for a moment after
-    // anything changes the zoom: a pass that reads 1.25 while the renderer
-    // has already gone back to 1 asks for a 1500px window and gets a 1500px
-    // viewport. It is self-correcting — the next pass reads the ratio that
-    // is now true — but with two passes a single mistimed read used up half
-    // the budget, and one did, three thousand checks into an otherwise
-    // green run. The extra passes cost nothing when the first one is right,
-    // which is every time nothing has just been zoomed.
-    for (let pass = 0; pass < 4; pass += 1) {
-      const dpr = await evalInApp("return page.evaluate(() => window.devicePixelRatio);");
-      const width = Math.round(size.width * dpr);
-      const height = Math.round(size.height * dpr);
-      inner = await evalInApp(`
-        await app.evaluate(({ BrowserWindow }, size) => {
-          const w = BrowserWindow.getAllWindows()[0];
-          if (w.isMaximized()) w.unmaximize();
-          w.setContentBounds({ x: size[2], y: size[3], width: size[0], height: size[1] });
-        }, [${width}, ${height}, ${size.x ?? 40}, ${size.y ?? 40}]);
-        await page.waitForTimeout(600);
-        return page.evaluate(() => [window.innerWidth, window.innerHeight]);
-      `);
-      if (Math.abs(inner[0] - size.width) <= 2 && Math.abs(inner[1] - size.height) <= 2) {
-        return { ok: true, inner };
-      }
-    }
-    return { ok: false, inner };
+    // Four passes and the verify are rig.mjs's now — the pixel gates need
+    // the same conversion for the same reason, and two copies of it is two
+    // places to fix the next time a window manager surprises one of them.
+    return sizeWindowTo(size.width, size.height, { x: size.x, y: size.y });
   };
 
   /** Stamp the theme the way theme.ts does, and tell the app it moved.
