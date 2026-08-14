@@ -100,7 +100,7 @@ const SETS = {
   /* The out-of-memory failure card (U5). Same doctrine as the canvas set:
      not a window, and not even a panel — the card sits past the fold of a
      scrolling inspector, so the frame is the card's own box at the size it
-     measures in a 1440x900 window (see parity-u5.mjs). */
+     measures in a 1440x900 window (see parity-inspector.mjs). */
   u5: {
     width: 388,
     height: 142,
@@ -109,7 +109,7 @@ const SETS = {
   /* About (U6). The mock is a 640px reading column on a padded body, and
      the app's About pane is the same column inside the Settings layer —
      so the frame is `main`, not a window, and the gate clips the app to
-     the pane's own box (see parity-u6.mjs). */
+     the pane's own box (see parity-about.mjs). */
   about: {
     width: 640,
     states: [["about", "about-mock.html"]],
