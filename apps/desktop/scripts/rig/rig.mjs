@@ -157,7 +157,24 @@ export async function startRigTrueToScale(extraEnv = {}) {
   // changes. Scoped to the pixel gates, where CSS pixels have to equal the
   // reference's — the walk and the sweep want the app at the zoom a real
   // user has.
-  const env = { RIG_SCALE: "1", GSETTINGS_BACKEND: "memory", ...extraEnv };
+  //
+  // `LOCALCUT_BACKEND=mock` belongs to the same family, and here rather than
+  // in each gate. The app spawns its engine with the default `local,mock`
+  // chain, so on a machine running Ollama a gate reaches a REAL model — and
+  // if that model is not the one installed, generation fails, the project
+  // never gets a graph, and the workspace the gate poses inside is never
+  // mounted at all. Every gate on this path is about geometry rather than
+  // about what any model wrote, so the content is pinned once for all of
+  // them; a gate that wants otherwise passes its own LOCALCUT_BACKEND, and
+  // so does a shell that exports one, since deliberately pointing a gate at
+  // a real backend is how the mock's fidelity gets checked at all.
+  // (sweep.mjs learned this first, and keeps its own note.)
+  const env = {
+    RIG_SCALE: "1",
+    GSETTINGS_BACKEND: "memory",
+    LOCALCUT_BACKEND: process.env.LOCALCUT_BACKEND || "mock",
+    ...extraEnv,
+  };
   for (let attempt = 0; attempt < 6; attempt++) {
     const child = await startRig(env);
     try {
@@ -211,6 +228,45 @@ export async function layoutTrue() {
     return { bounds: bounds.width, layout };
   `);
   return Math.abs(state.bounds - state.layout) <= 2;
+}
+
+/**
+ * Put the LAYOUT viewport at `width` x `height` CSS pixels, and prove it.
+ *
+ * `setContentBounds` is a request, not a result. A window manager may serve
+ * it late, clamp it, or ignore it outright while the window is still being
+ * mapped — and the gates asked once, waited a fixed moment and believed the
+ * answer. The cost is not a failed resize but a plausible one: a canvas gate
+ * measured its flowchart panel inside a window still at its 960x640 default
+ * and reported the panel had changed size, which sent the mock to be redrawn
+ * to a number that was never the app's.
+ *
+ * Four passes, for the reason sweep.mjs's setSize documents: the ratio is
+ * read from the renderer and applied by the main process, and the two are
+ * briefly out of step after anything touches the zoom. A pass that reads a
+ * stale ratio asks for the wrong window and corrects itself on the next one.
+ *
+ * Returns { ok, inner: [w, h] } — `ok` false means it never took, and a gate
+ * that measures geometry should stop rather than report what it found.
+ */
+export async function sizeWindowTo(width, height, { x = 40, y = 40 } = {}) {
+  let inner = null;
+  for (let pass = 0; pass < 4; pass += 1) {
+    const dpr = await evalInApp("return page.evaluate(() => window.devicePixelRatio);");
+    inner = await evalInApp(`
+      await app.evaluate(({ BrowserWindow }, size) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        if (w.isMaximized()) w.unmaximize();
+        w.setContentBounds({ x: size[2], y: size[3], width: size[0], height: size[1] });
+      }, [${Math.round(width * dpr)}, ${Math.round(height * dpr)}, ${x}, ${y}]);
+      await page.waitForTimeout(600);
+      return page.evaluate(() => [window.innerWidth, window.innerHeight]);
+    `);
+    if (Math.abs(inner[0] - width) <= 2 && Math.abs(inner[1] - height) <= 2) {
+      return { ok: true, inner };
+    }
+  }
+  return { ok: false, inner };
 }
 
 /** Exit code contract for the retry runner (retry.mjs): a gate that finds

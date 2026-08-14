@@ -30,6 +30,7 @@ const engineMock = vi.hoisted(() => ({
     waited: number;
     connection: { url: string; token: string } | null;
     crashListeners: ((crash: unknown) => void)[];
+    starts: ({ waitForPort?: boolean } | undefined)[];
   } | null,
   teardown: null as Promise<void> | null,
 }));
@@ -42,13 +43,16 @@ vi.mock("./engine", () => {
     waited = 0;
     /** Kept so a test can fire a crash the way the real supervisor does. */
     crashListeners: ((crash: unknown) => void)[] = [];
+    /** Every start's options, so a test can read which one waited. */
+    starts: ({ waitForPort?: boolean } | undefined)[] = [];
     constructor() {
       engineMock.instance = this;
     }
     onCrash(listener: (crash: unknown) => void): void {
       this.crashListeners.push(listener);
     }
-    async start(): Promise<{ url: string; token: string }> {
+    async start(options?: { waitForPort?: boolean }): Promise<{ url: string; token: string }> {
+      this.starts.push(options);
       this.connection = { ...localEngine };
       return this.connection;
     }
@@ -338,6 +342,7 @@ describe("who may call the IPC handlers", () => {
     expect(electron.invokeIpc("engine:connection", trusted("https://evil.example/"))).toEqual({
       connection: null,
       error: "untrusted sender",
+      crash: null,
       remote: false,
       remotePaired: false,
       keysArmed: false,
@@ -349,6 +354,8 @@ describe("who may call the IPC handlers", () => {
     expect(electron.invokeIpc("engine:connection", trusted())).toEqual({
       connection: { url: engineUrl, token: "local-token" },
       error: null,
+      // A working engine is not a crash, whatever happened earlier.
+      crash: null,
       remote: false,
       remotePaired: false,
       // The local engine is this machine; the keys are already on it.
@@ -1376,6 +1383,74 @@ describe("when the engine stops on its own", () => {
 
     const window = electron.BrowserWindow.instances[0]!;
     expect(window.sent).toEqual([{ channel: "engine:crashed", args: [crash] }]);
+  });
+
+  it("still has the crash for a renderer that was not there to be told", async () => {
+    // A crash during LAUNCH reaches no window: whenReady connects the engine
+    // before it creates one, so the push above goes to nobody and the app
+    // came up with the plain error bar — which offers nothing. The renderer
+    // asks for the connection as its first act; the crash rides along with
+    // it, and the difference on screen is a banner with a button on it.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] cannot bind"], at: "2026-08-09T00:00:00Z" };
+    engineMock.instance!.connection = null;
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({ crash });
+  });
+
+  it("withholds it again once there is an engine answering", async () => {
+    // A crash the app recovered from is history. Reporting it beside a live
+    // connection would raise a banner over a working engine — the same lie
+    // the late-exit guards in engine.ts exist to prevent.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({
+      crash: null,
+    });
+  });
+
+  it("does not keep a recovered crash to raise over some later failure", async () => {
+    // The crash outlives the connection it describes, and is handed to any
+    // renderer that finds no engine. Kept past the restart that fixed it, it
+    // comes back as the banner for the NEXT thing that goes wrong — dated an
+    // hour ago, with a report to paste about a fault that is not this one.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+    engineMock.instance!.connection = null;
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+    // ...and later, something else leaves the app with no engine at all.
+    engineMock.instance!.connection = null;
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({
+      crash: null,
+    });
+  });
+
+  it("does not let launch wait out a held port, but lets the restart do it", async () => {
+    // `whenReady` awaits the engine BEFORE it creates the window, so a launch
+    // that lands inside the minute a crashed engine's port stays reserved
+    // would sit there with nothing on screen at all — a worse failure than
+    // the one the waiting fixes, and one that reads as a hung app. The
+    // supervisor honours the flag (engine.test.ts proves that); this is the
+    // half that proves the shell passes it, which is where a refactor that
+    // normalises the three `connectEngine()` call sites would break it with
+    // both suites still green.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+
+    expect(engineMock.instance!.starts).toEqual([{ waitForPort: false }]);
+
+    await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
+
+    // The restart is the one the wait belongs to: the banner is on screen and
+    // can say what it is doing.
+    expect(engineMock.instance!.starts.at(-1)).not.toMatchObject({ waitForPort: false });
   });
 
   it("re-arms the stored provider keys against the engine it just started", async () => {

@@ -31,6 +31,7 @@ import {
   layoutTrue,
   makeCheck,
   shotsDir,
+  sizeWindowTo,
   startRigTrueToScale,
   stopRig,
 } from "./rig.mjs";
@@ -65,6 +66,8 @@ const RIGID = /thumb/;
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-canvas-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-canvas-engine-"));
 let scaleHeld = true;
+/** Whether the window ever took the size the reference was drawn at. */
+let windowTook = true;
 
 const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
@@ -230,22 +233,27 @@ try {
   // quarter of the height — so a panel of any chosen size would need a
   // window several times the display. Fixing the window instead makes the
   // frame reproducible anywhere that can show 1440x900, and the reference is
-  // drawn at whatever size that produces. setContentBounds does not speak
-  // the renderer's units on a scaled display, so the ratio between them is
-  // measured rather than assumed (see walk.mjs's boundsAgree).
-  const units = await evalInApp(`
-    const inner = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
-    const bounds = await app.evaluate(({ BrowserWindow }) =>
-      BrowserWindow.getAllWindows()[0].getContentBounds());
-    return { x: bounds.width / inner.w, y: bounds.height / inner.h };
-  `);
+  // drawn at whatever size that produces.
+  //
+  // Sized through rig.mjs's verified helper rather than one setContentBounds
+  // and a fixed wait: the window manager is entitled to serve that request
+  // late, clamp it, or ignore it while the window is still being mapped.
+  // This gate has measured its panel inside a window still at the 960x640
+  // default and reported the PANEL as having changed size - 458x70 on one
+  // run, 629x120 on the next - which is a message that sends the mock to be
+  // redrawn to a number the app never had.
   const WINDOW = { width: 1440, height: 900 };
-  await evalInApp(`
-    await app.evaluate(({ BrowserWindow }, [w, h]) => {
-      BrowserWindow.getAllWindows()[0].setContentBounds({ x: 0, y: 0, width: w, height: h });
-    }, [${Math.round(WINDOW.width * units.x)}, ${Math.round(WINDOW.height * units.y)}]);
-    return null;
-  `);
+  // 0,0 as before: a 1440x900 window placed at 40,40 needs 940px of work
+  // area below the offset, and a window manager that cannot give it clamps
+  // the height instead of refusing - which is the failure this call exists
+  // to catch, arriving from the one variable the gate did not need to change.
+  const sized = await sizeWindowTo(WINDOW.width, WINDOW.height, { x: 0, y: 0 });
+  windowTook = sized.ok;
+  check(
+    "the window took the size the reference was drawn at",
+    sized.ok,
+    `asked ${WINDOW.width}x${WINDOW.height}, got ${sized.inner?.join("x")} after 4 passes`,
+  );
 
   const readPanel = () =>
     evalInApp(`
@@ -297,7 +305,11 @@ try {
     "the flowchart panel is the reference's size",
     Math.abs(panel.width - FRAME.width) <= 1 && Math.abs(panel.height - FRAME.height) <= 1,
     `panel ${panel.width}x${panel.height}, reference ${FRAME.width}x${FRAME.height}` +
-      " - redraw canvas-mock.html's .panel to the panel size and re-render",
+      // Only when the window is the one the reference was drawn in. A panel
+      // measured inside a window the manager would not resize differs for a
+      // reason that has nothing to do with the mock, and this sentence is
+      // what sent it to be redrawn to a number the app never had.
+      (windowTook ? " - redraw canvas-mock.html's .panel to the panel size and re-render" : ""),
   );
 
   if (process.env.RIG_DEBUG_BAR) {
@@ -422,7 +434,11 @@ try {
     `${Object.keys(placed).length} drawn, ${Object.keys(POSE_GRAPH.nodes).length} posed`,
   );
 
-  scaleHeld = await layoutTrue();
+  // `windowTook` joins it: a window manager that would not give the window
+  // the size asked for has told this gate nothing about the app, which is the
+  // same verdict an off-scale run gets — invalid, so rerun it, rather than
+  // red, which is a claim about the app.
+  scaleHeld = (await layoutTrue()) && windowTook;
 } finally {
   await stopRig(rig);
   const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
@@ -435,7 +451,11 @@ try {
 }
 
 if (!scaleHeld) {
-  console.error("run went off-scale - invalid, not failed; rerunning");
+  console.error(
+    windowTook
+      ? "run went off-scale - invalid, not failed; rerunning"
+      : "window would not take its size - invalid, not failed; rerunning",
+  );
   process.exit(RETRYABLE_EXIT);
 }
 
