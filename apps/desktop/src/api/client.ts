@@ -23,6 +23,7 @@ import type {
   Project,
   ProjectTemplate,
   Provider,
+  ReadinessRow,
   StorageInfo,
   StoryGraph,
   SystemInfo,
@@ -479,6 +480,19 @@ export class EngineClient {
 
   deleteModel(modelId: string): Promise<{ ok: boolean; freed_bytes: number }> {
     return this.request(`/models/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+  }
+
+  /** Which tier will serve each job kind right now (all kinds when the
+   * filter is omitted) — the preflight the render itself never runs. */
+  readiness(kinds?: string[]): Promise<{ rows: ReadinessRow[] }> {
+    const filter = kinds?.length ? `?kinds=${encodeURIComponent(kinds.join(","))}` : "";
+    return this.request(`/readiness${filter}`);
+  }
+
+  /** The readiness report narrowed to what this project's graph would
+   * actually enqueue, per-node model overrides included. */
+  projectReadiness(projectId: string): Promise<{ rows: ReadinessRow[] }> {
+    return this.request(`/projects/${encodeURIComponent(projectId)}/readiness`);
   }
 
   /** Persisted per-task default models (Settings → Models). */

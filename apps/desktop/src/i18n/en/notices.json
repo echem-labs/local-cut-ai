@@ -1,5 +1,8 @@
 {
   "script": {
     "short_of_target": "The script came out around {estimated_s}s of the {target_s}s you asked for — the model wrote {words} words of narration, and narration is what sets the length. Lower the target duration, or switch to a larger script model, for the full length."
+  },
+  "export": {
+    "music_bed_dropped": "The music track could not be read (usually a placeholder from a machine with no music model), so this video was exported without music. Install a music model and regenerate the music for a scored cut."
   }
 }

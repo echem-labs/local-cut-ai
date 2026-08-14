@@ -1,0 +1,34 @@
+{
+  "reasons": {
+    "still_clip_tier": "No video model is installed — scenes render as still images with a slow push-in.",
+    "no_model_installed": "No {task} model is installed.",
+    "llm_server_down": "The local script server is not running.",
+    "llm_model_missing": "The script model \"{model}\" is not on the local server.",
+    "cloud_key_missing": "No {provider} API key is set for \"{model}\".",
+    "cloud_model_unknown": "No provider serves \"{model}\".",
+    "comfyui_down": "The image and video server is not running.",
+    "no_ffmpeg": "No working ffmpeg was found."
+  },
+  "consequences": {
+    "degraded": "Renders still work, at reduced quality.",
+    "placeholder": "A placeholder will be rendered instead.",
+    "placeholderMusic": "The finished video will have no music.",
+    "will_fail": "These jobs will fail."
+  },
+  "banner": {
+    "title": "Model setup needed",
+    "summary": "{tasks} will not render properly until models are set up.",
+    "download": "Get {model} · {size}",
+    "setup": "Set up models"
+  },
+  "dialog": {
+    "title": "Some models are not ready",
+    "intro": "This render will start, but:",
+    "renderAnyway": "Render anyway",
+    "setup": "Set up models",
+    "skip": "Don't warn me again",
+    "scopeSession": "For this session",
+    "scopeProject": "For this project",
+    "scopeAlways": "Always"
+  }
+}

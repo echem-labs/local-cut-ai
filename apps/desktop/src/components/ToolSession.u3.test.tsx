@@ -341,11 +341,15 @@ describe("the clone picker", () => {
 });
 
 describe("the seeded reroll", () => {
-  it("pins a fresh seed in the regenerate call itself", () => {
+  it("pins a fresh seed in the regenerate call itself", async () => {
     const regenerate = vi.fn().mockResolvedValue(undefined);
     mountSession("image", node("image", { params: { prompt: "waves" } }), { regenerate });
     fireEvent.click(screen.getByText("Reroll"));
-    expect(regenerate).toHaveBeenCalledTimes(1);
+    // Awaited rather than immediate: every render-starting click now clears
+    // the missing-model preflight first, which is a store call and so at
+    // least a microtask even when it has nothing to warn about. The seed is
+    // still pinned in the regenerate call itself — the point of this test.
+    await vi.waitFor(() => expect(regenerate).toHaveBeenCalledTimes(1));
     const [nodeId, seed] = regenerate.mock.calls[0];
     expect(nodeId).toBe("image");
     expect(typeof seed).toBe("number");

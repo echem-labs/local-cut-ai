@@ -44,6 +44,7 @@ from ..graph.model import (
     NodeKind,
     scene_sort_key,
 )
+from ..notices import EXPORT_MUSIC_BED_DROPPED
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
 _KINDS = {NodeKind.CLIP, NodeKind.TIMELINE, NodeKind.EXPORT}
@@ -510,7 +511,13 @@ class FFmpegBackend(ExecutionBackend):
             # as a finished export forever.
             partial = out.with_name(f".partial-{out.name}")
             music = resolve(timeline.get("music", ""))
-            if music is not None and await self._probe_duration(music) is not None:
+            music_duration = await self._probe_duration(music) if music is not None else None
+            if music is not None and music_duration is None:
+                # An undecodable bed is a placeholder from a machine with no
+                # music model. The cut ships without it — but the missing
+                # music is not self-explanatory, so the skip says so.
+                ctx.notify(EXPORT_MUSIC_BED_DROPPED)
+            if music_duration is not None:
                 volume = float(timeline.get("music_volume", MUSIC_BED_VOLUME))
                 if timeline.get("ducking", True):
                     # Sidechain ducking: the program audio (narration) keys a
