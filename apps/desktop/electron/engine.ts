@@ -22,6 +22,42 @@ const KILL_GRACE_MS = 2_000;
 const PORT_RELEASE_MS = 4_000;
 /** How many of the engine's last output lines travel with a crash report. */
 const CRASH_TAIL_LINES = 50;
+/**
+ * How long the app will keep trying to claim a port the kernel still holds.
+ *
+ * An engine that dies with connections open leaves them in TIME_WAIT with the
+ * ENGINE's port as their local port, and `serve` deliberately does not set
+ * SO_REUSEADDR (cli.py `_bind` — on Windows that option would let two live
+ * engines share the port outright). Nothing can bind it until the kernel lets
+ * go, and no socket option on our side changes that: measured at 61s here,
+ * where Linux's TCP_TIMEWAIT_LEN is a compile-time constant; Windows'
+ * TcpTimedWaitDelay defaults to 120s.
+ *
+ * So the way back the crash banner offers cannot work on its first try — it
+ * has to outlast the kernel. Before this, the restart failed instantly and so
+ * did every relaunch of the whole app for the next minute, which read as the
+ * crash having broken something permanent.
+ */
+const REBIND_TIMEOUT_MS = process.platform === "win32" ? 150_000 : 90_000;
+/**
+ * How long between attempts. Spawning IS the probe: node sets SO_REUSEADDR on
+ * every listener it opens (libuv does it unconditionally), so the app cannot
+ * test the port on the terms the engine will get.
+ */
+const REBIND_INTERVAL_MS = 2_000;
+/** How long a failed child gets to flush its last line before we read it. */
+const OUTPUT_GRACE_MS = 1_000;
+/** What every mirrored engine line is filed under in the app log. */
+const LOG_PREFIX = "[engine] ";
+/**
+ * The words the engine leads with when it could not claim the port.
+ *
+ * Written in cli.py as `BIND_REFUSED` and matched here — the one signal that
+ * separates a port still winding down (wait, it will come back) from an
+ * engine that fell over on startup for its own reasons (do not wait; say so).
+ * `test_ui_contract.py` keeps the two spellings in step.
+ */
+export const BIND_REFUSED = "cannot bind ";
 
 /** How an exit reads in a log line. */
 const describeExit = (code: number | null, signal: NodeJS.Signals | null): string =>
@@ -34,6 +70,22 @@ const enginePort = (): string => process.env.LOCALCUT_ENGINE_PORT ?? DEFAULT_ENG
 
 /** Startup found a foreign engine holding our port — retrying won't help. */
 export class EngineConflictError extends Error {}
+
+/**
+ * The port is spoken for, but nothing is serving on it.
+ *
+ * The sibling of the case above, and the opposite answer: there is no process
+ * to quit and nothing for the user to do, only a socket the kernel has not
+ * finished winding down. Waiting is the entire fix.
+ */
+export class EnginePortBusyError extends Error {}
+
+/** The sentence a user can act on when a live engine holds the port. */
+const conflictMessage = (url: string): string =>
+  `another engine is already running on ${url} — quit it or set LOCALCUT_ENGINE_PORT`;
+
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /** How much unterminated output is buffered before it is logged anyway. */
 const MAX_PENDING_LINE = 8192;
@@ -76,7 +128,7 @@ const mirrorEngineOutput = (
     // random bytes — but the failure is a log rendered unreadable, so it is
     // not worth leaving to the caller.
     const safe = token ? line.trimEnd().split(token).join("<token redacted>") : line.trimEnd();
-    write(`[engine] ${safe}`);
+    write(LOG_PREFIX + safe);
   };
   stream.on("data", (chunk: Buffer) => {
     const lines = (pending + decoder.write(chunk)).split("\n");
@@ -224,13 +276,52 @@ export class EngineManager {
    */
   private async startWithOrphanRecovery(): Promise<EngineConnection> {
     try {
-      return await this.spawnAndWait();
+      return await this.spawnUntilThePortIsFree();
     } catch (error) {
       if (!(error instanceof EngineConflictError)) throw error;
       const port = Number(enginePort());
       console.warn(`[engine] port ${port} held by a stale engine; reclaiming it`);
       if (!(await reclaimPort(port))) throw error; // not ours to kill — report it
-      return this.spawnAndWait();
+      // Through the same waiting loop, not straight to a spawn: killing the
+      // orphan is what CREATES the TIME_WAIT sockets, so this is the path
+      // most certain to meet them. `reclaimPort` only waits for /health to
+      // fall silent, which happens the moment the process dies — a minute
+      // before its accepted sockets let go of the port.
+      return this.spawnUntilThePortIsFree();
+    }
+  }
+
+  /** Set while the loop below is between attempts. See the crash handler. */
+  private rebinding = false;
+
+  /**
+   * Start the engine, and keep trying for as long as the only thing wrong is
+   * a port that has not been released yet.
+   *
+   * Every other failure is raised on the first attempt: an engine that cannot
+   * import torch would otherwise take REBIND_TIMEOUT_MS to say so, and say it
+   * in words about a port.
+   */
+  private async spawnUntilThePortIsFree(): Promise<EngineConnection> {
+    const deadline = Date.now() + REBIND_TIMEOUT_MS;
+    try {
+      for (;;) {
+        try {
+          return await this.spawnAndWait();
+        } catch (error) {
+          if (!(error instanceof EnginePortBusyError) || Date.now() >= deadline) throw error;
+          if (!this.rebinding) {
+            this.rebinding = true;
+            console.warn(
+              `[engine] port ${enginePort()} is still held by a closed socket; ` +
+                `retrying for up to ${Math.round(REBIND_TIMEOUT_MS / 1000)}s`,
+            );
+          }
+          await delay(REBIND_INTERVAL_MS);
+        }
+      }
+    } finally {
+      this.rebinding = false;
     }
   }
 
@@ -261,10 +352,21 @@ export class EngineManager {
     // value is belonging to the engine that just died.
     const tail: string[] = [];
     this.tail = tail;
+    // Anchored at the start of the mirrored line rather than searched for
+    // anywhere in it: the engine's stderr also carries tracebacks quoting
+    // project titles and model warnings, and one of those containing the
+    // phrase would turn a real failure into a minute of silent retrying.
+    const refusal = LOG_PREFIX + BIND_REFUSED;
+    let bindRefused = false;
     const remember = (line: string): void => {
+      if (line.startsWith(refusal)) bindRefused = true;
       tail.push(line);
       if (tail.length > CRASH_TAIL_LINES) tail.shift();
     };
+    // 'close' rather than 'exit': the two are not the same moment. 'exit'
+    // fires when the process ends, with the pipes possibly still draining —
+    // and what is draining is the one line that says why it ended.
+    const drained = new Promise<void>((resolve) => child.once("close", () => resolve()));
     mirrorEngineOutput(child.stdout, connection.token, (line) => {
       remember(line);
       console.log(line);
@@ -290,7 +392,13 @@ export class EngineManager {
         console.error(`[engine] exited with ${describeExit(code, signal)}`);
         // Only for the engine currently in service: a replaced child dying
         // late would otherwise raise a banner over an engine answering fine.
-        if (current) {
+        //
+        // `rebinding` excludes the attempts made while waiting out a held
+        // port. Those are one restart in the user's eyes, and reporting each
+        // as its own crash would rewrite the banner's report thirty times
+        // over — ending on "another engine is probably already running", the
+        // one explanation that is not true.
+        if (current && !this.rebinding) {
           const crash: EngineCrash = {
             code,
             signal,
@@ -309,10 +417,34 @@ export class EngineManager {
       // clear the connection) so a later retry starts clean instead of
       // stacking orphaned processes that still hold VRAM.
       this.stop();
+      // The health loop gives up the moment the child is gone, which can be
+      // before its stderr has been read. Give the pipes their moment before
+      // deciding what kind of failure this was — bounded, because a child
+      // whose pipes never close must not hold startup open.
+      await Promise.race([drained, delay(OUTPUT_GRACE_MS)]);
+      if (bindRefused) throw await this.whoHasThePort(connection);
       throw err;
     }
     this.connection = connection;
     return connection;
+  }
+
+  /**
+   * The bind was refused — decide which of the two refusals it was.
+   *
+   * Asked of the port rather than read off the engine's own guess: `serve`
+   * prints "another engine is probably already running", which is the right
+   * thing to tell an operator at a terminal and the wrong thing to act on
+   * here, because the far more common cause in the app is the engine it just
+   * lost. Something answering /health is a live rival the user has to deal
+   * with; silence means the only thing holding the port is a socket.
+   */
+  private async whoHasThePort(connection: EngineConnection): Promise<Error> {
+    const port = Number(enginePort());
+    if (await portIsHeld(port)) return new EngineConflictError(conflictMessage(connection.url));
+    return new EnginePortBusyError(
+      `port ${port} is still held by a socket the kernel has not released`,
+    );
   }
 
   private async waitHealthy(connection: EngineConnection): Promise<void> {
@@ -334,9 +466,7 @@ export class EngineManager {
             signal: AbortSignal.timeout(HEALTH_INTERVAL_MS * 4),
           });
           if (authed.status === 401) {
-            throw new EngineConflictError(
-              `another engine is already running on ${connection.url} — quit it or set LOCALCUT_ENGINE_PORT`,
-            );
+            throw new EngineConflictError(conflictMessage(connection.url));
           }
           return;
         }
