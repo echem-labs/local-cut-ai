@@ -39,7 +39,7 @@ import {
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { describeGap, useReadinessGuard } from "../components/Readiness";
-import { distinctGaps, noteworthyGaps } from "../lib/readiness";
+import { blockingGaps, distinctGaps } from "../lib/readiness";
 
 /** The engine kinds a full video renders. Everything but the thumbnail,
  * which only the publish kit and the thumbnail tool ever build — warning
@@ -218,11 +218,16 @@ export function Home() {
   // The prompt box notes the first gap a VIDEO would hit; a tool panel
   // notes only the kinds that tool renders. Both read the same engine
   // report the workspace banner and the gate dialog read.
-  const machineGaps = distinctGaps(noteworthyGaps(readiness));
-  const promptGap = machineGaps.find((row) => VIDEO_KINDS.includes(row.kind)) ?? null;
-  const toolGaps = tool
-    ? machineGaps.filter((row) => TOOL_ENGINE_KINDS[tool].includes(row.kind))
-    : [];
+  // `blockingGaps`, not `noteworthyGaps`: this note is standing, and the
+  // still-clip tier is how a low-VRAM machine normally works — a permanent
+  // alert about the normal path is the thing the banner/gate split exists
+  // to avoid. Filtered to the surface's kinds BEFORE deduping, or the
+  // thumbnail panel loses its only line to the keyframe row that shares
+  // its task.
+  const gapsFor = (kinds: string[]) =>
+    distinctGaps(blockingGaps(readiness).filter((row) => kinds.includes(row.kind)));
+  const promptGap = gapsFor(VIDEO_KINDS)[0] ?? null;
+  const toolGaps = tool ? gapsFor(TOOL_ENGINE_KINDS[tool]) : [];
 
   const generate = async () => {
     if (!prompt.trim() || busy) return;
@@ -448,8 +453,13 @@ export function Home() {
               {actionError.message}
             </p>
           )}
-          {promptGap && (
-            <p className="hint" role="alert">
+          {/* `status`, not `alert`: this is standing copy, and an
+              assertive live region re-announces it on every readiness
+              refresh. Also gated on the SENTENCE — a reason code this
+              build has no catalog entry for must render as nothing, not
+              as an empty announcement with a link after it. */}
+          {promptGap && describeGap(promptGap) && (
+            <p className="hint" role="status">
               {describeGap(promptGap)}{" "}
               <button className="link" onClick={() => openSettings("models")}>
                 {t("home.getIt")}
@@ -744,8 +754,8 @@ export function Home() {
               {actionError.message}
             </p>
           )}
-          {toolGaps.length > 0 && (
-            <p className="hint" role="alert">
+          {toolGaps.length > 0 && describeGap(toolGaps[0]) && (
+            <p className="hint" role="status">
               {describeGap(toolGaps[0])}{" "}
               <button className="link" onClick={() => openSettings("models")}>
                 {t("home.getIt")}

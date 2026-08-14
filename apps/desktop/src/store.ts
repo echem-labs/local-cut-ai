@@ -358,6 +358,9 @@ interface AppState {
     scopeKey: string,
     rows: ReadinessRow[],
     scope: "session" | "project" | "always",
+    /** The same `kinds` the gate asked with — the dismissal covers that
+     * narrowing, not every question this scopeKey can ask. */
+    kinds?: string[],
   ) => void;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
@@ -683,6 +686,15 @@ const DOWNLOAD_SETTLE_MS = 1500;
  * Cleared on an engine switch — a dismissal is about one engine's models,
  * and the next box has its own. */
 const sessionReadinessSkips = new Map<string, string>();
+
+/** The suppression key. The kinds scope is part of it because the
+ * fingerprint is taken over the NARROWED rows: Home asks about a whole
+ * video from one surface and a single tool kind from another under the
+ * same scopeKey, and with one entry between them each dismissal evicted
+ * the other and the dialog came back forever. */
+function scopeOf(scopeKey: string, kinds?: string[]): string {
+  return kinds?.length ? `${scopeKey}#${[...kinds].sort().join(",")}` : scopeKey;
+}
 
 function readReadinessSkips(): Record<string, string> {
   try {
@@ -1567,23 +1579,42 @@ export const useApp = create<AppState>((set, get) => {
         // serve — the gate fails open, the job's own error stays the truth.
         return null;
       }
-      const gaps = blockingGaps(rows);
+      // A model whose bytes are moving right now is not a gap to warn
+      // about: the engine reports it missing (is_downloaded is a
+      // completed-files check) but the user is already fixing it, and the
+      // pre-readiness code exempted it for exactly this reason — first run
+      // hands over mid-download by design.
+      const arriving = new Set(
+        get()
+          .models.filter((row) => row.downloading)
+          .map((row) => row.id),
+      );
+      const gaps = blockingGaps(rows).filter(
+        (row) => !(row.fix?.type === "download" && arriving.has(row.fix.model_id)),
+      );
       if (gaps.length === 0) return null;
+      const key = scopeOf(scopeKey, kinds);
       const fingerprint = readinessFingerprint(gaps);
-      if (sessionReadinessSkips.get(scopeKey) === fingerprint) return null;
-      if (readReadinessSkips()[scopeKey] === fingerprint) return null;
+      if (sessionReadinessSkips.get(key) === fingerprint) return null;
+      if (readReadinessSkips()[key] === fingerprint) return null;
       return gaps;
     },
 
-    suppressReadiness: (scopeKey, rows, scope) => {
+    suppressReadiness: (scopeKey, rows, scope, kinds) => {
+      const key = scopeOf(scopeKey, kinds);
       const fingerprint = readinessFingerprint(rows);
-      // Each scope writes exactly one place: "this project" persists and is
-      // read back through the same door on the next click, so the durable
-      // path is the one actually exercised rather than being masked by a
-      // session entry written alongside it.
-      if (scope === "project") writeReadinessSkip(scopeKey, fingerprint);
-      else sessionReadinessSkips.set(scopeKey, fingerprint);
-      if (scope === "always") get().setWarnMissingModels(false);
+      // "always" flips the switch and nothing else: writing a session skip
+      // alongside it left this one surface silent even after Settings
+      // turned warnings back on, which is what its own hint promises.
+      if (scope === "always") {
+        get().setWarnMissingModels(false);
+        return;
+      }
+      // "this project" persists and is read back through the same door on
+      // the next click, so the durable path is the one exercised rather
+      // than being masked by a session entry written alongside it.
+      if (scope === "project") writeReadinessSkip(key, fingerprint);
+      else sessionReadinessSkips.set(key, fingerprint);
     },
 
     refreshHome: async () => {

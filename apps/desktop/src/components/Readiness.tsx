@@ -19,12 +19,13 @@ export function describeGap(row: ReadinessRow): string | null {
     return null;
   }
   const taskLabels = m().models.taskLabels as Record<string, string>;
-  // The kind is the fallback, and it has to be reachable: an assembly row
-  // carries no task at all, and "No model is installed for ." is the one
-  // sentence worse than naming the raw kind.
+  // The kind is the fallback, and it has to be REACHED: an assembly row
+  // carries no task at all, and `?? row.kind` never fires on the empty
+  // string, so the sentence shipped as "…nothing configured to render ."
+  // — the one thing worse than naming the raw kind.
   const task = typeof row.data.task === "string" ? row.data.task : "";
   const sentence = t(`readiness.reasons.${row.reason}` as MessageKey, {
-    task: taskLabels[task] ?? task ?? row.kind,
+    task: taskLabels[task] || task || row.kind,
     model: String(row.data.model ?? row.model ?? ""),
     provider: String(row.data.provider ?? ""),
   });
@@ -64,8 +65,14 @@ export function ReadinessBanner() {
   if (lines.length === 0) return null;
   // One direct shortcut at most: with a single downloadable gap the fix is
   // one click; anything wider belongs in Settings → Models, whole.
+  // Counted by distinct MODEL, not by row: one missing image model shows
+  // up as both a keyframe gap and a thumbnail gap, and that is still one
+  // download — hiding the button there hides it in the very case it is for.
   const downloads = gaps.filter((row) => row.fix?.type === "download");
-  const direct = downloads.length === 1 ? downloads[0] : null;
+  const singleModel = new Set(
+    downloads.map((row) => (row.fix?.type === "download" ? row.fix.model_id : "")),
+  ).size === 1;
+  const direct = singleModel ? downloads[0] : null;
   const directFix = direct?.fix?.type === "download" ? direct.fix : null;
   const downloading =
     directFix != null && models.some((row) => row.id === directFix.model_id && row.downloading);
@@ -109,11 +116,15 @@ export function ReadinessBanner() {
 export function ReadinessDialog({
   scopeKey,
   rows,
+  kinds,
   onProceed,
   onClose,
 }: {
   scopeKey: string;
   rows: ReadinessRow[];
+  /** What the gate asked about, so a dismissal covers that question and
+   * not every other one this scope can raise. */
+  kinds?: string[];
   onProceed: () => void;
   onClose: () => void;
 }) {
@@ -158,7 +169,7 @@ export function ReadinessDialog({
           <button
             className="btn-primary"
             onClick={() => {
-              suppressReadiness(scopeKey, rows, scope);
+              suppressReadiness(scopeKey, rows, scope, kinds);
               onProceed();
             }}
           >
@@ -216,37 +227,47 @@ export function useReadinessGuard(scopeKey: string): {
   const readinessGaps = useApp((state) => state.readinessGaps);
   const [pending, setPending] = useState<{
     rows: ReadinessRow[];
+    kinds?: string[];
     proceed: () => void;
   } | null>(null);
   const busy = useRef(false);
+  // Read inside the guard's `finally`, where `pending` is still the stale
+  // render-time value.
+  const pendingRef = useRef(false);
 
   const guard = async (run: () => void | Promise<void>, kinds?: string[]) => {
     if (busy.current) return;
     busy.current = true;
-    let rows: ReadinessRow[] | null = null;
     try {
-      rows = await readinessGaps(scopeKey, kinds);
-    } finally {
-      // Held open only while a dialog is up — that IS the re-entry guard
-      // until the user answers it.
-      busy.current = rows !== null;
-    }
-    if (!rows) {
+      const rows = await readinessGaps(scopeKey, kinds);
+      if (rows) {
+        // Held until the user answers the dialog — `release` clears it.
+        setPending({ rows, kinds, proceed: () => void run() });
+        return;
+      }
+      // Inside the lock, not after it: the click this guards starts a
+      // render, and releasing before the action ran left the second click
+      // of a double-click free to start a second one — the exact case the
+      // lock exists for, on surfaces (ToolSession's Regenerate) that carry
+      // no busy state of their own.
       await run();
-      return;
+    } finally {
+      busy.current = pendingRef.current;
     }
-    setPending({ rows, proceed: () => void run() });
   };
 
   const release = () => {
     busy.current = false;
+    pendingRef.current = false;
     setPending(null);
   };
+  pendingRef.current = pending !== null;
 
   const dialog = pending ? (
     <ReadinessDialog
       scopeKey={scopeKey}
       rows={pending.rows}
+      kinds={pending.kinds}
       onProceed={() => {
         const held = pending;
         release();
