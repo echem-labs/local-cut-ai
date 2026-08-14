@@ -431,9 +431,30 @@ async function connectEngine({ waitForPort = true } = {}): Promise<void> {
     await verifyPairing(pairing);
     remoteStore.save(pairing); // persist a freshly-captured cert
     remoteConnection = pairing;
+    forgetLastCrash();
     return;
   }
   await engine.start({ waitForPort });
+  forgetLastCrash();
+}
+
+/**
+ * A crash the app has now recovered from.
+ *
+ * `lastCrash` outlives the connection it describes, and `engine:connection`
+ * hands it to any renderer that finds no engine — so kept past the start that
+ * fixed it, it comes back as the banner for the NEXT thing that goes wrong,
+ * dated an hour ago with a report to paste about a different fault.
+ *
+ * On the way UP, though, not on the way in: an attempt that then fails has
+ * not recovered from anything, and clearing this first would destroy the
+ * record of the very crash the user is trying to come back from. The banner
+ * they are looking at survives in the renderer that already has it, but a
+ * window created afterwards would come up with the plain bar — which offers
+ * nothing, which is the whole failure this crash was kept for.
+ */
+function forgetLastCrash(): void {
+  lastCrash = null;
 }
 
 /** PUT key fields to the engine, which holds them in memory only. An empty

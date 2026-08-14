@@ -35,6 +35,14 @@ const spawned = vi.hoisted(() => ({
    * loop nothing in the test is awaiting between iterations.
    */
   answer: null as null | ((child: { stderr: import("node:events").EventEmitter } & import("node:events").EventEmitter) => void),
+  /**
+   * What `run()` reads back from netstat / lsof / taskkill.
+   *
+   * Without it every helper command returns empty output, so `reclaimPort`
+   * finds no pid, gives up, and the retry it exists to make never happens —
+   * leaving everything past the reclaim untested.
+   */
+  says: null as null | ((cmd: string, args: string[]) => string | null),
 }));
 
 vi.mock("node:child_process", async () => {
@@ -56,6 +64,10 @@ vi.mock("node:child_process", async () => {
       // child watches it too, as the point by which its pipes have drained.
       setTimeout(() => {
         if (args.includes("serve")) spawned.answer?.(child);
+        else {
+          const out = spawned.says?.(cmd, args);
+          if (out) child.stdout.emit("data", Buffer.from(out));
+        }
         child.emit("close", 0);
       }, 0);
       return child;
@@ -94,6 +106,7 @@ const errored = (): string => errorSpy.mock.calls.map((call) => call.join(" ")).
 beforeEach(() => {
   spawned.calls.length = 0;
   spawned.answer = null;
+  spawned.says = null;
   savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
   for (const key of envKeys) delete process.env[key];
   // killTree signals a process GROUP by negative pid. The fake child reports
@@ -579,6 +592,38 @@ describe("waiting out a port the kernel still holds", () => {
     );
   });
 
+  it("does not shoot a stranger holding the port", async () => {
+    // `reclaimPort` SIGKILLs whatever is listening, and the only thing that
+    // has ever earned it is a 401 from /projects: proof the holder is a
+    // LocalCut engine of ours with a spent token. Something that merely
+    // answers a request on the port is any program at all - a dev server on
+    // 7830, a proxy, whatever the user pointed LOCALCUT_ENGINE_PORT at - and
+    // killing it is a far worse outcome than the failed start it was meant
+    // to rescue.
+    let dead = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (!dead) throw new Error("ECONNREFUSED");
+        return { ok: false, status: 404 }; // answers, but not as an engine
+      }),
+    );
+    spawned.answer = (child) => {
+      dead = true;
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await caught;
+    expect(spawned.calls.map((call) => call.cmd)).not.toContain(
+      process.platform === "win32" ? "netstat" : "lsof",
+    );
+  });
+
   it("does not make launch wait, because launch has no window to wait in", async () => {
     // `whenReady` awaits the engine BEFORE it creates the window, so a launch
     // that lands inside the minute would sit here with nothing on screen at
@@ -620,11 +665,70 @@ describe("waiting out a port the kernel still holds", () => {
     await promise;
   });
 
-  it("is one restart to the user, not one crash report per attempt", async () => {
-    // Every failed attempt reaching the crash listeners would rewrite the
-    // banner's pasteable report each time, and settle on the engine's own
-    // guess — "another engine is probably already running" — which is the one
-    // explanation that is not true here.
+  it("does not spawn an engine after reclaiming a port the app stopped wanting", async () => {
+    // The same cancellation as above, met on the orphan-recovery path — the
+    // one the rebind loop's own comment calls the likeliest place to meet a
+    // held port, because killing the orphan is what creates the sockets.
+    // `reclaimPort` polls for up to PORT_RELEASE_MS, which is a wide enough
+    // door for `before-quit` to walk through: `stopAndWait()` finds no child
+    // to wait for, the app exits, and the engine the retry then spawns
+    // outlives it holding the data dir and the port.
+    let released = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (released) throw new Error("ECONNREFUSED");
+        return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
+      }),
+    );
+    // A stale engine of ours answers, so the first attempt is a conflict...
+    // Each dialect in its own shape: `lsof -t` prints bare pids, `netstat
+    // -ano` prints a table `reclaimPort` filters itself. One string for both
+    // made this test vacuous on Windows — no pid found, no reclaim, and so
+    // none of the retry it exists to cancel.
+    // ...and letting go of the port a moment after it is killed is what puts
+    // the app inside reclaimPort's poll rather than past it. Both kills, for
+    // the same reason as both dialects: Windows shells out to `taskkill` and
+    // never reaches `process.kill`, so hanging the release off that one alone
+    // left the port held there, the poll running out, and the reclaim
+    // reporting failure instead of the retry this test is here to cancel.
+    const killed = (): void => void setTimeout(() => (released = true), 1_500);
+    spawned.says = (cmd) => {
+      if (cmd === "taskkill") killed();
+      if (cmd === "lsof") return "5150\n";
+      return cmd === "netstat"
+        ? "  TCP    127.0.0.1:7830    0.0.0.0:0    LISTENING    5150\n"
+        : null;
+    };
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      killed();
+      return true;
+    });
+    spawned.answer = (child) => {
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const promise = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(engineSpawns()).toHaveLength(1); // conflict found; reclaim under way
+    manager.stop();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(engineSpawns()).toHaveLength(1);
+    expect(manager.connection).toBeNull();
+    await promise;
+  });
+
+  it("reports no crash at all for the attempts it is going to outlive", async () => {
+    // NONE, not one. Every failed attempt reaching the crash listeners would
+    // rewrite the banner's pasteable report each time and settle on the
+    // engine's own guess — "another engine is probably already running" —
+    // which is the one explanation that is not true here; and a single one
+    // settles on exactly the same sentence. The report the user already has
+    // describes the crash they are trying to recover from, which is the one
+    // worth keeping.
     nothingServing();
     refuseTheBind();
     const manager = new EngineManager();
@@ -634,10 +738,39 @@ describe("waiting out a port the kernel still holds", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(engineSpawns().length).toBeGreaterThan(5);
-    expect(crashes).toHaveLength(1);
+    expect(crashes).toHaveLength(0);
 
     await vi.advanceTimersByTimeAsync(300_000);
     await caught;
+  });
+
+  it("still reports the failure that ends the wait, whichever attempt it is", async () => {
+    // The other half of the rule above: only a REFUSED BIND is beneath
+    // reporting, because only a refused bind is going to be retried. An
+    // engine that gets the port and then dies of a missing dependency ends
+    // the wait, and dropping its crash would leave the banner describing
+    // whatever came before it and offering a report with none of the words
+    // that say what is actually wrong.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(crashes).toHaveLength(0);
+
+    // The port comes free, and the engine that gets it falls over anyway.
+    spawned.answer = (child) => {
+      child.stderr.emit("data", Buffer.from("ModuleNotFoundError: No module named 'torch'\n"));
+      child.emit("exit", 1, null);
+    };
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await caught;
+    expect(crashes).toHaveLength(1);
+    expect(crashes[0]!.tail.join("\n")).toContain("No module named 'torch'");
   });
 });
 
@@ -663,6 +796,21 @@ describe("telling a crash from a quit the app asked for", () => {
 
     expect(crashes).toEqual([]);
     expect(errored()).not.toMatch(/exited/);
+  });
+
+  it("takes the connection down with the engine that stopped answering", async () => {
+    // A dead engine's url and token are a dead url and token. Left standing,
+    // the shell reads `connection` as "an engine is answering" and withholds
+    // the crash from the next renderer to ask for one — so a window created
+    // after the engine died (macOS: close it, then the dock icon) came up
+    // with no banner at all and a client pointed at nothing.
+    const manager = new EngineManager();
+    await manager.start();
+    expect(manager.connection).not.toBeNull();
+
+    firstSpawn().child.emit("exit", 1, null);
+
+    expect(manager.connection).toBeNull();
   });
 
   it("reports an engine that fell over on its own", async () => {
