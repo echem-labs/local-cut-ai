@@ -18,9 +18,18 @@ import { useApp } from "../store";
 import { crashReport } from "../lib/crashReport";
 import { Tip } from "./Tooltip";
 
+/**
+ * How long a restart may take before the wait needs explaining.
+ *
+ * Long enough that the ordinary restart — a second or two — says nothing, and
+ * short enough to arrive well before anyone concludes the button is dead.
+ */
+const SLOW_RESTART_MS = 5_000;
+
 export function EngineCrashBanner() {
   const { engineCrash, system, restartEngine } = useApp();
   const [busy, setBusy] = useState(false);
+  const [slow, setSlow] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -29,6 +38,21 @@ export function EngineCrashBanner() {
     const timer = setTimeout(() => setCopied(false), 1500);
     return () => clearTimeout(timer);
   }, [copied]);
+
+  // A restart that lands in the minute after a crash cannot be quick: the
+  // engine's port is still reserved by the kernel (see electron/engine.ts,
+  // REBIND_TIMEOUT_MS) and the app spends that minute retrying. Said out loud
+  // because a disabled button and no other movement for sixty seconds is
+  // indistinguishable from one that does nothing — which is what people
+  // reported, and why they force-quit instead of waiting the wait out.
+  useEffect(() => {
+    if (!busy) {
+      setSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlow(true), SLOW_RESTART_MS);
+    return () => clearTimeout(timer);
+  }, [busy]);
 
   if (!engineCrash) return null;
 
@@ -54,6 +78,13 @@ export function EngineCrashBanner() {
       <p>
         <strong>{t("errors.engineCrashed")}</strong> {t("errors.engineCrashedDetail")}
       </p>
+      {/* No role of its own, like the failure line below it. This sits inside
+          a role="alert", which is already a live region — a second one nested
+          in the first is announced by whichever an implementation decides
+          owns it, and by both in the ones that get it wrong. The alert is not
+          atomic, so the added line is what gets read, which is exactly the
+          wanted behaviour and needs nothing declaring it. */}
+      {slow && <p className="hint engine-crash-slow">{t("errors.engineRestartSlow")}</p>}
       {failed && <p className="hint engine-crash-failed">{failed}</p>}
       <div className="engine-crash-actions">
         <button className="btn-outline" onClick={() => void restart()} disabled={busy}>

@@ -94,7 +94,7 @@ const SETS = {
      the panel measures in a 1440x900 window (see parity-canvas.mjs). */
   canvas: {
     width: 629,
-    height: 143,
+    height: 120,
     states: [["canvas", "canvas-mock.html"]],
   },
   /* The out-of-memory failure card (U5). Same doctrine as the canvas set:
@@ -544,6 +544,19 @@ const SNAP_SESSION = `
 .stable th { line-height: 18px !important; }
 `;
 
+/* ---- the canvas set's snap. The toolbar's trailing controls, which the
+   mock sizes to its own content and the app sizes on the token scale. The
+   bar is a nowrap flex row ending in a right-anchored group, so every pixel
+   of difference in the group propagates LEFTWARDS through all of it: the
+   1px the mock added to the help mark, and the 4px stand-off the app gives
+   it (--space-1, on top of the row's --space-2 gap), moved the zoom control
+   and the Add node button 3-4px each, and then took two more pixels off the
+   counts, which is the row's only shrinkable item and absorbs whatever is
+   left. Six controls' worth of edges, from two values. */
+const SNAP_CANVAS = `
+.gbtn.help { width: 22px !important; padding: 0 !important; margin-left: 4px !important; }
+`;
+
 /* ---- the u5 set's snap. The app's `.chip` pins an 18px line box (it is
    what anchors the chip-row's rhythm), and SNAP_COMMON's blanket
    line-height:normal would otherwise draw every chip 3px shorter here than
@@ -626,6 +639,7 @@ const SNAP =
   (setName === "home" || setName === "session" ? SNAP_SHELL : "") +
   (setName === "home" ? SNAP_HOME : "") +
   (setName === "session" ? SNAP_SESSION : "") +
+  (setName === "canvas" ? SNAP_CANVAS : "") +
   (setName === "u5" ? SNAP_U5 : "") +
   (setName === "about" ? SNAP_ABOUT : "");
 

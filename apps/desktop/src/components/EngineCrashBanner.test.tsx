@@ -72,6 +72,35 @@ describe("the engine crash banner", () => {
     await act(async () => release(null));
   });
 
+  it("explains the wait rather than leaving a dead-looking button for a minute", async () => {
+    // A restart in the minute after a crash cannot succeed at once — the
+    // engine's port is still held by the kernel and the app spends that
+    // minute retrying. Sixty seconds of a disabled button and nothing else
+    // moving reads as a button that does nothing.
+    vi.useFakeTimers();
+    try {
+      let release: (value: string | null) => void = () => {};
+      const restart = vi.fn(() => new Promise<string | null>((resolve) => (release = resolve)));
+      mount(restart);
+      fireEvent.click(screen.getByText(t("errors.engineRestart")));
+
+      // Not immediately: the ordinary restart is over in a second or two and
+      // should say nothing at all.
+      expect(screen.queryByText(t("errors.engineRestartSlow"))).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000);
+      });
+      expect(screen.getByText(t("errors.engineRestartSlow"))).toBeInTheDocument();
+
+      // And it goes away with the wait it was explaining.
+      await act(async () => release(null));
+      expect(screen.queryByText(t("errors.engineRestartSlow"))).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the way back on screen when the restart failed", async () => {
     // The button clearing itself on failure is the trap: the banner would
     // vanish, the engine would still be down, and the app would be back to

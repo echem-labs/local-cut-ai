@@ -31,6 +31,13 @@ const rig = await startRig({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7930",
+  // The app spawns its engine with `local,mock`, so on a machine running
+  // Ollama this walkthrough writes its script with a REAL model - and if
+  // that model is not the one installed, generation fails, there is no
+  // script to promote, and the run dies waiting for a workspace that is
+  // never coming. Every step here is about the pipeline's shape rather
+  // than what any model wrote. (sweep.mjs learned this first.)
+  LOCALCUT_BACKEND: "mock",
 });
 try {
   const shoot = (name) =>
