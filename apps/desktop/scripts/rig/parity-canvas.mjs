@@ -249,7 +249,11 @@ try {
   // run, 629x120 on the next - which is a message that sends the mock to be
   // redrawn to a number the app never had.
   const WINDOW = { width: 1440, height: 900 };
-  const sized = await sizeWindowTo(WINDOW.width, WINDOW.height);
+  // 0,0 as before: a 1440x900 window placed at 40,40 needs 940px of work
+  // area below the offset, and a window manager that cannot give it clamps
+  // the height instead of refusing - which is the failure this call exists
+  // to catch, arriving from the one variable the gate did not need to change.
+  const sized = await sizeWindowTo(WINDOW.width, WINDOW.height, { x: 0, y: 0 });
   check(
     "the window took the size the reference was drawn at",
     sized.ok,
