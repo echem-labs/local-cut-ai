@@ -66,19 +66,13 @@ const RIGID = /thumb/;
 const profile = mkdtempSync(path.join(tmpdir(), "localcut-parity-canvas-"));
 const engineData = mkdtempSync(path.join(tmpdir(), "localcut-parity-canvas-engine-"));
 let scaleHeld = true;
+/** Whether the window ever took the size the reference was drawn at. */
+let windowTook = true;
 
 const rig = await startRigTrueToScale({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7935",
-  // The app spawns its engine with `local,mock`, so on a machine running
-  // Ollama the project created below reaches a REAL model — and if that
-  // model is not the engine's default, script generation fails and the
-  // project never gets a graph, so the workspace this gate measures a panel
-  // inside is never mounted at all. The gate is about geometry; pinning the
-  // chain gets it the same content on every machine. (sweep.mjs learned this
-  // first; its header carries the same note.)
-  LOCALCUT_BACKEND: "mock",
   LOCALCUT_SEED_HOOK: "1",
 });
 
@@ -254,6 +248,7 @@ try {
   // the height instead of refusing - which is the failure this call exists
   // to catch, arriving from the one variable the gate did not need to change.
   const sized = await sizeWindowTo(WINDOW.width, WINDOW.height, { x: 0, y: 0 });
+  windowTook = sized.ok;
   check(
     "the window took the size the reference was drawn at",
     sized.ok,
@@ -310,7 +305,11 @@ try {
     "the flowchart panel is the reference's size",
     Math.abs(panel.width - FRAME.width) <= 1 && Math.abs(panel.height - FRAME.height) <= 1,
     `panel ${panel.width}x${panel.height}, reference ${FRAME.width}x${FRAME.height}` +
-      " - redraw canvas-mock.html's .panel to the panel size and re-render",
+      // Only when the window is the one the reference was drawn in. A panel
+      // measured inside a window the manager would not resize differs for a
+      // reason that has nothing to do with the mock, and this sentence is
+      // what sent it to be redrawn to a number the app never had.
+      (windowTook ? " - redraw canvas-mock.html's .panel to the panel size and re-render" : ""),
   );
 
   if (process.env.RIG_DEBUG_BAR) {
@@ -435,7 +434,11 @@ try {
     `${Object.keys(placed).length} drawn, ${Object.keys(POSE_GRAPH.nodes).length} posed`,
   );
 
-  scaleHeld = await layoutTrue();
+  // `windowTook` joins it: a window manager that would not give the window
+  // the size asked for has told this gate nothing about the app, which is the
+  // same verdict an off-scale run gets — invalid, so rerun it, rather than
+  // red, which is a claim about the app.
+  scaleHeld = (await layoutTrue()) && windowTook;
 } finally {
   await stopRig(rig);
   const scrub = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 };
@@ -448,7 +451,11 @@ try {
 }
 
 if (!scaleHeld) {
-  console.error("run went off-scale - invalid, not failed; rerunning");
+  console.error(
+    windowTook
+      ? "run went off-scale - invalid, not failed; rerunning"
+      : "window would not take its size - invalid, not failed; rerunning",
+  );
   process.exit(RETRYABLE_EXIT);
 }
 
