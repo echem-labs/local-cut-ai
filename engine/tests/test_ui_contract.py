@@ -203,6 +203,15 @@ def test_readiness_vocabulary_matches_the_desktop():
         f"only in engine {sorted(set(READINESS_REASONS) - described - {'ok'})}"
     )
 
+    # The reason says the cause once; the effect phrase says what it costs
+    # each stage. A verdict with no phrase renders a stage with a blank
+    # beside it — a row that raises a problem and declines to say what it
+    # is. "ready" is the exception, for the same reason "ok" was: a ready
+    # row is never listed.
+    effects = set(catalog["effects"])
+    missing = set(READINESS_VERDICTS) - {"ready"} - effects
+    assert not missing, f"readiness.json has no effect phrase for {sorted(missing)}"
+
 
 def test_the_video_kinds_home_warns_about_match_the_pipeline():
     """Home scopes its pre-generate warning to what a video renders, so a

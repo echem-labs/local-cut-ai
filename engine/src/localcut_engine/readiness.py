@@ -44,12 +44,18 @@ import httpx
 from .backends.base import BackendRegistry, GenerationError
 from .config import EngineConfig
 from .graph.model import NodeKind
-from .manifest.capability import COMFY_TASKS, installed_comfy_models
-from .manifest.defaults import load_defaults
+from .manifest.capability import COMFY_TASKS, installed_by_task, installed_comfy_models
+from .manifest.defaults import DEFAULTABLE_TASKS, load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
 from .manifest.recommend import _fits
-from .providers.registry import PROVIDERS, Capability, configured_providers, provider_for_model
+from .providers.registry import (
+    PROVIDERS,
+    VISION_MODELS,
+    Capability,
+    configured_providers,
+    provider_for_model,
+)
 from .providers.textgen import ProviderError
 
 READINESS_VERDICTS = ("ready", "degraded", "placeholder", "will_fail")
@@ -134,6 +140,43 @@ def task_of(kind: NodeKind) -> str | None:
     if tasks:
         return tasks[0]
     return "text.llm" if kind is NodeKind.SCRIPT else None
+
+
+def auto_defaults(config: EngineConfig) -> dict[str, str | None]:
+    """What "Auto" resolves to for each defaultable task, with any STORED
+    default deliberately ignored. None means nothing would render it.
+
+    The picker needs this rather than the readiness report, for two reasons
+    the report cannot cover. It resolves WITH the stored default applied, so
+    on a task that has one it can only answer with that same pick — while
+    choosing Auto is precisely what discards it, making the label a promise
+    the engine would not keep. And `vision.llm` has no node kind at all
+    (nothing in a render reads an image; `/suggest-scene` does), so no row
+    is ever produced for it and its picker read "Auto" forever.
+
+    Each branch mirrors the resolution it describes: text.llm is
+    LLMBackend.resolve_model's last resort, vision.llm is
+    default_vision_model minus its local branch (the stored pick), and the
+    ComfyUI tasks are the head of the un-jumped installed queue that
+    `_template_for_installed` renders from.
+    """
+    installed = installed_by_task(config)
+    configured = {row["id"]: row["configured"] for row in configured_providers(config)}
+    auto: dict[str, str | None] = {}
+    for task in DEFAULTABLE_TASKS:
+        if task == "text.llm":
+            auto[task] = config.llm_model
+        elif task == "vision.llm":
+            auto[task] = None
+            for info in PROVIDERS:
+                model = VISION_MODELS.get(info.id)
+                if model and Capability.VISION in info.capabilities and configured.get(info.id):
+                    auto[task] = model
+                    break
+        else:
+            ids = installed.get(task) or []
+            auto[task] = ids[0] if ids else None
+    return auto
 
 
 def project_pairs(graph, *, is_tool_session: bool) -> list[tuple[NodeKind, str | None]]:

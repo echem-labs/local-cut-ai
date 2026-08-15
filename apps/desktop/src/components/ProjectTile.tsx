@@ -248,6 +248,7 @@ export function useTileLifecycle(options: { onSaveTemplate?: (project: Project) 
       })}
       message={t(toolKindOf(confirmDelete) ? "home.deleteToolMessage" : "home.deleteMessage")}
       confirmLabel={t(toolKindOf(confirmDelete) ? "home.deleteToolConfirm" : "home.deleteConfirm")}
+      cancelLabel={t("common.keepIt")}
       danger
       onCancel={() => setConfirmDelete(null)}
       onConfirm={() => {

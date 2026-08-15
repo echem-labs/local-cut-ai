@@ -3888,13 +3888,21 @@ button.link:hover {
   margin-top: var(--space-2);
 }
 
-.banner.checkpoint .row {
+/* The heading strip both asking banners share: label left, actions right.
+   Listed rather than written as a bare `.banner .row` because the notice
+   bar stacks plain rows inside the same class and would become a flex
+   container it never asked to be. The readiness banner had a spacer with
+   nothing to push against for exactly this reason — its button sat welded
+   to the title while the checkpoint's, three pixels away, sat right. */
+.banner.checkpoint .row,
+.banner.warning .row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.banner.checkpoint .spacer {
+.banner.checkpoint .spacer,
+.banner.warning .spacer {
   flex: 1;
 }
 
@@ -4968,6 +4976,312 @@ button.link:hover {
 
 .banner.warning {
   border-color: var(--status-draft);
+}
+
+/* ---- the instrument panel (design review v13) ----
+   A group of status is a WELL: content recessed into whatever surface it
+   sits on, so grouping is carried by depth instead of by a heading. The
+   well is the family's one container; severity is a light on it (a 2px
+   edge) and on each row (a dot), never a colour change in the prose. */
+.well {
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+/* The two lights. Red covers both "the job dies" and "you get a stand-in",
+   because a placeholder is a failure that happens to produce a file;
+   amber is the tier that still renders something real. */
+.well.edge-fail {
+  border-left: 2px solid var(--status-failed);
+}
+
+.well.edge-deg {
+  border-left: 2px solid var(--status-draft);
+}
+
+.well + .well {
+  margin-top: var(--space-3);
+}
+
+/* A well names itself with an icon row inside its own walls rather than an
+   eyebrow above them — the eyebrow was iteration 1, and stacking two
+   type-scale steps above every group is what made that page read as a
+   form. */
+.whead {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+.whead > svg {
+  color: var(--text-tertiary);
+  flex: none;
+  /* Optical, not geometric: the glyph rides the cap height of a 14px line
+     rather than its box, or it floats above the sentence it labels. */
+  margin-top: 3px;
+}
+
+/* The quieter header, for a well whose contents are a list of things
+   rather than a statement about them ("Fixes you can download"). */
+.whead.label {
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.whead.label > svg {
+  margin-top: 0;
+}
+
+/* One row anatomy for every well in the app: [light] [name] … [price]. */
+.prow {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prow + .prow {
+  border-top: 1px solid var(--border);
+}
+
+.pdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pdot.deg {
+  background: var(--status-draft);
+}
+
+/* Hollow for hollow output: a placeholder is an empty result, and the ring
+   says so before the sentence beside it does. */
+.pdot.ph {
+  border: 1.5px solid var(--status-failed);
+}
+
+.pdot.fail {
+  background: var(--status-failed);
+}
+
+.pname {
+  font-size: var(--text-s);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* The price column. `margin-left: auto` rather than a spacer element so a
+   row can be built from two nodes; right-aligned so the costs stack into a
+   column that reads top-to-bottom without reading the names. */
+.price {
+  margin-left: auto;
+  text-align: right;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The one place a status colour touches prose: a job that will not run at
+   all is the only row whose price is worth shouting. */
+.price.fail {
+  color: var(--status-failed);
+  font-weight: 500;
+}
+
+/* The rows inside a well are a list, and say so to a screen reader — the
+   dots are decoration, so the words have to carry the severity too. */
+.plist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* An empty well is the same instrument with the needle at zero: same
+   walls, same recess, never a dashed box or a different illustration. */
+.well-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.well-empty > svg {
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.well-empty > b {
+  color: var(--text-secondary);
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+/* The line that earns the empty state its space: what the first entry
+   buys, not a second way of saying there are none. */
+.well-empty > span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  max-width: 40ch;
+}
+
+/* Numbers are readouts, not prose: sizes, counts, timestamps and key caps
+   all in the mono face so a glance separates measurement from sentence. */
+.readout {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* Severity totals, shown only when there is more than one well to total —
+   with a single group the wells already are the summary. */
+.sev-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.sev-chip .readout {
+  color: var(--text-primary);
+}
+
+/* ---- readiness surfaces ---- */
+.gap-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The strip above a project board. Same component as the gate's list, one
+   step denser, on a surface-1 ground — so its wells go UP a step to
+   surface-2 rather than down to the inset, and the recess reads on a
+   lighter ground as it does on a darker one. */
+.banner.readiness {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--status-draft);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.banner.readiness.worst-fail {
+  border-left-color: var(--status-failed);
+}
+
+.banner.readiness .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.banner.readiness .row > b {
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+
+.banner.readiness .spacer {
+  flex: 1;
+}
+
+.banner.readiness .gap-list {
+  margin-top: var(--space-3);
+}
+
+.banner.readiness .well {
+  background: var(--surface-2);
+}
+
+/* Compact context: the same wells, one density step down, because the
+   strip is furniture above a board rather than the thing being read. */
+.banner.readiness .well {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  border-radius: var(--radius-s);
+}
+
+.banner.readiness .whead {
+  padding-bottom: 6px;
+}
+
+.banner.readiness .prow {
+  min-height: 24px;
+}
+
+/* The gate's scope control: a rule, not a well. It is the only thing in
+   the dialog that is a setting rather than a reading, and the wells are
+   reserved for readings. */
+.gate-scope {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.gate-scope > .lbl {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  /* Aligned to the toggle's centre, not its top edge. */
+  line-height: 32px;
+}
+
+.gate-scope > .sc {
+  margin-left: auto;
+  text-align: right;
+}
+
+.gate-scope .scope-hint {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.gate-intro {
+  margin: 0 0 var(--space-4);
+}
+
+.gate-intro .readout {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.gate-downloads {
+  margin-top: var(--space-3);
+}
+
+/* ModelLibrary lives inside the fixes well, so its per-task headings come
+   off: the well's header row already says what the list is, and the stage
+   names are in the gap list directly above it. Filtered to the handful of
+   models that fix THIS render, the groups have nothing left to separate. */
+.gate-downloads .model-group > h3 {
+  display: none;
+}
+
+.gate-downloads .model-group + .model-group {
+  margin-top: 0;
 }
 
 /* ---- first-run setup ---- */
@@ -7496,31 +7810,74 @@ button.link:hover {
   flex: none;
 }
 
-.savepoint-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 40vh;
+/* The versions live in one well, so the list scrolls inside its own walls
+   rather than running off the bottom of the body. */
+.savepoint-well {
+  max-height: 44vh;
   overflow-y: auto;
 }
 
-.savepoint-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
+/* Taller than a status row: these carry controls, and a 28px row makes a
+   32px button overhang its own hairline. */
+.vrow {
+  min-height: 40px;
 }
 
-.savepoint-list .savepoint-label {
-  flex: 1;
+.vrow > svg {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.vnames {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* The name can be any length the field allowed; the readout beneath it
+     never wraps, so the ellipsis belongs to the name alone. */
+  overflow: hidden;
+}
+
+.vnames > .pname {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.savepoints-empty {
-  color: var(--text-secondary);
+/* Actions sit right, pushed by the names column rather than by a spacer
+   element — one fewer node in a row that repeats per save point. */
+.vrow > .btn-ghost,
+.vrow > .tip-wrap {
+  margin-left: auto;
+  flex: none;
+}
+
+/* …but only the FIRST of them: a second `margin-left: auto` would split
+   the free space between the two buttons and leave a gap down the middle. */
+.vrow > .btn-ghost ~ .tip-wrap {
+  margin-left: 0;
+}
+
+/* A row control, one step under the panel-level ghost: 40px rows with
+   32px buttons in them leave 4px of air top and bottom, which reads as a
+   button that fell into the row rather than one that belongs to it. */
+.sp-restore {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+/* The only red an interactive control wears in the family, and only on
+   the way to a confirm — the act itself is still one dialog away. */
+.sp-delete:hover:not(:disabled) {
+  color: var(--status-failed);
+  background: var(--surface-1);
+}
+
+/* The victim of a destructive confirm: one row, no header — the dialog's
+   own title already asked the question. */
+.confirm-victim {
+  margin-top: var(--space-3);
+  padding-bottom: var(--space-3);
 }
 
 /* ---------- per-task default models (Settings → Models) ---------- */

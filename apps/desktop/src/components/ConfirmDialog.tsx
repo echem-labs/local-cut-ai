@@ -9,14 +9,25 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel,
+  cancelLabel,
   danger = false,
+  victim,
   onConfirm,
   onCancel,
 }: {
   title: string;
   message: string;
   confirmLabel: string;
+  /** Defaults to "Cancel". `common.keepIt` reads correctly against a
+   * delete and oddly against everything else ("Keep it" answering "Discard
+   * this download?"), so the caller that means it says so. */
+  cancelLabel?: string;
   danger?: boolean;
+  /** The thing being destroyed, put on screen as evidence: a dialog that
+   * names it in prose asks you to trust that the right one is selected,
+   * where a row showing its name and a distinguishing readout lets you
+   * check. */
+  victim?: { name: string; detail?: string };
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -30,7 +41,7 @@ export function ConfirmDialog({
       footer={
         <>
           <button className="btn-ghost" ref={cancelRef} onClick={onCancel}>
-            {t("common.keepIt")}
+            {cancelLabel ?? t("common.cancel")}
           </button>
           <button className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>
             {confirmLabel}
@@ -39,6 +50,14 @@ export function ConfirmDialog({
       }
     >
       <p>{message}</p>
+      {victim && (
+        <div className={`well confirm-victim${danger ? " edge-fail" : ""}`}>
+          <div className="prow">
+            <span className="pname">{victim.name}</span>
+            {victim.detail && <span className="price readout">{victim.detail}</span>}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
