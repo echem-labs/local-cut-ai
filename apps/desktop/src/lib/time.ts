@@ -20,6 +20,23 @@ export function relativeTime(epochSeconds: number): string {
   });
 }
 
+/** "Aug 15, 19:42" — the readout form, for a list where two entries have
+ * to be told apart rather than placed roughly in the past.
+ *
+ * Absolute where `relativeTime` is relative, and deliberately so: "2 hours
+ * ago" is the right answer on a tile you are browsing and the wrong one in
+ * a list of save points made twenty minutes apart, where the question is
+ * always "which of these is which". */
+export function absoluteTime(epochSeconds: number): string {
+  const locale = useLocale.getState().locale;
+  return new Date(epochSeconds * 1000).toLocaleString(locale, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** "0:31" / "1:02" — mono duration pill on tiles. */
 export function shortDuration(seconds: number): string {
   const whole = Math.round(seconds);

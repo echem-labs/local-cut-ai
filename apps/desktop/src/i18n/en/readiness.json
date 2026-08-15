@@ -1,31 +1,36 @@
 {
   "reasons": {
-    "still_clip_tier": "No video model is installed — scenes render as still images with a slow push-in.",
-    "no_model_installed": "No model is installed for {task}.",
-    "backend_not_configured": "This engine has nothing configured to render {task}.",
-    "model_ignored": "\"{model}\" can't be run here, so another installed model will render {task} instead.",
-    "llm_server_down": "The local script server is not running.",
-    "llm_model_missing": "The script model \"{model}\" is not on the local server.",
+    "still_clip_tier": "No video model is installed.",
+    "no_model_installed": "No model is installed for this kind of work.",
+    "backend_not_configured": "Nothing is set up to render this kind of work.",
+    "model_ignored": "\"{model}\" can't run here.",
+    "llm_server_down": "The program that runs language models isn't running.",
+    "llm_model_missing": "The program that runs language models doesn't have \"{model}\".",
     "cloud_key_missing": "No {provider} API key is set for \"{model}\".",
-    "cloud_model_unknown": "No provider serves \"{model}\" for this kind of work.",
-    "comfyui_down": "The image and video server is not running.",
-    "no_ffmpeg": "No working ffmpeg was found."
+    "cloud_model_unknown": "No provider offers \"{model}\" for this kind of work.",
+    "comfyui_down": "The program that draws images and video isn't running.",
+    "no_ffmpeg": "ffmpeg, the tool that puts the video together, wasn't found."
   },
-  "consequences": {
-    "degraded": "Renders still work, at reduced quality.",
-    "placeholder": "A placeholder will be rendered instead.",
-    "placeholderMusic": "The finished video will have no music.",
-    "will_fail": "These jobs will fail."
+  "effects": {
+    "degraded": "a lower-quality result",
+    "placeholder": "a stand-in, not the real thing",
+    "will_fail": "a failed job",
+    "stillClip": "still images with a slow push-in",
+    "silentMusic": "none in the finished video",
+    "otherModel": "rendered by a different installed model"
   },
+  "line": "{stage} — {effect}.",
   "banner": {
-    "title": "Model setup needed",
+    "title": "Some stages aren't ready",
     "download": "Get {model} · {size}",
     "downloadPlain": "Get {model}",
     "setup": "Set up models"
   },
   "dialog": {
-    "title": "Some models are not ready",
-    "intro": "This render will start, but:",
+    "title": "Before you render",
+    "intro_one": "You can still render, but one stage won't turn out right:",
+    "intro_other": "You can still render, but {count} stages won't turn out right:",
+    "fixes": "Fixes you can download",
     "renderAnyway": "Render anyway",
     "setup": "Set up models",
     "skip": "Stop warning me",
@@ -33,9 +38,14 @@
     "scopeProject": "This project",
     "scopeAlways": "Always",
     "scopeHint": {
-      "session": "Warn again next time you open LocalCut AI.",
-      "project": "Never warn about these models in this project again.",
-      "always": "Turn the warning off everywhere. Settings → General turns it back on."
+      "session": "Quiet until you close the app.",
+      "project": "Quiet for this project only.",
+      "always": "Never warn again. Settings → General turns it back on."
     }
+  },
+  "totals": {
+    "will_fail": "fail",
+    "placeholder": "stand-in",
+    "degraded": "lower quality"
   }
 }

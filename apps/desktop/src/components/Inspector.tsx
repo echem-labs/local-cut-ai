@@ -803,6 +803,7 @@ export function Inspector() {
           title={t("inspector.photoRemoveTitle")}
           message={t("inspector.photoRemoveBody", { n: sceneId.replace(/^s/, "") })}
           confirmLabel={t("inspector.photoRemoveConfirm")}
+          cancelLabel={t("common.keepIt")}
           onConfirm={() => {
             setRemovingPhoto(false);
             setPhotoError(null);

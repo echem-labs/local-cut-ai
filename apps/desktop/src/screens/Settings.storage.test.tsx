@@ -88,7 +88,7 @@ describe("Settings → Storage, quick tool outputs", () => {
       }),
     );
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: t("common.keepIt") }));
+      fireEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
     });
     expect(deleteToolSessions).not.toHaveBeenCalled();
 
