@@ -30,7 +30,13 @@ from pydantic import BaseModel
 # was rendered instead. data: target_s, estimated_s, words.
 SCRIPT_SHORT_OF_TARGET = "script.short_of_target"
 
-NOTICE_CODES = frozenset({SCRIPT_SHORT_OF_TARGET})
+# The export was handed a music input it could not decode — in practice a
+# placeholder from a machine with no music model — and rendered without a
+# bed rather than failing the cut. The video is fine; the missing music is
+# not self-explanatory, so the skip must not stay silent. data: none.
+EXPORT_MUSIC_BED_DROPPED = "export.music_bed_dropped"
+
+NOTICE_CODES = frozenset({SCRIPT_SHORT_OF_TARGET, EXPORT_MUSIC_BED_DROPPED})
 
 
 class Notice(BaseModel):

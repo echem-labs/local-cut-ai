@@ -20,6 +20,7 @@ import { SavePoints } from "../components/SavePoints";
 import { ToolSession } from "../components/ToolSession";
 import { PromotedFrom } from "../components/Provenance";
 import { PublishKit } from "../components/PublishKit";
+import { ReadinessBanner, useReadinessGuard } from "../components/Readiness";
 import { Tip } from "../components/Tooltip";
 import { Workspace } from "../components/Workspace";
 import { Elapsed, Spinner, useElapsed } from "../components/Working";
@@ -171,10 +172,17 @@ function StalledNotice() {
   const resumeRender = useApp((state) => state.resumeRender);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { guard, dialog } = useReadinessGuard(currentProject?.id ?? "home");
 
-  if (pendingCheckpoint(currentProject, board) !== null) return null;
-  if (!isStalled(board, jobs)) return null;
+  // The notice can stop applying while the dialog it opened is still on
+  // screen — a board refresh landing mid-read. The dialog therefore lives
+  // outside the condition: unmounting it would drop the held resume with
+  // nothing said, which is the failure this whole feature is against.
+  const stalled =
+    pendingCheckpoint(currentProject, board) === null && isStalled(board, jobs);
+  if (!stalled) return <>{dialog}</>;
   return (
+    <>
     <div className="banner stalled" role="note" aria-label={t("project.stalledLabel")}>
       {/* Classed, not just `> span`. `Tip` wraps its child in a `.tip-wrap`
           SPAN, so a child selector matched the button's wrapper too and gave
@@ -185,19 +193,23 @@ function StalledNotice() {
         <button
           className="btn-ghost"
           disabled={busy}
-          onClick={() => {
-            setError(null);
-            setBusy(true);
-            void resumeRender()
-              .then(setError)
-              .finally(() => setBusy(false));
-          }}
+          onClick={() =>
+            void guard(() => {
+              setError(null);
+              setBusy(true);
+              void resumeRender()
+                .then(setError)
+                .finally(() => setBusy(false));
+            })
+          }
         >
           {busy ? t("project.resuming") : t("project.resume")}
         </button>
       </Tip>
       {error && <Alert message={error} onDismiss={() => setError(null)} />}
     </div>
+    {dialog}
+    </>
   );
 }
 
@@ -225,6 +237,9 @@ function BoardMenu() {
   const [historyError, setHistoryError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const fit = useMenuFit();
+  // Outside the pop below: the menu closes on click, and a dialog rendered
+  // inside it would unmount with it.
+  const { guard, dialog: readinessDialog } = useReadinessGuard(currentProject?.id ?? "home");
 
   useEffect(() => {
     if (!open) return;
@@ -309,9 +324,11 @@ function BoardMenu() {
           <button
             role="menuitem"
             onClick={() => {
-              setHistoryError(null);
-              void resumeRender().then(setHistoryError);
               setOpen(false);
+              void guard(() => {
+                setHistoryError(null);
+                void resumeRender().then(setHistoryError);
+              });
             }}
           >
             <span className="check" />
@@ -455,6 +472,7 @@ function BoardMenu() {
         </div>
       )}
       {savePointsOpen && <SavePoints onClose={() => setSavePointsOpen(false)} />}
+      {readinessDialog}
     </div>
   );
 }
@@ -541,6 +559,11 @@ export function Project() {
   // indistinguishable from a board that simply did not move.
   const [historyKeyError, setHistoryKeyError] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  // The readiness gate for this screen's explicit render starts (finalize,
+  // script retry). Unconditional — hooks precede the tool-session return.
+  const { guard: readinessGuard, dialog: readinessDialog } = useReadinessGuard(
+    currentProject?.id ?? "home",
+  );
 
   useEffect(() => {
     void refreshBoard();
@@ -775,12 +798,16 @@ export function Project() {
 
   const runFinalize = async () => {
     if (finalizing) return;
-    setFinalizing(true);
-    try {
-      await finalize();
-    } finally {
-      setFinalizing(false);
-    }
+    // Warned before the spend, not after it fails — the same reasoning as
+    // the drawtext banner below, for the same most-expensive moment.
+    await readinessGuard(async () => {
+      setFinalizing(true);
+      try {
+        await finalize();
+      } finally {
+        setFinalizing(false);
+      }
+    });
   };
 
   return (
@@ -943,6 +970,7 @@ export function Project() {
 
       {currentProject.mode === "beginner" && <CheckpointBanner />}
       <NoticeBar />
+      <ReadinessBanner />
       <StalledNotice />
       {/* Said BEFORE the finalize, not after it fails.
           This engine's ffmpeg cannot draw text, and this cut burns a title
@@ -978,12 +1006,18 @@ export function Project() {
             {/* With no scenes there is no board, composer or inspector to
                 regenerate from — the banner is the only surface left, so
                 it carries the retry itself. */}
-            <button className="btn-outline" onClick={() => void regenerate("script")}>
+            <button
+              className="btn-outline"
+              onClick={() => void readinessGuard(() => void regenerate("script"), ["script"])}
+            >
               {t("project.retryScript")}
             </button>
           </div>
         ) : (
-          <ScriptWait node={script} onRetry={() => void regenerate("script")} />
+          <ScriptWait
+            node={script}
+            onRetry={() => void readinessGuard(() => void regenerate("script"), ["script"])}
+          />
         )
       ) : (
         <>
@@ -991,6 +1025,7 @@ export function Project() {
           <Workspace />
         </>
       )}
+      {readinessDialog}
     </div>
   );
 }

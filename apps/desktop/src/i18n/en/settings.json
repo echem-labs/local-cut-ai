@@ -36,6 +36,15 @@
     "tipOn": "Raise a desktop notification when the last render in the queue finishes. Never while you are looking at the app.",
     "tipOff": "Never notify. The taskbar still shows how far along a render is."
   },
+  "warnModels": {
+    "heading": "Warn before rendering with missing models",
+    "hint": "Ask first when a render would produce placeholders because a model isn't installed. Turning this off never blocks a render — it only stops the warning.",
+    "aria": "Warn before rendering with missing models",
+    "on": "On",
+    "off": "Off",
+    "tipOn": "Show what will not render properly before starting, with a one-click way to get the model.",
+    "tipOff": "Start renders without asking. The workspace still shows what is missing."
+  },
   "zoom": {
     "heading": "Interface zoom",
     "hint": "Scales the whole interface on top of your system text size. Ctrl + and Ctrl − work anywhere; Ctrl 0 resets.",
@@ -54,7 +63,7 @@
     "voiceHeading": "Default voice",
     "voiceHint": "Narrator used when a video doesn't specify one.",
     "modelHeading": "Final video model",
-    "modelHint": "Used when you create the final video. \"Auto\" follows the hardware recommendation; custom models appear here once added.",
+    "modelHint": "Used when you create the final video. \"Auto\" uses the first video model you have installed; custom models appear here once added.",
     "autoModel": "Auto (recommended)",
     "aspectTip": "Default frame shape",
     "aspectTipHint": "What new videos start as. Home's row still decides each video.",
@@ -84,8 +93,10 @@
     "defaultsHeading": "Default models",
     "defaultsHint": "What renders each kind of work when a scene doesn't name a model.",
     "defaultsAuto": "Auto",
+    "defaultsAutoResolved": "Auto — {model}",
+    "defaultsAutoNothing": "Auto — nothing installed yet",
     "defaultsPickTip": "Model for {task}",
-    "defaultsPickTipHint": "\"Auto\" follows the hardware recommendation",
+    "defaultsPickTipHint": "\"Auto\" uses the first model you have installed for this stage",
     "defaultsTaskFallback": "One stage of the pipeline."
   },
   "storage": {

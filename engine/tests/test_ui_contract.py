@@ -29,6 +29,18 @@ def _source() -> str:
     return _FORMATS.read_text(encoding="utf-8")
 
 
+def _ts_source(*parts: str) -> str:
+    """A TypeScript file with BOTH comment styles stripped.
+
+    Every union check below reads to the first `;`, and a semicolon inside
+    a comment ends that match early — leaving the test comparing against a
+    partial member list and passing for the wrong reason. Line comments
+    were already stripped for exactly this; a doc comment does it too.
+    """
+    source = _FORMATS.parent.parent.joinpath(*parts).read_text(encoding="utf-8")
+    return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", source, flags=re.S))
+
+
 def _number(pattern: str) -> float:
     match = re.search(pattern, _source())
     assert match, f"{_FORMATS.name} no longer matches {pattern!r} — update this test with it"
@@ -108,11 +120,7 @@ def test_every_board_status_has_a_ui_case_and_a_label():
 
     from localcut_engine.service import SCENE_NODE_STATUSES
 
-    src = _FORMATS.parent.parent / "api" / "types.ts"
-    # Comments go first: the union carries several, and a single `;` inside
-    # one would truncate the non-greedy match to a partial member list — the
-    # test would then pass by comparing against nothing.
-    text = re.sub(r"//[^\n]*", "", src.read_text(encoding="utf-8"))
+    text = _ts_source("api", "types.ts")
     union = re.search(r"export type NodeStatus =(.*?);", text, re.S)
     assert union, "types.ts no longer declares NodeStatus"
     # Not `[a-z]+`: a status carrying a digit, dash or capital would be
@@ -153,6 +161,101 @@ def test_notice_codes_match_the_desktop_catalog():
     assert leaves(catalog) == set(NOTICE_CODES)
 
 
+def test_readiness_vocabulary_matches_the_desktop():
+    """Verdicts, reasons and fix types cross the wire as codes the desktop
+    switches on and translates. A value only the engine knows renders as a
+    silent skip (the reason catalog) or falls through a verdict branch —
+    the same drift the status and notice contracts exist to catch."""
+    import json
+
+    from localcut_engine.readiness import (
+        READINESS_FIX_TYPES,
+        READINESS_REASONS,
+        READINESS_VERDICTS,
+    )
+
+    text = _ts_source("api", "types.ts")
+
+    def union(name: str) -> set[str]:
+        match = re.search(rf"export type {name} =(.*?);", text, re.S)
+        assert match, f"types.ts no longer declares {name}"
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    assert union("ReadinessVerdict") == set(READINESS_VERDICTS)
+    assert union("ReadinessReason") == set(READINESS_REASONS)
+    # The fix union is a discriminated one: each member names its type.
+    # Read to the next declaration, not to the next `;` — every member
+    # carries semicolons INSIDE its braces, so a non-greedy match to `;`
+    # stops after the first one and compares against a partial set.
+    fix = re.search(r"export type ReadinessFix =(.*?)\nexport ", text, re.S)
+    assert fix, "types.ts no longer declares ReadinessFix"
+    assert set(re.findall(r'type: "([^"]+)"', fix.group(1))) == set(READINESS_FIX_TYPES)
+
+    # Every reason needs a sentence, or the row renders as nothing. "ok" is
+    # the exception: a ready row is never described to anyone.
+    catalog = json.loads(
+        (_FORMATS.parent.parent / "i18n" / "en" / "readiness.json").read_text("utf-8")
+    )
+    described = set(catalog["reasons"])
+    assert described == set(READINESS_REASONS) - {"ok"}, (
+        f"readiness.json and READINESS_REASONS disagree: "
+        f"only in catalog {sorted(described - set(READINESS_REASONS))}, "
+        f"only in engine {sorted(set(READINESS_REASONS) - described - {'ok'})}"
+    )
+
+
+def test_the_video_kinds_home_warns_about_match_the_pipeline():
+    """Home scopes its pre-generate warning to what a video renders, so a
+    thumbnail model it will never touch cannot interrupt one. That list is
+    the engine's PIPELINE_KINDS written again in TypeScript — if the
+    pipeline grows a stage, the warning has to grow with it."""
+    from localcut_engine.readiness import PIPELINE_KINDS
+
+    text = _ts_source("screens", "Home.tsx")
+    match = re.search(r"const VIDEO_KINDS = \[(.*?)\];", text, re.S)
+    assert match, "Home.tsx no longer declares VIDEO_KINDS"
+    declared = set(re.findall(r'"([^"]+)"', match.group(1)))
+    assert declared == {kind.value for kind in PIPELINE_KINDS}
+
+
+def test_each_quick_tools_engine_kinds_match_its_graph():
+    """The tool panels scope their readiness note to the kinds that tool
+    renders. The truth is the graph the engine builds for it, and the two
+    are written on opposite sides of the wire."""
+    import json
+
+    from localcut_engine.graph.templates import tool_graph
+
+    text = _ts_source("lib", "tools.ts")
+    match = re.search(r"TOOL_ENGINE_KINDS: Record<ToolKind, string\[\]> = \{(.*?)\n\};", text, re.S)
+    assert match, "tools.ts no longer declares TOOL_ENGINE_KINDS"
+    declared = {
+        tool: set(json.loads(kinds.replace("'", '"')))
+        for tool, kinds in re.findall(r"(\w+):\s*(\[[^\]]*\])", match.group(1))
+    }
+    from localcut_engine.graph.template_io import TOOL_KINDS
+
+    # Or a regex that stopped matching entries would pass by looping over
+    # nothing — the failure mode this whole file exists to prevent.
+    assert declared.keys() == set(TOOL_KINDS)
+    params = {
+        "prompt": "a lighthouse",
+        "text": "spoken words",
+        "target_duration_s": 60,
+        "duration_s": 5.0,
+        "aspect": "16:9",
+        "voice": "narrator",
+        "style_preset": "cinematic",
+        "motion": "",
+    }
+    for tool, kinds in declared.items():
+        graph = tool_graph(tool, params)
+        actual = {node.kind.value for node in graph.nodes.values()}
+        assert kinds == actual, (
+            f"{tool}: UI says {sorted(kinds)}, the graph builds {sorted(actual)}"
+        )
+
+
 def test_speech_timing_matches_the_narration_authority():
     """ToolSession shows per-scene lengths computed from narration words —
     the script model's own duration_s is a claim nothing downstream reads.
@@ -187,9 +290,7 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in TOOL_KINDS {sorted(set(TOOL_KINDS) - accepted)}"
     )
 
-    # Comments first: a `;` inside one would truncate the non-greedy match to
-    # a partial member list, and the test would pass against nothing.
-    text = re.sub(r"//[^\n]*", "", (_FORMATS.parent.parent / "api" / "types.ts").read_text("utf-8"))
+    text = _ts_source("api", "types.ts")
     union = re.search(r"export type ToolKind =(.*?);", text, re.S)
     assert union, "types.ts no longer declares ToolKind"
     declared = set(re.findall(r'"([^"]+)"', union.group(1)))

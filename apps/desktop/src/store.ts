@@ -6,6 +6,7 @@ import { forgetPublishDraft } from "./lib/publishDraft";
 import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
 import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom";
+import { blockingGaps, readinessFingerprint } from "./lib/readiness";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -30,6 +31,7 @@ import type {
   NodeState,
   OomFallback,
   Project,
+  ReadinessRow,
   StorageInfo,
   StoryGraph,
   SystemInfo,
@@ -245,6 +247,17 @@ interface AppState {
   /** Whether a finished render may raise an OS notification. On by default,
    * and only ever shown while the window is unfocused. */
   notifyOnDone: boolean;
+  /** Whether an explicit render click warns first when a needed model is
+   * missing (the readiness gate). On by default; "Always" in the dialog and
+   * the Settings row both flip this one flag. */
+  warnMissingModels: boolean;
+  /** Machine-scoped readiness: which tier serves each job kind right now.
+   * Facts for Home's notes, the models popover and the honest-Auto labels —
+   * suppression never touches these. */
+  readiness: ReadinessRow[] | null;
+  /** The open project's readiness, per-node model overrides included.
+   * Cleared with the project; the workspace banner reads it. */
+  projectReadiness: ReadinessRow[] | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -329,6 +342,26 @@ interface AppState {
   restartEngine: () => Promise<string | null>;
   noteEngineCrash: (crash: EngineCrash | null) => void;
   setNotifyOnDone: (on: boolean) => void;
+  setWarnMissingModels: (on: boolean) => void;
+  /** Refetch both readiness slices (project one only while a project is
+   * open). Facts only — never gated, never suppressed. */
+  refreshReadiness: () => Promise<void>;
+  /** The rows an explicit render click should warn about, or null to
+   * proceed silently — fetched fresh, filtered to placeholder/will_fail,
+   * then checked against the master switch and the session/project
+   * suppressions. `scopeKey` is the project id, or "home" for Home. */
+  readinessGaps: (scopeKey: string, kinds?: string[]) => Promise<ReadinessRow[] | null>;
+  /** Record a dialog dismissal. "session" dies with the window; "project"
+   * persists per scopeKey and re-warns when the gap set changes; "always"
+   * flips `warnMissingModels` itself. */
+  suppressReadiness: (
+    scopeKey: string,
+    rows: ReadinessRow[],
+    scope: "session" | "project" | "always",
+    /** The same `kinds` the gate asked with — the dismissal covers that
+     * narrowing, not every question this scopeKey can ask. */
+    kinds?: string[],
+  ) => void;
   refreshHome: () => Promise<void>;
   openProject: (id: string) => Promise<void>;
   /** Leave the workspace for Home. Open tabs stay open. */
@@ -543,6 +576,8 @@ const DEFAULTS_KEY = "localcut.defaults.v1";
 const DRAFT_KEY = "localcut.home.draft";
 const OPEN_TABS_KEY = "localcut.openTabs";
 const NOTIFY_KEY = "localcut.notifyOnDone";
+const WARN_MODELS_KEY = "localcut.warnMissingModels";
+const READINESS_SKIP_KEY = "localcut.readinessSkip.v1";
 
 /** Rail tabs survive a restart (ids only — titles rehydrate from /projects;
  * refreshHome prunes ids whose projects no longer exist, which also empties
@@ -646,6 +681,46 @@ function readFlagDefaultOn(key: string): boolean {
 // A stale /models snapshot can lag a terminal download event — refetch
 // once more after the engine has settled.
 const DOWNLOAD_SETTLE_MS = 1500;
+
+/** "Don't warn again for this session": in memory only, gone on reload.
+ * Cleared on an engine switch — a dismissal is about one engine's models,
+ * and the next box has its own. */
+const sessionReadinessSkips = new Map<string, string>();
+
+/** The suppression key. The kinds scope is part of it because the
+ * fingerprint is taken over the NARROWED rows: Home asks about a whole
+ * video from one surface and a single tool kind from another under the
+ * same scopeKey, and with one entry between them each dismissal evicted
+ * the other and the dialog came back forever. */
+function scopeOf(scopeKey: string, kinds?: string[]): string {
+  return kinds?.length ? `${scopeKey}#${[...kinds].sort().join(",")}` : scopeKey;
+}
+
+function readReadinessSkips(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(READINESS_SKIP_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, value]) => typeof value === "string",
+      ),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function writeReadinessSkip(scopeKey: string, fingerprint: string): void {
+  try {
+    localStorage.setItem(
+      READINESS_SKIP_KEY,
+      JSON.stringify({ ...readReadinessSkips(), [scopeKey]: fingerprint }),
+    );
+  } catch {
+    /* blocked storage — the dismissal just does not survive a restart */
+  }
+}
 
 interface PendingPatch {
   projectId: string;
@@ -1105,9 +1180,12 @@ export const useApp = create<AppState>((set, get) => {
           else delete errors[event.model];
           set({ downloadErrors: errors });
           const refetch = () =>
-            get()
-              .refreshModels()
-              .catch((err) => console.warn("models refresh failed:", err));
+            Promise.all([
+              get().refreshModels(),
+              // Verdicts flip the moment weights land (capability is probed
+              // live) — the banner must clear without a restart.
+              get().refreshReadiness(),
+            ]).catch((err) => console.warn("models refresh failed:", err));
           void refetch();
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
@@ -1221,6 +1299,11 @@ export const useApp = create<AppState>((set, get) => {
     void get()
       .refreshModels()
       .catch((err) => console.warn("models refresh failed:", err));
+    // And readiness, so Home's notes and the workspace banner have facts
+    // from the first paint, not from the first download event.
+    void get()
+      .refreshReadiness()
+      .catch((err) => console.warn("readiness refresh failed:", err));
     if (get().currentProject) {
       try {
         await get().refreshBoard();
@@ -1291,8 +1374,20 @@ export const useApp = create<AppState>((set, get) => {
   // Pair/unpair swap the engine under us: drop every per-engine slice (zustand
   // and module-level) so the old engine's in-flight PATCH, download bytes, and
   // project list can't bleed into the new one, then reconnect.
+  /** Readiness is a side-effect of nearly every model action; a refresh
+   * that fails is never the reason the action failed. */
+  const refreshReadinessQuietly = () => {
+    void useApp
+      .getState()
+      .refreshReadiness()
+      .catch((err) => console.warn("readiness refresh failed:", err));
+  };
+
   const switchEngine = async () => {
     resetEngineScopedState();
+    // A dismissal is about one engine's models; the newly paired box has
+    // its own, and the fingerprints there mean something different.
+    sessionReadinessSkips.clear();
     // Timings belong to the machine that measured them. Carrying a laptop's
     // medians onto a GPU box (or the reverse) is worse than having none:
     // the number looks authoritative and is about the wrong hardware.
@@ -1312,6 +1407,10 @@ export const useApp = create<AppState>((set, get) => {
       // (establish repopulates it, or leaves it null if the new engine's
       // /system errors — better blank than another box's specs).
       system: null,
+      // Readiness is a claim about the ENGINE's backends and weights —
+      // another box's report is wrong the moment the switch lands.
+      readiness: null,
+      projectReadiness: null,
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1361,6 +1460,9 @@ export const useApp = create<AppState>((set, get) => {
     remoteKeysArmed: true,
     engineCrash: null,
     notifyOnDone: readFlagDefaultOn(NOTIFY_KEY),
+    warnMissingModels: readFlagDefaultOn(WARN_MODELS_KEY),
+    readiness: null,
+    projectReadiness: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1413,6 +1515,106 @@ export const useApp = create<AppState>((set, get) => {
       } catch {
         /* blocked storage — the preference just does not survive a restart */
       }
+    },
+
+    setWarnMissingModels: (on) => {
+      set({ warnMissingModels: on });
+      try {
+        localStorage.setItem(WARN_MODELS_KEY, on ? "1" : "0");
+      } catch {
+        /* blocked storage — the preference just does not survive a restart */
+      }
+    },
+
+    refreshReadiness: async () => {
+      const { client, currentProject } = get();
+      if (!client || seedFrozen) return;
+      // Settled independently, not Promise.all'd: the project report can
+      // 404 (deleted underneath) or 409 (a state file this build refuses),
+      // and one bad project must not blank the machine-wide report that
+      // Home's notes, the model picker and Settings all read.
+      const [machine, project] = await Promise.all([
+        client.readiness().catch((err) => {
+          console.warn("readiness refresh failed:", err);
+          return null;
+        }),
+        currentProject
+          ? client.projectReadiness(currentProject.id).catch((err) => {
+              console.warn("project readiness refresh failed:", err);
+              return null;
+            })
+          : null,
+      ]);
+      // Guard the write like refreshModels: a switchEngine mid-flight
+      // already blanked these, and another engine's report must not land.
+      if (get().client !== client || seedFrozen) return;
+      set({
+        ...(machine ? { readiness: machine.rows } : {}),
+        // Only meaningful while the SAME project is still open.
+        ...(project && get().currentProject?.id === currentProject?.id
+          ? { projectReadiness: project.rows }
+          : {}),
+      });
+    },
+
+    readinessGaps: async (scopeKey, kinds) => {
+      const { client, warnMissingModels } = get();
+      if (!client || !warnMissingModels) return null;
+      // Fetched fresh at the click, never from the cached slices: the gate
+      // guards a spend, and a stale "ready" is the one lie it must not tell.
+      let rows: ReadinessRow[];
+      try {
+        // A project's own report wins whenever there is one, `kinds` or
+        // not: it is the only one that judges per-node model overrides, and
+        // narrowing it here is a filter, not a reason to ask a different
+        // question. (The engine's project route takes no `kinds`.)
+        rows =
+          scopeKey === "home"
+            ? (await client.readiness(kinds)).rows
+            : (await client.projectReadiness(scopeKey)).rows.filter(
+                (row) => !kinds || kinds.includes(row.kind),
+              );
+      } catch {
+        // No report is no reason to block a render the engine may well
+        // serve — the gate fails open, the job's own error stays the truth.
+        return null;
+      }
+      // A model whose bytes are moving right now is not a gap to warn
+      // about: the engine reports it missing (is_downloaded is a
+      // completed-files check) but the user is already fixing it, and the
+      // pre-readiness code exempted it for exactly this reason — first run
+      // hands over mid-download by design.
+      const arriving = new Set(
+        get()
+          .models.filter((row) => row.downloading)
+          .map((row) => row.id),
+      );
+      const gaps = blockingGaps(rows).filter(
+        (row) => !(row.fix?.type === "download" && arriving.has(row.fix.model_id)),
+      );
+      if (gaps.length === 0) return null;
+      const key = scopeOf(scopeKey, kinds);
+      const fingerprint = readinessFingerprint(gaps);
+      if (sessionReadinessSkips.get(key) === fingerprint) return null;
+      if (readReadinessSkips()[key] === fingerprint) return null;
+      return gaps;
+    },
+
+    suppressReadiness: (scopeKey, rows, scope, kinds) => {
+      const key = scopeOf(scopeKey, kinds);
+      const fingerprint = readinessFingerprint(rows);
+      // "always" flips the switch and nothing else: writing a session skip
+      // alongside it left this one surface silent even after Settings
+      // turned warnings back on, which is what its own hint promises.
+      if (scope === "always") {
+        get().setWarnMissingModels(false);
+        return;
+      }
+      // "this project" persists and is read back through the same door on
+      // the next click, so the durable path is the one exercised rather
+      // than being masked by a session entry written alongside it.
+      if (scope === "project") writeReadinessSkip(key, fingerprint);
+      else sessionReadinessSkips.set(key, fingerprint);
     },
 
     refreshHome: async () => {
@@ -1519,8 +1721,14 @@ export const useApp = create<AppState>((set, get) => {
         // OOM advice on this one's identically-named node.
         nodeFailures: {},
         nodeRetries: {},
+        // Cleared then fetched — the previous project's missing-model
+        // banner must not hang over this one's board.
+        projectReadiness: null,
       });
       void get().refreshHistory();
+      void get()
+        .refreshReadiness()
+        .catch((err) => console.warn("readiness refresh failed:", err));
     },
 
     closeProject: () => {
@@ -1537,6 +1745,7 @@ export const useApp = create<AppState>((set, get) => {
         graphError: null,
         nodeFailures: {},
         nodeRetries: {},
+        projectReadiness: null,
       });
     },
 
@@ -2129,6 +2338,9 @@ export const useApp = create<AppState>((set, get) => {
         const modelDefaults = await client.setModelDefault(task, model);
         if (get().client !== client) return null;
         set({ modelDefaults });
+        // The default IS what Auto resolves to, so the picker's own "Auto —
+        // X" label and every readiness verdict move with it.
+        refreshReadinessQuietly();
         return null;
       } catch (err) {
         return messageOf(err);
@@ -2412,6 +2624,10 @@ export const useApp = create<AppState>((set, get) => {
         });
       }
       await get().refreshModels();
+      // Deleting weights can turn a ready stage back into a placeholder —
+      // the banner and the model picker have to hear about it now, not at
+      // the next unrelated download event.
+      refreshReadinessQuietly();
     },
 
     inspectPairing: (code) => window.localcut.inspectPairing(code),
@@ -2750,6 +2966,8 @@ export const useApp = create<AppState>((set, get) => {
         return messageOf(err);
       }
       await get().refreshModels();
+      // A registered local-file model can make a whole stage renderable.
+      refreshReadinessQuietly();
       return null;
     },
 
@@ -2764,6 +2982,7 @@ export const useApp = create<AppState>((set, get) => {
         });
       }
       await get().refreshModels();
+      refreshReadinessQuietly();
     },
 
     setDefaults: (patch) => {
