@@ -13,7 +13,7 @@
  * reports whichever it chose. A machine that can do neither never sees the
  * button at all.
  */
-import { Cloud, Laptop, Loader2, Sparkles, Square } from "lucide-react";
+import { Cloud, Laptop, Loader2, Sparkles, Square, Timer } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { t } from "../i18n";
@@ -231,6 +231,9 @@ export function NewSceneDialog({
   };
 
   const ready = narration.trim().length > 0 && prompt.trim().length > 0;
+  // ~200 words a minute is the rate the narration backends actually read
+  // at, and the rule this app runs on: the cut is as long as its audio.
+  const words = narration.trim() ? narration.trim().split(/\s+/).length : 0;
 
   return (
     <Modal
@@ -241,6 +244,18 @@ export function NewSceneDialog({
       initialFocus={firstField}
       footer={
         <>
+          {/* A disabled primary with nothing saying why is a dead end. The
+              compiler needs both fields, so the footnote names whichever
+              one is still missing rather than a static line that would be
+              wrong half the time. */}
+          {!ready && !busy && (
+            <span className="foot-note">
+              {narration.trim()
+                ? t("drop.sceneNeedsPrompt")
+                : t("drop.sceneNeedsNarration")}
+            </span>
+          )}
+          <div className="spacer" />
           <button className="btn-ghost" onClick={onClose} disabled={busy}>
             {t("drop.sceneCancel")}
           </button>
@@ -380,6 +395,21 @@ export function NewSceneDialog({
           onChange={(event) => setNarration(event.target.value)}
         />
       </label>
+
+      {/* The one non-obvious rule of this app, said at the only moment it
+          can be acted on: a cut's length is its narration audio, not a
+          duration anybody picks. Empty, it states the rate; typing, it
+          counts. */}
+      <div className="scene-runtime">
+        <Timer size={13} strokeWidth={1.8} aria-hidden="true" />
+        <span>{t("drop.sceneRuntimeLabel")}</span>
+        <span className="spacer" />
+        <span className="readout">
+          {words === 0
+            ? t("drop.sceneRuntimeRate")
+            : t("drop.sceneRuntimeCount", { words, seconds: Math.max(1, Math.round(words * 0.3)) })}
+        </span>
+      </div>
 
       <label className="field">
         <span>{t("drop.scenePrompt")}</span>

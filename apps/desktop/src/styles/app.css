@@ -3107,71 +3107,117 @@ button.link:hover {
    which is what a shrinkable flex item does to a two-word label. The keys
    column is as wide as the widest key and no wider; every description
    starts in the same place. */
-.shortcut-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-4);
+/* ---- key caps ----
+   One cap per key, sitting in the row's right column. A column of mono
+   caps down the right edge is scannable without reading a word, which is
+   what a shortcut list is for. */
+.kcaps {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
 }
 
-.shortcut-list > div {
-  display: contents;
-}
-
-.shortcut-list kbd {
+.kcaps kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 18px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface-1);
   border: 1px solid var(--border-hi);
   border-radius: var(--radius-xs);
-  padding: 0 7px;
-  min-width: 52px;
-  text-align: center;
   /* One line, always: the box is the key, and a key that wraps stops
      reading as one. */
   white-space: nowrap;
-  color: var(--text-primary);
-  background: var(--inset-bg);
 }
 
-.shortcut-list span {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
+/* Sticky, so the way to filter 32 terms does not scroll away from the
+   list it filters. Opaque, or entries ghost through it on the way past. */
+.glossary-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--surface-2);
+  padding-bottom: var(--space-3);
+}
+
+.glossary-head > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
 }
 
 .glossary-search {
   width: 100%;
-  background: var(--surface-2);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   color: var(--text-primary);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) 32px;
   min-height: var(--control-h);
   outline: none;
-  margin-bottom: var(--space-3);
 }
 
 .glossary-search:focus {
   border-color: var(--accent);
+  box-shadow: var(--accent-glow);
 }
 
-.glossary-list {
-  max-height: 320px;
-  overflow-y: auto;
-  display: grid;
-  gap: var(--space-3);
+.glossary-well {
+  padding-top: 0;
+  padding-bottom: 0;
   user-select: text;
 }
 
-.glossary-list b {
-  font-size: var(--text-xs);
-  font-weight: 650;
+.glossary-list {
+  margin: 0;
 }
 
-.glossary-list p {
+/* A run-in dictionary entry: term as an anchor, definition following it on
+   the same line. Thirty-two violet anchors down the left edge give the
+   scan rhythm that a wall of bold-over-paragraph never had. */
+.gentry {
+  padding: var(--space-3) 0;
+}
+
+.gentry + .gentry {
+  border-top: 1px solid var(--border);
+}
+
+.gentry > dt {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  margin-right: var(--space-2);
+  background: var(--accent-muted);
+  color: var(--accent-hover);
+  border-radius: var(--radius-xs);
   font-size: var(--text-xs);
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+/* `display: inline` on the definition is what makes it run IN after the
+   term rather than starting a block under it — and the margin reset is
+   load-bearing, because a `dd` carries a 40px inline-start margin by
+   default that would indent every wrapped line. */
+.gentry > dd {
+  display: inline;
+  margin: 0;
+  font-size: var(--text-s);
   color: var(--text-secondary);
-  margin-top: 2px;
+  line-height: 1.5;
 }
 
 /* ---- legacy timeline strip (chips) ---- */
@@ -4723,19 +4769,48 @@ button.link:hover {
    Everything inside it is the modal recipe already in this file — `.field`
    for the labelled controls, `.modal-actions` for the footer. The first
    version hand-rolled a grid instead and looked like a different app. */
-/* The suggested thumbnail. Sized like a thumbnail rather than stretched to
-   the dialog: at full width a 16:9 preview is 315px of the window's height
-   before the first field, which pushed the footer off a short screen. */
+/* The hero. It IS the top of the panel: the picture is what the title is
+   being written for, and at 240px it left a third of a 620px dialog empty
+   beside it. Full width costs height, which the body's own scroll absorbs
+   — the earlier note here traded a dead column for a footer that never
+   moved, and the footer is pinned by the shell anyway. */
+.publish-hero {
+  position: relative;
+  margin-bottom: var(--space-4);
+}
+
 .publish-thumb {
   display: block;
-  width: 240px;
-  max-width: 100%;
+  width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: cover;
   border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  margin-top: var(--space-4);
+  border-radius: var(--radius-m);
+  /* The darkest ground in the app, so an image reads as footage in a
+     monitor rather than as a panel that happens to hold a picture. */
+  background: var(--surface-0);
+}
+
+/* The image's own way out, which it never had: a picture cannot be copied
+   by the text affixes beside every other field here. */
+.hero-tray {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+}
+
+.hero-tray .icon-btn-sm {
+  width: 28px;
+  height: 28px;
+  background: var(--tray-bg);
+  color: var(--text-primary);
+  backdrop-filter: blur(3px);
+}
+
+.hero-tray .icon-btn-sm:hover {
+  background: var(--surface-3);
 }
 
 /* The busy line, under the thumbnail. It sat flush against the picture above
@@ -4767,6 +4842,131 @@ button.link:hover {
   flex-shrink: 0;
   /* Beside the control's first row, not centred against a tall textarea. */
   margin-top: 3px;
+}
+
+/* The platform ceiling, as a readout under the field it governs. Quiet
+   until it matters: tertiary while there is room, amber inside the last
+   tenth, red past the cap — the reserved hues, earning their keep. */
+.char-count {
+  margin-top: var(--space-1);
+  text-align: right;
+}
+
+.char-count > .readout {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.char-count.near > .readout {
+  color: var(--status-draft);
+}
+
+.char-count.over > .readout {
+  color: var(--status-failed);
+}
+
+/* ---- hashtags ---- */
+/* The label row carries the copy-all affix, because the control below it
+   is a well of chips rather than one focusable box to hang it beside. */
+.publish-tags .tags-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.publish-tags .tags-label > span {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.publish-tags .tags-label > .tip-wrap {
+  margin-left: auto;
+}
+
+/* Chips wrap; nothing truncates. This was one line of input, so five
+   multi-word tags ended at "#se…" — a field unable to show its contents. */
+.tag-well {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: border-color var(--motion-fast);
+}
+
+/* The only green in the family, and it means one thing: that went to the
+   clipboard. */
+.tag-chip.copied {
+  border-color: var(--status-final);
+}
+
+.tag-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  color: inherit;
+  font: inherit;
+}
+
+.tag-copy > .hash {
+  color: var(--text-tertiary);
+}
+
+.tag-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 100%;
+  padding: 0 var(--space-1) 0 0;
+  color: var(--text-tertiary);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+.tag-remove:hover {
+  color: var(--status-failed);
+}
+
+/* The entry sits IN the well, so adding a tag happens where the tags are.
+   Borderless: the well is already the box. */
+.tag-entry {
+  flex: 1;
+  min-width: 96px;
+  height: 22px;
+  padding: 0 var(--space-1);
+  background: none;
+  border: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.tag-entry:focus {
+  outline: none;
+  /* The well takes the focus ring rather than the bare input, so focus
+     lands on the thing the eye reads as the control. */
+  box-shadow: none;
+}
+
+.tag-well:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
 }
 
 /* No padding override here. One asking for a tighter box than the dialog
@@ -5227,6 +5427,33 @@ button.link:hover {
 
 .banner.readiness .prow {
   min-height: 24px;
+}
+
+/* The readout under the narration field: the app's one non-obvious rule,
+   live, at the only moment it can be acted on. */
+.scene-runtime {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.scene-runtime > svg {
+  flex: none;
+}
+
+.scene-runtime > .spacer {
+  flex: 1;
+}
+
+/* A footer that narrates: the reason a disabled primary is disabled, in
+   the slot the shell already reserves on the left. */
+.foot-note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
 }
 
 /* The gate's scope control: a rule, not a well. It is the only thing in
@@ -6990,13 +7217,25 @@ button.link:hover {
 
 /* Bounded by the viewport, not by the image: a 4000px photo must not make
  * the dialog itself scroll in either direction. */
+/* The exhibit sits on the darkest ground in the app, letterboxed — a
+   portrait source then reads as footage in a monitor rather than as a
+   layout that broke. */
+.photo-stage {
+  display: grid;
+  place-items: center;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
 .photo-full {
   display: block;
   max-width: 100%;
-  max-height: 70vh;
-  margin: 0 auto;
+  /* Room for the head and foot the shell pins around it, so the one thing
+     this dialog exists to show never needs scrolling to see. */
+  max-height: min(70vh, 520px);
   object-fit: contain;
-  border-radius: var(--radius-s);
 }
 
 .drop-overlay-card {

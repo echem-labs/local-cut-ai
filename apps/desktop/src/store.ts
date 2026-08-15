@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient, EngineTimeoutError } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { messageOf } from "./lib/errors";
 import { forgetPublishDraft } from "./lib/publishDraft";
 import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
@@ -803,18 +804,6 @@ const without = <T>(record: Record<string, T>, key: string): Record<string, T> =
   return rest;
 };
 
-const messageOf = (err: unknown): string => {
-  // fetch's network-level failure is a TypeError whose message ("Failed to
-  // fetch") names neither the engine nor a next step — say what it means
-  // here, the one place every action's error passes through.
-  if (err instanceof TypeError) return t("errors.engineUnreachable", { detail: err.message });
-  // The platform's own wording for an aborted fetch is "signal timed out",
-  // which names no actor and no next step. Say which side gave up, and that
-  // the work may not have been wasted — the engine is still going.
-  if (err instanceof EngineTimeoutError)
-    return t("errors.engineTimeout", { seconds: Math.round(err.timeoutMs / 1000) });
-  return err instanceof Error ? err.message : String(err);
-};
 
 // Drop all per-engine module state — pending edits, download bookkeeping —
 // when the engine itself changes (pair/unpair). Otherwise the old engine's

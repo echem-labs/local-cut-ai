@@ -16,7 +16,7 @@
  * affordance. The Inspector's remove asks first and then rewires the graph,
  * neither of which a thumbnail should know about.
  */
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { useState } from "react";
 
 import { t } from "../i18n";
@@ -38,6 +38,10 @@ export function PhotoThumb({
   onRemove?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Read off the loaded image rather than asked of the engine: the bytes
+  // are already in the page, and a round trip for two numbers is a round
+  // trip that can fail and leave the heading half-written.
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
 
   return (
     <div className="photo-thumb">
@@ -71,8 +75,45 @@ export function PhotoThumb({
         </Tip>
       )}
       {open && (
-        <Modal title={title} size="l" onClose={() => setOpen(false)}>
-          <img className="photo-full" src={src} alt={alt} />
+        <Modal
+          title={title}
+          /* What the shell's subtitle slot is for. The full view named
+             nothing but the file, so "which of these two similar frames
+             am I looking at" had no answer on screen — the dimensions
+             are the answer, and the image knows them once it has
+             loaded. */
+          subtitle={
+            size ? (
+              <span className="readout">
+                {size.width}×{size.height}
+              </span>
+            ) : undefined
+          }
+          size="l"
+          onClose={() => setOpen(false)}
+          footer={
+            <>
+              <span className="spacer" />
+              <a className="btn-ghost" href={src} download={title}>
+                <Download size={14} strokeWidth={2} aria-hidden="true" />
+                {t("inspector.photoSave")}
+              </a>
+            </>
+          }
+        >
+          <div className="photo-stage">
+            <img
+              className="photo-full"
+              src={src}
+              alt={alt}
+              onLoad={(event) =>
+                setSize({
+                  width: event.currentTarget.naturalWidth,
+                  height: event.currentTarget.naturalHeight,
+                })
+              }
+            />
+          </div>
         </Modal>
       )}
     </div>
