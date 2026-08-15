@@ -32,7 +32,15 @@ const boundsAgree = (inner, bounds, dpr) =>
 // generation fails - here that emptied the audio segments and the row-width
 // check below measured nothing against seven scene blocks. This walk is
 // about geometry; it gets the same content every time.
-const rig = await startRig({ LOCALCUT_BACKEND: "mock", ...(ozone ? { RIG_OZONE: ozone } : {}) });
+// Deferring to an exported value rather than overriding it, the way
+// rig.mjs's own default does: `startRig` merges extraEnv LAST, so a literal
+// here would beat `LOCALCUT_BACKEND=local npm run rig:walk` and quietly
+// measure the mock - and pointing a gate at a real backend is the only way
+// the mock's fidelity ever gets checked.
+const rig = await startRig({
+  LOCALCUT_BACKEND: process.env.LOCALCUT_BACKEND || "mock",
+  ...(ozone ? { RIG_OZONE: ozone } : {}),
+});
 try {
   // Let the renderer connect and paint Home.
   await evalInApp("await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;");

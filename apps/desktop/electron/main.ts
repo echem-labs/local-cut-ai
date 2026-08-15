@@ -724,6 +724,13 @@ ipcMain.handle("engine:pair", async (event, code: unknown, options: unknown) => 
     forgetStoredPairing();
     remoteConnection = pairing;
     engineError = null;
+    // Pairing is a recovery too, so it clears the crash for the same reason
+    // `connectEngine` does: the local engine's last words outlive the
+    // connection they describe, and kept past the engine that replaced them
+    // they come back as the banner for whatever goes wrong after the next
+    // Disconnect — dated hours ago, with a report to paste about a fault the
+    // user has already moved on from.
+    forgetLastCrash();
     engine.stop(); // the GPU box renders now; no reason to keep a local engine
     if (armKeys) await armStoredKeys();
     return { ok: true, error: null, keysArmed: armKeys };

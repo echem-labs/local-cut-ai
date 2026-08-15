@@ -91,12 +91,18 @@ def test_the_desktop_can_recognise_a_bind_the_engine_refused():
     would report a crashed engine as unrecoverable a minute too early."""
     from localcut_engine.cli import BIND_REFUSED
 
-    engine_ts = _FORMATS.parents[2] / "electron" / "engine.ts"
-    match = re.search(
-        r'export const BIND_REFUSED = "([^"]+)"', engine_ts.read_text(encoding="utf-8")
-    )
-    assert match, "engine.ts no longer declares BIND_REFUSED"
-    assert match.group(1) == BIND_REFUSED
+    desktop = _FORMATS.parents[2]
+    # All three copies, not just the desktop's. u7.mjs greps the app log for
+    # this to prove the restart it measured actually outlived a held port; a
+    # reworded message would leave that gate counting nothing and reporting
+    # success, which is the opposite of what a contract test is for.
+    for path, pattern in (
+        (desktop / "electron" / "engine.ts", r'export const BIND_REFUSED = "([^"]+)"'),
+        (desktop / "scripts" / "rig" / "u7.mjs", r'const BIND_REFUSED = "([^"]+)"'),
+    ):
+        match = re.search(pattern, path.read_text(encoding="utf-8"))
+        assert match, f"{path.name} no longer declares BIND_REFUSED"
+        assert match.group(1) == BIND_REFUSED, f"{path.name} disagrees with cli.py"
 
 
 def test_every_board_status_has_a_ui_case_and_a_label():

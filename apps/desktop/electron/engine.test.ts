@@ -600,12 +600,22 @@ describe("waiting out a port the kernel still holds", () => {
     // 7830, a proxy, whatever the user pointed LOCALCUT_ENGINE_PORT at - and
     // killing it is a far worse outcome than the failed start it was meant
     // to rescue.
+    //
+    // Posed as a program that answers /health perfectly well and then does
+    // not know /projects, because that is where the bar actually sits. A
+    // holder that fails the FIRST request never reaches the 401 test at all,
+    // so it leaves "is 401 what earns the kill" unasked - and any weaker
+    // reading (a 403, a 404, anything that is not 200) would send reclaimPort
+    // to SIGKILL an auth proxy or a dev server with the whole suite green.
     let dead = false;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn(async (input: string) => {
         if (!dead) throw new Error("ECONNREFUSED");
-        return { ok: false, status: 404 }; // answers, but not as an engine
+        // Healthy-looking, but not one of ours: no 401, so no kill.
+        return input.endsWith("/health")
+          ? { ok: true, status: 200 }
+          : { ok: false, status: 404 };
       }),
     );
     spawned.answer = (child) => {
@@ -662,7 +672,12 @@ describe("waiting out a port the kernel still holds", () => {
 
     expect(engineSpawns()).toHaveLength(spawnedByThen);
     expect(manager.connection).toBeNull();
-    await promise;
+    // And says so as a cancellation. This message is what `engine:restart`
+    // hands back to the banner, so reporting the port error that happened to
+    // be in hand tells the user a socket is stuck when the truth is that the
+    // app called the start off itself - and writes that into the log the
+    // support bundle ships.
+    expect(String(await promise)).toMatch(/cancelled/);
   });
 
   it("does not spawn an engine after reclaiming a port the app stopped wanting", async () => {
@@ -771,6 +786,150 @@ describe("waiting out a port the kernel still holds", () => {
     await caught;
     expect(crashes).toHaveLength(1);
     expect(crashes[0]!.tail.join("\n")).toContain("No module named 'torch'");
+  });
+
+  it("reports the refused bind that ends the wait, not only the other failures", async () => {
+    // A refused bind is beneath reporting only while it is going to be tried
+    // again. When the answer comes back "a live engine holds this port" or
+    // "a stranger does", the wait is over on the spot — and reporting nothing
+    // leaves the banner describing the crash the user was recovering FROM,
+    // with a pasteable report that says nothing about the port.
+    let dead = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (!dead) throw new Error("ECONNREFUSED");
+        return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
+      }),
+    );
+    spawned.answer = (child) => {
+      dead = true;
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await caught).toBeInstanceOf(EngineConflictError);
+    expect(crashes).toHaveLength(1);
+    expect(crashes[0]!.tail.join("\n")).toContain(BIND_REFUSED);
+  });
+
+  it("does not read a traceback that quotes the words as a refused bind", async () => {
+    // The match is anchored at the start of the mirrored line, and that is
+    // load-bearing rather than tidy: the engine's stderr carries tracebacks
+    // quoting project titles and model warnings, and one of those containing
+    // the phrase would turn a real failure into a minute and a half of silent
+    // retrying - ending in a sentence about a port, with the crash that
+    // actually happened never reported at all.
+    nothingServing();
+    spawned.answer = (child) => {
+      child.stderr.emit("data", Buffer.from(`RuntimeError: ${BIND_REFUSED}the clip to a track\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await caught).not.toBeInstanceOf(EnginePortBusyError);
+    expect(engineSpawns()).toHaveLength(1);
+    expect(crashes).toHaveLength(1);
+  });
+
+  it("waits out a socket, but not a program too busy to say who it is", async () => {
+    // `whoAnswersOn` reads silence on the port as "only a socket winding
+    // down" — the case worth spending ninety seconds on. A request that TIMES
+    // OUT is not silence: a closed port and a socket in TIME_WAIT both refuse
+    // at once, so something took the connection and did not answer, and that
+    // is a program. Counting it as nobody spends the whole budget outlasting
+    // a socket that is not there, and then explains the failure in terms of a
+    // port that nothing is holding.
+    let dead = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        if (!dead) throw new Error("ECONNREFUSED");
+        // What AbortSignal.timeout rejects with, by name.
+        const timeout = new Error("The operation was aborted due to timeout");
+        timeout.name = "TimeoutError";
+        throw timeout;
+      }),
+    );
+    refuseTheBind();
+    spawned.answer = (child) => {
+      dead = true;
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(await caught).not.toBeInstanceOf(EnginePortBusyError);
+    expect(String(await caught)).toMatch(/another program/);
+    expect(engineSpawns()).toHaveLength(1);
+  });
+
+  it("does not hand a cancelled start to the caller that comes after it", async () => {
+    // `stop()` cancels the loop, but the loop only notices when it wakes —
+    // two seconds later, or four if the stop landed inside an orphan reclaim.
+    // For that whole window the cancelled start is still the one `start()`
+    // dedups onto, so the next caller is handed a promise already on its way
+    // to throwing. Pairing a GPU box and changing your mind a second later is
+    // the ordinary way to meet it, and the app ends up with no engine at all.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const abandoned = manager.start().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    manager.stop();
+    // The port comes free and someone asks again, inside the window before
+    // the cancelled loop has woken up to notice.
+    spawned.answer = null;
+    vi.stubGlobal("fetch", healthyEngine());
+    const second = manager.start();
+    await vi.advanceTimersByTimeAsync(6_000);
+
+    await expect(second).resolves.toMatchObject({ url: "http://127.0.0.1:7830" });
+    await abandoned;
+  });
+
+  it("does not publish a connection for an engine that died on the way up", async () => {
+    // `waitHealthy` tests that the child is alive only at the top of each
+    // iteration, so an engine that answers /health and then dies while the
+    // authenticated request is in flight gets all the way to the end. Its
+    // exit has already taken the connection down; putting it back hands the
+    // renderer a url and token for a process that is gone, and the app says
+    // an engine is answering while every request fails.
+    let release: (value: { ok: boolean; status: number }) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input.endsWith("/health")) return { ok: true, status: 200 };
+        // The authenticated request hangs until the test lets it go.
+        return new Promise((resolve) => (release = resolve));
+      }),
+    );
+    const manager = new EngineManager();
+    const caught = manager.start({ waitForPort: false }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // The engine falls over with the /projects response still in flight.
+    firstSpawn().child.emit("exit", 1, null);
+    release({ ok: true, status: 200 });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await caught;
+    expect(manager.connection).toBeNull();
   });
 });
 

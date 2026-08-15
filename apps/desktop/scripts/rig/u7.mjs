@@ -20,6 +20,11 @@ import { evalInApp, health, makeCheck, startRig, stopRig } from "./rig.mjs";
 
 const check = makeCheck();
 const ENGINE_PORT = Number(process.env.LOCALCUT_ENGINE_PORT || 7830);
+/** The words the engine leads with when it could not claim the port. The
+ * third place this is written down - cli.py and electron/engine.ts are the
+ * others - and `test_ui_contract.py` keeps all three in step, because a
+ * reworded message would leave this gate silently counting nothing. */
+const BIND_REFUSED = "cannot bind ";
 
 /** PIDs listening on a port, without assuming which tool exists. */
 function listenersOn(port) {
@@ -490,12 +495,19 @@ try {
   // Whether the kernel actually made this app wait is not ours to decide —
   // TIME_WAIT only forms if the dying engine's sockets closed with a FIN
   // rather than a RST, which depends on what was in flight when it was
-  // killed. So the wait is reported rather than required, and the check that
-  // it is worth reporting is asserted instead: every refused bind on the way
-  // must have been outlived, not surfaced to the user as a failed restart.
-  const refused = ((await health()).mainLog ?? []).filter((line) =>
-    line.includes("cannot bind "),
-  ).length;
+  // killed. So the wait itself is reported rather than required, and what is
+  // asserted instead is that every refused bind on the way was outlived: the
+  // app saw it for what it was and said so, rather than surfacing it to the
+  // user as a failed restart. That is the half a reworded message breaks —
+  // the count alone would just quietly fall to zero and still read green.
+  const log = (await health()).mainLog ?? [];
+  const refused = log.filter((line) => line.includes(BIND_REFUSED)).length;
+  const waited = log.some((line) => line.includes("still held by a closed socket"));
+  check(
+    "and every refused bind on the way was outlived rather than reported",
+    refused === 0 || (waited && recovered === true),
+    `${refused} refused bind(s), ${waited ? "recognised as a wait" : "NOT recognised as a wait"}`,
+  );
   console.log(`  note ${took}s to recover, over ${refused} refused bind(s)`);
 } finally {
   await stopRig(rig);
