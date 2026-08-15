@@ -1,4 +1,4 @@
-import { BookOpen, HelpCircle, Keyboard } from "lucide-react";
+import { BookOpen, HelpCircle, Keyboard, Search, SearchX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { m, t } from "../i18n";
 import { shortcutLabel } from "../lib/platform";
@@ -8,6 +8,27 @@ import { Modal } from "./Modal";
 import { Tip } from "./Tooltip";
 
 type Panel = "shortcuts" | "glossary" | null;
+
+/** One cap per key, which is how a keyboard shortcut is actually written.
+ *
+ * The catalog stores a combo as one string ("Ctrl Shift Z") because that is
+ * what a translator should see and what the Mac swap operates on; the caps
+ * are a rendering of it. No "+" between them — the caps are the syntax, and
+ * a plus glyph sitting at the same size as a key reads as one. */
+function Keys({ keys }: { keys: string }) {
+  return (
+    <span className="kcaps">
+      {shortcutLabel(keys)
+        .split(" ")
+        .map((key, index) => (
+          // The combo is the identity here; a repeated key within one combo
+          // (there are none, but the type does not know that) would collide
+          // on its own name.
+          <kbd key={`${key}-${index}`}>{key}</kbd>
+        ))}
+    </span>
+  );
+}
 
 /** Panel-level "?" popovers dispatch this to open the glossary that
  * HelpMenu hosts — one modal, many entry points. */
@@ -221,31 +242,66 @@ export function HelpMenu({ compact = false }: { compact?: boolean }) {
           onClose={() => setPanel(null)}
         >
           {panel === "shortcuts" ? (
-            <div className="shortcut-list">
-              {m().help.shortcuts.map((entry) => (
-                <div key={entry.keys}>
-                  <kbd>{shortcutLabel(entry.keys)}</kbd>
-                  <span>{entry.what}</span>
+            /* Four wells instead of fifteen flat rows. The groups also
+               retire four parentheticals — "(from anywhere)", "(Home or
+               Library)" — that were doing a heading's job one row at a
+               time. */
+            <div className="gap-list">
+              {m().help.shortcutGroups.map((group) => (
+                <div className="well" key={group.name}>
+                  <div className="whead label">
+                    <span>{group.name}</span>
+                  </div>
+                  <ul className="plist">
+                    {group.items.map((entry) => (
+                      <li className="prow" key={entry.keys}>
+                        <span className="pname">{entry.what}</span>
+                        <Keys keys={entry.keys} />
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
           ) : (
             <>
-              <input
-                className="glossary-search"
-                placeholder={t("help.modal.searchPlaceholder")}
-                value={search}
-                aria-label={t("help.modal.searchAria")}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-              <div className="glossary-list">
-                {glossary.map((entry) => (
-                  <div key={entry.term}>
-                    <b>{entry.term}</b>
-                    <p>{entry.def}</p>
+              {/* Sticky, and it says how big the haystack is before a
+                  single character is typed. */}
+              <div className="glossary-head">
+                <Search size={14} strokeWidth={1.8} aria-hidden="true" />
+                <input
+                  className="glossary-search"
+                  placeholder={t("help.modal.searchGlossary", {
+                    count: m().terms.glossary.length,
+                  })}
+                  value={search}
+                  aria-label={t("help.modal.searchAria")}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </div>
+              <div className="well glossary-well">
+                {glossary.length === 0 ? (
+                  <div className="well-empty">
+                    <SearchX size={20} strokeWidth={1.8} aria-hidden="true" />
+                    <b>{t("help.modal.nothingMatches")}</b>
+                    <button className="btn-ghost" onClick={() => setSearch("")}>
+                      {t("help.modal.clearSearch")}
+                    </button>
                   </div>
-                ))}
-                {glossary.length === 0 && <p className="hint">{t("help.modal.nothingMatches")}</p>}
+                ) : (
+                  /* Run-in entries: the term is an anchor the eye can
+                     count down the left edge, and the definition follows
+                     it on the same line rather than under a bold word
+                     with nothing separating one pair from the next. */
+                  <dl className="glossary-list">
+                    {glossary.map((entry) => (
+                      <div className="gentry" key={entry.term}>
+                        <dt className="term-chip">{entry.term}</dt>
+                        <dd>{entry.def}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
               </div>
             </>
           )}

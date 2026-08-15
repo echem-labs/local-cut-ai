@@ -193,7 +193,46 @@ describe("once the kit has rendered", () => {
     // The engine strips it, so bare words would be pasted into a caption box
     // and mean nothing.
     mount(done);
-    expect(await screen.findByLabelText(/^hashtags$/i)).toHaveValue("#snakes #nature");
+    await screen.findByLabelText(/^title$/i);
+    const chips = [...document.querySelectorAll(".tag-chip")].map((node) => node.textContent);
+    expect(chips).toEqual(["#snakes", "#nature"]);
+  });
+
+  it("shows every tag whole, however many there are", async () => {
+    // One line of input could not show its own contents: five multi-word
+    // tags ended at "#se…", which is the bug the chips exist to kill.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        json: () =>
+          Promise.resolve({
+            ...KIT,
+            hashtags: [
+              "feline communication",
+              "cat behavior",
+              "animal language",
+              "pet relationships",
+            ],
+          }),
+      } as unknown as Response),
+    );
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    const chips = [...document.querySelectorAll(".tag-chip")].map((node) => node.textContent);
+    expect(chips).toEqual([
+      "#feline communication",
+      "#cat behavior",
+      "#animal language",
+      "#pet relationships",
+    ]);
+  });
+
+  it("removes one tag without disturbing the others", async () => {
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    await userEvent.click(screen.getByRole("button", { name: /remove #snakes/i }));
+    const draft = JSON.parse(localStorage.getItem("localcut.publishDraft.p1") ?? "{}");
+    expect(draft.hashtags).toEqual(["nature"]);
   });
 
   it("copies a field to the clipboard", async () => {
@@ -276,14 +315,30 @@ describe("editing what will be pasted", () => {
     expect(Object.keys(draft)).toEqual(["title"]);
   });
 
-  it("takes hashtags with or without the hash and stores them bare", async () => {
+  it("takes a hashtag with or without the hash and stores it bare", async () => {
     mount(done);
-    const tags = await screen.findByLabelText(/^hashtags$/i);
-    await userEvent.clear(tags);
-    await userEvent.type(tags, "#reptiles nature");
+    await screen.findByLabelText(/^title$/i);
+    const entry = screen.getByLabelText(/add a tag/i);
+    // A separator ends the tag rather than joining the next word to it —
+    // the free-text field parsed on every keystroke and ate the space, so
+    // "#a b" became "#ab".
+    await userEvent.type(entry, "#reptiles ");
+    await userEvent.type(entry, "swamps{Enter}");
 
     const draft = JSON.parse(localStorage.getItem("localcut.publishDraft.p1") ?? "{}");
-    expect(draft.hashtags).toEqual(["reptiles", "nature"]);
+    expect(draft.hashtags).toEqual(["snakes", "nature", "reptiles", "swamps"]);
+  });
+
+  it("copies the whole kit as one block", async () => {
+    // Three copies is three trips; the paste is always all of it.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    mount(done);
+    await screen.findByLabelText(/^title$/i);
+    await userEvent.click(screen.getByRole("button", { name: /copy all/i }));
+    expect(writeText).toHaveBeenCalledWith(
+      `${KIT.title}\n\n${KIT.description}\n\n#snakes #nature`,
+    );
   });
 
   it("closes on Escape without leaving the keystroke for the board", async () => {
@@ -326,7 +381,12 @@ describe("the dialog itself", () => {
     mount(done);
     await screen.findByLabelText(/^title$/i);
     const dialog = screen.getByRole("dialog");
-    expect(dialog.querySelectorAll("label.field")).toHaveLength(3);
+    // Two labelled controls plus the hashtag block, which wears `.field`
+    // for its label rhythm but is a DIV: it has no single focusable box to
+    // be the label's control, and a <label> wrapping a wellful of buttons
+    // would name whichever one it reached first.
+    expect(dialog.querySelectorAll("label.field")).toHaveLength(2);
+    expect(dialog.querySelectorAll(".field")).toHaveLength(3);
     expect(dialog.querySelector(".modal-head h2")).toHaveTextContent(/publish/i);
     expect(dialog.querySelector(".modal-body")).not.toBeNull();
     expect(dialog.querySelector(".modal-foot")).not.toBeNull();
