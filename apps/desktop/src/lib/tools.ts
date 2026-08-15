@@ -45,6 +45,19 @@ export const TOOL_ICONS: Record<ToolKind, typeof FileText> = {
   clip: Film,
 };
 
+/** The engine node kinds a tool session renders — what its readiness
+ * preflight covers. `clip` is two: the keyframe is generated first and the
+ * clip is conditioned on it (graph/templates.py builds the pair). A drift
+ * here only mis-scopes a warning; the render itself never reads this. */
+export const TOOL_ENGINE_KINDS: Record<ToolKind, string[]> = {
+  script: ["script"],
+  thumbnail: ["thumbnail"],
+  voiceover: ["narration"],
+  image: ["keyframe"],
+  music: ["music"],
+  clip: ["keyframe", "clip"],
+};
+
 /** What a kind is MADE OF — the tile tag's tint groups by this rather than
  * giving six tools six hues. The tag carries the exact word, so the color
  * is there to group, not to identify. A video project is `motion` too: a

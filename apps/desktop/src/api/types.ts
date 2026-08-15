@@ -320,6 +320,47 @@ export interface ModelRow extends ModelEntry {
   partial_bytes: number;
 }
 
+/** GET /readiness — which tier will actually serve each node kind.
+ * Verdicts, reasons and fix types are wire contracts mirrored from the
+ * engine's readiness.py; test_ui_contract compares the sets, so a value
+ * added on one side without the other fails the engine suite. */
+export type ReadinessVerdict = "ready" | "degraded" | "placeholder" | "will_fail";
+
+export type ReadinessReason =
+  | "ok"
+  | "still_clip_tier"
+  | "no_model_installed"
+  /** Weights (or a server) are fine — nothing in this engine's backend
+   * chain can use them, so a download would change nothing. */
+  | "backend_not_configured"
+  /** The node names a model ComfyUI will not run; something else renders
+   * it instead. */
+  | "model_ignored"
+  | "llm_server_down"
+  | "llm_model_missing"
+  | "cloud_key_missing"
+  | "cloud_model_unknown"
+  | "comfyui_down"
+  | "no_ffmpeg";
+
+export type ReadinessFix =
+  | { type: "download"; model_id: string; size_bytes: number }
+  | { type: "pick_model"; task: string }
+  | { type: "configure_provider"; provider: string }
+  | { type: "install_ffmpeg" };
+
+export interface ReadinessRow {
+  kind: string;
+  /** The model the row was judged for — the node's own on a project row,
+   * or what Auto resolves to when the engine can name it. */
+  model: string | null;
+  backend: string | null;
+  verdict: ReadinessVerdict;
+  reason: ReadinessReason;
+  data: Record<string, string | number | boolean>;
+  fix: ReadinessFix | null;
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "fal";
 
 export interface Provider {

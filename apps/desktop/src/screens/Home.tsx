@@ -31,12 +31,30 @@ import { tileStatus } from "../lib/tiles";
 import {
   MOTION_PRESETS,
   SCRIPT_PRESETS,
+  TOOL_ENGINE_KINDS,
   TOOL_ICONS,
   TOOL_KINDS,
   VOICE_SWATCHES,
   isToolSession,
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
+import { describeGap, useReadinessGuard } from "../components/Readiness";
+import { blockingGaps, distinctGaps } from "../lib/readiness";
+
+/** The engine kinds a full video renders. Everything but the thumbnail,
+ * which only the publish kit and the thumbnail tool ever build — warning
+ * about a thumbnail model before a video is a warning about nothing.
+ * Mirrors readiness.PIPELINE_KINDS, compared by test_ui_contract. */
+const VIDEO_KINDS = [
+  "script",
+  "keyframe",
+  "clip",
+  "narration",
+  "captions",
+  "music",
+  "timeline",
+  "export",
+];
 import { EMPTY_TOOL_OPTIONS, useApp } from "../store";
 
 /** The bundled 2-second samples the voice swatches play. Resolved at build
@@ -85,12 +103,13 @@ export function Home() {
     openLibrary,
     actionError,
     dismissActionError,
+    readiness,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
-  const [missingModel, setMissingModel] = useState<{ task: string; size: number } | null>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const tiles = useTileLifecycle();
+  const { guard, dialog: readinessDialog } = useReadinessGuard("home");
 
   const { prompt, tool, toolInput, voice, motion, scriptModel, toolAspect, toolDuration, clipSeconds } =
     homeDraft;
@@ -195,40 +214,49 @@ export function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // FR1 readiness note: a missing recommended model for a downloadable task.
-  const checkReadiness = () => {
-    for (const rec of system?.recommendations ?? []) {
-      if (!rec.model || rec.model.files.length === 0) continue;
-      const row = models.find((entry) => entry.id === rec.model?.id);
-      if (row && !row.downloaded && !row.downloading) {
-        setMissingModel({ task: rec.task, size: row.size_bytes });
-        return;
-      }
-    }
-    setMissingModel(null);
-  };
+  // The readiness facts, standing — not a snapshot taken after a click.
+  // The prompt box notes the first gap a VIDEO would hit; a tool panel
+  // notes only the kinds that tool renders. Both read the same engine
+  // report the workspace banner and the gate dialog read.
+  // `blockingGaps`, not `noteworthyGaps`: this note is standing, and the
+  // still-clip tier is how a low-VRAM machine normally works — a permanent
+  // alert about the normal path is the thing the banner/gate split exists
+  // to avoid. Filtered to the surface's kinds BEFORE deduping, or the
+  // thumbnail panel loses its only line to the keyframe row that shares
+  // its task.
+  const gapsFor = (kinds: string[]) =>
+    distinctGaps(blockingGaps(readiness).filter((row) => kinds.includes(row.kind)));
+  const promptGap = gapsFor(VIDEO_KINDS)[0] ?? null;
+  const toolGaps = tool ? gapsFor(TOOL_ENGINE_KINDS[tool]) : [];
 
   const generate = async () => {
     if (!prompt.trim() || busy) return;
-    checkReadiness();
-    setBusy(true);
-    try {
-      await createFromPrompt(prompt.trim(), duration, aspect, mode, style);
-      // The whole composition goes, not just the words: the row described
-      // THAT video, and leaving a look or a run mode behind aims the next
-      // one without anyone choosing it. Back to the Settings baseline.
-      if (!useApp.getState().actionError)
-        setHomeDraft({ prompt: "", aspect: null, duration: null, style: null, mode: null });
-    } finally {
-      setBusy(false);
-    }
+    // The gate holds the click when a needed model is missing — warned,
+    // suppressible, never blocking ("Render anyway" always proceeds).
+    // Scoped to what a video renders: a thumbnail model it will never
+    // touch is not a reason to interrupt.
+    await guard(async () => {
+      setBusy(true);
+      try {
+        await createFromPrompt(prompt.trim(), duration, aspect, mode, style);
+        // The whole composition goes, not just the words: the row described
+        // THAT video, and leaving a look or a run mode behind aims the next
+        // one without anyone choosing it. Back to the Settings baseline.
+        if (!useApp.getState().actionError)
+          setHomeDraft({ prompt: "", aspect: null, duration: null, style: null, mode: null });
+      } finally {
+        setBusy(false);
+      }
+    }, VIDEO_KINDS);
   };
 
   const runTool = async () => {
     if (!tool || !toolInput.trim() || busy) return;
-    // No checkReadiness() here: the missing-model banner only renders in the
-    // video prompt box, so setting it from a tool run just leaks a stale note
-    // into the prompt box after the tool closes.
+    await guard(() => runToolNow(), TOOL_ENGINE_KINDS[tool]);
+  };
+
+  const runToolNow = async () => {
+    if (!tool || !toolInput.trim() || busy) return;
     setBusy(true);
     const effectiveVoice = voice.trim() || defaults.voice.trim();
     // A number input does not stop a typed value from leaving its bounds.
@@ -308,9 +336,6 @@ export function Home() {
   // the life of the install.
   const downloading = models.some((row) => row.downloading);
   const [dlOpen, setDlOpen] = useState(false);
-  const [stripDismissed, setStripDismissed] = useState(
-    () => localStorage.getItem("localcut.home.dlStripDismissed") === "1",
-  );
   let dlDone = 0;
   let dlTotal = 0;
   for (const stage of downloadStages) {
@@ -428,14 +453,14 @@ export function Home() {
               {actionError.message}
             </p>
           )}
-          {missingModel && (
-            <p className="hint" role="alert">
-              {t("home.modelMissing", {
-                task:
-                  (m().models.taskLabels as Record<string, string>)[missingModel.task] ??
-                  missingModel.task,
-                size: formatSize(missingModel.size),
-              })}{" "}
+          {/* `status`, not `alert`: this is standing copy, and an
+              assertive live region re-announces it on every readiness
+              refresh. Also gated on the SENTENCE — a reason code this
+              build has no catalog entry for must render as nothing, not
+              as an empty announcement with a link after it. */}
+          {promptGap && describeGap(promptGap) && (
+            <p className="hint" role="status">
+              {describeGap(promptGap)}{" "}
               <button className="link" onClick={() => openSettings("models")}>
                 {t("home.getIt")}
               </button>
@@ -729,13 +754,22 @@ export function Home() {
               {actionError.message}
             </p>
           )}
+          {toolGaps.length > 0 && describeGap(toolGaps[0]) && (
+            <p className="hint" role="status">
+              {describeGap(toolGaps[0])}{" "}
+              <button className="link" onClick={() => openSettings("models")}>
+                {t("home.getIt")}
+              </button>
+            </p>
+          )}
         </div>
       )}
+      {readinessDialog}
 
       {/* Setup hands over mid-download: the same per-stage rows the wizard's
           last step shows, behind one line so they never push the tools down
           the page while bytes move (design review v5, Q1). */}
-      {downloading && !stripDismissed && (
+      {downloading && (
         <div className={`dl-summary${dlOpen ? " open" : ""}`}>
           <button
             className="dl-summary-head"
