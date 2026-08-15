@@ -1,64 +1,88 @@
 {
-  "shortcuts": [
+  "shortcutGroups": [
     {
-      "keys": "Space",
-      "what": "Play / pause the draft preview"
+      "name": "Anywhere",
+      "items": [
+        {
+          "keys": "Ctrl K",
+          "what": "Command palette — projects, tools, settings"
+        },
+        {
+          "keys": "/",
+          "what": "Search the library"
+        },
+        {
+          "keys": "?",
+          "what": "This overlay"
+        },
+        {
+          "keys": "Ctrl +",
+          "what": "Zoom the interface in"
+        },
+        {
+          "keys": "Ctrl −",
+          "what": "Zoom the interface out"
+        },
+        {
+          "keys": "Ctrl 0",
+          "what": "Reset interface zoom"
+        }
+      ]
     },
     {
-      "keys": "Ctrl K",
-      "what": "Command palette — projects, tools, settings, from anywhere"
+      "name": "Home & Library",
+      "items": [
+        {
+          "keys": "F2",
+          "what": "Rename the focused tile"
+        },
+        {
+          "keys": "Ctrl ↵",
+          "what": "Generate from the prompt"
+        }
+      ]
     },
     {
-      "keys": "/",
-      "what": "Search the library (from anywhere)"
+      "name": "In a project",
+      "items": [
+        {
+          "keys": "Space",
+          "what": "Play / pause the draft preview"
+        },
+        {
+          "keys": "Enter",
+          "what": "Open the focused scene's details"
+        },
+        {
+          "keys": "R",
+          "what": "Regenerate the focused scene (new take)"
+        },
+        {
+          "keys": "P",
+          "what": "Pin / unpin the focused scene"
+        },
+        {
+          "keys": "Esc",
+          "what": "Close the inspector"
+        },
+        {
+          "keys": "Ctrl wheel",
+          "what": "Zoom the flowchart (Fit brings the graph back)"
+        }
+      ]
     },
     {
-      "keys": "F2",
-      "what": "Rename the focused tile (Home or Library)"
-    },
-    {
-      "keys": "Enter",
-      "what": "Open the focused scene's details"
-    },
-    {
-      "keys": "R",
-      "what": "Regenerate the focused scene (new take)"
-    },
-    {
-      "keys": "P",
-      "what": "Pin / unpin the focused scene"
-    },
-    {
-      "keys": "Esc",
-      "what": "Close the inspector"
-    },
-    {
-      "keys": "Ctrl ↵",
-      "what": "Generate (Home prompt)"
-    },
-    {
-      "keys": "Ctrl + / Ctrl −",
-      "what": "Zoom the interface in / out"
-    },
-    {
-      "keys": "Ctrl 0",
-      "what": "Reset interface zoom"
-    },
-    {
-      "keys": "Ctrl wheel",
-      "what": "Zoom the flowchart (Fit brings the graph back)"
-    },
-    {
-      "keys": "?",
-      "what": "This overlay"
-    },
-    {
-      "keys": "Ctrl Z",
-      "what": "Undo the last edit"
-    },
-    {
-      "keys": "Ctrl Shift Z",
-      "what": "Redo"
+      "name": "Editing",
+      "items": [
+        {
+          "keys": "Ctrl Z",
+          "what": "Undo the last edit"
+        },
+        {
+          "keys": "Ctrl Shift Z",
+          "what": "Redo"
+        }
+      ]
     }
   ],
   "panels": {
@@ -115,6 +139,9 @@
     "glossaryTitle": "Glossary",
     "searchPlaceholder": "Search terms…",
     "searchAria": "Search the glossary",
-    "nothingMatches": "Nothing matches."
+    "nothingMatches": "Nothing matches.",
+    "searchShortcuts": "Filter shortcuts",
+    "searchGlossary": "Search {count} terms",
+    "clearSearch": "Clear the search"
   }
 }

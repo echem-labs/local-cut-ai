@@ -8,10 +8,17 @@
   "fieldHashtags": "Hashtags",
   "copyField": "Copy the {field}",
   "open": "Publish kit",
-  "hint": "A title, description and hashtags written from your script, and a thumbnail to go with them. Nothing is uploaded anywhere - this is what you paste.",
+  "hint": "Written from your script. Nothing is uploaded anywhere - this is what you paste.",
   "regenerate": "Write them again",
   "metaFailed": "The title, description and hashtags could not be written.",
   "thumbFailed": "The thumbnail could not be rendered.",
   "unreadable": "The engine wrote the kit, but it could not be read back.",
-  "editNote": "Edits are yours and stay on this machine."
+  "editNote": "Edits are yours and stay on this machine.",
+  "copyAll": "Copy all",
+  "copiedAll": "Copied",
+  "copyImage": "Copy the image",
+  "saveImage": "Save the image",
+  "copyTag": "Copy #{tag}",
+  "removeTag": "Remove #{tag}",
+  "addTag": "Add a tag"
 }
