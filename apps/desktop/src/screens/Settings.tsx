@@ -127,13 +127,22 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
  *  the user an empty picker for a knob the engine does honor. */
 const SERVER_TASKS = ["text.llm", "vision.llm"];
 
+/** Whether the LLM server's list holds a model name. Ollama reports a
+ *  tagged name, so a perfectly good `qwen3.5:9b` has to match the
+ *  `qwen3.5:9b:latest` it may list — an exact test declares that machine
+ *  broken. Mirrors `_lists_model` in the engine's readiness.py, which
+ *  answers the same question about the same list. */
+function servesModel(names: string[], model: string): boolean {
+  const wanted = model.replace(/:latest$/, "");
+  return names.some((name) => name.replace(/:latest$/, "") === wanted);
+}
+
 /** Per-task default models (engine-persisted): what renders each kind of
  * work when a node names no model. Rows come from the engine's own list of
  * defaultable tasks, so a task the engine cannot honor never grows a knob;
  * a task with nothing installed to choose stays hidden too. */
 function ModelDefaultsPanel() {
-  const { models, modelDefaults, refreshModelDefaults, setModelDefault, client, readiness } =
-    useApp();
+  const { models, modelDefaults, refreshModelDefaults, setModelDefault, client } = useApp();
   const [llmNames, setLlmNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,33 +174,37 @@ function ModelDefaultsPanel() {
   if (!modelDefaults) return null;
   const taskLabels = m().models.taskLabels as Record<string, string>;
   const taskHints = m().models.taskHints as Record<string, string>;
-  // What Auto actually resolves to per task, straight from the engine's
-  // readiness report. "Auto" alone reads as "not selected" — and on a
-  // machine with nothing installed for the task that is very nearly what
-  // it means, since resolution then lands on a placeholder tier.
-  const resolvedByTask = new Map<string, string | null>();
-  for (const row of readiness ?? []) {
-    const task = String(row.data.task ?? "");
-    if (!task || resolvedByTask.has(task)) continue;
-    // Only "the weights are not here" earns the bleak label. A model that
-    // is installed but momentarily unservable (ComfyUI stopped) is not
-    // "nothing installed yet", and saying so sends people to re-download.
-    const missing = row.reason === "no_model_installed" || row.reason === "still_clip_tier";
-    resolvedByTask.set(task, missing ? null : row.model);
-  }
+  // What Auto actually resolves to per task, from the engine's own
+  // `auto` map — which answers with the stored default IGNORED, so the
+  // label holds on the rows that have one too. "Auto" alone reads as "not
+  // selected", and on a machine with nothing installed for the task that is
+  // very nearly what it means, since resolution then lands on a placeholder
+  // tier. Read from the defaults reply rather than from the readiness
+  // report: the report covers what a render queues, and `vision.llm` — the
+  // model that reads a picture — is not part of one.
+  const autoModels = modelDefaults.auto;
   const autoLabel = (task: string): string => {
-    // A task with a default STORED resolves to that default, so naming it
-    // here would advertise the stored pick as what Auto falls back to —
-    // and choosing Auto is precisely what discards it.
-    if (!resolvedByTask.has(task) || modelDefaults.defaults[task]) {
-      return t("settings.models.defaultsAuto");
+    if (!autoModels || !(task in autoModels)) return t("settings.models.defaultsAuto");
+    const resolved = autoModels[task];
+    if (!resolved) {
+      // Two different nothings: no weights on disk is a download, while an
+      // unset server task is a choice nobody has made yet. Telling someone
+      // to install what is already installed is the worse of the two.
+      return SERVER_TASKS.includes(task)
+        ? t("settings.models.defaultsAutoUnset")
+        : t("settings.models.defaultsAutoNothing");
     }
-    const resolved = resolvedByTask.get(task);
-    const entry = resolved ? models.find((row) => row.id === resolved) : null;
+    const entry = models.find((row) => row.id === resolved);
     const name = entry ? displayModelName(entry.family, entry.version) : resolved;
-    return name
-      ? t("settings.models.defaultsAutoResolved", { model: name })
-      : t("settings.models.defaultsAutoNothing");
+    // A server task's fallback is a NAME the server may not have — the
+    // engine ships `qwen3:14b` and most machines pull something else. Said
+    // plainly here, it is one glance instead of one failed render. Only
+    // once the list has arrived: an empty list is "not asked yet", and
+    // calling every model missing on a slow server is worse than silence.
+    if (SERVER_TASKS.includes(task) && llmNames.length > 0 && !servesModel(llmNames, resolved)) {
+      return t("settings.models.defaultsAutoMissing", { model: name });
+    }
+    return t("settings.models.defaultsAutoResolved", { model: name });
   };
   const rows = modelDefaults.tasks
     .map((task) => {
@@ -1447,6 +1460,7 @@ export function Settings() {
           confirmLabel={t(
             isToolSession(confirmProject.id) ? "home.deleteToolConfirm" : "home.deleteConfirm",
           )}
+          cancelLabel={t("common.keepIt")}
           danger
           onConfirm={() => {
             const target = confirmProject;

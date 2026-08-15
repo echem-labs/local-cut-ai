@@ -796,6 +796,7 @@ export function NodeCanvas() {
           title={t("canvas.confirmDelete.title", { id: pendingDelete })}
           message={t("canvas.confirmDelete.message")}
           confirmLabel={t("canvas.confirmDelete.confirm")}
+          cancelLabel={t("common.keepIt")}
           danger
           onConfirm={() => {
             const target = pendingDelete;

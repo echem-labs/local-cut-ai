@@ -432,6 +432,12 @@ export interface HistoryInfo {
 export interface ModelDefaults {
   defaults: Record<string, string>;
   tasks: string[];
+  /** Task -> what "Auto" resolves to with any stored default ignored, which
+   * is the only honest thing to label the Auto option with: choosing Auto is
+   * what discards the stored pick. `null` means nothing would render it.
+   * Optional so an engine that predates the field degrades to a bare
+   * "Auto" rather than to "nothing installed". */
+  auto?: Record<string, string | null>;
 }
 
 export interface Job {
