@@ -5527,6 +5527,17 @@ a.icon-btn-sm {
   text-align: right;
 }
 
+/* The toggle hugs its three buttons, whatever is written under it.
+   `.seg-toggle` is `display: flex`, which is BLOCK-level: as a child of a
+   column whose width is set by the widest thing in it, it stretched to the
+   width of the hint line below — and the hint for "Always" is twice the
+   length of the other two. The result was a fourth, empty segment appearing
+   inside the bordered box on that choice and no other. */
+.gate-scope .seg-toggle {
+  width: fit-content;
+  margin-left: auto;
+}
+
 .gate-scope .scope-hint {
   margin-top: 6px;
   font-size: var(--text-xs);
