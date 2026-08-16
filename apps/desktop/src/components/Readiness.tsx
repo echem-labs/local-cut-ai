@@ -1,5 +1,7 @@
 import {
   Boxes,
+  ChevronDown,
+  ChevronUp,
   Clapperboard,
   CircleSlash,
   Download,
@@ -12,7 +14,7 @@ import {
 import { useRef, useState, type ReactNode } from "react";
 import type { ReadinessRow } from "../api/types";
 import { m, plural, t, type MessageKey } from "../i18n";
-import { distinctGaps, noteworthyGaps } from "../lib/readiness";
+import { distinctGaps, noteworthyGaps, readinessFingerprint } from "../lib/readiness";
 import { useApp } from "../store";
 import { formatSize, ModelLibrary } from "./ModelLibrary";
 import { Modal } from "./Modal";
@@ -168,17 +170,7 @@ export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
       {/* Only worth totalling when there is more than one well: with a
           single group the well IS the summary, and a chip repeating it is
           furniture. */}
-      {groups.length > 1 && totals.length > 0 && (
-        <div className="sev-row">
-          {totals.map((total) => (
-            <span className="sev-chip" key={total.verdict}>
-              <span className={`pdot ${DOT[total.verdict]}`} aria-hidden="true" />
-              <span className="readout">{total.count}</span>
-              {t(`readiness.totals.${total.verdict}` as MessageKey)}
-            </span>
-          ))}
-        </div>
-      )}
+      {groups.length > 1 && totals.length > 0 && <SeverityChips groups={groups} />}
       <div className="gap-list">
         {groups.map((group) => {
           const Icon = CAUSE_ICON[group.reason] ?? CircleSlash;
@@ -210,6 +202,24 @@ export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
   );
 }
 
+/** How many stages sit at each severity, worst first. Shared by the list
+ * (above its wells) and by the folded banner, where it is the whole
+ * reading — same chips, same order, one implementation, so a folded strip
+ * cannot come to disagree with an open one. */
+function SeverityChips({ groups }: { groups: GapGroup[] }) {
+  return (
+    <div className="sev-row">
+      {severityTotals(groups).map((total) => (
+        <span className="sev-chip" key={total.verdict}>
+          <span className={`pdot ${DOT[total.verdict]}`} aria-hidden="true" />
+          <span className="readout">{total.count}</span>
+          {t(`readiness.totals.${total.verdict}` as MessageKey)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** How many stages sit at each severity, worst first — the chip strip's
  * data. Counted over ITEMS rather than groups: two causes that both cost a
  * placeholder are two placeholders to the person reading. */
@@ -226,11 +236,45 @@ function severityTotals(groups: GapGroup[]): { verdict: string; count: number }[
     .sort((a, b) => (SEVERITY[b.verdict] ?? 0) - (SEVERITY[a.verdict] ?? 0));
 }
 
+/** Where a collapsed banner is remembered, keyed by WHAT was collapsed.
+ *
+ * Folding is not dismissal, and the fingerprint is what keeps the two
+ * apart: it is the same key the gate's own skip uses, so a new problem —
+ * or a worse one — has a different key and unfolds the strip again. A flat
+ * boolean would have hidden the next thing to go wrong behind a click the
+ * user made about something else entirely. */
+const FOLD_KEY = "localcut.readinessFolded";
+
+const readFolded = (): string | null => {
+  try {
+    return localStorage.getItem(FOLD_KEY);
+  } catch {
+    return null;
+  }
+};
+
+const writeFolded = (fingerprint: string | null) => {
+  try {
+    if (fingerprint === null) localStorage.removeItem(FOLD_KEY);
+    else localStorage.setItem(FOLD_KEY, fingerprint);
+  } catch {
+    /* storage full or blocked — folding is a preference, not state */
+  }
+};
+
 /** Non-blocking facts strip for the workspace (project board and tool
  * sessions): what will not render properly, and the shortest path to
  * fixing it. Never suppressed — dismissing the DIALOG must not take the
  * facts off the screen — and it clears itself the moment a download lands,
  * because the store refetches readiness on every terminal download event.
+ *
+ * It FOLDS rather than closes, and that is the whole answer to "should this
+ * be dismissable": the sentence and the severity chips stay, so the board
+ * never lies about being ready, and the rows that repeat what the chips
+ * already said go away. A dismissal would hide a true statement about the
+ * project with nothing on screen to say it had been hidden — and the app
+ * already has a considered way to stop being warned, in the gate, where the
+ * choice is scoped and says what it covers.
  *
  * Unlike the gate, this states `degraded` too: "no video model, so your
  * scenes will be stills" is a fact worth having, even though it is never
@@ -240,6 +284,7 @@ export function ReadinessBanner() {
   const models = useApp((state) => state.models);
   const startDownload = useApp((state) => state.startDownload);
   const openSettings = useApp((state) => state.openSettings);
+  const [folded, setFolded] = useState(readFolded);
   const gaps = noteworthyGaps(projectReadiness);
   if (gaps.length === 0) return null;
 
@@ -266,8 +311,21 @@ export function ReadinessBanner() {
   const worst = Math.max(...gapGroups(gaps).map((group) => group.severity), 0);
   const grave = worst >= SEVERITY.placeholder;
 
+  // This exact set of problems, in the gate's own terms. Folded only while
+  // the two match: anything new here is worth the room again.
+  const fingerprint = readinessFingerprint(gaps);
+  const shut = folded === fingerprint;
+  const fold = () => {
+    const next = shut ? null : fingerprint;
+    writeFolded(next);
+    setFolded(next);
+  };
+
   return (
-    <div role="status" className={`banner readiness${grave ? " worst-fail" : ""}`}>
+    <div
+      role="status"
+      className={`banner readiness${grave ? " worst-fail" : ""}${shut ? " folded" : ""}`}
+    >
       <div className="row">
         {/* Coloured by the worst gap present — a status hue on a status
             mark, which is the one use the palette reserves them for. */}
@@ -278,6 +336,9 @@ export function ReadinessBanner() {
           color={`var(--status-${grave ? "failed" : "draft"})`}
         />
         <b>{t("readiness.banner.title")}</b>
+        {/* Folded, the chips ARE the banner — the count and the severity
+            survive, so the strip never reads as "everything is fine". */}
+        {shut && <SeverityChips groups={gapGroups(gaps)} />}
         <span className="spacer" />
         {directFix && (
           <button
@@ -296,8 +357,22 @@ export function ReadinessBanner() {
           <Boxes size={14} strokeWidth={1.8} aria-hidden="true" />
           {t("readiness.banner.setup")}
         </button>
+        <Tip label={t(shut ? "readiness.banner.unfold" : "readiness.banner.fold")}>
+          <button
+            className="icon-btn-sm"
+            aria-expanded={!shut}
+            aria-label={t(shut ? "readiness.banner.unfold" : "readiness.banner.fold")}
+            onClick={fold}
+          >
+            {shut ? (
+              <ChevronDown size={15} strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <ChevronUp size={15} strokeWidth={2} aria-hidden="true" />
+            )}
+          </button>
+        </Tip>
       </div>
-      <GapList rows={gaps} />
+      {!shut && <GapList rows={gaps} />}
     </div>
   );
 }

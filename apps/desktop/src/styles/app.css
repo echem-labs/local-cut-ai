@@ -5460,6 +5460,12 @@ button.link:hover {
   min-height: 24px;
 }
 
+/* Folded, the chips sit in the title row rather than above the wells, so
+   they lose the margin that spaces them from a list that is not there. */
+.banner.readiness .row > .sev-row {
+  margin: 0;
+}
+
 /* The readout under the narration field: the app's one non-obvious rule,
    live, at the only moment it can be acted on. */
 .scene-runtime {

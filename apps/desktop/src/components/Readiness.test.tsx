@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReadinessRow } from "../api/types";
+import { t } from "../i18n";
 import { ReadinessBanner, useReadinessGuard } from "./Readiness";
 import { useApp } from "../store";
 
@@ -473,5 +474,56 @@ describe("suppression", () => {
     await dismissOnce(nextKey(), "project");
     render(<ReadinessBanner />);
     expect(screen.getByRole("status").textContent).toMatch(/none in the finished video/i);
+  });
+});
+
+/**
+ * Folding is the answer to "can I close this?" — and it is not closing.
+ * The strip keeps saying that something is not ready; what goes away is
+ * the detail. The fold is remembered against the gap set it was made
+ * about, so the next problem is not hidden behind a click about this one.
+ */
+describe("folding the banner", () => {
+  const fold = () =>
+    screen.getByRole("button", { name: t("readiness.banner.fold") });
+
+  it("keeps the warning and the count, and drops the rows", async () => {
+    seed([musicGap, clipDegraded]);
+    render(<ReadinessBanner />);
+    await userEvent.click(fold());
+
+    const strip = screen.getByRole("status");
+    expect(strip.textContent).toContain(t("readiness.banner.title"));
+    // The chips are the reading that survives: two problems, still there.
+    expect(strip.querySelectorAll(".sev-chip").length).toBe(2);
+    expect(strip.querySelector(".gap-list")).toBeNull();
+    // And the way in is a disclosure, not a dismissal.
+    expect(
+      screen.getByRole("button", { name: t("readiness.banner.unfold") }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("stays folded across a remount, because a preference that forgets is furniture", async () => {
+    seed([musicGap]);
+    const first = render(<ReadinessBanner />);
+    await userEvent.click(fold());
+    first.unmount();
+
+    render(<ReadinessBanner />);
+    expect(screen.getByRole("status").querySelector(".gap-list")).toBeNull();
+  });
+
+  it("unfolds itself when the problems change", async () => {
+    seed([musicGap]);
+    const first = render(<ReadinessBanner />);
+    await userEvent.click(fold());
+    first.unmount();
+
+    // A second, worse gap appears. The fold was a judgement about the
+    // music being a placeholder — it cannot cover an export that will
+    // fail, which nobody has seen yet.
+    seed([musicGap, exportFails]);
+    render(<ReadinessBanner />);
+    expect(screen.getByRole("status").querySelector(".gap-list")).not.toBeNull();
   });
 });
