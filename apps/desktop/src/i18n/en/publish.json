@@ -13,7 +13,6 @@
   "metaFailed": "The title, description and hashtags could not be written.",
   "thumbFailed": "The thumbnail could not be rendered.",
   "unreadable": "The engine wrote the kit, but it could not be read back.",
-  "editNote": "Edits are yours and stay on this machine.",
   "copyAll": "Copy all",
   "copiedAll": "Copied",
   "copyImage": "Copy the image",

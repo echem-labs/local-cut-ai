@@ -3815,8 +3815,9 @@ button.link:hover {
 
 /* A note under the last field. `.field` carries its spacing above itself,
    so anything FOLLOWING one inherits none and sat against the input above
-   as though it were that field's own error text. Two dialogs need this —
-   the publish kit's edit note and the pack grant's version hint. */
+   as though it were that field's own error text. The pack grant's version
+   hint is the one left that needs it — the publish kit's edit note said
+   what its own subtitle already says and has gone. */
 .modal .field + .hint {
   display: block;
   margin-top: var(--space-3);
@@ -4848,24 +4849,43 @@ button.link:hover {
   margin-top: var(--space-3);
 }
 
-/* Control and copy button on one row. The button is a SIBLING of the input,
-   never wrapping it: a control inside a control is unreachable to a screen
-   reader, and a field you cannot click into is not editable at all.
+/* The copy control rides INSIDE the field's right edge, as an affix — the
+   design's own arrangement, and the reason the fields here are full width
+   like every other field in the app instead of 28px short of it.
+
+   Still a SIBLING of the input in the markup, never wrapping it: a control
+   inside a control is unreachable to a screen reader, and a field you
+   cannot click into is not editable at all. Only the painting overlaps.
 
    A `div`, and the markup says so too: `.modal .field span` is the LABEL
    rule and matches every span in the field, so a span wrapper here was laid
    out as a block with the button under the input, wearing 10px uppercase
    type. */
 .publish-field .field-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
+  position: relative;
 }
 
-.publish-field .field-row > .icon-btn-sm {
-  flex-shrink: 0;
-  /* Beside the control's first row, not centred against a tall textarea. */
-  margin-top: 3px;
+/* The text stops before the affix rather than running under it.
+   `.modal` prefixed, for the third time in this family: the dialog field
+   recipe is `.modal input:not([type])` at 0-2-1, which ties with a bare
+   two-class rule and wins on order — so the padding here silently became
+   the recipe's 12px and the affix sat on top of the last characters of
+   the title. */
+.modal .publish-field .field-row > input,
+.modal .publish-field .field-row > textarea {
+  padding-right: 34px;
+}
+
+.publish-field .field-row > .tip-wrap {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+}
+
+.publish-field .field-row > .tip-wrap > .icon-btn-sm {
+  /* 24 in a 32px control leaves the 4px the top offset above assumes. */
+  width: 24px;
+  height: 24px;
 }
 
 /* The platform ceiling, as a readout under the field it governs. Quiet
@@ -4954,14 +4974,30 @@ button.link:hover {
   color: var(--text-tertiary);
 }
 
+/* Shown on approach, not at rest. A chip carrying a permanent ✕ is a chip
+   about its own deletion — the design draws a clean word — but dropping the
+   control to match the drawing would have cost the only way to edit a tag.
+   `:focus-within` on the chip is what keeps that bargain honest: the button
+   is in the DOM and in the tab order the whole time, and reaching it by
+   keyboard reveals it exactly as hovering does. */
 .tag-remove {
   display: inline-grid;
   place-items: center;
-  width: 18px;
+  width: 0;
   height: 100%;
-  padding: 0 var(--space-1) 0 0;
+  padding: 0;
+  overflow: hidden;
   color: var(--text-tertiary);
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  transition:
+    width var(--motion-fast),
+    padding var(--motion-fast);
+}
+
+.tag-chip:hover > .tag-remove,
+.tag-chip:focus-within > .tag-remove {
+  width: 18px;
+  padding: 0 var(--space-1) 0 0;
 }
 
 .tag-remove:hover {
