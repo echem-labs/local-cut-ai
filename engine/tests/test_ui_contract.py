@@ -318,6 +318,14 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in engine {sorted(set(TOOL_KINDS) - set(catalog))}"
     )
 
+    # Every kind needs the mid-sentence noun the delete confirmation uses
+    # ("Removes this voiceover"). `toolNoun` falls back to the generic word
+    # so an UNKNOWN kind from a newer engine still reads — which is exactly
+    # what would hide a known kind that shipped without one, back to the
+    # "quick tool output" this replaced.
+    missing = sorted(kind for kind, entry in catalog.items() if not entry.get("noun"))
+    assert not missing, f"tools.json entries with no `noun`: {missing}"
+
     # The fifth source, and the one TypeScript cannot check: lib/tools.ts's
     # TOOL_KINDS decides whether a session resolves to a labelled kind (Home's
     # picker and its icon map derive from it, and the palette asks the same
