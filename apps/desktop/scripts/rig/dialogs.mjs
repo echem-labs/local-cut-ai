@@ -15,7 +15,8 @@
  *
  * Usage: node scripts/rig/dialogs.mjs [--shots <dir>]
  */
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { deflateSync } from "node:zlib";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { evalInApp, makeCheck, shotsDir, startRigTrueToScale, stopRig } from "./rig.mjs";
@@ -37,6 +38,69 @@ const SPEC = {
   cap: 22,
   chip: 22,
 };
+
+/** A solid-colour PNG, written here rather than read from disk.
+ *
+ * The photo viewer and the new-scene dialog both need a real picture to
+ * open on, and this file used to point at one in whichever scratchpad the
+ * author happened to be using — a run from anywhere else died on ENOENT
+ * halfway through, after the checks above it had already passed. There is
+ * no ImageMagick on the box either, so the bytes are assembled: IHDR,
+ * one zlib-deflated scanline block, IEND.
+ */
+function samplePng(file, width, height, [red, green, blue]) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf) => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(4);
+    head.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+    const tail = Buffer.alloc(4);
+    tail.writeUInt32BE(crc(body));
+    return Buffer.concat([head, body, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolour
+  // A filter byte per row, then RGB triples.
+  const raw = Buffer.alloc(height * (1 + width * 3));
+  for (let y = 0; y < height; y += 1) {
+    const row = y * (1 + width * 3);
+    for (let x = 0; x < width; x += 1) {
+      const at = row + 1 + x * 3;
+      raw[at] = red;
+      raw[at + 1] = green;
+      raw[at + 2] = blue;
+    }
+  }
+  writeFileSync(
+    file,
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      chunk("IHDR", ihdr),
+      chunk("IDAT", deflateSync(raw)),
+      chunk("IEND", Buffer.alloc(0)),
+    ]),
+  );
+  return file;
+}
+
+const samplePhoto = samplePng(
+  path.join(mkdtempSync(path.join(tmpdir(), "lc-dialogs-media-")), "sample-photo.png"),
+  640,
+  360,
+  [178, 84, 30],
+);
 
 const shoot = (name) =>
   evalInApp(
@@ -171,6 +235,59 @@ try {
     check("gate: opens from the render click", false);
   }
 
+  // The scope control hugs its three buttons on every choice. `.seg-toggle`
+  // is `display: flex`, which is BLOCK-level, so inside a right-aligned
+  // column it stretched to the width of the hint line underneath — and the
+  // hint for "Always" is twice the length of the other two. The bordered
+  // box grew a fourth, empty segment on that one choice.
+  const scope = await evalInApp(`
+    const dialog = await page.$('[role="alertdialog"]');
+    if (!dialog) return null;
+    const widths = {};
+    for (const label of ['This session', 'This project', 'Always']) {
+      await page.evaluate((want) => {
+        const button = [...document.querySelectorAll('.gate-scope .seg-toggle button')].find(
+          (b) => (b.textContent || '').trim() === want,
+        );
+        button?.click();
+      }, label);
+      await page.waitForTimeout(120);
+      widths[label] = await page.evaluate(() => {
+        const toggle = document.querySelector('.gate-scope .seg-toggle');
+        const buttons = [...toggle.querySelectorAll('button')];
+        return {
+          toggle: Math.round(toggle.getBoundingClientRect().width),
+          // The three buttons plus the box's own two borders is all the
+          // width there is any reason for.
+          content:
+            Math.round(buttons.reduce((sum, b) => sum + b.getBoundingClientRect().width, 0)) + 2,
+          hint: (document.querySelector('.scope-hint')?.textContent ?? '').length,
+        };
+      });
+    }
+    return widths;
+  `);
+  if (scope) {
+    const widths = Object.values(scope).map((entry) => entry.toggle);
+    check(
+      "gate: the scope toggle is the same width on every choice",
+      new Set(widths).size === 1,
+      JSON.stringify(scope),
+    );
+    check(
+      "gate: and holds no segment its buttons do not fill",
+      Object.values(scope).every((entry) => Math.abs(entry.toggle - entry.content) <= 1),
+    );
+    // The hints really do differ in length — otherwise the check above
+    // passes on a build where the bug is simply unreachable.
+    check(
+      "gate: the choices carry hints of different lengths",
+      new Set(Object.values(scope).map((entry) => entry.hint)).size > 1,
+    );
+  } else {
+    check("gate: the scope control is measurable", false);
+  }
+
   // ---- 3. Through it, into the project the gate was holding.
   const made = await evalInApp(`
     await page.evaluate(() => {
@@ -224,8 +341,107 @@ try {
     check("banner: price column is right-aligned", banner.priceAlign === "right");
     await shoot("01-banner-in-place.png");
     await shootDialog("02-banner.png", ".banner.readiness");
+
+    // Folding is the answer to "can I close this?". What has to survive the
+    // fold is the claim itself and the count — a strip that folded to
+    // nothing would be a dismissal wearing a chevron.
+    const folded = await evalInApp(`
+      const open = await page.evaluate(
+        () => Math.round(document.querySelector('.banner.readiness').getBoundingClientRect().height),
+      );
+      await page.click('.banner.readiness .row .icon-btn-sm');
+      await page.waitForTimeout(200);
+      return page.evaluate((open) => {
+        const strip = document.querySelector('.banner.readiness');
+        if (!strip) return null;
+        const row = strip.querySelector('.row');
+        return {
+          open,
+          title: (strip.querySelector('b')?.textContent ?? '').length,
+          chips: strip.querySelectorAll('.sev-chip').length,
+          rows: strip.querySelectorAll('.prow').length,
+          height: Math.round(strip.getBoundingClientRect().height),
+          // Nothing below the title row survives, which is the claim the
+          // height alone cannot make on a board of any given size.
+          rowHeight: Math.round(row.getBoundingClientRect().height),
+          padding: getComputedStyle(strip).paddingTop,
+        };
+      }, open);
+    `);
+    if (folded) {
+      check(
+        "banner: folds to its title row and nothing else",
+        folded.height === folded.rowHeight + 2 * parseInt(folded.padding, 10) + 2 &&
+          folded.height < folded.open / 2,
+        `open ${folded.open} -> ${folded.height} (row ${folded.rowHeight})`,
+      );
+      check("banner: and still says what it is about", folded.title > 0 && folded.chips > 0);
+      check("banner: the detail is what goes", folded.rows === 0);
+      await shootDialog("03-banner-folded.png", ".banner.readiness");
+      await evalInApp(`
+        await page.click('.banner.readiness .row .icon-btn-sm');
+        await page.waitForTimeout(200);
+        return null;
+      `);
+    } else {
+      check("banner: folds", false);
+    }
   } else {
     check("banner: present on a machine with gaps", false);
+  }
+
+  // ---- 4b. Removing a scene, the verb the board never had. Driven the way
+  // a user reaches it: hover the card, press its trash, read the confirm.
+  const removal = await evalInApp(`
+    const card = await page.$('.scene-card');
+    if (!card) return null;
+    const before = await page.evaluate(() => document.querySelectorAll('.scene-card:not(.scene-add)').length);
+    if (before < 2) return { before, skipped: true };
+    await page.hover('.scene-card');
+    const button = await page.$('.scene-card .act-remove');
+    if (!button) return { before, missing: true };
+    await button.click();
+    const asked = await page
+      .waitForSelector('[role="alertdialog"]', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!asked) return { before, asked: false };
+    const confirm = await page.evaluate(() => {
+      const dialog = document.querySelector('[role="alertdialog"]');
+      const act = [...dialog.querySelectorAll('.modal-foot button')].pop();
+      return {
+        victim: dialog.querySelector('.confirm-victim')?.textContent ?? '',
+        danger: getComputedStyle(act).backgroundColor,
+        label: (act.textContent || '').trim(),
+      };
+    });
+    return { before, asked: true, confirm };
+  `);
+  if (removal?.asked) {
+    check("scene: the board can remove one", true);
+    check("scene: the confirm shows which scene, and its words", /Scene \d/.test(removal.confirm.victim));
+    check("scene: the act is a danger button", /rgb\(2[0-9][0-9]/.test(removal.confirm.danger));
+    await shootDialog("13-confirm-remove-scene.png");
+    const after = await evalInApp(`
+      await page.evaluate(() => {
+        const act = [...document.querySelectorAll('[role="alertdialog"] .modal-foot button')].pop();
+        act?.click();
+      });
+      await page.waitForTimeout(2500);
+      return page.evaluate(() => ({
+        cards: document.querySelectorAll('.scene-card:not(.scene-add)').length,
+        error: document.querySelector('.board-scroll .alert')?.textContent ?? '',
+      }));
+    `);
+    check(
+      "scene: and the board is one shorter, with nothing refused",
+      after.cards === removal.before - 1 && after.error === "",
+      `${removal.before} -> ${after.cards} ${after.error}`,
+    );
+  } else if (removal?.skipped) {
+    check("scene: removal is reachable", true, "SKIPPED - a one-scene cut keeps its last scene");
+  } else {
+    check("scene: removal is reachable from the card", false, JSON.stringify(removal));
   }
 
   // ---- 4. Save points, its empty state, and the confirm it now asks.
@@ -430,10 +646,56 @@ try {
         closeIsGhost: buttons.some(
           (b) => /close/i.test(b.textContent || '') && b.className.includes('btn-ghost'),
         ),
+        // The copy control is an affix INSIDE the field's right edge (the
+        // design's arrangement), not a button beside it stealing 30px of
+        // every field's width. Measured as containment, which is what the
+        // eye reads, plus the design's own 24px box and 4/5 offsets.
+        affix: (() => {
+          const row = dialog.querySelector('.publish-field .field-row');
+          const input = row?.querySelector('input');
+          const button = row?.querySelector('.icon-btn-sm');
+          if (!input || !button) return null;
+          const field = input.getBoundingClientRect();
+          const box = button.getBoundingClientRect();
+          return {
+            inside: box.right <= field.right + 1 && box.left >= field.left,
+            size: Math.round(box.width),
+            top: Math.round(box.top - field.top),
+            right: Math.round(field.right - box.right),
+            // And the field runs the body's full width again, like every
+            // other field in the app.
+            fieldFull: Math.abs(field.width - (body.clientWidth - 48)) < 3,
+            // Text stops before the affix rather than running under it.
+            padRight: getComputedStyle(input).paddingRight,
+          };
+        })(),
+        // At rest a chip is the design's clean word; the remove appears on
+        // approach. It stays in the tab order either way — the reveal is
+        // width, not display, and :focus-within opens it for a keyboard.
+        chipRestWidth: (() => {
+          const remove = dialog.querySelector('.tag-remove');
+          return remove ? Math.round(remove.getBoundingClientRect().width) : -1;
+        })(),
+        chipRemoveReachable: !!dialog.querySelector('.tag-remove'),
       };
     });
   `);
   if (publish) {
+    if (publish.affix) {
+      check("publish: the copy control sits inside the field", publish.affix.inside);
+      check("publish: at the design's 24px", publish.affix.size === 24);
+      check(
+        "publish: inset 4 from the top and 5 from the right",
+        publish.affix.top === 4 && publish.affix.right === 5,
+        `top ${publish.affix.top} right ${publish.affix.right}`,
+      );
+      check("publish: so the field is full width again", publish.affix.fieldFull);
+      check("publish: and the text stops before it", publish.affix.padRight === "34px");
+    } else {
+      check("publish: the copy affix is measurable", false);
+    }
+    check("publish: a chip is a clean word at rest", publish.chipRestWidth === 0);
+    check("publish: with its remove still in the DOM for a keyboard", publish.chipRemoveReachable);
     check("publish: the hero runs the body's full width", publish.heroFull);
     check("publish: the image carries its own copy/save tray", publish.tray);
     check("publish: title and description are counted", publish.counters === 2);
@@ -458,7 +720,7 @@ try {
     await page.waitForTimeout(600);
     const input = await page.$('#inspector-asset');
     if (!input) return null;
-    await input.setInputFiles("/tmp/claude-1000/-home-hanzlamateen-hm-local-cut-ai/e4f20421-df42-4802-aa06-d0323cc765ac/scratchpad/sample-photo.png");
+    await input.setInputFiles(${JSON.stringify(samplePhoto)});
     const thumb = await page
       .waitForSelector('.photo-thumb-open', { timeout: 20000 })
       .then(() => true)
