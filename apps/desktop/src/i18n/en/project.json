@@ -78,6 +78,7 @@
     "placeholder": "Name this save point",
     "save": "Save",
     "restore": "Restore",
+    "restored": "Restored “{name}” — Ctrl+Z puts it back the way it was.",
     "delete": "Delete",
     "listAria": "Save points",
     "nameAria": "Save point name",
