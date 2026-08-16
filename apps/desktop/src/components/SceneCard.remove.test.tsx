@@ -71,4 +71,15 @@ describe("removing a scene from the board", () => {
       screen.queryByRole("button", { name: t("scene.actions.remove.aria", { n: "2" }) }),
     ).toBeNull();
   });
+
+  it("does not take the end of the row from Edit", () => {
+    // The last control in a row is the easiest one to hit, and Edit is what
+    // the row is opened for; a destructive control does not get that spot.
+    mount(scene(), vi.fn());
+    const labels = [...document.querySelectorAll(".acts button")].map((button) =>
+      button.getAttribute("aria-label"),
+    );
+    expect(labels[labels.length - 1]).toBe(t("scene.actions.edit.aria"));
+    expect(labels[labels.length - 2]).toBe(t("scene.actions.remove.aria", { n: "2" }));
+  });
 });
