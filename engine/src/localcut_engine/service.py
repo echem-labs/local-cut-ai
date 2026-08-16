@@ -26,7 +26,14 @@ from .graph.compiler import (
     orphaned_nodes,
     unready_nodes,
 )
-from .graph.editor import EditPlan, compile_edits, graph_revision, graph_view, typical_clip_s
+from .graph.editor import (
+    EditPlan,
+    compile_edits,
+    graph_revision,
+    graph_view,
+    scrub_removed,
+    typical_clip_s,
+)
 from .graph.model import (
     KEYFRAME_PORT,
     OPTIONAL_PORTS,
@@ -444,7 +451,7 @@ class ProjectService:
             # caller found already there.
             before_cloud = self._cloud_models(graph)
             ops, takes = self._resolve_select_takes(project_id, graph, ops)
-            ops = self._resolve_add_scenes(graph, ops)
+            ops = self._resolve_scene_ops(graph, ops)
             dirty = apply_patch(graph, ops)
             dirty |= self._sync_caption_texts(graph)
             # Nothing is on disk yet: a refusal here leaves the project
@@ -506,10 +513,11 @@ class ProjectService:
             )
         return resolved, takes
 
-    def _resolve_add_scenes(self, graph: StoryGraph, ops: list[PatchOp]) -> list[PatchOp]:
-        """Compile each add_scene op into the primitive ops that build a
-        scene subgraph — through apply_patch like every other edit, so the
-        cycle check and the consent gate cover added scenes for free.
+    def _resolve_scene_ops(self, graph: StoryGraph, ops: list[PatchOp]) -> list[PatchOp]:
+        """Compile each add_scene / remove_scene op into the primitive ops
+        that build or dismantle a scene subgraph — through apply_patch like
+        every other edit, so the cycle check and the consent gate cover
+        added scenes for free.
 
         The screenplay stays the source of truth: like a scene removed by
         the NL editor, an added scene lives until the script itself
@@ -521,14 +529,59 @@ class ProjectService:
         # add_scene in the same patch must see the order the first one
         # built, not recompute it from the graph and overwrite it.
         carried_order: list[str] | None = None
+        # Same reason, one op along: two removals in a patch must not each
+        # think the other's scene is still there — the last scene check
+        # would pass twice and empty the project.
+        removed: set[str] = set()
         for op in ops:
             if op.op == "add_scene":
                 compiled = self._compile_add_scene(graph, op, resolved, carried_order)
                 carried_order = list(compiled[-1].params["order"])
                 resolved.extend(compiled)
+            elif op.op == "remove_scene":
+                removed.add(op.node_id)
+                resolved.extend(self._compile_remove_scene(graph, op, removed))
             else:
                 resolved.append(op)
         return resolved
+
+    @staticmethod
+    def _compile_remove_scene(graph: StoryGraph, op: PatchOp, removed: set[str]) -> list[PatchOp]:
+        """A scene's nodes, plus the timeline's references to it.
+
+        The refusals are the NL editor's, restated against a single scene —
+        one route for removing a scene must not be safer than the other.
+        They are ValueErrors rather than dropped warnings because this op
+        names one scene and the caller is a person who clicked delete: a
+        refusal they can read beats a request that reports success and
+        changes nothing.
+        """
+        scene_id = op.node_id
+        # Prefix-based, like templates._remove_scene: a split scene owns
+        # clip takes beyond the fixed member set.
+        members = sorted(n for n in graph.nodes if n.startswith(f"{scene_id}."))
+        if not members:
+            raise KeyError(scene_id)
+        scenes = {n.split(".")[0] for n in graph.nodes if "." in n}
+        if not scenes - removed:
+            raise ValueError(f"{scene_id} is the only scene left — a project keeps at least one")
+        pinned = [n for n in members if graph.nodes[n].pinned]
+        if pinned:
+            raise ValueError(f"{scene_id} has a pinned node ({pinned[0]}) — unpin it to remove it")
+        timeline = graph.nodes.get("timeline")
+        if timeline is not None and timeline.pinned:
+            # A pinned timeline serves a frozen EDL, so the removal would
+            # delete the nodes and leave the cut playing them. Refuse rather
+            # than half-apply.
+            raise ValueError("the timeline is pinned — unpin it to remove scenes")
+        compiled = [PatchOp(op="remove_node", node_id=member) for member in members]
+        # Computed against every scene removed so far in this patch, so the
+        # last scrub in a multi-removal patch is the complete one.
+        if timeline is not None:
+            scrub = scrub_removed(timeline.params, removed)
+            if scrub:
+                compiled.append(PatchOp(op="set_params", node_id="timeline", params=scrub))
+        return compiled
 
     @staticmethod
     def _compile_add_scene(

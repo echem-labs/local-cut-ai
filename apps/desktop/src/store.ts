@@ -467,6 +467,10 @@ interface AppState {
   selectTake: (nodeId: string, outputHash: string) => Promise<string | null>;
   /** Append an empty scene (engine allocates the id) and select it. */
   addScene: () => Promise<string | null>;
+  /** Take a scene out of the cut — its nodes and the timeline's references
+   * to it. The engine refuses the last scene, a pinned one, and any removal
+   * while the timeline is pinned; the message it gives is what comes back. */
+  removeScene: (sceneId: string) => Promise<string | null>;
   refreshModelDefaults: () => Promise<void>;
   setModelDefault: (task: string, model: string | null) => Promise<string | null>;
   cancelJob: (jobId: string) => Promise<void>;
@@ -2298,6 +2302,23 @@ export const useApp = create<AppState>((set, get) => {
           (id) => id.endsWith(".keyframe") && !known.has(id.split(".")[0]),
         );
         if (added) set({ selectedNode: added });
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    removeScene: async (sceneId) => {
+      const { client, currentProject, selectedNode } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        await client.patch(currentProject.id, [{ op: "remove_scene", node_id: sceneId }]);
+        // The Inspector cannot stay open on a node that is gone: its panel
+        // reads the board for the selection and would render an empty
+        // editor over "Apply & regenerate" for a scene nobody can see.
+        if (selectedNode?.split(".")[0] === sceneId) set({ selectedNode: null });
         await get().refreshBoard();
         return null;
       } catch (err) {

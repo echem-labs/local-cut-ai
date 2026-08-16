@@ -105,6 +105,62 @@ describe("addScene", () => {
   });
 });
 
+describe("removeScene", () => {
+  it("sends remove_scene for the whole scene, not a node at a time", async () => {
+    const patch = vi.fn().mockResolvedValue({ dirty: ["timeline"] });
+    const client = fakeClient({ patch });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useApp.setState({ client, currentProject: PROJECT as any });
+
+    const error = await useApp.getState().removeScene("s2");
+
+    expect(error).toBeNull();
+    expect(patch).toHaveBeenCalledWith("p1", [{ op: "remove_scene", node_id: "s2" }]);
+  });
+
+  it("drops a selection that lived in the removed scene", async () => {
+    const client = fakeClient({ patch: vi.fn().mockResolvedValue({ dirty: [] }) });
+    useApp.setState({
+      client,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentProject: PROJECT as any,
+      selectedNode: "s2.keyframe",
+    });
+
+    await useApp.getState().removeScene("s2");
+
+    // Otherwise the Inspector stays open on a node that no longer exists.
+    expect(useApp.getState().selectedNode).toBeNull();
+  });
+
+  it("keeps a selection that belongs to a different scene", async () => {
+    const client = fakeClient({ patch: vi.fn().mockResolvedValue({ dirty: [] }) });
+    useApp.setState({
+      client,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      currentProject: PROJECT as any,
+      selectedNode: "s10.keyframe",
+    });
+
+    // Prefix matching on the id would take "s1" for "s10" — the scene id is
+    // the segment before the dot, never a string the other starts with.
+    await useApp.getState().removeScene("s1");
+
+    expect(useApp.getState().selectedNode).toBe("s10.keyframe");
+  });
+
+  it("returns the engine's refusal rather than throwing", async () => {
+    const patch = vi
+      .fn()
+      .mockRejectedValue(new Error("engine 422: s1 is the only scene left"));
+    const client = fakeClient({ patch });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    useApp.setState({ client, currentProject: PROJECT as any });
+
+    expect(await useApp.getState().removeScene("s1")).toContain("only scene left");
+  });
+});
+
 describe("savepoints", () => {
   it("create and restore round-trip through the client", async () => {
     const withSavepoint = {
