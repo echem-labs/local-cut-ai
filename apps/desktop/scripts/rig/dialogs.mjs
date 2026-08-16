@@ -677,6 +677,27 @@ try {
           return remove ? Math.round(remove.getBoundingClientRect().width) : -1;
         })(),
         chipRemoveReachable: !!dialog.querySelector('.tag-remove'),
+        // A chip's two runs sit on one line. The dialog field recipe used
+        // to reach them - every span inside a field was styled as its
+        // LABEL - which gave the chip 10px uppercase type and an 8px
+        // bottom margin, and that margin lifted each hash mark exactly 4px
+        // above its own word on the centred row.
+        chipType: (() => {
+          const chip = dialog.querySelector('.tag-chip');
+          const hash = chip?.querySelector('.hash');
+          const copy = chip?.querySelector('.tag-copy');
+          if (!hash || !copy) return null;
+          const range = document.createRange();
+          range.selectNode(copy.childNodes[1]);
+          const word = range.getBoundingClientRect();
+          const style = getComputedStyle(chip);
+          return {
+            size: style.fontSize,
+            transform: style.textTransform,
+            margin: getComputedStyle(hash).marginBottom,
+            drift: Math.round(Math.abs(hash.getBoundingClientRect().top - word.top)),
+          };
+        })(),
       };
     });
   `);
@@ -695,6 +716,20 @@ try {
       check("publish: the copy affix is measurable", false);
     }
     check("publish: a chip is a clean word at rest", publish.chipRestWidth === 0);
+    if (publish.chipType) {
+      check(
+        "publish: the # sits on the same line as its tag",
+        publish.chipType.drift === 0,
+        `${publish.chipType.drift}px apart, margin ${publish.chipType.margin}`,
+      );
+      check(
+        "publish: and the chip is a tag, not a field label",
+        publish.chipType.size === "12px" && publish.chipType.transform === "none",
+        `${publish.chipType.size} ${publish.chipType.transform}`,
+      );
+    } else {
+      check("publish: the chip's type is measurable", false);
+    }
     check("publish: with its remove still in the DOM for a keyboard", publish.chipRemoveReachable);
     check("publish: the hero runs the body's full width", publish.heroFull);
     check("publish: the image carries its own copy/save tray", publish.tray);
@@ -705,6 +740,15 @@ try {
     check("publish: the gradient is on Copy all, and Close is a ghost", publish.primaryIsCopy && publish.closeIsGhost);
     check("publish: the title field is on screen without scrolling", publish.titleVisible);
     await shootDialog("09-publish-kit.png");
+    // The hashtag well on its own: the rig's window is short enough that
+    // the chips sit below the fold in the frame above, and they are the
+    // part of this dialog with the most to get wrong.
+    await evalInApp(`
+      await page.evaluate(() => document.querySelector('.publish-tags')?.scrollIntoView({ block: 'center' }));
+      await page.waitForTimeout(250);
+      return null;
+    `);
+    await shootDialog("09b-publish-hashtags.png", ".publish-tags");
     await evalInApp(`await page.keyboard.press('Escape'); await page.waitForTimeout(300); return null;`);
   } else {
     check("publish: the kit opens and renders", false);
