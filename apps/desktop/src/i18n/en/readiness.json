@@ -24,7 +24,9 @@
     "title": "Some stages aren't ready",
     "download": "Get {model} · {size}",
     "downloadPlain": "Get {model}",
-    "setup": "Set up models"
+    "setup": "Set up models",
+    "fold": "Fold this away",
+    "unfold": "Show what is not ready"
   },
   "dialog": {
     "title": "Before you render",
