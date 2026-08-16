@@ -1,4 +1,4 @@
-import { Pencil, Pin, Play, RotateCw, SlidersHorizontal } from "lucide-react";
+import { Pencil, Pin, Play, RotateCw, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
 import { t } from "../i18n";
@@ -49,6 +49,7 @@ export function SceneCard({
   onDragStart,
   onDragEnd,
   onDropSide,
+  onRemove,
   teachDraft = false,
   onTeachDismiss,
 }: {
@@ -58,6 +59,10 @@ export function SceneCard({
   onDragEnd?: () => void;
   /** Called on drop with true when dropped on the right half (insert after). */
   onDropSide?: (after: boolean) => void;
+  /** Asks to take this scene out of the cut. The board owns the confirm and
+   * the refusal, because both outlive the card: a removal that goes through
+   * unmounts the thing that would have reported it. */
+  onRemove?: () => void;
   /** First-ever rendering card carries the one-time draft-quality note. */
   teachDraft?: boolean;
   onTeachDismiss?: () => void;
@@ -378,6 +383,29 @@ export function SceneCard({
                 <Pencil size={11} strokeWidth={2} />
               </button>
             </Tip>
+            {/* Last in the row, and the only one that wears a warning
+                colour on hover — the same place and the same rule as the
+                trash in every other list in the app. Pinning is the app's
+                word for "leave this alone", so a pinned scene refuses here
+                rather than asking a question the engine will decline. */}
+            {onRemove && (
+              <Tip
+                label={t("scene.actions.remove.label")}
+                hint={t("scene.actions.remove.hint")}
+              >
+                <button
+                  className="act-remove"
+                  aria-label={t("scene.actions.remove.aria", { n: sceneNo })}
+                  disabled={clip.pinned}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemove();
+                  }}
+                >
+                  <Trash2 size={11} strokeWidth={2} />
+                </button>
+              </Tip>
+            )}
           </div>
         )}
       </div>

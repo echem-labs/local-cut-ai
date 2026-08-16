@@ -2066,6 +2066,20 @@ button.link:hover {
   border-color: var(--accent);
 }
 
+/* The one destructive control in the row, so it is the one that does not
+   light up in the product's accent. Red on hover, matching every other
+   trash in the app; a pinned scene refuses instead, because a pin is the
+   app's word for "leave this alone". */
+.scene-card .acts button.act-remove:hover:not(:disabled) {
+  background: var(--status-failed);
+  border-color: var(--status-failed);
+}
+
+.scene-card .acts button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .scene-card .body {
   padding: var(--space-2) var(--space-3) var(--space-3);
 }
@@ -8144,6 +8158,25 @@ a.icon-btn-sm {
 .confirm-victim {
   margin-top: var(--space-3);
   padding-bottom: var(--space-3);
+}
+
+/* The name identifies the thing; it does not wrap to make room for the
+   detail beside it. "Scene 1" broke across two lines the moment a scene's
+   narration was long enough to want the space — a two-line label in an
+   evidence row reads as two things being deleted. */
+.confirm-victim .pname {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* And the detail is evidence, not the content itself: one line, cut where
+   it runs out. A scene's narration set as three right-aligned lines of
+   prose is a paragraph pretending to be a readout. */
+.confirm-victim .price {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ---------- per-task default models (Settings → Models) ---------- */
