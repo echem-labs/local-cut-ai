@@ -6,7 +6,14 @@ import { shortcutLabel } from "../lib/platform";
 import type { TileStatus } from "../lib/tiles";
 import { relativeTime, shortDuration } from "../lib/time";
 import { useMenuFit } from "../lib/useMenuFit";
-import { isToolSession, TOOL_ICONS, TOOL_MEDIUM, toolKindOf, toolLabel } from "../lib/tools";
+import {
+  isToolSession,
+  TOOL_ICONS,
+  TOOL_MEDIUM,
+  toolKindOf,
+  toolLabel,
+  toolNounOf,
+} from "../lib/tools";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { MediaThumb } from "./MediaThumb";
@@ -243,11 +250,24 @@ export function useTileLifecycle(options: { onSaveTemplate?: (project: Project) 
       // A one-off output is not a project: promising to cancel running jobs
       // and remove "all generated media" overstates what is at stake and
       // makes deleting a stray thumbnail feel unsafe.
-      title={t(toolKindOf(confirmDelete) ? "home.deleteToolTitle" : "home.deleteTitle", {
+      //
+      // And it is not "an output" either. Every one of these sentences knew
+      // exactly what kind of thing it was about — the tile draws its icon —
+      // and still said "quick tool output", which is the app's word for its
+      // own data model rather than the user's word for their script.
+      title={t(isToolSession(confirmDelete) ? "home.deleteToolTitle" : "home.deleteTitle", {
         title: confirmDelete.title,
       })}
-      message={t(toolKindOf(confirmDelete) ? "home.deleteToolMessage" : "home.deleteMessage")}
-      confirmLabel={t(toolKindOf(confirmDelete) ? "home.deleteToolConfirm" : "home.deleteConfirm")}
+      message={
+        isToolSession(confirmDelete)
+          ? t("home.deleteToolMessage", { noun: toolNounOf(confirmDelete) })
+          : t("home.deleteMessage")
+      }
+      confirmLabel={
+        isToolSession(confirmDelete)
+          ? t("home.deleteToolConfirm", { noun: toolNounOf(confirmDelete) })
+          : t("home.deleteConfirm")
+      }
       cancelLabel={t("common.keepIt")}
       danger
       onCancel={() => setConfirmDelete(null)}
