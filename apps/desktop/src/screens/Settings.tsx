@@ -37,6 +37,7 @@ import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
 import { SETTINGS_TABS, type SettingsTab } from "../lib/settingsTabs";
+import { isToolSession as isToolProject, toolNounOf } from "../lib/tools";
 import { setUserZoom, userZoomFactor, ZOOM_EVENT, ZOOM_STEPS } from "../lib/zoom";
 import {
   type PairingPreview,
@@ -351,11 +352,15 @@ export function Settings() {
   // The storage walk reports every .lcut directory without saying which are
   // quick tool sessions; `mode` lives on the project list, so the split
   // happens here rather than as a second engine field that could disagree.
-  const isToolSession = useCallback(
+  // The project itself, not a boolean: the delete confirmation names what
+  // kind of thing it is about ("Removes this voiceover"), which needs the
+  // mode and not just the fact that there is one.
+  const toolSession = useCallback(
     (id: string) =>
-      projects.some((project) => project.id === id && project.mode.startsWith("tool:")),
+      projects.find((project) => project.id === id && isToolProject(project)) ?? null,
     [projects],
   );
+  const isToolSession = useCallback((id: string) => toolSession(id) !== null, [toolSession]);
 
   const refreshProviders = useCallback(async () => {
     if (!client) return;
@@ -1454,12 +1459,18 @@ export function Settings() {
             isToolSession(confirmProject.id) ? "home.deleteToolTitle" : "home.deleteTitle",
             { title: confirmProject.title },
           )}
-          message={t(
-            isToolSession(confirmProject.id) ? "home.deleteToolMessage" : "home.deleteMessage",
-          )}
-          confirmLabel={t(
-            isToolSession(confirmProject.id) ? "home.deleteToolConfirm" : "home.deleteConfirm",
-          )}
+          message={(() => {
+            const session = toolSession(confirmProject.id);
+            return session
+              ? t("home.deleteToolMessage", { noun: toolNounOf(session) })
+              : t("home.deleteMessage");
+          })()}
+          confirmLabel={(() => {
+            const session = toolSession(confirmProject.id);
+            return session
+              ? t("home.deleteToolConfirm", { noun: toolNounOf(session) })
+              : t("home.deleteConfirm");
+          })()}
           cancelLabel={t("common.keepIt")}
           danger
           onConfirm={() => {
