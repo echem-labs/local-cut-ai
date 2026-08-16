@@ -52,6 +52,27 @@ describe("SavePoints", () => {
     expect(restoreSavepoint).toHaveBeenCalledWith("sp1");
   });
 
+  it("says a restore happened, and names the way back out", async () => {
+    // Everything a restore changes is behind this dialog, so a successful
+    // one looked exactly like a dead button.
+    mount([{ id: "sp1", label: "start", at: 1 }]);
+    fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    const said = await screen.findByRole("status");
+    expect(said.textContent).toContain("start");
+    // The undo is the reason this button needs no confirm; saying so is
+    // the difference between "it worked" and "it worked, and here is the
+    // way back".
+    expect(said.textContent).toMatch(/Ctrl\+Z/);
+  });
+
+  it("stays silent when the restore was refused", async () => {
+    mount([{ id: "sp1", label: "start", at: 1 }]);
+    restoreSavepoint.mockResolvedValue("the engine is not reachable");
+    fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("asks before deleting a save point, and does nothing if the answer is no", () => {
     // Restore needs no confirmation because it lands in the undo history —
     // one Ctrl+Z walks back out of it. That reasoning has never applied to
