@@ -372,22 +372,12 @@ export function SceneCard({
                 <Pin size={11} strokeWidth={2} />
               </button>
             </Tip>
-            <Tip label={t("scene.actions.edit.label")} hint={t("scene.actions.edit.hint")}>
-              <button
-                aria-label={t("scene.actions.edit.aria")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  select(primary.node_id);
-                }}
-              >
-                <Pencil size={11} strokeWidth={2} />
-              </button>
-            </Tip>
-            {/* Last in the row, and the only one that wears a warning
-                colour on hover — the same place and the same rule as the
-                trash in every other list in the app. Pinning is the app's
-                word for "leave this alone", so a pinned scene refuses here
-                rather than asking a question the engine will decline. */}
+            {/* Before Edit, not after it. Edit is the action this row is
+                reached for most, and the end of a row is the easiest place
+                to hit — a destructive control does not get that spot. It is
+                still the only one that lights red on hover. Pinning is the
+                app's word for "leave this alone", so a pinned scene refuses
+                here rather than asking a question the engine will decline. */}
             {onRemove && (
               <Tip
                 label={t("scene.actions.remove.label")}
@@ -406,6 +396,17 @@ export function SceneCard({
                 </button>
               </Tip>
             )}
+            <Tip label={t("scene.actions.edit.label")} hint={t("scene.actions.edit.hint")}>
+              <button
+                aria-label={t("scene.actions.edit.aria")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  select(primary.node_id);
+                }}
+              >
+                <Pencil size={11} strokeWidth={2} />
+              </button>
+            </Tip>
           </div>
         )}
       </div>
