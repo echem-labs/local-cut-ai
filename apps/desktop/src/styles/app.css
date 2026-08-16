@@ -4921,7 +4921,9 @@ button.link:hover {
 
 .publish-tags .tags-label > span {
   font-size: var(--text-2xs);
-  letter-spacing: 0.09em;
+  /* The recipe's own tracking, not a nearby value: this label sits directly
+     under TITLE and DESCRIPTION, which are the shared rule. */
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   font-weight: 600;
   color: var(--text-tertiary);
@@ -8553,7 +8555,16 @@ a.icon-btn-sm {
   margin-top: var(--space-4);
 }
 
-.modal .field span {
+/* The field's LABEL — a direct child span, and only that.
+   Written as a descendant it matched every span anywhere in the field, and
+   has now cost three separate bugs: the copy button's wrapper laid out as a
+   block under the input, the tag entry given a label's 10px uppercase type,
+   and the hashtag chips wearing the label's 8px bottom margin — which, on a
+   centred flex row, lifted each `#` exactly 4px above its own word.
+   Every label in the app is a direct child; the one that is not (the
+   hashtag well's, nested in `.tags-label` beside its copy button) carries
+   the same recipe explicitly below. */
+.modal .field > span {
   display: block;
   font-size: var(--text-2xs);
   font-weight: 600;
