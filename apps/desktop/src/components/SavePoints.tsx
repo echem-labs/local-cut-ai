@@ -1,5 +1,5 @@
-import { Bookmark, History, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { Bookmark, Check, History, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { SavePointInfo } from "../api/types";
 import { t } from "../i18n";
 import { absoluteTime, relativeTime } from "../lib/time";
@@ -17,6 +17,12 @@ import { Tip } from "./Tooltip";
  * point with it — so it asks first. The two sat side by side, identically
  * styled, with neither asking anything.
  *
+ * A restore that works changes nothing IN HERE, though — the graph it
+ * rewinds is behind the dialog — so it said nothing at all, and the only
+ * reading available was that the button was broken. It now acknowledges
+ * itself, and the acknowledgement carries the way back out, because "one
+ * Ctrl+Z" is the reason there was no confirm and the user was never told.
+ *
  * No footer: the dialog's one productive verb is Save, which lives beside
  * the field it completes, and a footer holding nothing but "Close"
  * duplicates the ✕ the shell already draws.
@@ -27,7 +33,17 @@ export function SavePoints({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [doomed, setDoomed] = useState<SavePointInfo | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Longer than the 1.4s tick the copy buttons use: this one is a sentence
+  // that teaches the undo, and a transient nobody can finish reading is a
+  // flicker rather than a message.
+  useEffect(() => {
+    if (restored === null) return;
+    const timer = setTimeout(() => setRestored(null), 6000);
+    return () => clearTimeout(timer);
+  }, [restored]);
 
   const run = (action: () => Promise<string | null>) => {
     setBusy(true);
@@ -100,7 +116,13 @@ export function SavePoints({ onClose }: { onClose: () => void }) {
                 <button
                   className="btn-ghost sp-restore"
                   disabled={busy}
-                  onClick={() => run(() => restoreSavepoint(savepoint.id))}
+                  onClick={() =>
+                    run(async () => {
+                      const message = await restoreSavepoint(savepoint.id);
+                      if (!message) setRestored(savepoint.label);
+                      return message;
+                    })
+                  }
                 >
                   {t("project.savepoints.restore")}
                 </button>
@@ -122,6 +144,17 @@ export function SavePoints({ onClose }: { onClose: () => void }) {
           </ul>
         )}
       </div>
+
+      {/* The instrument line the rest of the family uses for a reading,
+          carrying the one fact this dialog never said out loud. Polite,
+          not assertive: nothing was lost, and the undo it names is
+          available for as long as the history is. */}
+      {restored && (
+        <p className="sp-restored" role="status">
+          <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+          <span>{t("project.savepoints.restored", { name: restored })}</span>
+        </p>
+      )}
 
       {/* `<Alert>`, not a bare div: this was an unstyled `role="status"`
           node, which is both invisible and — being a polite live region —

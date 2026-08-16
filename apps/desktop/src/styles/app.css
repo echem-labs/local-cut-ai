@@ -8146,6 +8146,24 @@ a.icon-btn-sm {
   font-size: var(--text-xs);
 }
 
+/* The restore acknowledgement: the family's instrument line, with the tick
+   in the one green the family owns — it means "that happened", the same as
+   every copy affix. */
+.sp-restored {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.sp-restored > svg {
+  flex: none;
+  color: var(--status-final);
+}
+
 /* The only red an interactive control wears in the family, and only on
    the way to a confirm — the act itself is still one dialog away. */
 .sp-delete:hover:not(:disabled) {
