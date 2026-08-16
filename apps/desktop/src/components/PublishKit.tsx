@@ -273,7 +273,6 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
                 // box is not what anyone means by "hashtags".
                 onChange={(hashtags) => edit({ hashtags })}
               />
-              <p className="hint">{t("publish.editNote")}</p>
             </>
           ) : metaFailed && metadata ? (
             // The job died. "Write them again" in the footer is the way
