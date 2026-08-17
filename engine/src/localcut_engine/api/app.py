@@ -85,7 +85,7 @@ from ..providers.registry import (
     textgen_for_model,
 )
 from ..providers.textgen import ProviderError
-from ..readiness import PIPELINE_ORDER, project_pairs, readiness_rows
+from ..readiness import PIPELINE_ORDER, auto_defaults, project_pairs, readiness_rows
 from ..project.store import (
     PROJECT_ID_PATTERN,
     ProjectStore,
@@ -741,15 +741,29 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             }
         return {"etas": etas}
 
+    def _defaults_payload(defaults: dict[str, str]) -> dict:
+        """`auto` travels with every answer, GET and PUT alike: the picker
+        labels its Auto option from it, and a reply that carried the stored
+        defaults without it would leave that label a frame stale after every
+        save."""
+        return {
+            "defaults": defaults,
+            "tasks": list(DEFAULTABLE_TASKS),
+            "auto": auto_defaults(config),
+        }
+
     @app.get("/models/defaults", dependencies=[Authed])
     async def model_defaults() -> dict:
-        """The persisted per-task default models, plus which tasks accept
-        one — the picker renders rows only for tasks the engine honors."""
+        """The persisted per-task default models, what Auto resolves to
+        without them, plus which tasks accept one — the picker renders rows
+        only for tasks the engine honors."""
         try:
-            defaults = await asyncio.to_thread(load_defaults, config)
+            payload = await asyncio.to_thread(
+                lambda: _defaults_payload(load_defaults(config)),
+            )
         except DefaultsTooNew as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
+        return payload
 
     class ModelDefaultBody(BaseModel):
         task: str = Field(max_length=32)
@@ -759,7 +773,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.put("/models/defaults", dependencies=[Authed])
     async def set_model_default(body: ModelDefaultBody) -> dict:
         try:
-            defaults = await asyncio.to_thread(set_default, config, body.task, body.model)
+            payload = await asyncio.to_thread(
+                lambda: _defaults_payload(set_default(config, body.task, body.model)),
+            )
         except DefaultsTooNew as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except KeyError as exc:
@@ -769,7 +785,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except OSError as exc:
             # The override manifest could not be read to validate against.
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"defaults": defaults, "tasks": list(DEFAULTABLE_TASKS)}
+        return payload
 
     @app.get("/models/manifest", dependencies=[Authed])
     async def models_manifest() -> dict:

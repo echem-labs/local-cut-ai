@@ -14,6 +14,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReadinessRow } from "../api/types";
+import { t } from "../i18n";
 import { ReadinessBanner, useReadinessGuard } from "./Readiness";
 import { useApp } from "../store";
 
@@ -111,8 +112,10 @@ describe("the readiness banner", () => {
     seed([musicGap]);
     render(<ReadinessBanner />);
     // The point of the whole feature: silence in the finished video is the
-    // fact worth saying, and it is the one nothing said before.
-    expect(screen.getByRole("status").textContent).toMatch(/no music/i);
+    // fact worth saying, and it is the one nothing said before. Phrased
+    // without the word "music" — the stage label already says it, and
+    // "Music — no music" was the repetition the copy pass removed.
+    expect(screen.getByRole("status").textContent).toMatch(/none in the finished video/i);
   });
 
   it("states the still-clip tier — the fact it is easiest to miss", () => {
@@ -122,6 +125,100 @@ describe("the readiness banner", () => {
     seed([clipDegraded]);
     render(<ReadinessBanner />);
     expect(screen.getByRole("status").textContent).toMatch(/still images/i);
+  });
+
+  it("says one stopped server once, however many stages it costs", () => {
+    // The shipped banner built every line as cause + consequence, so a
+    // single dead ComfyUI stated its cause sentence three times in a
+    // four-line box.
+    const down = (
+      kind: string,
+      task: string,
+      verdict: ReadinessRow["verdict"],
+    ): ReadinessRow => ({
+      kind,
+      model: null,
+      backend: "mock",
+      verdict,
+      reason: "comfyui_down",
+      data: { task },
+      fix: null,
+    });
+    seed([
+      down("keyframe", "image.gen", "placeholder"),
+      down("clip", "video.i2v", "degraded"),
+      down("music", "music.gen", "placeholder"),
+    ]);
+    render(<ReadinessBanner />);
+    const text = screen.getByRole("status").textContent ?? "";
+    expect(text.match(/program that draws images and video/g)).toHaveLength(1);
+    // Said once, and then priced per stage - which is the half the old
+    // lines left out entirely.
+    for (const stage of ["Keyframes", "Video clips", "Music"]) {
+      expect(text).toContain(stage);
+    }
+    expect(text).toMatch(/still images/);
+    expect(text).toMatch(/none in the finished video/);
+  });
+
+  it("names an assembly stage in catalog words, not as its wire id", () => {
+    // An export row carries no task, so its label falls through to the
+    // kind — which must land on the aux catalog's "Final video", the word
+    // the rest of the app uses. The raw id "export" leaking into a list of
+    // catalog labels is the exact drift the i18n rule exists to stop.
+    seed([exportFails]);
+    render(<ReadinessBanner />);
+    const text = screen.getByRole("status").textContent ?? "";
+    expect(text).toContain("Final video");
+    expect(text).not.toMatch(/\bexport\b/);
+  });
+
+  it("reads worst-first, so stopping after one well is still the worst news", () => {
+    // The whole argument of the panel: a reader who takes in one group has
+    // taken in the most damaging one. A degraded cause listed first would
+    // make the calm case the headline while a job that dies sits below it.
+    seed([clipDegraded, exportFails]);
+    const { container } = render(<ReadinessBanner />);
+    const causes = [...container.querySelectorAll(".well .whead")].map(
+      (node) => node.textContent ?? "",
+    );
+    expect(causes).toHaveLength(2);
+    expect(causes[0]).toMatch(/ffmpeg/);
+    expect(causes[1]).toMatch(/No video model/);
+  });
+
+  it("lights each row by verdict, and the well by the worst row in it", () => {
+    // Severity travels as a dot per row and an edge per well, so the panel
+    // ranks itself before a word of it is read.
+    seed([clipDegraded, exportFails]);
+    const { container } = render(<ReadinessBanner />);
+    const wells = [...container.querySelectorAll(".well")];
+    expect(wells[0].className).toContain("edge-fail");
+    expect(wells[0].querySelector(".pdot")?.className).toContain("fail");
+    // A degraded-only group stays amber — the still-clip tier renders
+    // something real, and calling it red would spend the alarm on it.
+    expect(wells[1].className).toContain("edge-deg");
+    expect(wells[1].querySelector(".pdot")?.className).toContain("deg");
+    // And the strip repeats the worst light of all of them.
+    expect(screen.getByRole("status").className).toContain("worst-fail");
+  });
+
+  it("totals the damage only when there is more than one well to total", () => {
+    // With one group the well already is the summary; a chip strip
+    // repeating it is furniture.
+    seed([clipDegraded]);
+    const single = render(<ReadinessBanner />);
+    expect(single.container.querySelector(".sev-chip")).toBeNull();
+    single.unmount();
+
+    seed([clipDegraded, exportFails]);
+    const many = render(<ReadinessBanner />);
+    const chips = [...many.container.querySelectorAll(".sev-chip")].map(
+      (node) => node.textContent ?? "",
+    );
+    // Worst first here too, and counted over stages rather than causes.
+    expect(chips[0]).toMatch(/1\s*fail/);
+    expect(chips[1]).toMatch(/1\s*lower quality/);
   });
 
   it("says an image model is missing once, not once per kind that needs it", () => {
@@ -376,6 +473,57 @@ describe("suppression", () => {
     seed([musicGap]);
     await dismissOnce(nextKey(), "project");
     render(<ReadinessBanner />);
-    expect(screen.getByRole("status").textContent).toMatch(/no music/i);
+    expect(screen.getByRole("status").textContent).toMatch(/none in the finished video/i);
+  });
+});
+
+/**
+ * Folding is the answer to "can I close this?" — and it is not closing.
+ * The strip keeps saying that something is not ready; what goes away is
+ * the detail. The fold is remembered against the gap set it was made
+ * about, so the next problem is not hidden behind a click about this one.
+ */
+describe("folding the banner", () => {
+  const fold = () =>
+    screen.getByRole("button", { name: t("readiness.banner.fold") });
+
+  it("keeps the warning and the count, and drops the rows", async () => {
+    seed([musicGap, clipDegraded]);
+    render(<ReadinessBanner />);
+    await userEvent.click(fold());
+
+    const strip = screen.getByRole("status");
+    expect(strip.textContent).toContain(t("readiness.banner.title"));
+    // The chips are the reading that survives: two problems, still there.
+    expect(strip.querySelectorAll(".sev-chip").length).toBe(2);
+    expect(strip.querySelector(".gap-list")).toBeNull();
+    // And the way in is a disclosure, not a dismissal.
+    expect(
+      screen.getByRole("button", { name: t("readiness.banner.unfold") }),
+    ).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("stays folded across a remount, because a preference that forgets is furniture", async () => {
+    seed([musicGap]);
+    const first = render(<ReadinessBanner />);
+    await userEvent.click(fold());
+    first.unmount();
+
+    render(<ReadinessBanner />);
+    expect(screen.getByRole("status").querySelector(".gap-list")).toBeNull();
+  });
+
+  it("unfolds itself when the problems change", async () => {
+    seed([musicGap]);
+    const first = render(<ReadinessBanner />);
+    await userEvent.click(fold());
+    first.unmount();
+
+    // A second, worse gap appears. The fold was a judgement about the
+    // music being a placeholder — it cannot cover an export that will
+    // fail, which nobody has seen yet.
+    seed([musicGap, exportFails]);
+    render(<ReadinessBanner />);
+    expect(screen.getByRole("status").querySelector(".gap-list")).not.toBeNull();
   });
 });

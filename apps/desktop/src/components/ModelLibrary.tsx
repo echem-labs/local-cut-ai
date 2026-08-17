@@ -562,6 +562,7 @@ export function ModelLibrary({
               : t("models.deleteMessage", { size: formatSize(pending.row.size_bytes) })
           }
           confirmLabel={t("models.deleteConfirm", { size: formatSize(pending.row.size_bytes) })}
+          cancelLabel={t("common.keepIt")}
           danger
           onConfirm={() => {
             // Custom entries also leave the register, not just the disk.
@@ -577,6 +578,7 @@ export function ModelLibrary({
           title={t("models.discardTitle", { id: pending.row.id })}
           message={t("models.discardMessage", { size: formatSize(pending.row.partial_bytes) })}
           confirmLabel={t("models.discardConfirm")}
+          cancelLabel={t("common.keepIt")}
           danger
           onConfirm={() => {
             void deleteModel(pending.row.id);

@@ -512,7 +512,8 @@ def build_server(
     @server.tool()
     def patch_project(project_id: str, ops: list[dict[str, Any]]) -> dict[str, Any]:
         """Apply raw graph ops (set_params, set_seed, set_model, pin, unpin,
-        add_node, remove_node, connect, disconnect, select_take, add_scene)
+        add_node, remove_node, connect, disconnect, select_take, add_scene,
+        remove_scene)
         and return the dirtied node ids. This is the same validated /patch
         every other client uses: cycles are refused, and voice_ref accepts
         only a consented voice sample. Ops naming a cloud:* model are
