@@ -931,6 +931,149 @@ describe("waiting out a port the kernel still holds", () => {
     await caught;
     expect(manager.connection).toBeNull();
   });
+
+  it("does not report the app's own stop as an engine that died", async () => {
+    // The check above fires whenever the child stopped being the current one,
+    // and `stop()` is one of the ways that happens: `discardChild` nulls
+    // `this.child` too. Told apart by `asked`, because the two read to the
+    // user as opposite things — "your engine crashed" is what someone who
+    // just paired a GPU box would see at the moment they switched away from
+    // the local one, in the sentence `engine:restart` hands the banner.
+    let release: (value: { ok: boolean; status: number }) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input.endsWith("/health")) return { ok: true, status: 200 };
+        return new Promise((resolve) => (release = resolve));
+      }),
+    );
+    const manager = new EngineManager();
+    const caught = manager.start({ waitForPort: false }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    manager.stop(); // the user paired a remote engine
+    release({ ok: true, status: 200 });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(String(await caught)).toMatch(/cancelled/);
+    expect(manager.connection).toBeNull();
+  });
+
+  it("reports no crash for an orphan it reclaims and recovers from", async () => {
+    // The wait-ending report must not fire for the one failure the app
+    // repairs by itself. A refused bind whose holder is a stale engine of
+    // ours is answered by SIGKILLing it and starting over, and a crash
+    // reported on the way puts a banner and a pasteable report on screen for
+    // a fault that is fixed by the time anyone reads it — describing an
+    // engine that is answering, in the words the exit handler's own comment
+    // says must never reach the banner.
+    let holder: "orphan" | "gone" = "orphan";
+    let dead = false;
+    let attempt = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (!dead) throw new Error("ECONNREFUSED");
+        // Killed, and nothing on the port until our own engine binds it.
+        if (holder === "gone") {
+          if (attempt < 2) throw new Error("ECONNREFUSED");
+          return { ok: true, status: 200 };
+        }
+        return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
+      }),
+    );
+    spawned.says = (cmd) => (cmd === "lsof" || cmd === "netstat" ? "9999\n" : null);
+    spawned.answer = (child) => {
+      attempt += 1;
+      if (attempt > 1) return; // the port is ours now; this one lives
+      dead = true;
+      child.stderr.emit("data", Buffer.from(`${BIND_REFUSED}127.0.0.1:7830: in use\n`));
+      child.emit("exit", 1, null);
+    };
+    // The orphan stops answering the moment it is killed.
+    (process.kill as unknown as { mockImplementation: (fn: unknown) => void }).mockImplementation(
+      (pid: number) => {
+        if (pid === 9999) holder = "gone";
+        return true;
+      },
+    );
+    const manager = new EngineManager();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const started = manager.start();
+    void started.catch(() => {});
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(started).resolves.toMatchObject({ url: "http://127.0.0.1:7830" });
+    expect(crashes).toHaveLength(0);
+  });
+
+  it("does not un-suppress a replacement's crashes when a cancelled start unwinds", async () => {
+    // `rebinding` is what makes one restart read as one crash instead of
+    // forty-five. `stop()` now releases the dedup slot, so a replacement
+    // start can be waiting a port out by the time the cancelled one wakes up
+    // two seconds later — and a `finally` that clears the flag unconditionally
+    // clears it on the replacement's behalf. Every one of ITS attempts then
+    // files its own crash, and the banner is rewritten every two seconds for
+    // ninety, ending on "another engine is probably already running": the
+    // exact rewriting the flag exists to prevent.
+    nothingServing();
+    refuseTheBind();
+    const manager = new EngineManager();
+    const crashes: { tail: string[] }[] = [];
+    manager.onCrash((crash) => crashes.push(crash));
+    const abandoned = manager.start().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    manager.stop();
+    const replacement = manager.start().catch((error: unknown) => error);
+    // Well past the moment the cancelled loop wakes and unwinds (2s), and
+    // several of the replacement's own attempts later.
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(crashes).toHaveLength(0);
+    manager.stop();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await abandoned;
+    await replacement;
+  });
+
+  it("does not let a cancelled start kill the engine the next one brought up", async () => {
+    // The other half of the same overlap. `waitHealthy` asked only whether
+    // there was A child, so a cancelled attempt woken by the replacement's
+    // engine read that one as its own still being alive - and its cleanup
+    // then killed `this.child` and nulled `this.connection` without asking
+    // whose they were. The app is left holding a url and a token for a
+    // process its own cancelled start has just SIGTERMed.
+    let release: (value: { ok: boolean; status: number }) => void = () => {};
+    let hang = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (hang && input.endsWith("/health"))
+          return new Promise((resolve) => (release = resolve));
+        return { ok: true, status: 200 };
+      }),
+    );
+    const manager = new EngineManager();
+    const abandoned = manager.start().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(300); // parked inside waitHealthy
+
+    manager.stop();
+    hang = false;
+    const second = manager.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(second).resolves.toMatchObject({ url: "http://127.0.0.1:7830" });
+
+    // Only now does the cancelled attempt's health probe come back.
+    release({ ok: true, status: 200 });
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    await abandoned;
+    expect(manager.connection).not.toBeNull();
+    expect(engineSpawns()).toHaveLength(2);
+  });
 });
 
 /**
