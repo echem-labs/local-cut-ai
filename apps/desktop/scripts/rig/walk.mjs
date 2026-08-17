@@ -12,7 +12,7 @@
  * Usage: node walk.mjs [--ozone=x11]
  */
 import path from "node:path";
-import { evalInApp, health, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import { evalInApp, health, makeCheck, pinnedBackend, shotsDir, startRig, stopRig } from "./rig.mjs";
 
 const ozone = process.argv.find((arg) => arg.startsWith("--ozone="))?.slice(8);
 const dir = shotsDir(ozone ? `walk-${ozone}` : "walk");
@@ -26,13 +26,17 @@ const check = makeCheck();
 const boundsAgree = (inner, bounds, dpr) =>
   Math.abs(inner - bounds) <= 2 || Math.abs(inner * dpr - bounds) <= 2 + dpr;
 
-// LOCALCUT_BACKEND=mock for the reason sweep.mjs's header gives: the app
-// spawns its engine with `local,mock`, so on a machine running Ollama the
-// walk reaches a REAL model, and if that model is not the one installed the
+// The pinned backend for the reason `pinnedBackend` gives: the app spawns
+// its engine with `local,mock`, so on a machine running Ollama the walk
+// reaches a REAL model, and if that model is not the one installed the
 // generation fails - here that emptied the audio segments and the row-width
 // check below measured nothing against seven scene blocks. This walk is
-// about geometry; it gets the same content every time.
-const rig = await startRig({ LOCALCUT_BACKEND: "mock", ...(ozone ? { RIG_OZONE: ozone } : {}) });
+// about geometry; it gets the same content every time, unless the shell
+// deliberately asked for another chain.
+const rig = await startRig({
+  LOCALCUT_BACKEND: pinnedBackend(),
+  ...(ozone ? { RIG_OZONE: ozone } : {}),
+});
 try {
   // Let the renderer connect and paint Home.
   await evalInApp("await page.waitForSelector('.home, .setup', { timeout: 30000 }); return null;");

@@ -61,6 +61,25 @@ async function waitForPortFree(port, budgetMs = 8000) {
   }
 }
 
+/**
+ * The generation chain a gate pins itself to, unless the shell asked for one.
+ *
+ * The app spawns its engine with the default `local,mock` chain, so on a
+ * machine running Ollama a gate reaches a REAL model - and if that model is
+ * not the one installed, generation fails, the project never gets a graph,
+ * and the workspace the gate poses inside is never mounted at all. Every gate
+ * that pins this is about geometry or pipeline shape rather than about what
+ * any model wrote.
+ *
+ * Deferring to an exported value rather than overriding it, because
+ * `startRig` merges extraEnv LAST: a literal in a gate beats
+ * `LOCALCUT_BACKEND=local npm run rig:whatever`, and deliberately pointing a
+ * gate at a real backend is how the mock's fidelity gets checked at all.
+ * Written here rather than at each gate so that stays true of all of them -
+ * it was hand-copied into three, and the fourth kept the literal.
+ */
+export const pinnedBackend = () => process.env.LOCALCUT_BACKEND || "mock";
+
 export async function startRig(extraEnv = {}) {
   enginePort = Number(extraEnv.LOCALCUT_ENGINE_PORT || process.env.LOCALCUT_ENGINE_PORT || 7830);
   // Pre-flight, not just teardown: an engine still finishing its boot when
