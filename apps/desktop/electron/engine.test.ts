@@ -843,14 +843,15 @@ describe("waiting out a port the kernel still holds", () => {
     expect(crashes).toHaveLength(1);
   });
 
-  it("waits out a socket, but not a program too busy to say who it is", async () => {
+  it("does not tell a user holding a busy program that a socket is stuck", async () => {
     // `whoAnswersOn` reads silence on the port as "only a socket winding
     // down" — the case worth spending ninety seconds on. A request that TIMES
     // OUT is not silence: a closed port and a socket in TIME_WAIT both refuse
     // at once, so something took the connection and did not answer, and that
-    // is a program. Counting it as nobody spends the whole budget outlasting
-    // a socket that is not there, and then explains the failure in terms of a
-    // port that nothing is holding.
+    // is a program. It is still waited out (the test above says why — the
+    // likeliest such program is an orphan of ours mid-render), but the
+    // sentence the user is finally given has to name what is actually there,
+    // not a socket that was never holding anything.
     let dead = false;
     vi.stubGlobal(
       "fetch",
@@ -871,11 +872,14 @@ describe("waiting out a port the kernel still holds", () => {
     const manager = new EngineManager();
     const caught = manager.start().catch((error: unknown) => error);
 
-    await vi.advanceTimersByTimeAsync(30_000);
+    // The whole budget, because this one is now waited out rather than
+    // reported on the first attempt.
+    await vi.advanceTimersByTimeAsync(95_000);
 
-    expect(await caught).not.toBeInstanceOf(EnginePortBusyError);
-    expect(String(await caught)).toMatch(/another program/);
-    expect(engineSpawns()).toHaveLength(1);
+    const error = await caught;
+    expect(String(error)).toMatch(/never said who it is/);
+    expect(String(error)).not.toMatch(/socket/);
+    expect(engineSpawns().length).toBeGreaterThan(1);
   });
 
   it("does not hand a cancelled start to the caller that comes after it", async () => {
@@ -1073,6 +1077,61 @@ describe("waiting out a port the kernel still holds", () => {
     await abandoned;
     expect(manager.connection).not.toBeNull();
     expect(engineSpawns()).toHaveLength(2);
+  });
+
+  it("waits out a program too busy to say who it is, rather than giving up on it", async () => {
+    // A timeout says something took the connection and went quiet - not that
+    // it is a stranger. The case that distinction decides is the one this
+    // file's own orphan recovery exists for: an engine of ours mid-render
+    // blocks its event loop for far longer than one probe waits, and calling
+    // that a stranger is the single verdict that neither retries NOR
+    // reclaims. The user is told to quit a process `windowsHide: true` gave
+    // no window. So it stays retryable, and a later probe - once the orphan
+    // is between steps - gets the 401 that proves it ours and reclaims it.
+    let blocked = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (blocked) {
+          const timeout = new Error("The operation was aborted due to timeout");
+          timeout.name = "TimeoutError";
+          throw timeout;
+        }
+        return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
+      }),
+    );
+    refuseTheBind();
+    const manager = new EngineManager();
+    const caught = manager.start().catch((error: unknown) => error);
+
+    // Still going, where "a-stranger" would have ended the wait on attempt 1.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(engineSpawns().length).toBeGreaterThan(1);
+
+    manager.stop();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await caught).toBeInstanceOf(Error);
+    blocked = false;
+  });
+
+  it("does not spawn an engine into an app that is quitting", async () => {
+    // `before-quit` preventDefaults and awaits `stopAndWait()`, and for that
+    // whole window the windows are open and the IPC handlers are live. The
+    // generation bump cannot cover this: a start created AFTER it reads the
+    // new generation and passes every cancellation check. So a restart or an
+    // unpair arriving mid-teardown spawns an engine, `engineTornDown` sends
+    // the re-issued quit straight through without a second teardown, and the
+    // child outlives the app holding the data dir and the port.
+    nothingServing();
+    const manager = new EngineManager();
+    await manager.stopAndWait();
+    const spawnedByThen = engineSpawns().length;
+
+    const caught = await manager.start().catch((error: unknown) => error);
+
+    expect(engineSpawns()).toHaveLength(spawnedByThen);
+    expect(manager.connection).toBeNull();
+    expect(String(caught)).toMatch(/quitting/);
   });
 });
 
