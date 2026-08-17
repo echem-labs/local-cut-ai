@@ -33,6 +33,10 @@ const engineMock = vi.hoisted(() => ({
     starts: ({ waitForPort?: boolean } | undefined)[];
   } | null,
   teardown: null as Promise<void> | null,
+  /** Make the local engine refuse to come back, the way a held port or a
+   * broken venv does. The state a crash kept too long resurfaces in: there
+   * is no connection to hide it behind and no successful start to clear it. */
+  failStart: null as string | null,
 }));
 
 vi.mock("./engine", () => {
@@ -53,6 +57,7 @@ vi.mock("./engine", () => {
     }
     async start(options?: { waitForPort?: boolean }): Promise<{ url: string; token: string }> {
       this.starts.push(options);
+      if (engineMock.failStart) throw new Error(engineMock.failStart);
       this.connection = { ...localEngine };
       return this.connection;
     }
@@ -110,6 +115,7 @@ beforeEach(async () => {
   keysFile = path.join(dir, "provider-keys.json");
   engineCalls = [];
   engineMock.teardown = null;
+  engineMock.failStart = null;
   healthStatus = 200;
   engineStatus = 200;
 
@@ -1427,6 +1433,37 @@ describe("when the engine stops on its own", () => {
     await electron.invokeIpc("engine:restart", trusted(DEV_ORIGIN));
     // ...and later, something else leaves the app with no engine at all.
     engineMock.instance!.connection = null;
+
+    expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({
+      crash: null,
+    });
+  });
+
+  it("does not keep it across a pairing either, which is also a way back", async () => {
+    // The sibling of the case above, on the path that does not go through
+    // `connectEngine`. Pairing a GPU box recovers from a dead local engine
+    // just as a restart does, but it establishes the connection by hand — so
+    // the crash it recovered from stayed behind, invisible while the pairing
+    // held, and surfaced hours later as the banner for whatever went wrong
+    // after the next Disconnect: dated then, with a report to paste about a
+    // fault the user has long since moved past.
+    const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
+    const crash = { code: 1, signal: null, tail: ["[engine] boom"], at: "2026-08-09T00:00:00Z" };
+    engineMock.instance!.connection = null;
+    for (const listener of engineMock.instance!.crashListeners) listener(crash);
+
+    await electron.invokeIpc(
+      "engine:pair",
+      trusted(DEV_ORIGIN),
+      codeFor({ url: engineUrl, token: "remote-token" }),
+      { armKeys: false },
+    );
+    // ...and later the user disconnects, and the local engine does not come
+    // back for some reason of its own — which is the only state the stale
+    // crash can be seen in: nothing to hide it behind, and no successful
+    // start to clear it on the way.
+    engineMock.failStart = "port 7830 is held by another program";
+    await electron.invokeIpc("engine:unpair", trusted(DEV_ORIGIN));
 
     expect(electron.invokeIpc("engine:connection", trusted(DEV_ORIGIN))).toMatchObject({
       crash: null,

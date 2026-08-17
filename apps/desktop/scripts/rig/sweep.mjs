@@ -45,6 +45,7 @@ import {
   evalInApp,
   health,
   makeCheck,
+  pinnedBackend,
   shotsDir,
   sizeWindowTo,
   startRig,
@@ -753,7 +754,7 @@ const rig = await startRig({
   LOCALCUT_USERDATA: profile,
   LOCALCUT_DATA_DIR: engineData,
   LOCALCUT_ENGINE_PORT: process.env.RIG_ENGINE_PORT || "7932",
-  LOCALCUT_BACKEND: "mock",
+  LOCALCUT_BACKEND: pinnedBackend(),
   LOCALCUT_SEED_HOOK: "1",
   // Boot at interface zoom 1, so a window sized 1000x700 lays out at
   // 1000x700 CSS pixels — see setSize below for what this cost before.
