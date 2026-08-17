@@ -25,6 +25,23 @@ const ENGINE_PORT = Number(process.env.LOCALCUT_ENGINE_PORT || 7830);
  * others - and `test_ui_contract.py` keeps all three in step, because a
  * reworded message would leave this gate silently counting nothing. */
 const BIND_REFUSED = "cannot bind ";
+/** What every engine line is filed under in the app log. Counted WITH the
+ * prefix, because electron/engine.ts decides to retry on
+ * `startsWith(LOG_PREFIX + BIND_REFUSED)` - a traceback quoting the phrase is
+ * not a refused bind there, and must not be one here either, or a run that
+ * never held a port at all reports refusals and then demands a recognition
+ * that could not have happened. */
+const LOG_PREFIX = "[engine] ";
+/** How the app says it recognised one of those as a port winding down.
+ * Written in electron/engine.ts as `PORT_HELD_BY_SOCKET` and matched here for
+ * the same reason and with the same risk as the line above - so
+ * `test_ui_contract.py` keeps this pair in step too. */
+const PORT_HELD_BY_SOCKET = "is still held by a closed socket";
+/** And how it says the holder turned out to be an orphan of ours instead.
+ * Not contract-tested: this one only ever widens what counts as recognised,
+ * so a rewording costs the gate nothing it was not already getting from the
+ * line above. */
+const STALE_ENGINE = "held by a stale engine";
 
 /** PIDs listening on a port, without assuming which tool exists. */
 function listenersOn(port) {
@@ -501,12 +518,22 @@ try {
   // user as a failed restart. That is the half a reworded message breaks —
   // the count alone would just quietly fall to zero and still read green.
   const log = (await health()).mainLog ?? [];
-  const refused = log.filter((line) => line.includes(BIND_REFUSED)).length;
-  const waited = log.some((line) => line.includes("still held by a closed socket"));
+  const refused = log.filter((line) => line.includes(LOG_PREFIX + BIND_REFUSED)).length;
+  // Either way the app has of RECOGNISING one, not just the wait: a refused
+  // bind whose holder turns out to be an orphan of ours is answered by
+  // reclaiming the port instead, and a run that recovers that way logs no
+  // wait at all - so asking only about the wait fails the gate against an app
+  // that did exactly the right thing.
+  const handled = log.some(
+    (line) => line.includes(PORT_HELD_BY_SOCKET) || line.includes(STALE_ENGINE),
+  );
+  // Not `&& recovered` as well: the check above already owns that, and folding
+  // it in here means one failed restart prints two FAIL lines - the second
+  // under a detail string that cannot explain the term that caused it.
   check(
     "and every refused bind on the way was outlived rather than reported",
-    refused === 0 || (waited && recovered === true),
-    `${refused} refused bind(s), ${waited ? "recognised as a wait" : "NOT recognised as a wait"}`,
+    refused === 0 || handled,
+    `${refused} refused bind(s), ${handled ? "recognised" : "NOT recognised"} as one the app handles`,
   );
   console.log(`  note ${took}s to recover, over ${refused} refused bind(s)`);
 } finally {

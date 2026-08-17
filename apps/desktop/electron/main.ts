@@ -771,6 +771,12 @@ ipcMain.handle("engine:unpair", async (event) => {
   try {
     await connectEngine();
     await armStoredKeys();
+    // Cleared on the way up, the way `engine:restart` does it and for the
+    // same reason: `connectEngine` clears this before the start, so a crash
+    // reported DURING the start that then recovered would leave
+    // `engine:connection` answering with a live connection and an error
+    // beside it — a shape nothing downstream expects.
+    engineError = null;
     return { ok: true, error: null };
   } catch (err) {
     engineError = err instanceof Error ? err.message : String(err);

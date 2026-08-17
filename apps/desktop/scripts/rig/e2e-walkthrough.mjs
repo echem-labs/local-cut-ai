@@ -20,7 +20,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { evalInApp, health, makeCheck, shotsDir, startRig, stopRig } from "./rig.mjs";
+import { evalInApp, health, makeCheck, pinnedBackend, shotsDir, startRig, stopRig } from "./rig.mjs";
 
 const dir = shotsDir("e2e");
 const check = makeCheck();
@@ -37,12 +37,10 @@ const rig = await startRig({
   // script to promote, and the run dies waiting for a workspace that is
   // never coming. Every step here is about the pipeline's shape rather
   // than what any model wrote. (sweep.mjs learned this first.)
-  // Deferring to an exported value rather than overriding it, the way
-  // rig.mjs's own default does: `startRig` merges this LAST, so a literal
-  // would beat `LOCALCUT_BACKEND=local npm run rig:e2e` - and since rig:gate
-  // is this walkthrough plus the walk, a literal here means the release gate
-  // can never be pointed at the real generation chain at all.
-  LOCALCUT_BACKEND: process.env.LOCALCUT_BACKEND || "mock",
+  // Through `pinnedBackend`, which carries the rest of the reasoning: since
+  // rig:gate is this walkthrough plus the walk, a literal here would mean the
+  // release gate can never be pointed at the real generation chain at all.
+  LOCALCUT_BACKEND: pinnedBackend(),
 });
 try {
   const shoot = (name) =>
