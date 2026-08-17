@@ -88,7 +88,7 @@ describe("Settings → Storage, quick tool outputs", () => {
       }),
     );
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: t("common.keepIt") }));
+      fireEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
     });
     expect(deleteToolSessions).not.toHaveBeenCalled();
 
@@ -112,7 +112,21 @@ describe("Settings → Storage, quick tool outputs", () => {
     fireEvent.click(
       screen.getByLabelText(t("settings.storage.deleteAria", { title: "a lighthouse at dusk" })),
     );
-    expect(screen.getByText(t("home.deleteToolMessage"))).toBeTruthy();
+    // Named for what it is, not for the app's own data model: this row is
+    // an image, and "quick tool output" was the phrase every one of these
+    // used no matter which of the six made it.
+    expect(screen.getByText(t("home.deleteToolMessage", { noun: "image" }))).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: t("home.deleteToolConfirm", { noun: "image" }) }),
+    ).toBeTruthy();
+  });
+
+  it("names the other kinds too, from the tool the session ran", async () => {
+    await mount();
+    fireEvent.click(
+      screen.getByLabelText(t("settings.storage.deleteAria", { title: "one small step" })),
+    );
+    expect(screen.getByText(t("home.deleteToolMessage", { noun: "voiceover" }))).toBeTruthy();
   });
 
   it("keeps the project warning for a real project", async () => {

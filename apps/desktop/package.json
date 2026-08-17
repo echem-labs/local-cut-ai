@@ -2,7 +2,7 @@
   "name": "localcut-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "LocalCut AI desktop shell — Electron + React frontend for the LocalCut engine",
+  "description": "LocalCut AI desktop shell \u2014 Electron + React frontend for the LocalCut engine",
   "main": "dist-electron/electron/main.js",
   "type": "commonjs",
   "scripts": {
@@ -31,6 +31,7 @@
     "package:mac:x64": "npm run check:engine -- mac-x64 && npm run icon:check && npm run build && electron-builder --mac --x64",
     "rig:refs": "electron scripts/rig/render-mock.cjs",
     "rig:parity": "node scripts/rig/parity.mjs",
+    "rig:dialogs": "node scripts/rig/dialogs.mjs",
     "rig:u7": "node scripts/rig/u7.mjs",
     "rig:sweep": "node scripts/rig/sweep.mjs",
     "rig:sweep:x11": "node scripts/rig/sweep.mjs --ozone=x11"

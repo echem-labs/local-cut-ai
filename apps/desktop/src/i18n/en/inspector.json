@@ -71,5 +71,6 @@
   "photoTitle": "Your photo for scene {n}",
   "photoRemoveTitle": "Remove your photo?",
   "photoRemoveBody": "Scene {n} goes back to the picture the model generates for it. Your file stays on the Flowchart, so nothing is thrown away.",
-  "photoRemoveConfirm": "Remove photo"
+  "photoRemoveConfirm": "Remove photo",
+  "photoSave": "Save the image"
 }

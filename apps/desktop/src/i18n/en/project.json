@@ -72,14 +72,20 @@
   "fromSession": "From the script session",
   "savepoints": {
     "title": "Save points",
-    "hint": "Named versions of this project. Restore any of them — restoring is itself undoable.",
-    "empty": "No save points yet.",
-    "placeholder": "Name this version…",
+    "hint": "Named versions of this project — restoring is itself undoable.",
+    "empty": "No save points yet",
+    "emptyWhy": "Save one before a risky change — restore brings the whole project back.",
+    "placeholder": "Name this save point",
     "save": "Save",
     "restore": "Restore",
+    "restored": "Restored “{name}” — Ctrl+Z puts it back the way it was.",
     "delete": "Delete",
     "listAria": "Save points",
-    "nameAria": "Save point name"
+    "nameAria": "Save point name",
+    "deleteTitle": "Delete this save point?",
+    "deleteMessage": "Deleting is not undoable — a save point does not pass through the undo history.",
+    "deleteAria": "Delete save point {name}",
+    "deleteTipHint": "Removes this version. Cannot be undone."
   },
   "historyKinds": {
     "patch": "change",

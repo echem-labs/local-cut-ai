@@ -11,7 +11,7 @@
 import { Aperture, FileText, Film, Image as ImageIcon, Mic, Music } from "lucide-react";
 
 import type { Project, ToolKind } from "../api/types";
-import { m } from "../i18n";
+import { m, t } from "../i18n";
 
 /** The kinds this build has copy and an icon for, in the order Home offers
  * them. `satisfies` only proves each entry IS a ToolKind — never that all of
@@ -96,6 +96,24 @@ export const toolKindOf = (project: Project): ToolKind | null => {
  * better answer than a crash and than blank. */
 export const toolLabel = (kind: string): string =>
   (m().tools as Record<string, { label: string } | undefined>)[kind]?.label ?? kind;
+
+/** What the thing a tool made IS, in the middle of a sentence — "Removes
+ * this voiceover", "Delete script". The label will not do: it is a heading
+ * ("Voiceover"), and a confirm that says "Delete Voiceover" is shouting a
+ * noun at someone who asked to delete one thing.
+ *
+ * The fallback is the generic word the six replaced. A session from a newer
+ * engine still gets a sentence that reads, and the contract test makes a
+ * KNOWN kind arriving without a noun a failure rather than a quiet
+ * downgrade to it. */
+export const toolNoun = (kind: string): string =>
+  (m().tools as Record<string, { noun?: string } | undefined>)[kind]?.noun ??
+  t("home.toolOutputNoun");
+
+/** The same, for the surfaces that hold the project rather than the kind.
+ * The `tool:` prefix is this module's business — a caller slicing five
+ * characters off `mode` is the third place that would have to change. */
+export const toolNounOf = (project: Project): string => toolNoun(project.mode.slice(5));
 
 /** The voiceover panel's preview swatches. `brief` is what travels as the
  * `voice` param — the engine's kokoro backend resolves it by keyword — and

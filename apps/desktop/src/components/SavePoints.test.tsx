@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SavePoints } from "./SavePoints";
+import { t } from "../i18n";
 import { useApp } from "../store";
 
 const HISTORY = (savepoints: { id: string; label: string; at: number }[]) => ({
@@ -51,17 +52,64 @@ describe("SavePoints", () => {
     expect(restoreSavepoint).toHaveBeenCalledWith("sp1");
   });
 
-  it("deletes a listed save point", () => {
+  it("says a restore happened, and names the way back out", async () => {
+    // Everything a restore changes is behind this dialog, so a successful
+    // one looked exactly like a dead button.
     mount([{ id: "sp1", label: "start", at: 1 }]);
-    fireEvent.click(screen.getByRole("button", { name: /delete/i }));
+    fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    const said = await screen.findByRole("status");
+    expect(said.textContent).toContain("start");
+    // The undo is the reason this button needs no confirm; saying so is
+    // the difference between "it worked" and "it worked, and here is the
+    // way back".
+    expect(said.textContent).toMatch(/Ctrl\+Z/);
+  });
+
+  it("stays silent when the restore was refused", async () => {
+    mount([{ id: "sp1", label: "start", at: 1 }]);
+    restoreSavepoint.mockResolvedValue("the engine is not reachable");
+    fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("asks before deleting a save point, and does nothing if the answer is no", () => {
+    // Restore needs no confirmation because it lands in the undo history —
+    // one Ctrl+Z walks back out of it. That reasoning has never applied to
+    // delete, which sits two pixels away and is not undoable.
+    mount([{ id: "sp1", label: "start", at: 1 }]);
+    fireEvent.click(screen.getByRole("button", { name: /delete save point start/i }));
+    expect(deleteSavepoint).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: t("common.cancel") }));
+    expect(deleteSavepoint).not.toHaveBeenCalled();
+  });
+
+  it("deletes a listed save point once confirmed", () => {
+    mount([{ id: "sp1", label: "start", at: 1 }]);
+    fireEvent.click(screen.getByRole("button", { name: /delete save point start/i }));
+    // The confirm names the victim, so the right one is checkable rather
+    // than merely trusted.
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("start");
+    fireEvent.click(screen.getByRole("button", { name: t("project.savepoints.delete") }));
     expect(deleteSavepoint).toHaveBeenCalledWith("sp1");
   });
 
   it("shows the engine's refusal instead of swallowing it", async () => {
+    // As an Alert: this was an unstyled `role="status"` div, so a failed
+    // restore was invisible on screen and, being a polite live region,
+    // could go unannounced as well.
     mount([{ id: "sp1", label: "start", at: 1 }]);
     restoreSavepoint.mockResolvedValue("engine 409: nope");
     fireEvent.click(screen.getByRole("button", { name: /restore/i }));
-    expect(await screen.findByRole("status")).toHaveTextContent("engine 409: nope");
+    expect(await screen.findByRole("alert")).toHaveTextContent("engine 409: nope");
+  });
+
+  it("names each version by when it was taken", () => {
+    // `SavePointInfo.at` is on the wire and was dropped on the floor, so
+    // two versions saved twenty minutes apart were indistinguishable.
+    mount([{ id: "sp1", label: "start", at: 1_755_000_000 }]);
+    expect(screen.getByRole("listitem").textContent).toMatch(/\d{2}:\d{2}/);
   });
 
   it("escape closes the dialog", () => {

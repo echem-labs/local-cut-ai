@@ -143,8 +143,8 @@
   "deleteMessage": "Removes this project and all generated media from this machine. Running jobs are cancelled. This can't be undone.",
   "deleteConfirm": "Delete project",
   "deleteToolTitle": "Delete \"{title}\"?",
-  "deleteToolMessage": "Removes this quick tool output and the file it generated. If it is still generating, that stops. This can't be undone.",
-  "deleteToolConfirm": "Delete output",
+  "deleteToolMessage": "Removes this {noun} and the file it generated. If it is still generating, that stops. This can't be undone.",
+  "deleteToolConfirm": "Delete {noun}",
   "styleAria": "Visual style",
   "aspectTip": "Frame shape",
   "aspectTipHint": "9:16 for Shorts, Reels and TikTok; 16:9 for YouTube; 1:1 for feed posts.",
@@ -181,5 +181,6 @@
   "dlSummary": "{ready} of {total} stages ready",
   "dlSummaryBytes": "{done} of {total}",
   "dlExpandAria": "Show what is still downloading",
-  "dlCollapseAria": "Hide the download detail"
+  "dlCollapseAria": "Hide the download detail",
+  "toolOutputNoun": "output"
 }

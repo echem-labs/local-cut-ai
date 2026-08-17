@@ -7,11 +7,14 @@ import type {
 } from "dockview-react";
 import "dockview-core/dist/styles/dockview.css";
 import { useEffect, useRef, useState } from "react";
+import type { SceneCardModel } from "../api/types";
 import { t, type MessageKey } from "../i18n";
 import { movedOrder, orderedScenes } from "../lib/order";
 import { useWorkspace, type WorkspaceView } from "../lib/workspace";
 import { useApp } from "../store";
+import { Alert } from "./Alert";
 import { Composer } from "./Composer";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { PanelHelp } from "./Help";
 import { Inspector } from "./Inspector";
 import { Monitor } from "./Monitor";
@@ -70,11 +73,16 @@ function useGroupMinHeight(api: IDockviewPanelProps["api"], minimumHeight: numbe
 const DRAFT_TEACH_KEY = "localcut.draftTaught";
 
 function BoardPanel(_props: IDockviewPanelProps) {
-  const { board, applyTimeline, addScene } = useApp();
+  const { board, applyTimeline, addScene, removeScene } = useApp();
   const density = useWorkspace((state) => state.density);
   const [dragged, setDragged] = useState<string | null>(null);
   const [addingScene, setAddingScene] = useState(false);
-  const [addSceneError, setAddSceneError] = useState<string | null>(null);
+  const [boardError, setBoardError] = useState<string | null>(null);
+  // The scene whose removal is being asked about. Held here rather than on
+  // the card: a confirmed removal unmounts the card, and the engine's
+  // refusal (a pinned member, the last scene, a pinned timeline) has to
+  // land somewhere that is still on screen afterwards.
+  const [doomed, setDoomed] = useState<SceneCardModel | null>(null);
   const [draftTaught, setDraftTaught] = useState(
     () => localStorage.getItem(DRAFT_TEACH_KEY) === "1",
   );
@@ -130,6 +138,7 @@ function BoardPanel(_props: IDockviewPanelProps) {
               onDragStart={() => setDragged(scene.scene_id)}
               onDragEnd={() => setDragged(null)}
               onDropSide={(after) => dropAt(index, after)}
+              onRemove={() => setDoomed(scene)}
               teachDraft={scene.scene_id === teachId}
               onTeachDismiss={markTaught}
             />
@@ -141,9 +150,9 @@ function BoardPanel(_props: IDockviewPanelProps) {
                 disabled={addingScene}
                 onClick={() => {
                   setAddingScene(true);
-                  setAddSceneError(null);
+                  setBoardError(null);
                   void addScene()
-                    .then((error) => setAddSceneError(error))
+                    .then((error) => setBoardError(error))
                     .finally(() => setAddingScene(false));
                 }}
               >
@@ -153,8 +162,36 @@ function BoardPanel(_props: IDockviewPanelProps) {
             </Tip>
           )}
         </div>
-        {addSceneError && <div role="status">{addSceneError}</div>}
+        {/* `<Alert>`, not the bare `role="status"` div this was: a polite
+            live region with no styling is a refusal nobody sees and a
+            screen reader mentions in passing. */}
+        {boardError && <Alert message={boardError} onDismiss={() => setBoardError(null)} />}
       </div>
+      {doomed && (
+        <ConfirmDialog
+          title={t("scene.remove.title", { n: doomed.scene_id.replace(/^s/, "") })}
+          message={t("scene.remove.message")}
+          confirmLabel={t("scene.remove.confirm")}
+          cancelLabel={t("common.keepIt")}
+          danger
+          /* The words are what tells two scenes apart on a board of
+             thumbnails — the number alone identifies the slot, not the
+             content that is about to go. */
+          victim={{
+            name: t("scene.sceneName", { n: doomed.scene_id.replace(/^s/, "") }),
+            detail:
+              String(doomed.narration?.params.text ?? "").trim() ||
+              t("scene.remove.victimNarration"),
+          }}
+          onCancel={() => setDoomed(null)}
+          onConfirm={() => {
+            const target = doomed;
+            setDoomed(null);
+            setBoardError(null);
+            void removeScene(target.scene_id).then(setBoardError);
+          }}
+        />
+      )}
     </div>
   );
 }

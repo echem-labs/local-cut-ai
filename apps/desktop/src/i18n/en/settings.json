@@ -95,6 +95,8 @@
     "defaultsAuto": "Auto",
     "defaultsAutoResolved": "Auto — {model}",
     "defaultsAutoNothing": "Auto — nothing installed yet",
+    "defaultsAutoUnset": "Auto — nothing set",
+    "defaultsAutoMissing": "Auto — {model} (not on the server)",
     "defaultsPickTip": "Model for {task}",
     "defaultsPickTipHint": "\"Auto\" uses the first model you have installed for this stage",
     "defaultsTaskFallback": "One stage of the pipeline."
