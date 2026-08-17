@@ -106,6 +106,13 @@ async function main() {
   // The main process is where the engine's own failures surface (it spawns
   // it and logs its output). Playwright swallows that stream, so a rig
   // could see "no projects" and never learn the engine had exited.
+  // Deep enough to hold a whole restart. u7 proves a held port was outlived
+  // by finding the one line that says the wait began, which the app says once
+  // and then buries under three lines per retry - about 135 on Linux's 90s
+  // budget and 225 on Windows' 150s, on top of two engine startups. At 400
+  // that line is evicted before the gate reads it, and a recovery that worked
+  // reports "NOT recognised".
+  const MAIN_LOG_LINES = 4000;
   const mainLog = [];
   const record = (stream) => {
     if (!stream) return;
@@ -114,7 +121,7 @@ async function main() {
       for (const line of chunk.split("\n")) {
         if (line.trim()) mainLog.push(line.trimEnd());
       }
-      if (mainLog.length > 400) mainLog.splice(0, mainLog.length - 400);
+      if (mainLog.length > MAIN_LOG_LINES) mainLog.splice(0, mainLog.length - MAIN_LOG_LINES);
     });
   };
   record(app.process().stdout);
