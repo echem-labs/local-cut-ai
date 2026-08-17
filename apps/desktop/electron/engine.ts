@@ -314,6 +314,10 @@ export class EngineManager {
 
   private starting: Promise<EngineConnection> | null = null;
 
+  /** Set once `before-quit` has begun tearing the engine down; never unset,
+   * because there is no way back from it — see `stopAndWait`. */
+  private quitting = false;
+
   /**
    * @param waitForPort Whether to keep trying while the only thing wrong is a
    * port the kernel has not released — up to a minute of it (see
@@ -328,6 +332,10 @@ export class EngineManager {
    * where it can say what it is doing.
    */
   async start({ waitForPort = true }: { waitForPort?: boolean } = {}): Promise<EngineConnection> {
+    // Refused rather than ignored: the renderer asked for an engine and is
+    // owed an answer it can show, and a start that quietly resolved to
+    // nothing would leave the caller waiting on a window that is closing.
+    if (this.quitting) throw new Error("the app is quitting");
     if (this.connection && this.child) return this.connection;
     // Dedup concurrent starts: during startup `connection` is still null, so a
     // second caller (e.g. whenReady racing engine:unpair) would otherwise
@@ -686,7 +694,7 @@ export class EngineManager {
   }
 
   /**
-   * The bind was refused — decide which of the three refusals it was.
+   * The bind was refused — decide which of the four refusals it was.
    *
    * Asked of the port rather than read off the engine's own guess: `serve`
    * prints "another engine is probably already running", which is the right
@@ -703,6 +711,18 @@ export class EngineManager {
    * with a token we no longer have. Anything else is a stranger — the user's
    * own dev server, a proxy, whatever LOCALCUT_ENGINE_PORT was pointed at —
    * and killing it would be a far worse outcome than the failed start.
+   *
+   * Which leaves the holder that answers nothing at all in the time it is
+   * given. That is NOT a stranger: the case it is likeliest to be is an
+   * orphan of ours mid-render, whose event loop a sampling step blocks for
+   * far longer than any probe waits — and "a stranger" is the one verdict
+   * that neither retries nor reclaims, so it ends the start by telling the
+   * user to quit a process `windowsHide: true` gave no window to close. It
+   * gets the retrying verdict instead, without the reclaim: a later probe,
+   * once the orphan is between steps, gets the 401 that proves it ours and
+   * kills it on evidence rather than on a guess. The cost is that a stranger
+   * which is merely wedged is waited out before it is reported, which is the
+   * cheaper of the two mistakes.
    */
   private async whoHasThePort(connection: EngineConnection): Promise<Error> {
     const port = Number(enginePort());
@@ -712,6 +732,10 @@ export class EngineManager {
       case "a-stranger":
         return new Error(
           `port ${port} is held by another program — quit it or set LOCALCUT_ENGINE_PORT`,
+        );
+      case "too-busy-to-say":
+        return new EnginePortBusyError(
+          `port ${port} is held by a program that never said who it is — quit it or set LOCALCUT_ENGINE_PORT`,
         );
       default:
         return new EnginePortBusyError(
@@ -842,6 +866,18 @@ export class EngineManager {
    * Await this from `before-quit` so the escalation is reachable.
    */
   async stopAndWait(): Promise<void> {
+    // The one caller is `before-quit`, so this IS the app going away — and
+    // nothing else in the class can stand for that. `stopGeneration` cancels
+    // starts that read an older generation; a start arriving after the bump
+    // reads the new one and passes every check in the loop. So an
+    // `engine:restart` or `engine:unpair` landing inside the teardown (which
+    // preventDefaults the quit and can run for TERM_GRACE_MS + KILL_GRACE_MS,
+    // with the windows open and the IPC handlers live the whole time) would
+    // spawn an engine, and `engineTornDown` sends the re-issued quit through
+    // without a second teardown. That child outlives the app holding the data
+    // dir and the port — seeding exactly the orphan the rest of this file
+    // exists to dig out of.
+    this.quitting = true;
     const child = this.child;
     this.stop();
     if (!child || child.pid === undefined) return;
@@ -982,7 +1018,7 @@ async function portIsHeld(port: number): Promise<boolean> {
  */
 async function whoAnswersOn(
   connection: EngineConnection,
-): Promise<"nobody" | "our-kind-of-engine" | "a-stranger"> {
+): Promise<"nobody" | "our-kind-of-engine" | "a-stranger" | "too-busy-to-say"> {
   try {
     const health = await fetch(`${connection.url}/health`, {
       signal: AbortSignal.timeout(IDENTIFY_TIMEOUT_MS),
@@ -995,9 +1031,10 @@ async function whoAnswersOn(
     // connection and did not answer, so it is a program, and "nobody" sends
     // the start to spend the whole rebind budget outlasting a socket that is
     // not there and then to explain the failure in terms of a port nobody is
-    // holding. Same reasoning the second catch below already carries; this
-    // one was left to say "nobody" for both.
-    return timedOut(error) ? "a-stranger" : "nobody";
+    // holding. Not "a-stranger" either: a program that has answered nothing
+    // has not been shown to be one, and an orphan of ours mid-render answers
+    // nothing for as long as the step it is inside — see `whoHasThePort`.
+    return timedOut(error) ? "too-busy-to-say" : "nobody";
   }
   // A separate catch on purpose. Once /health has answered, SOMETHING is on
   // the port, and "nobody" is provably false — but one try block around both
@@ -1010,8 +1047,12 @@ async function whoAnswersOn(
     return (await refusesOurToken(connection, IDENTIFY_TIMEOUT_MS))
       ? "our-kind-of-engine"
       : "a-stranger";
-  } catch {
-    return "a-stranger";
+  } catch (error) {
+    // And here the same split as above: /health answered, so something is
+    // there, but a timeout on the authenticated route is exactly what a busy
+    // engine of ours looks like. Only a route that answers something other
+    // than a 401 has actually identified itself as not ours.
+    return timedOut(error) ? "too-busy-to-say" : "a-stranger";
   }
 }
 
