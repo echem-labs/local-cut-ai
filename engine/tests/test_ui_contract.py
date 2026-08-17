@@ -18,10 +18,18 @@ from pathlib import Path
 
 import pytest
 
-_FORMATS = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "lib" / "formats.ts"
+_DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
+_FORMATS = _DESKTOP / "src" / "lib" / "formats.ts"
+_ENGINE_TS = _DESKTOP / "electron" / "engine.ts"
+_U7 = _DESKTOP / "scripts" / "rig" / "u7.mjs"
 
+# Every file this module reads, not just the first one it happened to need: a
+# checkout carrying the app source without the rig scripts raises
+# FileNotFoundError out of a contract test, which says nothing about the
+# contract. The promise here is to stand aside when the desktop is not present.
 pytestmark = pytest.mark.skipif(
-    not _FORMATS.exists(), reason="desktop app not present beside the engine"
+    not all(path.exists() for path in (_FORMATS, _ENGINE_TS, _U7)),
+    reason="desktop app not present beside the engine",
 )
 
 
@@ -103,12 +111,35 @@ def test_the_desktop_can_recognise_a_bind_the_engine_refused():
     would report a crashed engine as unrecoverable a minute too early."""
     from localcut_engine.cli import BIND_REFUSED
 
-    engine_ts = _FORMATS.parents[2] / "electron" / "engine.ts"
-    match = re.search(
-        r'export const BIND_REFUSED = "([^"]+)"', engine_ts.read_text(encoding="utf-8")
-    )
-    assert match, "engine.ts no longer declares BIND_REFUSED"
-    assert match.group(1) == BIND_REFUSED
+    # All three copies, not just the desktop's. u7.mjs greps the app log for
+    # this to prove the restart it measured actually outlived a held port; a
+    # reworded message would leave that gate counting nothing and reporting
+    # success, which is the opposite of what a contract test is for.
+    for path, pattern in (
+        (_ENGINE_TS, r'export const BIND_REFUSED = "([^"]+)"'),
+        (_U7, r'const BIND_REFUSED = "([^"]+)"'),
+    ):
+        match = re.search(pattern, path.read_text(encoding="utf-8"))
+        assert match, f"{path.name} no longer declares BIND_REFUSED"
+        assert match.group(1) == BIND_REFUSED, f"{path.name} disagrees with cli.py"
+
+
+def test_the_u7_gate_can_recognise_the_wait_it_measures():
+    """u7 proves the restart it timed actually outlived a held port by
+    grepping the app log for the sentence engine.ts writes when it recognises
+    one. That is a second value written down on both sides of a boundary no
+    build step reconciles — and the failure it hides is the nastier direction:
+    a reworded sentence fails the gate against an app doing exactly the right
+    thing, which reads as the fix having regressed."""
+    said = {}
+    for path, pattern in (
+        (_ENGINE_TS, r'export const PORT_HELD_BY_SOCKET = "([^"]+)"'),
+        (_U7, r'const PORT_HELD_BY_SOCKET = "([^"]+)"'),
+    ):
+        match = re.search(pattern, path.read_text(encoding="utf-8"))
+        assert match, f"{path.name} no longer declares PORT_HELD_BY_SOCKET"
+        said[path.name] = match.group(1)
+    assert len(set(said.values())) == 1, f"the two spellings disagree: {said}"
 
 
 def test_every_board_status_has_a_ui_case_and_a_label():
