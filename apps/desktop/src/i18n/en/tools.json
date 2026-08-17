@@ -1,36 +1,42 @@
 {
   "script": {
     "label": "Script",
+    "noun": "script",
     "tip": "Topic → structured script · platform & tone presets",
     "placeholder": "e.g. A 60-second script on why octopuses have three hearts",
     "output": "Markdown script"
   },
   "thumbnail": {
     "label": "Thumbnail",
+    "noun": "thumbnail",
     "tip": "Prompt → platform-ready thumbnail",
     "placeholder": "e.g. A diver face-to-face with a giant octopus, dramatic light",
     "output": "16:9 PNG"
   },
   "voiceover": {
     "label": "Voiceover",
+    "noun": "voiceover",
     "tip": "Text → narration audio · preview voices, clone with consent",
     "placeholder": "Paste the text to narrate…",
     "output": "Voice audio"
   },
   "image": {
     "label": "Image",
+    "noun": "image",
     "tip": "Prompt → single image · reroll with a visible seed",
     "placeholder": "e.g. Bioluminescent waves on a black-sand beach at night",
     "output": "PNG image"
   },
   "music": {
     "label": "Music",
+    "noun": "music track",
     "tip": "Brief → music track · loop-seam preview",
     "placeholder": "e.g. Lo-fi beat, warm keys, gentle vinyl crackle, 60 seconds",
     "output": "Audio track"
   },
   "clip": {
     "label": "Clip",
+    "noun": "clip",
     "tip": "Prompt → single video clip · your image as the start frame",
     "placeholder": "e.g. A hummingbird hovering at a red flower, macro detail",
     "output": "MP4 clip"

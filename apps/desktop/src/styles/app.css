@@ -2066,6 +2066,20 @@ button.link:hover {
   border-color: var(--accent);
 }
 
+/* The one destructive control in the row, so it is the one that does not
+   light up in the product's accent. Red on hover, matching every other
+   trash in the app; a pinned scene refuses instead, because a pin is the
+   app's word for "leave this alone". */
+.scene-card .acts button.act-remove:hover:not(:disabled) {
+  background: var(--status-failed);
+  border-color: var(--status-failed);
+}
+
+.scene-card .acts button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .scene-card .body {
   padding: var(--space-2) var(--space-3) var(--space-3);
 }
@@ -3107,71 +3121,121 @@ button.link:hover {
    which is what a shrinkable flex item does to a two-word label. The keys
    column is as wide as the widest key and no wider; every description
    starts in the same place. */
-.shortcut-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-4);
+/* ---- key caps ----
+   One cap per key, sitting in the row's right column. A column of mono
+   caps down the right edge is scannable without reading a word, which is
+   what a shortcut list is for. */
+.kcaps {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
 }
 
-.shortcut-list > div {
-  display: contents;
-}
-
-.shortcut-list kbd {
+.kcaps kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 18px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--surface-1);
   border: 1px solid var(--border-hi);
   border-radius: var(--radius-xs);
-  padding: 0 7px;
-  min-width: 52px;
-  text-align: center;
   /* One line, always: the box is the key, and a key that wraps stops
      reading as one. */
   white-space: nowrap;
-  color: var(--text-primary);
-  background: var(--inset-bg);
 }
 
-.shortcut-list span {
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-}
-
-.glossary-search {
-  width: 100%;
+/* Sticky, so the way to filter 32 terms does not scroll away from the
+   list it filters. Opaque, or entries ghost through it on the way past. */
+.glossary-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   background: var(--surface-2);
+  padding-bottom: var(--space-3);
+}
+
+.glossary-head > svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+/* Three classes deep on purpose: `.modal input:not([type])` is the dialog
+   field recipe and outranks a bare class, so a plain `.glossary-search`
+   rule lost its padding and the search icon sat on top of the placeholder
+   it was meant to precede. */
+.modal .glossary-head .glossary-search {
+  width: 100%;
+  background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   color: var(--text-primary);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) 32px;
   min-height: var(--control-h);
   outline: none;
-  margin-bottom: var(--space-3);
 }
 
-.glossary-search:focus {
+.modal .glossary-head .glossary-search:focus {
   border-color: var(--accent);
+  box-shadow: var(--accent-glow);
 }
 
-.glossary-list {
-  max-height: 320px;
-  overflow-y: auto;
-  display: grid;
-  gap: var(--space-3);
+.glossary-well {
+  padding-top: 0;
+  padding-bottom: 0;
   user-select: text;
 }
 
-.glossary-list b {
-  font-size: var(--text-xs);
-  font-weight: 650;
+.glossary-list {
+  margin: 0;
 }
 
-.glossary-list p {
+/* A run-in dictionary entry: term as an anchor, definition following it on
+   the same line. Thirty-two violet anchors down the left edge give the
+   scan rhythm that a wall of bold-over-paragraph never had. */
+.gentry {
+  padding: var(--space-3) 0;
+}
+
+.gentry + .gentry {
+  border-top: 1px solid var(--border);
+}
+
+.gentry > dt {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  margin-right: var(--space-2);
+  background: var(--accent-muted);
+  color: var(--accent-hover);
+  border-radius: var(--radius-xs);
   font-size: var(--text-xs);
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+/* `display: inline` on the definition is what makes it run IN after the
+   term rather than starting a block under it — and the margin reset is
+   load-bearing, because a `dd` carries a 40px inline-start margin by
+   default that would indent every wrapped line. */
+.gentry > dd {
+  display: inline;
+  margin: 0;
+  font-size: var(--text-s);
   color: var(--text-secondary);
-  margin-top: 2px;
+  line-height: 1.5;
 }
 
 /* ---- legacy timeline strip (chips) ---- */
@@ -3751,8 +3815,9 @@ button.link:hover {
 
 /* A note under the last field. `.field` carries its spacing above itself,
    so anything FOLLOWING one inherits none and sat against the input above
-   as though it were that field's own error text. Two dialogs need this —
-   the publish kit's edit note and the pack grant's version hint. */
+   as though it were that field's own error text. The pack grant's version
+   hint is the one left that needs it — the publish kit's edit note said
+   what its own subtitle already says and has gone. */
 .modal .field + .hint {
   display: block;
   margin-top: var(--space-3);
@@ -3888,13 +3953,21 @@ button.link:hover {
   margin-top: var(--space-2);
 }
 
-.banner.checkpoint .row {
+/* The heading strip both asking banners share: label left, actions right.
+   Listed rather than written as a bare `.banner .row` because the notice
+   bar stacks plain rows inside the same class and would become a flex
+   container it never asked to be. The readiness banner had a spacer with
+   nothing to push against for exactly this reason — its button sat welded
+   to the title while the checkpoint's, three pixels away, sat right. */
+.banner.checkpoint .row,
+.banner.warning .row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.banner.checkpoint .spacer {
+.banner.checkpoint .spacer,
+.banner.warning .spacer {
   flex: 1;
 }
 
@@ -4715,19 +4788,54 @@ button.link:hover {
    Everything inside it is the modal recipe already in this file — `.field`
    for the labelled controls, `.modal-actions` for the footer. The first
    version hand-rolled a grid instead and looked like a different app. */
-/* The suggested thumbnail. Sized like a thumbnail rather than stretched to
-   the dialog: at full width a 16:9 preview is 315px of the window's height
-   before the first field, which pushed the footer off a short screen. */
+/* The hero. It IS the top of the panel: the picture is what the title is
+   being written for, and at 240px it left a third of a 620px dialog empty
+   beside it. Full width costs height, which the body's own scroll absorbs
+   — the earlier note here traded a dead column for a footer that never
+   moved, and the footer is pinned by the shell anyway. */
+.publish-hero {
+  position: relative;
+  margin-bottom: var(--space-4);
+}
+
 .publish-thumb {
   display: block;
-  width: 240px;
-  max-width: 100%;
+  width: 100%;
   aspect-ratio: 16 / 9;
+  /* Full width, but never so tall that the text this dialog exists to
+     hand over sits below the fold: at 620px wide a 16:9 hero is 322px,
+     which on a short window left the title field off screen behind a
+     scroll. Cropped rather than shrunk — the picture is a reminder of
+     which video this is, and the fields are the errand. */
+  max-height: min(40vh, 260px);
   object-fit: cover;
   border: 1px solid var(--border);
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  margin-top: var(--space-4);
+  border-radius: var(--radius-m);
+  /* The darkest ground in the app, so an image reads as footage in a
+     monitor rather than as a panel that happens to hold a picture. */
+  background: var(--surface-0);
+}
+
+/* The image's own way out, which it never had: a picture cannot be copied
+   by the text affixes beside every other field here. */
+.hero-tray {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  gap: var(--space-1);
+}
+
+.hero-tray .icon-btn-sm {
+  width: 28px;
+  height: 28px;
+  background: var(--tray-bg);
+  color: var(--text-primary);
+  backdrop-filter: blur(3px);
+}
+
+.hero-tray .icon-btn-sm:hover {
+  background: var(--surface-3);
 }
 
 /* The busy line, under the thumbnail. It sat flush against the picture above
@@ -4741,24 +4849,193 @@ button.link:hover {
   margin-top: var(--space-3);
 }
 
-/* Control and copy button on one row. The button is a SIBLING of the input,
-   never wrapping it: a control inside a control is unreachable to a screen
-   reader, and a field you cannot click into is not editable at all.
+/* The copy control rides INSIDE the field's right edge, as an affix — the
+   design's own arrangement, and the reason the fields here are full width
+   like every other field in the app instead of 28px short of it.
+
+   Still a SIBLING of the input in the markup, never wrapping it: a control
+   inside a control is unreachable to a screen reader, and a field you
+   cannot click into is not editable at all. Only the painting overlaps.
 
    A `div`, and the markup says so too: `.modal .field span` is the LABEL
    rule and matches every span in the field, so a span wrapper here was laid
    out as a block with the button under the input, wearing 10px uppercase
    type. */
 .publish-field .field-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
+  position: relative;
 }
 
-.publish-field .field-row > .icon-btn-sm {
-  flex-shrink: 0;
-  /* Beside the control's first row, not centred against a tall textarea. */
-  margin-top: 3px;
+/* The text stops before the affix rather than running under it.
+   `.modal` prefixed, for the third time in this family: the dialog field
+   recipe is `.modal input:not([type])` at 0-2-1, which ties with a bare
+   two-class rule and wins on order — so the padding here silently became
+   the recipe's 12px and the affix sat on top of the last characters of
+   the title. */
+.modal .publish-field .field-row > input,
+.modal .publish-field .field-row > textarea {
+  padding-right: 34px;
+}
+
+.publish-field .field-row > .tip-wrap {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+}
+
+.publish-field .field-row > .tip-wrap > .icon-btn-sm {
+  /* 24 in a 32px control leaves the 4px the top offset above assumes. */
+  width: 24px;
+  height: 24px;
+}
+
+/* The platform ceiling, as a readout under the field it governs. Quiet
+   until it matters: tertiary while there is room, amber inside the last
+   tenth, red past the cap — the reserved hues, earning their keep. */
+.char-count {
+  margin-top: var(--space-1);
+  text-align: right;
+}
+
+.char-count > .readout {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.char-count.near > .readout {
+  color: var(--status-draft);
+}
+
+.char-count.over > .readout {
+  color: var(--status-failed);
+}
+
+/* ---- hashtags ---- */
+/* The label row carries the copy-all affix, because the control below it
+   is a well of chips rather than one focusable box to hang it beside. */
+.publish-tags .tags-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.publish-tags .tags-label > span {
+  font-size: var(--text-2xs);
+  /* The recipe's own tracking, not a nearby value: this label sits directly
+     under TITLE and DESCRIPTION, which are the shared rule. */
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.publish-tags .tags-label > .tip-wrap {
+  margin-left: auto;
+}
+
+/* Chips wrap; nothing truncates. This was one line of input, so five
+   multi-word tags ended at "#se…" — a field unable to show its contents. */
+.tag-well {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: border-color var(--motion-fast);
+}
+
+/* The only green in the family, and it means one thing: that went to the
+   clipboard. */
+.tag-chip.copied {
+  border-color: var(--status-final);
+}
+
+.tag-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  color: inherit;
+  font: inherit;
+}
+
+.tag-copy > .hash {
+  color: var(--text-tertiary);
+}
+
+/* Shown on approach, not at rest. A chip carrying a permanent ✕ is a chip
+   about its own deletion — the design draws a clean word — but dropping the
+   control to match the drawing would have cost the only way to edit a tag.
+   `:focus-within` on the chip is what keeps that bargain honest: the button
+   is in the DOM and in the tab order the whole time, and reaching it by
+   keyboard reveals it exactly as hovering does. */
+.tag-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 0;
+  height: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  transition:
+    width var(--motion-fast),
+    padding var(--motion-fast);
+}
+
+.tag-chip:hover > .tag-remove,
+.tag-chip:focus-within > .tag-remove {
+  width: 18px;
+  padding: 0 var(--space-1) 0 0;
+}
+
+.tag-remove:hover {
+  color: var(--status-failed);
+}
+
+/* The entry sits IN the well, so adding a tag happens where the tags are.
+   Borderless: the well is already the box. */
+/* Same specificity fight as the glossary search: without the `.modal`
+   prefix the field recipe gives this a surface-2 box, a border and
+   `width: 100%`, which turns a tag entry sharing a row with chips into a
+   full-width input that shoves every chip onto its own line. */
+.modal .tag-well .tag-entry {
+  flex: 1;
+  width: auto;
+  min-width: 96px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0 var(--space-1);
+  background: none;
+  border: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.modal .tag-well .tag-entry:focus {
+  outline: none;
+  /* The well takes the focus ring rather than the bare input, so focus
+     lands on the thing the eye reads as the control. */
+  border: 0;
+  box-shadow: none;
+}
+
+.tag-well:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
 }
 
 /* No padding override here. One asking for a tighter box than the dialog
@@ -4968,6 +5245,366 @@ button.link:hover {
 
 .banner.warning {
   border-color: var(--status-draft);
+}
+
+/* ---- the instrument panel (design review v13) ----
+   A group of status is a WELL: content recessed into whatever surface it
+   sits on, so grouping is carried by depth instead of by a heading. The
+   well is the family's one container; severity is a light on it (a 2px
+   edge) and on each row (a dot), never a colour change in the prose. */
+.well {
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+/* The two lights. Red covers both "the job dies" and "you get a stand-in",
+   because a placeholder is a failure that happens to produce a file;
+   amber is the tier that still renders something real. */
+.well.edge-fail {
+  border-left: 2px solid var(--status-failed);
+}
+
+.well.edge-deg {
+  border-left: 2px solid var(--status-draft);
+}
+
+.well + .well {
+  margin-top: var(--space-3);
+}
+
+/* A well names itself with an icon row inside its own walls rather than an
+   eyebrow above them — the eyebrow was iteration 1, and stacking two
+   type-scale steps above every group is what made that page read as a
+   form. */
+.whead {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+.whead > svg {
+  color: var(--text-tertiary);
+  flex: none;
+  /* Optical, not geometric: the glyph rides the cap height of a 14px line
+     rather than its box, or it floats above the sentence it labels. */
+  margin-top: 3px;
+}
+
+/* The quieter header, for a well whose contents are a list of things
+   rather than a statement about them ("Fixes you can download"). */
+.whead.label {
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.whead.label > svg {
+  margin-top: 0;
+}
+
+/* One row anatomy for every well in the app: [light] [name] … [price]. */
+.prow {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prow + .prow {
+  border-top: 1px solid var(--border);
+}
+
+.pdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pdot.deg {
+  background: var(--status-draft);
+}
+
+/* Hollow for hollow output: a placeholder is an empty result, and the ring
+   says so before the sentence beside it does. */
+.pdot.ph {
+  border: 1.5px solid var(--status-failed);
+}
+
+.pdot.fail {
+  background: var(--status-failed);
+}
+
+.pname {
+  font-size: var(--text-s);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* The price column. `margin-left: auto` rather than a spacer element so a
+   row can be built from two nodes; right-aligned so the costs stack into a
+   column that reads top-to-bottom without reading the names. */
+.price {
+  margin-left: auto;
+  text-align: right;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The one place a status colour touches prose: a job that will not run at
+   all is the only row whose price is worth shouting. */
+.price.fail {
+  color: var(--status-failed);
+  font-weight: 500;
+}
+
+/* The rows inside a well are a list, and say so to a screen reader — the
+   dots are decoration, so the words have to carry the severity too. */
+.plist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* An empty well is the same instrument with the needle at zero: same
+   walls, same recess, never a dashed box or a different illustration. */
+.well-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.well-empty > svg {
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.well-empty > b {
+  color: var(--text-secondary);
+  font-size: var(--text-s);
+  font-weight: 500;
+}
+
+/* The line that earns the empty state its space: what the first entry
+   buys, not a second way of saying there are none. */
+.well-empty > span {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  max-width: 40ch;
+}
+
+/* Numbers are readouts, not prose: sizes, counts, timestamps and key caps
+   all in the mono face so a glance separates measurement from sentence. */
+.readout {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* Severity totals, shown only when there is more than one well to total —
+   with a single group the wells already are the summary. */
+.sev-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.sev-chip .readout {
+  color: var(--text-primary);
+}
+
+/* ---- readiness surfaces ---- */
+.gap-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The strip above a project board. Same component as the gate's list, one
+   step denser, on a surface-1 ground — so its wells go UP a step to
+   surface-2 rather than down to the inset, and the recess reads on a
+   lighter ground as it does on a darker one. */
+.banner.readiness {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--status-draft);
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.banner.readiness.worst-fail {
+  border-left-color: var(--status-failed);
+}
+
+.banner.readiness .row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.banner.readiness .row > b {
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  font-weight: 600;
+}
+
+.banner.readiness .spacer {
+  flex: 1;
+}
+
+.banner.readiness .gap-list {
+  margin-top: var(--space-3);
+}
+
+.banner.readiness .well {
+  background: var(--surface-2);
+}
+
+/* Compact context: the same wells, one density step down, because the
+   strip is furniture above a board rather than the thing being read. */
+.banner.readiness .well {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  border-radius: var(--radius-s);
+}
+
+.banner.readiness .whead {
+  padding-bottom: 6px;
+}
+
+.banner.readiness .prow {
+  min-height: 24px;
+}
+
+/* Folded, the chips sit in the title row rather than above the wells, so
+   they lose the margin that spaces them from a list that is not there. */
+.banner.readiness .row > .sev-row {
+  margin: 0;
+}
+
+/* The readout under the narration field: the app's one non-obvious rule,
+   live, at the only moment it can be acted on. */
+.scene-runtime {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.scene-runtime > svg {
+  flex: none;
+}
+
+.scene-runtime > .spacer {
+  flex: 1;
+}
+
+/* A footer that narrates: the reason a disabled primary is disabled, in
+   the slot the shell already reserves on the left. */
+.foot-note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* Two controls in this family are anchors rather than buttons, because a
+   download is the browser's own job and an onClick that fabricates one is
+   the same thing with a keyboard hole in it. They should not then read as
+   links: the app's anchors are underlined, and a button that wears one
+   looks like a mistake. */
+a.btn-ghost,
+a.icon-btn-sm {
+  text-decoration: none;
+}
+
+/* The gate's scope control: a rule, not a well. It is the only thing in
+   the dialog that is a setting rather than a reading, and the wells are
+   reserved for readings. */
+.gate-scope {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.gate-scope > .lbl {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  /* Aligned to the toggle's centre, not its top edge. */
+  line-height: 32px;
+}
+
+.gate-scope > .sc {
+  margin-left: auto;
+  text-align: right;
+}
+
+/* The toggle hugs its three buttons, whatever is written under it.
+   `.seg-toggle` is `display: flex`, which is BLOCK-level: as a child of a
+   column whose width is set by the widest thing in it, it stretched to the
+   width of the hint line below — and the hint for "Always" is twice the
+   length of the other two. The result was a fourth, empty segment appearing
+   inside the bordered box on that choice and no other. */
+.gate-scope .seg-toggle {
+  width: fit-content;
+  margin-left: auto;
+}
+
+.gate-scope .scope-hint {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.gate-intro {
+  margin: 0 0 var(--space-4);
+}
+
+.gate-intro .readout {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.gate-downloads {
+  margin-top: var(--space-3);
+}
+
+/* ModelLibrary lives inside the fixes well, so its per-task headings come
+   off: the well's header row already says what the list is, and the stage
+   names are in the gap list directly above it. Filtered to the handful of
+   models that fix THIS render, the groups have nothing left to separate. */
+.gate-downloads .model-group > h3 {
+  display: none;
+}
+
+.gate-downloads .model-group + .model-group {
+  margin-top: 0;
 }
 
 /* ---- first-run setup ---- */
@@ -6676,13 +7313,25 @@ button.link:hover {
 
 /* Bounded by the viewport, not by the image: a 4000px photo must not make
  * the dialog itself scroll in either direction. */
+/* The exhibit sits on the darkest ground in the app, letterboxed — a
+   portrait source then reads as footage in a monitor rather than as a
+   layout that broke. */
+.photo-stage {
+  display: grid;
+  place-items: center;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  overflow: hidden;
+}
+
 .photo-full {
   display: block;
   max-width: 100%;
-  max-height: 70vh;
-  margin: 0 auto;
+  /* Room for the head and foot the shell pins around it, so the one thing
+     this dialog exists to show never needs scrolling to see. */
+  max-height: min(70vh, 520px);
   object-fit: contain;
-  border-radius: var(--radius-s);
 }
 
 .drop-overlay-card {
@@ -7496,31 +8145,111 @@ button.link:hover {
   flex: none;
 }
 
-.savepoint-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 40vh;
+/* The versions live in one well, so the list scrolls inside its own walls
+   rather than running off the bottom of the body. */
+.savepoint-well {
+  max-height: 44vh;
   overflow-y: auto;
 }
 
-.savepoint-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border);
+/* Taller than a status row: these carry controls, and a 28px row makes a
+   32px button overhang its own hairline. */
+.vrow {
+  min-height: 40px;
 }
 
-.savepoint-list .savepoint-label {
-  flex: 1;
+.vrow > svg {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.vnames {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* The name can be any length the field allowed; the readout beneath it
+     never wraps, so the ellipsis belongs to the name alone. */
+  overflow: hidden;
+}
+
+.vnames > .pname {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.savepoints-empty {
-  color: var(--text-secondary);
+/* Actions sit right, pushed by the names column rather than by a spacer
+   element — one fewer node in a row that repeats per save point. */
+.vrow > .btn-ghost,
+.vrow > .tip-wrap {
+  margin-left: auto;
+  flex: none;
+}
+
+/* …but only the FIRST of them: a second `margin-left: auto` would split
+   the free space between the two buttons and leave a gap down the middle. */
+.vrow > .btn-ghost ~ .tip-wrap {
+  margin-left: 0;
+}
+
+/* A row control, one step under the panel-level ghost: 40px rows with
+   32px buttons in them leave 4px of air top and bottom, which reads as a
+   button that fell into the row rather than one that belongs to it. */
+.sp-restore {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+/* The restore acknowledgement: the family's instrument line, with the tick
+   in the one green the family owns — it means "that happened", the same as
+   every copy affix. */
+.sp-restored {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.sp-restored > svg {
+  flex: none;
+  color: var(--status-final);
+}
+
+/* The only red an interactive control wears in the family, and only on
+   the way to a confirm — the act itself is still one dialog away. */
+.sp-delete:hover:not(:disabled) {
+  color: var(--status-failed);
+  background: var(--surface-1);
+}
+
+/* The victim of a destructive confirm: one row, no header — the dialog's
+   own title already asked the question. */
+.confirm-victim {
+  margin-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+/* The name identifies the thing; it does not wrap to make room for the
+   detail beside it. "Scene 1" broke across two lines the moment a scene's
+   narration was long enough to want the space — a two-line label in an
+   evidence row reads as two things being deleted. */
+.confirm-victim .pname {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* And the detail is evidence, not the content itself: one line, cut where
+   it runs out. A scene's narration set as three right-aligned lines of
+   prose is a paragraph pretending to be a readout. */
+.confirm-victim .price {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ---------- per-task default models (Settings → Models) ---------- */
@@ -7826,7 +8555,16 @@ button.link:hover {
   margin-top: var(--space-4);
 }
 
-.modal .field span {
+/* The field's LABEL — a direct child span, and only that.
+   Written as a descendant it matched every span anywhere in the field, and
+   has now cost three separate bugs: the copy button's wrapper laid out as a
+   block under the input, the tag entry given a label's 10px uppercase type,
+   and the hashtag chips wearing the label's 8px bottom margin — which, on a
+   centred flex row, lifted each `#` exactly 4px above its own word.
+   Every label in the app is a direct child; the one that is not (the
+   hashtag well's, nested in `.tags-label` beside its copy button) carries
+   the same recipe explicitly below. */
+.modal .field > span {
   display: block;
   font-size: var(--text-2xs);
   font-weight: 600;

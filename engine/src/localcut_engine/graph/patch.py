@@ -102,6 +102,7 @@ class PatchOp(BaseModel):
         "disconnect",
         "select_take",
         "add_scene",
+        "remove_scene",
     ]
     # add_scene allocates its own ids, so it is the one op with no target.
     node_id: str = ""
@@ -299,6 +300,15 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # scene conventions this module does not know — the service
                 # compiles it into add_node/connect/set_params ops first.
                 raise ValueError("add_scene must be resolved by the project service")
+            case "remove_scene":
+                # The mirror of add_scene, and service-compiled for the same
+                # reason: a scene is a set of nodes named by convention plus
+                # the timeline's references to it, and this module knows
+                # neither. Compiled into remove_node ops and one timeline
+                # set_params — the same shape the NL editor's own
+                # `remove_scene` produces, so both routes remove a scene the
+                # one way.
+                raise ValueError("remove_scene must be resolved by the project service")
             case "disconnect":
                 if op.port is None:
                     raise ValueError("disconnect requires a port")

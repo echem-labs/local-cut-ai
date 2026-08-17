@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, RotateCw } from "lucide-react";
+import { Check, Copy, Download, RotateCw, X } from "lucide-react";
 
 import type { PublishKit as PublishKitData } from "../api/types";
 import { t } from "../i18n";
 import { loadDraft, mergeDraft, saveDraft } from "../lib/publishDraft";
+import { messageOf } from "../lib/errors";
 import { isDone } from "../lib/status";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
@@ -61,12 +62,20 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
     if (projectId) saveDraft(projectId, next);
   };
 
-  // The hashtag field's text WHILE it is being typed. The stored value is a
-  // list, and rebuilding the text from it on every keystroke deletes the
-  // separator just pressed — so "#a b" became "#ab". Null means "nothing
-  // typed yet, show the list"; a regenerate clears it so a rewritten set of
-  // tags is not shadowed by the text of the old one.
-  const [tagText, setTagText] = useState<string | null>(null);
+  // Transient acknowledgements for the two whole-kit copies. They expire on
+  // their own, or the button lies about the next press.
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedImage, setCopiedImage] = useState(false);
+  useEffect(() => {
+    if (!copiedAll) return;
+    const timer = setTimeout(() => setCopiedAll(false), 1400);
+    return () => clearTimeout(timer);
+  }, [copiedAll]);
+  useEffect(() => {
+    if (!copiedImage) return;
+    const timer = setTimeout(() => setCopiedImage(false), 1400);
+    return () => clearTimeout(timer);
+  }, [copiedImage]);
 
   const kit = engineKit ? mergeDraft(engineKit, draft) : null;
   const asked = !!metadata || !!thumbnail;
@@ -79,10 +88,29 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
   const metaFailed = metadata?.status === "failed";
   const thumbFailed = thumbnail?.status === "failed";
 
+  const thumbUrl =
+    thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
+      ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
+      : null;
+
+  /** The thumbnail onto the clipboard as an IMAGE, so it can be pasted
+   *  into the upload form beside the text. Returns a message rather than
+   *  throwing: `ClipboardItem` is behind a permission and only speaks
+   *  PNG, and a silent failure here looks identical to a successful one. */
+  const copyImage = async (url: string): Promise<string | null> => {
+    try {
+      const blob = await fetch(url).then((response) => response.blob());
+      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      setCopiedImage(true);
+      return null;
+    } catch (err) {
+      return messageOf(err);
+    }
+  };
+
   const build = () => {
     setError(null);
     setBusy(true);
-    setTagText(null);
     void preparePublish()
       .then(setError)
       .finally(() => setBusy(false));
@@ -130,8 +158,30 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
             </button>
           )}
           <div className="spacer" />
-          <button className="btn-primary" onClick={() => closeRef.current()}>
+          <button className="btn-ghost" onClick={() => closeRef.current()}>
             {t("common.close")}
+          </button>
+          {/* The gradient goes to the verb this dialog exists for. Close
+              wore it, which put the app's one accent on the act of
+              leaving without taking anything. */}
+          <button
+            className="btn-primary"
+            disabled={!kit}
+            onClick={() => {
+              if (!kit) return;
+              void navigator.clipboard
+                .writeText(
+                  `${kit.title}\n\n${kit.description}\n\n${formatTags(kit.hashtags)}`.trim(),
+                )
+                .then(() => setCopiedAll(true));
+            }}
+          >
+            {copiedAll ? (
+              <Check size={14} strokeWidth={2.2} aria-hidden="true" />
+            ) : (
+              <Copy size={14} strokeWidth={2} aria-hidden="true" />
+            )}
+            {copiedAll ? t("publish.copiedAll") : t("publish.copyAll")}
           </button>
         </>
       }
@@ -146,16 +196,49 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
         </>
       ) : (
         <>
-          <MediaThumb
-            className="publish-thumb"
-            src={
-              thumbnail?.artifact_hash && client && currentProject && isDone(thumbnail.status)
-                ? client.artifactUrl(currentProject.id, thumbnail.artifact_hash)
-                : null
-            }
-            alt={t("publish.thumbAlt")}
-            fallback={<span className="publish-thumb empty" aria-hidden="true" />}
-          />
+          {/* The hero, full width. It sat at 390px in a 620px dialog with
+              nothing beside it — and the picture is the one part of the kit
+              that cannot be copied as text, so it also carries its own way
+              out. */}
+          <div className="publish-hero">
+            <MediaThumb
+              className="publish-thumb"
+              src={thumbUrl}
+              alt={t("publish.thumbAlt")}
+              fallback={<span className="publish-thumb empty" aria-hidden="true" />}
+            />
+            {thumbUrl && (
+              <div className="hero-tray">
+                <Tip label={t("publish.copyImage")}>
+                  <button
+                    type="button"
+                    className="icon-btn-sm"
+                    aria-label={t("publish.copyImage")}
+                    onClick={() => void copyImage(thumbUrl).then(setError)}
+                  >
+                    {copiedImage ? (
+                      <Check size={14} strokeWidth={2.2} aria-hidden="true" />
+                    ) : (
+                      <Copy size={14} strokeWidth={2} aria-hidden="true" />
+                    )}
+                  </button>
+                </Tip>
+                <Tip label={t("publish.saveImage")}>
+                  {/* A real link, so the browser's own download path runs
+                      — an onClick that fabricates one is the same thing
+                      with a keyboard hole in it. */}
+                  <a
+                    className="icon-btn-sm"
+                    href={thumbUrl}
+                    download={`${currentProject?.title ?? "thumbnail"}.png`}
+                    aria-label={t("publish.saveImage")}
+                  >
+                    <Download size={14} strokeWidth={2} aria-hidden="true" />
+                  </a>
+                </Tip>
+              </div>
+            )}
+          </div>
           {thumbFailed && thumbnail && (
             <>
               <p className="hint">{t("publish.thumbFailed")}</p>
@@ -166,35 +249,30 @@ export function PublishKit({ onClose }: { onClose: () => void }) {
           )}
           {kit ? (
             <>
+              {/* The caps are what every platform this gets pasted into
+                  enforces silently; a model writing the text knows nothing
+                  about them. Amber near the ceiling, red past it — the
+                  reserved hues, used semantically. */}
               <Field
                 label={t("publish.fieldTitle")}
                 value={kit.title}
+                limit={TITLE_LIMIT}
                 onChange={(title) => edit({ title })}
               />
               <Field
                 label={t("publish.fieldDescription")}
                 value={kit.description}
+                limit={DESCRIPTION_LIMIT}
                 onChange={(description) => edit({ description })}
                 multiline
               />
-              <Field
-                label={t("publish.fieldHashtags")}
-                // The engine strips the `#`, so it is added back here
-                // rather than assumed — pasting bare words into a caption
-                // box is not what anyone means by "hashtags". Typing them
-                // back with or without it works either way.
-                //
-                // Displayed from `tagText` while it is being typed, not
-                // from the stored list: parsing on every keystroke drops
-                // the separator you just pressed, so the space between
-                // two tags vanished and the next word joined the last.
-                value={tagText ?? formatTags(kit.hashtags)}
-                onChange={(text) => {
-                  setTagText(text);
-                  edit({ hashtags: parseTags(text) });
-                }}
+              <Hashtags
+                tags={kit.hashtags}
+                // The engine strips the `#`, so it is added back for
+                // display and on copy — pasting bare words into a caption
+                // box is not what anyone means by "hashtags".
+                onChange={(hashtags) => edit({ hashtags })}
               />
-              <p className="hint">{t("publish.editNote")}</p>
             </>
           ) : metaFailed && metadata ? (
             // The job died. "Write them again" in the footer is the way
@@ -261,6 +339,117 @@ const parseTags = (text: string) =>
     .map((tag) => tag.replace(/^#+/, "").trim())
     .filter(Boolean);
 
+/** What the platforms this text is pasted into will silently cut it at.
+ *  YouTube's two, which are the tightest of the set a short lands on. */
+const TITLE_LIMIT = 100;
+const DESCRIPTION_LIMIT = 5000;
+
+/** The hashtag well: one chip per tag, wrapping, none of them truncating.
+ *
+ * This was a single-line input, so five multi-word tags ended at "#se…" —
+ * a field that cannot show its own contents. Chips wrap instead, each one
+ * copies itself on click, and each carries the remove the design's own
+ * sketch left out (dropping the ability to edit a tag was not a trade
+ * worth making for the look of it). New tags arrive through the field at
+ * the end, on Enter, comma or space. */
+function Hashtags({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [entry, setEntry] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (copied === null) return;
+    const timer = setTimeout(() => setCopied(null), 1400);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  const commit = (text: string) => {
+    const added = parseTags(text);
+    if (added.length === 0) return;
+    // Deduped case-insensitively: the same tag twice is a paste artefact,
+    // never an intention, and platforms count the repeat against the cap.
+    const seen = new Set(tags.map((tag) => tag.toLowerCase()));
+    onChange([...tags, ...added.filter((tag) => !seen.has(tag.toLowerCase()))]);
+    setEntry("");
+  };
+
+  return (
+    <div className="field publish-tags">
+      <div className="tags-label">
+        <span>{t("publish.fieldHashtags")}</span>
+        <Tip label={t("publish.copyField", { field: t("publish.fieldHashtags") })}>
+          <button
+            type="button"
+            className="icon-btn-sm"
+            aria-label={t("publish.copyField", { field: t("publish.fieldHashtags") })}
+            disabled={tags.length === 0}
+            onClick={() => {
+              void navigator.clipboard.writeText(formatTags(tags)).then(() => setCopied("*"));
+            }}
+          >
+            {copied === "*" ? (
+              <Check size={13} strokeWidth={2.2} aria-hidden="true" />
+            ) : (
+              <Copy size={13} strokeWidth={2} aria-hidden="true" />
+            )}
+          </button>
+        </Tip>
+      </div>
+      <div className="well tag-well">
+        {tags.map((tag) => (
+          <span className={`tag-chip${copied === tag ? " copied" : ""}`} key={tag}>
+            <button
+              type="button"
+              className="tag-copy"
+              aria-label={t("publish.copyTag", { tag })}
+              onClick={() => {
+                void navigator.clipboard.writeText(`#${tag}`).then(() => setCopied(tag));
+              }}
+            >
+              <span className="hash" aria-hidden="true">
+                #
+              </span>
+              {tag}
+            </button>
+            <button
+              type="button"
+              className="tag-remove"
+              aria-label={t("publish.removeTag", { tag })}
+              onClick={() => onChange(tags.filter((other) => other !== tag))}
+            >
+              <X size={11} strokeWidth={2.4} aria-hidden="true" />
+            </button>
+          </span>
+        ))}
+        <input
+          className="tag-entry"
+          value={entry}
+          aria-label={t("publish.addTag")}
+          placeholder={t("publish.addTag")}
+          onChange={(event) => {
+            // A separator ends the tag rather than joining the next word to
+            // it, which is what the old parse-per-keystroke field did.
+            if (/[\s,]/.test(event.target.value)) commit(event.target.value);
+            else setEntry(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit(entry);
+            }
+            // Backspace on an empty box takes the last chip — the standard
+            // token-field reflex, and the only way to remove one without
+            // the pointer.
+            if (event.key === "Backspace" && entry === "" && tags.length > 0) {
+              onChange(tags.slice(0, -1));
+            }
+          }}
+          onBlur={() => commit(entry)}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** One editable, copyable field. The copy button is a sibling of the input,
  * never wrapping it — a control inside a control is unreachable to a screen
  * reader, and a `<textarea>` you cannot click into is not editable at all. */
@@ -268,11 +457,14 @@ function Field({
   label,
   value,
   onChange,
+  limit,
   multiline = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** The platform ceiling this text is heading for, if it has one. */
+  limit?: number;
   multiline?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
@@ -329,6 +521,15 @@ function Field({
           </button>
         </Tip>
       </div>
+      {limit !== undefined && (
+        <div
+          className={`char-count${value.length > limit ? " over" : value.length > limit * 0.9 ? " near" : ""}`}
+        >
+          <span className="readout">
+            {value.length} / {limit}
+          </span>
+        </div>
+      )}
     </label>
   );
 }

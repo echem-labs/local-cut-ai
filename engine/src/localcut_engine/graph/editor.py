@@ -433,8 +433,13 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
 _TIMELINE_MAPS = ("overlays", "trims", "transitions")
 
 
-def _scrub_removed(params: dict, removed: set[str]) -> dict:
-    """Timeline params with every reference to the removed scenes dropped."""
+def scrub_removed(params: dict, removed: set[str]) -> dict:
+    """Timeline params with every reference to the removed scenes dropped.
+
+    Public because the `remove_scene` patch op compiles to the same thing:
+    a scene removed from the board and a scene removed by the NL editor
+    must leave the cut in the same state, and two implementations of "drop
+    the references" is how one of them keeps a dangling id in `order`."""
     scrubbed: dict[str, Any] = {}
     if isinstance(order := params.get("order"), list):
         scrubbed["order"] = [s for s in order if s not in removed]
@@ -560,7 +565,7 @@ def compile_edits(
         # Scrub after the plan's own timeline edits so a reorder that also
         # removes a scene doesn't resurrect it from the pre-edit params.
         merged = {**existing_timeline, **timeline_params}
-        timeline_params.update(_scrub_removed(merged, removed))
+        timeline_params.update(scrub_removed(merged, removed))
     if timeline_params:
         if "timeline" in graph.nodes and graph.nodes["timeline"].pinned:
             # A pinned timeline serves its frozen EDL; scrubbing its params

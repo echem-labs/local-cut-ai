@@ -45,7 +45,7 @@ function Harness({
 describe("ConfirmDialog", () => {
   it("opens with focus on the safe action", () => {
     render(<Harness />);
-    expect(screen.getByRole("button", { name: "Keep it" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
   });
 
   it("keeps the confirm button reachable while the parent re-renders (UI-1)", async () => {
@@ -77,7 +77,7 @@ describe("ConfirmDialog", () => {
     const user = userEvent.setup();
     render(<Harness />);
     const close = screen.getByRole("button", { name: "Close" });
-    const cancel = screen.getByRole("button", { name: "Keep it" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
     const confirm = screen.getByRole("button", { name: "Delete" });
 
     // Focus opens on the SAFE action, not on the shell's close button and

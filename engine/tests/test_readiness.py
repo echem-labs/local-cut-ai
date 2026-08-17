@@ -347,6 +347,49 @@ def test_pipeline_kinds_match_a_real_expansion():
     assert {node.kind for node in graph.nodes.values()} == set(PIPELINE_KINDS)
 
 
+def test_auto_covers_every_task_the_picker_can_show(tmp_path):
+    """The picker labels its Auto option per task from this map, so a
+    defaultable task missing from it reads "Auto" forever - which is the
+    one thing the honest-Auto work exists to stop."""
+    from localcut_engine.manifest.defaults import DEFAULTABLE_TASKS
+    from localcut_engine.readiness import auto_defaults
+
+    auto = auto_defaults(_bare_config(tmp_path))
+    assert set(auto) == set(DEFAULTABLE_TASKS)
+
+
+def test_auto_answers_with_the_stored_default_ignored(tmp_path):
+    """What Auto falls back TO, not what the task resolves to today.
+
+    Choosing Auto discards the stored pick, so a map that answered with it
+    would label the option with the very value selecting it throws away.
+    """
+    from localcut_engine.manifest.defaults import set_default
+    from localcut_engine.readiness import auto_defaults
+
+    _tiny_manifest(tmp_path)
+    weights = tmp_path / "models" / "checkpoints" / "tiny.safetensors"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"weights")
+    config = EngineConfig(data_dir=tmp_path, backend="local,mock")
+
+    assert auto_defaults(config)["video.i2v"] == "tiny-i2v"
+    assert auto_defaults(config)["text.llm"] == config.llm_model
+
+    # A stored pick changes what renders; it must not change this answer.
+    set_default(config, "text.llm", "llama3.2")
+    assert auto_defaults(config)["text.llm"] == config.llm_model
+
+
+def test_auto_for_a_machine_that_cannot_see_is_nothing(tmp_path):
+    """vision.llm has no engine-config fallback on purpose (unset means
+    "this machine cannot see"), and no node kind produces it - so it is
+    also the task no readiness row can ever answer for."""
+    from localcut_engine.readiness import auto_defaults
+
+    assert auto_defaults(_bare_config(tmp_path))["vision.llm"] is None
+
+
 async def test_every_row_names_its_task_and_resolved_model(tmp_path, monkeypatch):
     """Two fields the desktop keys on, and so must never be dropped: the
     task (its per-task surfaces group by it, ready rows included) and the

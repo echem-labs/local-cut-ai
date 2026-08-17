@@ -43,7 +43,18 @@
       "label": "Edit scene",
       "hint": "opens details",
       "aria": "Edit scene"
+    },
+    "remove": {
+      "label": "Remove scene",
+      "hint": "takes it out of the cut",
+      "aria": "Remove scene {n}"
     }
+  },
+  "remove": {
+    "title": "Remove scene {n}?",
+    "message": "Takes this scene out of the cut, with its picture, its clip and its narration. Ctrl+Z brings it back.",
+    "confirm": "Remove scene",
+    "victimNarration": "No narration yet"
   },
   "addScene": "Add scene",
   "addSceneTitle": "Add an empty scene at the end — write its prompt in Details"

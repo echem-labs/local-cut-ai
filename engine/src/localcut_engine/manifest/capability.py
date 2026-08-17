@@ -27,10 +27,16 @@ COMFY_TASKS: dict[NodeKind, tuple[str, ...]] = {
 }
 
 
-def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
-    """Kind -> ids of fully-downloaded models able to serve it. Recomputed
-    per call (a stat per manifest file): a download finishing mid-session
-    must flip capability without an engine restart."""
+def installed_by_task(config: EngineConfig) -> dict[str, list[str]]:
+    """Manifest task -> ids of fully-downloaded models able to serve it, in
+    MANIFEST order — the queue before any stored default jumps it.
+
+    Separate from `installed_comfy_models` because two callers need the two
+    different orders: rendering wants the user's default first (it is what
+    Auto renders with), while the Settings picker has to say what Auto would
+    fall back to *if the default went away*, and a list that already applied
+    it can only answer with the default itself.
+    """
     try:
         manifest = load_manifest(config)
     except (OSError, ValueError):
@@ -38,7 +44,7 @@ def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
         # nothing here keeps renders on the fallback tiers instead of
         # submitting workflows whose weights are unknowable.
         logger.warning("model manifest unreadable — ComfyUI claims no kinds")
-        return {kind: [] for kind in COMFY_TASKS}
+        return {}
     models_dir = config.resolved_models_dir
     ready: dict[str, list[str]] = {}
     for entry in manifest.models:
@@ -57,6 +63,14 @@ def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
             )
             continue
         ready.setdefault(entry.task, []).append(entry.id)
+    return ready
+
+
+def installed_comfy_models(config: EngineConfig) -> dict[NodeKind, list[str]]:
+    """Kind -> ids of fully-downloaded models able to serve it. Recomputed
+    per call (a stat per manifest file): a download finishing mid-session
+    must flip capability without an engine restart."""
+    ready = installed_by_task(config)
     # A configured per-task default jumps its task's queue: the first
     # installed id with a template is what _template_for_installed renders
     # with when a node names no model, so order IS the choice here.

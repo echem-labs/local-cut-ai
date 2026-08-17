@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { EngineClient, EngineTimeoutError } from "./api/client";
 import { t } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
+import { messageOf } from "./lib/errors";
 import { forgetPublishDraft } from "./lib/publishDraft";
 import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
@@ -466,6 +467,10 @@ interface AppState {
   selectTake: (nodeId: string, outputHash: string) => Promise<string | null>;
   /** Append an empty scene (engine allocates the id) and select it. */
   addScene: () => Promise<string | null>;
+  /** Take a scene out of the cut — its nodes and the timeline's references
+   * to it. The engine refuses the last scene, a pinned one, and any removal
+   * while the timeline is pinned; the message it gives is what comes back. */
+  removeScene: (sceneId: string) => Promise<string | null>;
   refreshModelDefaults: () => Promise<void>;
   setModelDefault: (task: string, model: string | null) => Promise<string | null>;
   cancelJob: (jobId: string) => Promise<void>;
@@ -803,18 +808,6 @@ const without = <T>(record: Record<string, T>, key: string): Record<string, T> =
   return rest;
 };
 
-const messageOf = (err: unknown): string => {
-  // fetch's network-level failure is a TypeError whose message ("Failed to
-  // fetch") names neither the engine nor a next step — say what it means
-  // here, the one place every action's error passes through.
-  if (err instanceof TypeError) return t("errors.engineUnreachable", { detail: err.message });
-  // The platform's own wording for an aborted fetch is "signal timed out",
-  // which names no actor and no next step. Say which side gave up, and that
-  // the work may not have been wasted — the engine is still going.
-  if (err instanceof EngineTimeoutError)
-    return t("errors.engineTimeout", { seconds: Math.round(err.timeoutMs / 1000) });
-  return err instanceof Error ? err.message : String(err);
-};
 
 // Drop all per-engine module state — pending edits, download bookkeeping —
 // when the engine itself changes (pair/unpair). Otherwise the old engine's
@@ -2309,6 +2302,23 @@ export const useApp = create<AppState>((set, get) => {
           (id) => id.endsWith(".keyframe") && !known.has(id.split(".")[0]),
         );
         if (added) set({ selectedNode: added });
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    removeScene: async (sceneId) => {
+      const { client, currentProject, selectedNode } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await flushPatches();
+        await client.patch(currentProject.id, [{ op: "remove_scene", node_id: sceneId }]);
+        // The Inspector cannot stay open on a node that is gone: its panel
+        // reads the board for the selection and would render an empty
+        // editor over "Apply & regenerate" for a scene nobody can see.
+        if (selectedNode?.split(".")[0] === sceneId) set({ selectedNode: null });
         await get().refreshBoard();
         return null;
       } catch (err) {
