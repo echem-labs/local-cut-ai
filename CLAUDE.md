@@ -129,6 +129,6 @@ be fixed for exactly this.
 ## Dependencies
 
 Stay on latest stable, and verify the current version from the registry
-rather than from memory. Renovate opens the routine bumps; the ML stack
-(torch and friends) is pinned to what the vendored ComfyUI actually supports,
-so those are deliberate rather than automatic.
+rather than from memory. Renovate opens the routine bumps. ComfyUI is not
+vendored here - the adapter reaches it over HTTP - and the engine pins no ML
+stack of its own, so there is no torch-and-friends exception to carve out.
