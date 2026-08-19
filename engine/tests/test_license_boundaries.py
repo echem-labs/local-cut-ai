@@ -10,8 +10,9 @@ The second is the one nobody had looked at. The frozen engine redistributes
 its whole transitive closure, native libraries included, and GPL arrives
 through `pip` as readily as through a model card: `faster-whisper` pulls
 `av`, whose wheel bundles a full FFmpeg with the x264 and x265 encoders
-(nothing in this product calls them — video is encoded by shelling out to
-the user's own ffmpeg), and `kokoro-onnx` pulls `phonemizer-fork` plus
+(video is encoded by shelling out to the user's own ffmpeg, so nothing here
+calls them — though `libavcodec` names them in its `DT_NEEDED`, so they load
+with it either way), and `kokoro-onnx` pulls `phonemizer-fork` plus
 `espeakng-loader`, which ships libespeak-ng. All of that is loaded in the
 engine's own process.
 
@@ -24,6 +25,8 @@ arrive is this file's job.
 
 from __future__ import annotations
 
+import ast
+import functools
 import importlib.metadata as metadata
 import re
 import sysconfig
@@ -33,10 +36,28 @@ import pytest
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
-# `import comfy...` / `from comfy... import`, at any indentation. Matching the
-# statement rather than the bare word so a mention in a comment or a URL does
-# not read as linkage.
-_COMFY_IMPORT = re.compile(r"^\s*(?:import\s+comfy|from\s+comfy[\s.])", re.MULTILINE)
+#: ComfyUI's top-level packages. Only the `comfy*` names are listed: ComfyUI
+#: also exposes generic ones (`nodes`, `execution`, `folder_paths`) that a
+#: first-party module could legitimately be called, and a guard that cries
+#: wolf on this repo's own code is a guard someone weakens.
+_COMFY_ROOTS = frozenset(
+    {
+        "comfy",
+        "comfy_api",
+        "comfy_api_nodes",
+        "comfy_config",
+        "comfy_execution",
+        "comfy_extras",
+    }
+)
+
+# `importlib.import_module("comfy")` / `__import__("comfy")`. The ast walk
+# below sees the call but not what the string means, so the dynamic forms are
+# matched textually. The engine uses importlib in five modules, so this is an
+# idiomatic way in here rather than an exotic one.
+_DYNAMIC_COMFY = re.compile(
+    r"""(?:import_module|__import__)\s*\(\s*['"](comfy(?:_\w+)?)(?:[.'"])"""
+)
 
 #: Distributions whose own metadata declares a copyleft licence, with why each
 #: one is tolerable today. Anything not listed here fails the test.
@@ -119,32 +140,42 @@ _KNOWN_LIBRARIES = frozenset(
 #: what resolving the debt looks like — but must never grow.
 _KNOWN_COPYLEFT_LIBRARIES = frozenset(
     {
-        "libx264",  # GPL-2.0-or-later, via av's FFmpeg. Never called.
-        "libx265",  # GPL-2.0-or-later, via av's FFmpeg. Never called.
+        # GPL-2.0-or-later, via av's FFmpeg. No encode in this product asks
+        # for them — but they are `DT_NEEDED` entries of `libavcodec`, so
+        # `import av` maps both into the engine's own address space whether or
+        # not anything calls them. Non-invocation is not the mitigation it
+        # reads as: linkage is what the licence question turns on.
+        "libx264",
+        "libx265",
         "libespeak-ng",  # GPL-3.0, ctypes-loaded by kokoro-onnx's tokenizer.
     }
 )
 
-_HASH_SUFFIX = re.compile(r"-[0-9a-f]{6,}$")
-_VERSION_SUFFIX = re.compile(r"[-.][0-9][0-9.]*$")
-_ARCH_SUFFIX = re.compile(r"_(x86_64|aarch64|arm64|amd64)$")
-_SHARED_OBJECT = re.compile(r"\.(so|dylib|dll)(\.|$)")
+#: One pattern, used both to recognise a shared object and to strip its
+#: extension. Written twice it drifts: adding `.pyd` to the detector alone
+#: would admit a file that then normalises with the extension still attached.
+_SHARED_OBJECT = re.compile(r"\.(?:so|dylib|dll)(?:\.[0-9][0-9.]*)?$")
+
+#: Version, build-hash and arch suffixes, in any order and any number. One
+#: greedy alternation rather than three patterns applied in sequence, because
+#: sequencing made the answer depend on the order a wheel builder happened to
+#: stack them: `libfoo_x86_64-abcdef12.so` normalised to `libfoo_x86_64` while
+#: `libfoo-abcdef12_x86_64.so` normalised to `libfoo`.
+_BUILD_SUFFIX = re.compile(r"(?:-[0-9a-f]{6,}|[-.][0-9][0-9.]*|_(?:x86_64|aarch64|arm64|amd64))+$")
 
 
 def _normalise(filename: str) -> str:
-    """`libx264-d6533a8d.so.165` -> `libx264`, `libgfortran-a-b.so.5` -> `libgfortran`."""
-    name = re.sub(r"\.(so|dylib|dll)(\.[0-9.]+)?$", "", filename)
-    name = _ARCH_SUFFIX.sub("", name)
-    # Repeated: auditwheel stacks more than one hash on some libraries.
-    while True:
-        stripped = _VERSION_SUFFIX.sub("", _HASH_SUFFIX.sub("", name))
-        if stripped == name:
-            return name
-        name = stripped
+    """`libx264-d6533a8d.so.165` -> `libx264`, `libgfortran-040eee7a.so.5.0.0` -> `libgfortran`."""
+    return _BUILD_SUFFIX.sub("", _SHARED_OBJECT.sub("", filename))
 
 
-def _bundled_libraries() -> set[str]:
-    site_packages = Path(sysconfig.get_paths()["purelib"])
+@functools.cache
+def _bundled_libraries() -> frozenset[str]:
+    # platlib, not purelib: compiled artefacts are the whole subject here, and
+    # the two only coincide by accident of the venv scheme. On a distro split
+    # (`/usr/lib64/...` on the RPM family) purelib holds pure Python alone, and
+    # scanning it would report an empty closure as a clean one.
+    site_packages = Path(sysconfig.get_paths()["platlib"])
     found: set[str] = set()
     for path in site_packages.rglob("*"):
         name = path.name
@@ -153,16 +184,66 @@ def _bundled_libraries() -> set[str]:
         if not _SHARED_OBJECT.search(name) or ".abi3" in name or ".cpython-" in name:
             continue
         found.add(_normalise(name))
-    return found
+    return frozenset(found)
+
+
+def _installed_closure() -> frozenset[str]:
+    """The bundled libraries, or a skip if this environment has none.
+
+    The single definition of "is this an installed closure". It used to be
+    two — a `skipif` globbing `*/*` with no filter, and this walk — and they
+    disagreed in both directions: a tree holding only a package's own
+    `.cpython-*.so` satisfied the guard, which then ran the test against an
+    empty set, while a tree whose libraries sat at depth 3
+    (`onnxruntime/capi/`) was invisible to the guard and skipped with
+    libraries sitting there unchecked.
+    """
+    libraries = _bundled_libraries()
+    if not libraries:
+        pytest.skip("no bundled shared libraries in this environment (not an installed closure)")
+    return libraries
+
+
+def _comfy_imports(path: Path) -> list[tuple[int, str]]:
+    """`(line, module)` for every ComfyUI import in one source file.
+
+    Parsed rather than pattern-matched, because the regex this replaced was
+    wrong in four ways at once. A whitespace class matches newlines, so under
+    `re.MULTILINE` the match began at the blank line above the import and the
+    line number it reported was off by however many blank lines preceded it.
+    It fired inside docstrings. It matched `import comfyui_client` on a bare
+    prefix, and it missed `from comfy_extras.x import y` entirely. An ast walk
+    gets all four right and hands back `node.lineno` for free.
+    """
+    source = path.read_text(encoding="utf-8")
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(ast.parse(source, filename=str(path))):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import cannot reach ComfyUI, and `node.module` is
+            # None for `from . import x`.
+            modules = [node.module] if node.level == 0 and node.module else []
+        else:
+            continue
+        hits += [(node.lineno, m) for m in modules if m.split(".")[0] in _COMFY_ROOTS]
+    hits += [
+        (source.count("\n", 0, match.start()) + 1, match.group(1))
+        for match in _DYNAMIC_COMFY.finditer(source)
+    ]
+    return sorted(hits)
 
 
 def test_the_engine_never_imports_comfyui_in_process() -> None:
     """The GPL containment the adapter's docstring promises."""
+    sources = sorted(_SRC.rglob("*.py"))
+    # Without this the guard passes on nothing the moment the layout moves:
+    # `rglob` on a missing directory yields no paths, and so no offenders.
+    assert sources, f"no engine sources under {_SRC} — this test would pass on nothing"
     offenders = [
-        f"{path.relative_to(_SRC)}:{source[: match.start()].count(chr(10)) + 1}"
-        for path in _SRC.rglob("*.py")
-        for source in [path.read_text(encoding="utf-8")]
-        for match in _COMFY_IMPORT.finditer(source)
+        f"{path.relative_to(_SRC)}:{line} ({module})"
+        for path in sources
+        for line, module in _comfy_imports(path)
     ]
     assert not offenders, (
         "ComfyUI is GPL-3.0 and is reached over its HTTP/WS API precisely so its "
@@ -193,27 +274,41 @@ def test_no_distribution_declares_copyleft_outside_the_recorded_set() -> None:
     )
 
 
-@pytest.mark.skipif(
-    not any(
-        _SHARED_OBJECT.search(p.name) for p in Path(sysconfig.get_paths()["purelib"]).glob("*/*")
-    ),
-    reason="no bundled shared libraries in this environment (not an installed closure)",
-)
 def test_no_unrecorded_native_library_ships_in_the_closure() -> None:
-    unrecorded = _bundled_libraries() - _KNOWN_LIBRARIES
+    unrecorded = _installed_closure() - _KNOWN_LIBRARIES
     assert not unrecorded, (
         "a wheel started bundling a native library nobody has licensed — this is "
-        "how x264 and libespeak-ng arrived. Check each one's licence, then add it "
-        f"to _KNOWN_LIBRARIES (and to _KNOWN_COPYLEFT_LIBRARIES if it is one): {sorted(unrecorded)}"
+        "how x264 and libespeak-ng arrived. Establish each one's licence, then "
+        "record it in _KNOWN_LIBRARIES; if it is copyleft it also belongs in "
+        f"_KNOWN_COPYLEFT_LIBRARIES, which is the record a licence review reads: "
+        f"{sorted(unrecorded)}"
     )
 
 
-def test_the_copyleft_native_libraries_have_not_grown() -> None:
-    """Shrinking is the fix landing; growing is a regression."""
-    present = _bundled_libraries() & _KNOWN_COPYLEFT_LIBRARIES
-    assert present <= _KNOWN_COPYLEFT_LIBRARIES
-    stale = _KNOWN_COPYLEFT_LIBRARIES - _bundled_libraries()
-    if stale:
-        pytest.skip(
-            f"recorded copyleft no longer present (good) — prune from the set: {sorted(stale)}"
-        )
+def test_the_recorded_copyleft_is_part_of_the_inventory() -> None:
+    """The two sets are maintained by hand and have to describe one closure."""
+    orphaned = _KNOWN_COPYLEFT_LIBRARIES - _KNOWN_LIBRARIES
+    assert not orphaned, (
+        "recorded as copyleft but absent from the inventory — one of the two sets "
+        f"was edited without the other: {sorted(orphaned)}"
+    )
+
+
+def test_the_recorded_copyleft_is_still_present() -> None:
+    """Shrinking is the fix landing, and the record has to shrink with it.
+
+    A hard failure rather than the skip this used to be. `pytest.skip` was
+    being used to report a result, and it reported the wrong one: it fired
+    whenever the scan came back empty, which far more often means "the closure
+    is not installed here" than "the GPL debt was paid" — and what it printed
+    under `-rs` was `recorded copyleft no longer present (good) — prune from
+    the set`. A maintainer acting on that deletes the only record that x264,
+    x265 and libespeak-ng ship at all. `_installed_closure()` now owns the one
+    legitimate skip here, and it says which case it is.
+    """
+    stale = _KNOWN_COPYLEFT_LIBRARIES - _installed_closure()
+    assert not stale, (
+        "recorded copyleft is no longer in the closure. If the chain was replaced "
+        "this is the fix landing and the entry should be pruned; if it merely moved "
+        f"or was renamed, the record is now wrong: {sorted(stale)}"
+    )
