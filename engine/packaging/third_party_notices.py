@@ -40,6 +40,27 @@ from pathlib import Path
 
 _PROJECT = "localcut-engine"
 
+#: Modules deliberately kept out of the freeze, and why. `localcut.spec` passes
+#: these to PyInstaller's `excludes`, and the walk below drops whatever
+#: distribution provides one — so this document describes the installer rather
+#: than the build environment, which still has all of it installed.
+#:
+#: One list, read from both ends. Written twice it would drift, and the
+#: direction it drifts in is the dangerous one: a notice claiming a licence for
+#: something that is not there is a smaller problem than the freeze quietly
+#: regaining a dependency this file still says was removed.
+FREEZE_EXCLUDES: dict[str, str] = {
+    # A hard requirement of faster-whisper (`av>=11`) that we never call: the
+    # aligner decodes with the ffmpeg binary and hands `transcribe()` an array,
+    # and `decode_audio` is the only thing in that package reaching PyAV.
+    # Its wheel bundles a full FFmpeg — libx264 and libx265 among it.
+    "av": "PyAV; faster-whisper's decode path, replaced by the ffmpeg binary",
+    # CPython's readline module links libreadline, which is GPL-3.0-or-later
+    # with no linking exception. The engine is a server and a non-interactive
+    # CLI; nothing here reads a line from a terminal.
+    "readline": "CPython's readline module; links GPL-3.0-or-later libreadline",
+}
+
 # Guesswork, so it is anchored at both ends: `licenses.py` — a module, not a
 # notice — must not match on its first seven characters. Anything after the
 # word has to start with a separator: LICENSE.txt, LICENSE-APACHE,
@@ -226,6 +247,7 @@ def runtime_distributions() -> list[metadata.Distribution]:
             f"{_PROJECT} is not installed in this environment, so the runtime closure "
             "cannot be walked and the notices would ship empty"
         ) from exc
+    excluded = _excluded_distributions()
     while queue:
         name, extras = queue.pop(0)
         key = canonicalize_name(name)
@@ -238,7 +260,26 @@ def runtime_distributions() -> list[metadata.Distribution]:
             continue
         seen.setdefault(key, dist)
         queue.extend(_requirement_names(dist, extras))
-    return [seen[k] for k in sorted(seen)]
+    # Filtered at the end rather than skipped in the walk: an excluded
+    # distribution's own requirements may be shared with something that does
+    # ship, and cutting the branch would drop those too.
+    return [seen[k] for k in sorted(seen) if k not in excluded]
+
+
+def _excluded_distributions() -> set[str]:
+    """Which installed distributions provide a module in `FREEZE_EXCLUDES`.
+
+    Resolved rather than listed, because the two namespaces are not the same:
+    `excludes` names modules, this walk yields distributions, and `readline` is
+    a stdlib module with no distribution behind it at all. `packages_distributions`
+    is what maps one to the other.
+    """
+    from packaging.utils import canonicalize_name
+
+    providers = metadata.packages_distributions()
+    return {
+        canonicalize_name(name) for module in FREEZE_EXCLUDES for name in providers.get(module, ())
+    }
 
 
 def _is_own_metadata(location: str) -> bool:

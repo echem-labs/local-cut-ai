@@ -8,7 +8,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
 from pathlib import Path
+
+import numpy as np
 
 from ..captions import Word, anchor_words_to_text, cues_to_srt, words_to_cues
 from ..graph.compiler import JobSpec
@@ -28,9 +31,15 @@ _PROGRESS_TIMEOUT_S = 5.0
 class AlignBackend(ExecutionBackend):
     name = "align"
 
-    def __init__(self, models_dir: Path, file_dests: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        models_dir: Path,
+        file_dests: list[str] | None = None,
+        ffmpeg_bin: str = "ffmpeg",
+    ) -> None:
         first = (file_dests or [f"{_DEFAULT_MODEL_DIR}/model.bin"])[0]
         self.model_dir = models_dir / Path(first).parent
+        self.ffmpeg_bin = ffmpeg_bin
         self._model = None
         self._lock = asyncio.Lock()
 
@@ -127,10 +136,58 @@ class AlignBackend(ExecutionBackend):
         await ctx.progress(1.0)
         return out
 
+    def _decode(self, path: Path) -> "np.ndarray":
+        """Narration as mono float32 at 16 kHz, decoded by the ffmpeg binary.
+
+        Handed a path, faster-whisper decodes it through PyAV, whose wheel
+        bundles a full FFmpeg build - libx264 and libx265 among it. Handed an
+        array it decodes nothing. Shelling out is what upstream's own docstring
+        points at for this, and it is the same ffmpeg this engine already
+        assembles video with, so there is one decoder in the product rather
+        than two.
+        """
+        try:
+            out = subprocess.run(
+                [
+                    self.ffmpeg_bin,
+                    "-nostdin",
+                    "-threads",
+                    "0",
+                    "-i",
+                    str(path),
+                    "-f",
+                    "s16le",
+                    "-ac",
+                    "1",
+                    "-acodec",
+                    "pcm_s16le",
+                    "-ar",
+                    "16000",
+                    "-",
+                ],
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            # `check=False` covers a non-zero exit, not a binary that is not
+            # there: the exec itself fails and raises before there is a
+            # returncode to look at.
+            raise GenerationError(
+                f"could not decode narration for alignment: {self.ffmpeg_bin} could not be run "
+                "- install ffmpeg or set LOCALCUT_FFMPEG_BIN"
+            ) from exc
+        if out.returncode != 0:
+            detail = out.stderr.decode("utf-8", "replace").strip().splitlines()
+            raise GenerationError(
+                f"could not decode narration for alignment: {detail[-1] if detail else 'ffmpeg failed'}"
+            )
+        # s16 -> f32 on the same scale faster-whisper's own decoder uses.
+        return np.frombuffer(out.stdout, np.int16).astype(np.float32) / 32768.0
+
     def _align_one(self, path: Path, offset: float) -> list[Word]:
         model = self._load()
         segments, _ = model.transcribe(
-            str(path),
+            self._decode(path),
             language="en",
             beam_size=1,
             word_timestamps=True,
