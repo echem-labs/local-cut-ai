@@ -18,9 +18,9 @@ name: CI (engine)
 #
 # test_license_contract.py is the second such reader, and the one whose inputs
 # sit at the repository root: LICENSE, NOTICE, README.md and the desktop's
-# package.json. Those four match no other workflow either -- a README reverted
-# to TBD or a deleted LICENSE runs nothing at all, and package.json alone runs
-# only ci-desktop, which cannot execute pytest.
+# package.json. Those four match no other workflow either -- an edit to the
+# README's License section or a deleted LICENSE runs nothing at all, and
+# package.json alone runs only ci-desktop, which cannot execute pytest.
 #
 # (Spelled out twice rather than shared through a YAML anchor: the workflow
 # parser does not expand anchors.)

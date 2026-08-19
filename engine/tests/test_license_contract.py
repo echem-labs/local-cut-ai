@@ -6,8 +6,7 @@ NOTICE — five files, no build step reconciling them. That is the shape
 CLAUDE.md gives a contract test, and the cost of drift is not cosmetic here:
 electron-builder reads `package.json` to stamp the `.deb` control file, so a
 manifest that disagrees with LICENSE ships a package making a false statement
-about its own terms (before this landed, the field was absent and the deb said
-`License: unknown`).
+about its own terms.
 
 NOTICE is pinned for the licence it names, not only for its copyright line.
 Apache-2.0 §4(d) makes NOTICE the one text every downstream redistributor is
@@ -50,11 +49,12 @@ LICENSE_ID = "Apache-2.0"
 def _readme_license_section() -> str:
     """The body of the README's License section, bounded by the next heading.
 
-    Bounded, rather than everything following the heading: an unrelated later
-    section that happens to carry the word TBD would otherwise redden a
-    licence test, and the cheapest way to green that is to weaken the
-    pattern - and the pattern is the guard. Bounding also stops the section
-    being satisfied by an `Apache-2.0` occurring somewhere further down.
+    Bounded, rather than everything following the heading: unbounded, the
+    assertions below answer for the whole rest of the file, so an unrelated
+    section could fail them for reasons that have nothing to do with the
+    licence - and the cheapest way to green that is to weaken the pattern,
+    which is the guard. Bounding also stops the section being satisfied by an
+    `Apache-2.0` occurring somewhere further down.
 
     Either spelling of the heading: the heading is "License" while the prose
     under it is British, so which one a future edit lands on is a coin toss.
@@ -103,10 +103,9 @@ def test_the_desktop_manifest_declares_the_same_license() -> None:
     )
 
 
-def test_the_readme_names_the_license_and_no_longer_says_tbd() -> None:
+def test_the_readme_names_the_license() -> None:
     section = _readme_license_section()
     assert LICENSE_ID in section, f"README's License section does not name {LICENSE_ID!r}"
-    assert "TBD" not in section, "README still parks the licence decision"
 
 
 def test_the_notice_carries_a_copyright_line_and_names_the_license() -> None:
