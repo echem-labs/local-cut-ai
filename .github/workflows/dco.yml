@@ -1,0 +1,56 @@
+name: DCO
+
+# Contributions come in under a Developer Certificate of Origin rather than a
+# CLA (CONTRIBUTING.md says why). The DCO is only a sign-off line, so it is
+# only worth anything if something checks for it — an unenforced policy is
+# discovered missing at the worst possible moment, which is when an outside
+# contribution needs its provenance established after the fact.
+#
+# Pull requests only: this checks the commits a PR proposes, and there is
+# nothing to gate on a push to main that has already merged.
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    name: every commit is signed off
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR's commits, not just the merge result — the sign-off is a
+          # per-commit assertion. Depth 0 so the base is present to diff from.
+          fetch-depth: 0
+
+      - name: Check Signed-off-by on each commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          missing=0
+          while read -r sha; do
+            [ -z "$sha" ] && continue
+            subject=$(git log -1 --format='%s' "$sha")
+            # Merge commits carry the sign-offs of what they merge.
+            if [ "$(git rev-list --parents -n1 "$sha" | wc -w)" -gt 2 ]; then
+              continue
+            fi
+            if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by: .+ <.+@.+>'; then
+              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line"
+              missing=1
+            fi
+          done < <(git rev-list "$base..HEAD")
+          if [ "$missing" -ne 0 ]; then
+            echo "Sign off with 'git commit -s' (amend with 'git commit -s --amend', or"
+            echo "rebase with 'git rebase --signoff $base'). See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "all commits signed off"
