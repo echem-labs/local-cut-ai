@@ -21,11 +21,12 @@ datas = collect_data_files("localcut_engine")
 datas += [("../LICENSE", "."), ("../NOTICE", ".")]
 
 # The notices for everything the freeze redistributes *besides* our own code:
-# 70 Python distributions and the 41 native libraries their wheels carry, with
-# the licence texts each one obliges us to reproduce. Generated here rather
-# than committed because the answer is platform-specific — the `av` wheel
-# bundles a different FFmpeg per OS and architecture — so a file written on
-# one machine would misdescribe the installers built on the other two.
+# every Python distribution in the runtime closure and every native library
+# collected alongside them, with the licence texts each one obliges us to
+# reproduce. Generated here rather than committed because the answer is
+# platform-specific — the `av` wheel bundles a different FFmpeg per OS and
+# architecture — so a file written on one machine would misdescribe the
+# installers built on the other two.
 #
 # Lands beside LICENSE and NOTICE, which on PyInstaller 6 means
 # resources/engine/_internal/ rather than the top of resources/engine —
@@ -34,11 +35,7 @@ datas += [("../LICENSE", "."), ("../NOTICE", ".")]
 # distribution, but it is worth writing down: the three files are one
 # directory deeper than the place someone would look for them.
 sys.path.insert(0, str(Path(SPECPATH) / "packaging"))
-from third_party_notices import write_notices  # noqa: E402  (needs the path above)
-
-_notices = Path(SPECPATH) / "build" / "THIRD-PARTY-NOTICES.txt"
-_notices.parent.mkdir(parents=True, exist_ok=True)
-datas += [(str(write_notices(_notices)), ".")]
+from third_party_notices import bundled_libraries, write_notices  # noqa: E402
 
 a = Analysis(
     ["packaging/entry.py"],
@@ -51,6 +48,22 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+
+# Written after Analysis rather than before it, because the native libraries
+# the installers carry are the ones PyInstaller collected — and most of those
+# link in from the build machine rather than riding inside a wheel. Deriving
+# the list from site-packages instead missed 33 of the 73 in the last Linux
+# freeze, `libreadline` (plain GPL-3.0, no linking exception) among them.
+#
+# Both TOCs, not just `a.binaries`: Analysis splits the collected set by
+# typecode, keeping BINARY and EXTENSION in `binaries` and putting everything
+# else — symlinks, and any shared library a hook collected as package data —
+# into `datas`. Reading one of the two would describe most of the freeze and
+# call it all of it.
+_notices = Path(SPECPATH) / "build" / "THIRD-PARTY-NOTICES.txt"
+_notices.parent.mkdir(parents=True, exist_ok=True)
+write_notices(_notices, bundled_libraries(dest for dest, _src, _kind in a.binaries + a.datas))
+a.datas += [("THIRD-PARTY-NOTICES.txt", str(_notices), "DATA")]
 
 pyz = PYZ(a.pure)
 
