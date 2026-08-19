@@ -132,6 +132,37 @@ describe("the dialog shell", () => {
   });
 });
 
+describe("the focus trap sees natively focusable controls", () => {
+  /* A dialog whose only control is a disclosure. `summary` carries no
+     tabindex and is not a button, input, select, textarea or [href], so every
+     clause of the trap's selector misses it — and a dialog where the selector
+     matches nothing returns early and traps nothing at all. The licenses
+     panel is the app's first dialog built out of disclosures; it wraps today
+     only because the footer's Close button happens to sit after them. */
+  it("wraps Tab in a dialog whose only control is a disclosure", () => {
+    render(
+      <Modal title="Notices" onClose={() => {}}>
+        <details>
+          <summary>License text</summary>
+          <pre>body</pre>
+        </details>
+      </Modal>,
+    );
+    const summary = document.querySelector("summary") as HTMLElement;
+    summary.focus();
+    expect(document.activeElement).toBe(summary);
+    // Asserted on the keystroke, not on where focus lands: jsdom does not
+    // implement Tab navigation at all, so focus stays on the summary whether
+    // the trap acted or not. Cancelling the event is the trap's only
+    // observable act here — a selector that misses `summary` finds nothing to
+    // trap, returns early, and lets Tab through to the document behind.
+    const delivered = fireEvent.keyDown(window, { key: "Tab" });
+    expect(delivered, "Tab escaped the dialog").toBe(false);
+    // And it wrapped to the front of the dialog rather than out of it.
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+  });
+});
+
 /**
  * The cohesion rule, as a test rather than as a convention.
  *

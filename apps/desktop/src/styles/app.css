@@ -3874,6 +3874,10 @@ button.link:hover {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   word-break: break-all;
+  /* Against `body { user-select: none }`. This line is where the panel sends
+     a reader whose package published no notice, and a URL they cannot select
+     is a dead end. */
+  user-select: text;
 }
 
 .lic-text {
@@ -3889,29 +3893,48 @@ button.link:hover {
   width: fit-content;
 }
 
+/* A borderless target, so it follows .info-dot and .pack-repo: tint the text
+   and KEEP the UA ring. `outline: none` plus `--accent-glow` is the pattern
+   for controls that have a border to accent — on bare text the 16%-alpha
+   glow composites to 1.22:1 against the surface, under the 3:1 floor, and
+   forced-colors mode drops box-shadow entirely, leaving nothing at all. */
 .lic-text > summary:focus-visible {
-  outline: none;
-  border-radius: var(--radius-xs);
-  box-shadow: var(--accent-glow);
+  color: var(--accent);
 }
 
 .lic-text pre {
   margin: var(--space-2) 0 0;
   padding: var(--space-2);
   max-height: 14rem;
-  overflow: auto;
+  overflow-y: auto;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   /* License texts are hard-wrapped at ~70 columns already; preserving that
      and letting long URLs wrap is closer to the source than re-flowing. */
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
+  /* `body` sets user-select: none, and this pre is the ONLY copy of these
+     notices anywhere in the installed product — esbuild strips the @license
+     banners and electron-builder leaves node_modules out. A notice nobody can
+     copy is the same problem this list was opened to fix. */
+  user-select: text;
 }
 
-.lic-none {
+.lic-text pre:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+
+/* Qualified, not bare: `.modal p` (0,1,1) sets color and font-size and
+   outranks a lone `.lic-none` (0,1,0) whatever the source order, which leaves
+   the rows carrying NO notice the loudest text in their own list. Scoped to
+   the list rather than to `.modal` — the list is what owns this rule. */
+.licenses-list .lic-none {
   margin: var(--space-2) 0 0;
   color: var(--text-tertiary);
   font-size: var(--text-xs);

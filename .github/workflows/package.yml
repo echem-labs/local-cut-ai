@@ -139,6 +139,12 @@ jobs:
           # requests only. A tag build is the last point at which committed
           # icons that no longer match branding/logo.svg can still be caught.
           npm run icon:check
+          # Same argument, same last point. The attribution list is collected
+          # at build time from whatever node_modules this runner installed,
+          # and a collector that degrades produces an installer that ships
+          # license notices for only some of what is inside it. Nothing in
+          # `vite build` fails when that happens - this is the check that does.
+          npm run notices:check
           npm run ${{ matrix.script }}
 
       - name: Show what was produced
