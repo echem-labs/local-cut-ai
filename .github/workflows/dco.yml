@@ -67,11 +67,23 @@ jobs:
             body=$(git log -1 --format='%B' "$sha")
             if ! grep -qiE '^Signed-off-by: .+ <.+@.+>' <<< "$body"; then
               subject=$(git log -1 --format='%s' "$sha")
+              # A bare CR in a subject is passed through by git, and the runner
+              # splits its stdout on CR as well as LF - so an unsigned commit
+              # from a fork could emit its own `::` workflow commands here,
+              # including `::stop-commands::` to blank the real annotations.
+              subject=${subject//[$'\r\n']/ }
               echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line"
               missing=1
             fi
           done
 
+          # An empty range is the other way this passes having checked nothing:
+          # a PR whose commits already landed on the base, or whose only content
+          # is a merge. `checked` was counted for the message and never asserted.
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::no commits were examined in $base..HEAD - refusing to report a pass"
+            exit 1
+          fi
           if [ "$missing" -ne 0 ]; then
             echo "Sign off with 'git commit -s' (amend with 'git commit -s --amend', or"
             echo "rebase with 'git rebase --signoff $base'). See CONTRIBUTING.md."
