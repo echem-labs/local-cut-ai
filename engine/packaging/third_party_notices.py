@@ -132,11 +132,11 @@ _COPYLEFT_TERMS = {
         "libasound",
         "libiconv",
     ): "LGPL-2.1-or-later — bundled inside the `av` wheel's FFmpeg build",
-    ("libmp3lame",): "LGPL-2.0-or-later — bundled inside the `av` wheel's FFmpeg build",
+    ("libmp3lame",): "LGPL-2.0-or-later — linked into libsndfile, inside the `soundfile` wheel",
     ("libespeak-ng",): "GPL-3.0 — bundled inside the `espeakng-loader` wheel",
     ("libpcaudio",): "GPL-3.0-or-later — espeak-ng's audio output library",
     ("libsndfile",): "LGPL-2.1-or-later — bundled inside the `soundfile` wheel",
-    ("libmpg123",): "LGPL-2.1-only — via the `soundfile` wheel's libsndfile",
+    ("libmpg123",): "LGPL-2.1-only — linked into libsndfile, inside the `soundfile` wheel",
     (
         "libgfortran",
         "libstdc++",
@@ -188,6 +188,43 @@ COPYLEFT_LIBRARIES = {
     for libraries, note in _COPYLEFT_TERMS.items()
     for library in libraries
 }
+
+#: Libraries that ship linked *into* another one instead of as a file of their
+#: own, keyed by the library carrying them.
+#:
+#: Nothing that scans filenames can find these, because there is no filename:
+#: `soundfile`'s libsndfile is built with LAME and mpg123 compiled in, and the
+#: wheel ships one binary. Both are LGPL, both are redistributed, and until the
+#: `av` wheel left the freeze both happened to be named anyway — PyAV's FFmpeg
+#: build carried its own `libmp3lame` as a separate file, so the row appeared
+#: for the wrong reason. Dropping PyAV took the row with it and left the code
+#: still shipping, which is the one direction this document must never move in.
+#:
+#: Checked in each platform's wheel rather than assumed from the Linux one:
+#: libsndfile_arm64.dylib and libsndfile_x64.dll carry LAME's and mpg123's
+#: version strings and symbol tables too.
+_LINKED_INTO = {
+    "libsndfile": ("libmp3lame", "libmpg123"),
+}
+
+
+def statically_linked(libraries: Iterable[str]) -> list[str]:
+    """Libraries carried inside the given ones, that are not among them already.
+
+    `libmp3lame` can also arrive as a file in its own right — a system copy
+    pulled in beside libsndfile on a machine that has one — and listing it
+    twice would read as two different components rather than one named twice.
+    """
+    present = {annotation_key(library) for library in libraries}
+    return sorted(
+        {
+            guest
+            for host, guests in _LINKED_INTO.items()
+            if annotation_key(host) in present
+            for guest in guests
+            if annotation_key(guest) not in present
+        }
+    )
 
 
 def _normalise_library(filename: str) -> str:
@@ -577,6 +614,18 @@ def build_notices(libraries: list[str] | None = None) -> str:
     for library in libraries:
         note = copyleft_note(library)
         lines.append(f"  {library}" + (f" — {note}" if note else ""))
+    carried = statically_linked(libraries)
+    if carried:
+        lines += [
+            "",
+            "  Compiled into one of the above rather than shipped beside it, so",
+            "  they have no file of their own to list — redistributed all the",
+            "  same:",
+            "",
+        ]
+        for library in carried:
+            note = copyleft_note(library)
+            lines.append(f"  {library}" + (f" — {note}" if note else ""))
     lines.append("")
 
     return "\n".join(lines) + "\n"

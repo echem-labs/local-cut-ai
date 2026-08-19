@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import importlib.metadata as metadata
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
     FREEZE_EXCLUDES,
+    _LINKED_INTO,
     _LICENCE_FILENAMES,
     _SOURCE_FILENAMES,
     _is_own_metadata,
@@ -44,6 +46,7 @@ from third_party_notices import (  # noqa: E402  (needs the path above)
     runtime_distributions,
     shipped_distributions,
     site_package_roots,
+    statically_linked,
     write_notices,
 )
 
@@ -713,3 +716,122 @@ class TestWhatIsKeptOutOfTheFreeze:
         # an unrelated traceback anywhere in the frozen engine.
         assert getattr(stub, "__file__", None) is None
         assert repr(stub) == "<module 'av'>"
+
+
+class TestWhatShipsInsideSomethingElse:
+    """Libraries with no file of their own still have to be named.
+
+    Everything else in this module answers "what is in the box" by looking at
+    filenames, which is the right question for a directory of `.so`s and the
+    wrong one for a static link: `soundfile`'s libsndfile is built with LAME
+    and mpg123 compiled in and ships as a single binary. Both are LGPL and both
+    are redistributed, so a document assembled from filenames alone is silent
+    about them.
+    """
+
+    def test_a_library_compiled_into_another_one_is_named(self):
+        # Named through the carrier, so the claim is conditional on the
+        # carrier actually shipping rather than asserted unconditionally.
+        assert statically_linked(["libsndfile"]) == ["libmp3lame", "libmpg123"]
+        assert statically_linked(["libctranslate2"]) == []
+
+    def test_the_document_carries_them_under_a_heading_that_says_why(self):
+        document = build_notices(["libsndfile", "libctranslate2"])
+        for library in ("libmp3lame", "libmpg123"):
+            assert f"  {library} — " in document, f"{library} ships and the notices do not name it"
+        assert "no file of their own" in document, (
+            "the carried libraries are listed with the rest, so the document "
+            "reads as though a file was found for them"
+        )
+
+    def test_one_that_also_ships_as_a_file_is_not_named_twice(self):
+        # A machine with a system libsndfile pulls its dependencies in beside
+        # it, so `libmp3lame` can arrive as a file as well. Listed from both
+        # places it reads as two components rather than one named twice.
+        assert statically_linked(["libsndfile", "libmp3lame"]) == ["libmpg123"]
+        document = build_notices(["libsndfile", "libmp3lame"])
+        assert document.count("  libmp3lame — ") == 1
+
+    def test_the_carrier_really_carries_them(self):
+        # The rest of this class asserts the plumbing. This asserts the fact,
+        # which is the half that can quietly stop being true: an upstream
+        # `soundfile` that dropped mp3 support, or linked LAME dynamically,
+        # would leave the document naming something the box no longer has.
+        # Read out of the installed binary rather than recorded here, so the
+        # next wheel is what answers.
+        carrier = next(
+            (
+                path
+                for root in site_package_roots()
+                for path in (root / "_soundfile_data").glob("libsndfile*")
+                if path.is_file()
+            ),
+            None,
+        )
+        if carrier is None:
+            pytest.skip("the soundfile wheel's libsndfile is not installed here")
+        blob = carrier.read_bytes()
+        for library, marker in (("libmp3lame", b"LAME3."), ("libmpg123", b"mpg123")):
+            assert marker in blob, (
+                f"{carrier.name} no longer contains {library}, which _LINKED_INTO "
+                f"says it carries - prune the entry rather than shipping a "
+                f"notice for something that is not there"
+            )
+
+    def test_each_one_is_named_with_its_terms(self):
+        # Same rule the collected libraries are held to: listed bare, a
+        # copyleft library reads as a claim that it carries no such terms.
+        for guests in _LINKED_INTO.values():
+            for guest in guests:
+                assert copyleft_note(guest), f"{guest} is listed with nothing beside it"
+
+
+class TestTheContainerKeepsPyAVOutToo:
+    """The image is the second thing that redistributes this closure.
+
+    `localcut.spec` keeps PyAV out of the installers; without the same move
+    here, `uv sync` puts its FFmpeg build - x264 and x265 among it - into an
+    image whose own ffmpeg is pinned to an LGPL build precisely to keep them
+    out.
+    """
+
+    @staticmethod
+    def _stub():
+        path = Path(__file__).resolve().parents[1] / "packaging" / "av_stub.py"
+        spec = importlib.util.spec_from_file_location("av_stub_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_it_refuses_a_real_pyav_attribute(self):
+        with pytest.raises(RuntimeError, match="deliberately not bundled"):
+            self._stub().open
+
+    def test_it_answers_the_lookups_a_module_is_expected_to_answer(self):
+        # Same reasoning as the freeze's hook: `__path__` in particular is read
+        # inside an `except AttributeError` to decide whether `import av.audio`
+        # is a submodule import, so refusing there raises a RuntimeError out of
+        # a statement an `except ImportError` is written to catch.
+        stub = self._stub()
+        assert getattr(stub, "__path__", None) is None
+        assert isinstance(repr(stub), str)
+
+    def test_the_dockerfile_drops_pyav_and_puts_the_stub_in_its_place(self):
+        dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+        assert "uv pip uninstall av" in dockerfile, "the image still installs PyAV"
+        assert "packaging/av_stub.py" in dockerfile, (
+            "PyAV is uninstalled with nothing standing in for it, so "
+            "faster-whisper's module-scope import fails at the first captions job"
+        )
+
+    def test_the_entrypoint_does_not_put_it_back(self):
+        # `uv run` reconciles the environment against the lock before running
+        # anything, and the lock still contains PyAV - it is faster-whisper's
+        # dependency and dropping it there would drop it for the tests. Without
+        # --no-sync the wheel is reinstalled on every container start, so the
+        # image is clean when it is inspected and not when it runs.
+        dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+        entrypoint = next(line for line in dockerfile.splitlines() if line.startswith("ENTRYPOINT"))
+        assert '"--no-sync"' in entrypoint, (
+            "the entrypoint re-syncs from the lock, which reinstalls PyAV at runtime"
+        )
