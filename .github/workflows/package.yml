@@ -121,9 +121,10 @@ jobs:
         # The one place this can be asked. Every other licence guard scans
         # site-packages, and about half of what the freeze carries is resolved
         # from the build machine by PyInstaller's dependency walk rather than
-        # from any wheel - which is how a GPL-3.0 libreadline came to be in
-        # every installer with the engine suite green. The artifact only
-        # exists here, and this job is what redistributes it.
+        # from any wheel, so no scan of the closure can reach them: libstdc++,
+        # libgcc_s and glibc's libmvec ship this way today, all three carrying
+        # copyleft terms. The artifact only exists here, and this job is what
+        # redistributes it.
         #
         # `-m freeze`, not the whole module: the rest of it is the closure
         # guard, whose inventories are POSIX-spelled and were only ever
