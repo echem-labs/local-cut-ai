@@ -238,7 +238,7 @@
     "licenses": "Open-source licenses",
     "licensesTipHint": "Every bundled package, its version and its license.",
     "licensesTitle": "Open-source licenses",
-    "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors; the full text of each is below.",
+    "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors, and every notice a package publishes is reproduced below.",
     "licensesClose": "Close",
     "diagApp": "App {version}",
     "diagEngine": "Engine {engine} · API v{api}",
@@ -285,7 +285,8 @@
     "machineLoading": "Reading this machine…",
     "whatsNew": "What's new in {version} →",
     "licensesNoText": "This package publishes no license file — see its repository.",
-    "licensesShowText": "License text"
+    "licensesShowText": "License text",
+    "licensesTextAria": "License text for {name}"
   },
   "workflows": {
     "hint": "Custom ComfyUI graphs, and the third-party node packs they need. Only relevant if you run ComfyUI — everything ships working without any of this.",
