@@ -48,7 +48,13 @@ a = Analysis(
     datas=datas,
     hiddenimports=[],
     hookspath=[],
-    runtime_hooks=["packaging/rthook_av.py"],
+    # Absolute, unlike the script above it: PyInstaller joins a relative
+    # `scripts` entry onto the spec's own directory, but a runtime hook goes
+    # through a bare `os.path.abspath`, which resolves against the working
+    # directory instead. Spelled relative, the hook is found only when
+    # pyinstaller is run from `engine/` — and a same-named file under some
+    # other working directory would be taken in its place.
+    runtime_hooks=[str(Path(SPECPATH) / "packaging" / "rthook_av.py")],
     # Read from third_party_notices so the notices document and the freeze
     # cannot disagree about what is in the installer. See FREEZE_EXCLUDES for
     # what each one is and why it is out.

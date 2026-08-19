@@ -41,9 +41,10 @@ from pathlib import Path
 _PROJECT = "localcut-engine"
 
 #: Modules deliberately kept out of the freeze, and why. `localcut.spec` passes
-#: these to PyInstaller's `excludes`, and the walk below drops whatever
-#: distribution provides one — so this document describes the installer rather
-#: than the build environment, which still has all of it installed.
+#: these to PyInstaller's `excludes`, and `shipped_distributions()` drops
+#: whatever distribution provides one — so the document the spec generates
+#: describes the installer rather than the build environment, which still has
+#: all of it installed.
 #:
 #: One list, read from both ends. Written twice it would drift, and the
 #: direction it drifts in is the dangerous one: a notice claiming a licence for
@@ -247,7 +248,6 @@ def runtime_distributions() -> list[metadata.Distribution]:
             f"{_PROJECT} is not installed in this environment, so the runtime closure "
             "cannot be walked and the notices would ship empty"
         ) from exc
-    excluded = _excluded_distributions()
     while queue:
         name, extras = queue.pop(0)
         key = canonicalize_name(name)
@@ -260,26 +260,41 @@ def runtime_distributions() -> list[metadata.Distribution]:
             continue
         seen.setdefault(key, dist)
         queue.extend(_requirement_names(dist, extras))
-    # Filtered at the end rather than skipped in the walk: an excluded
-    # distribution's own requirements may be shared with something that does
-    # ship, and cutting the branch would drop those too.
-    return [seen[k] for k in sorted(seen) if k not in excluded]
+    return [seen[k] for k in sorted(seen)]
 
 
-def _excluded_distributions() -> set[str]:
-    """Which installed distributions provide a module in `FREEZE_EXCLUDES`.
+def shipped_distributions() -> list[metadata.Distribution]:
+    """The closure minus whatever the freeze leaves behind.
 
-    Resolved rather than listed, because the two namespaces are not the same:
-    `excludes` names modules, this walk yields distributions, and `readline` is
-    a stdlib module with no distribution behind it at all. `packages_distributions`
-    is what maps one to the other.
+    A separate walk rather than a filter inside `runtime_distributions()`,
+    because the unfiltered closure is what the licence guards read:
+    `test_no_distribution_declares_copyleft_outside_the_recorded_set` iterates
+    it to force a decision on every dependency that declares GPL terms, and
+    subtracting there would let a name added to `FREEZE_EXCLUDES` walk a new
+    copyleft dependency straight past the tripwire — which is still installed
+    by `uv sync` and still in the Docker image.
+
+    Filtered at the end rather than skipped in the walk: an excluded
+    distribution's own requirements may be shared with something that does
+    ship, and cutting the branch would drop those too.
+
+    Which distribution provides an excluded module is resolved rather than
+    listed, because the two namespaces are not the same: `excludes` names
+    modules, the walk yields distributions, and `readline` is a stdlib module
+    with no distribution behind it at all. `packages_distributions` maps one
+    to the other.
     """
     from packaging.utils import canonicalize_name
 
     providers = metadata.packages_distributions()
-    return {
+    excluded = {
         canonicalize_name(name) for module in FREEZE_EXCLUDES for name in providers.get(module, ())
     }
+    return [
+        dist
+        for dist in runtime_distributions()
+        if canonicalize_name(dist.metadata["Name"]) not in excluded
+    ]
 
 
 def _is_own_metadata(location: str) -> bool:
@@ -465,7 +480,16 @@ def bundled_libraries(filenames: Iterable[str] | None = None) -> list[str]:
 
 
 def build_notices(libraries: list[str] | None = None) -> str:
-    """The whole document, as it should land beside LICENSE in the freeze."""
+    """The whole document, as it should land beside LICENSE in the freeze.
+
+    Both halves describe the same thing, which is whichever thing `libraries`
+    describes. Handed what PyInstaller collected, this is the installer, so the
+    distributions half subtracts what the freeze excludes. Left to the
+    site-packages fallback it is the closure, wheels and all — and the same
+    subtraction would name `libx264` under BUNDLED NATIVE LIBRARIES, annotated
+    "bundled inside the `av` wheel", while claiming PyAV is not here.
+    """
+    describes_the_freeze = libraries is not None
     if libraries is None:
         libraries = bundled_libraries()
     if not libraries:
@@ -491,7 +515,7 @@ def build_notices(libraries: list[str] | None = None) -> str:
         "",
     ]
 
-    distributions = runtime_distributions()
+    distributions = shipped_distributions() if describes_the_freeze else runtime_distributions()
     lines += ["", "PYTHON DISTRIBUTIONS", "-" * 72, ""]
     for dist in distributions:
         name = dist.metadata["Name"]
