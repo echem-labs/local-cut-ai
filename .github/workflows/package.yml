@@ -117,6 +117,16 @@ jobs:
           uv sync --all-groups
           uv run pyinstaller --noconfirm localcut.spec
 
+      - name: Nothing unlicensed ships in the freeze
+        # The one place this can be asked. Every other licence guard scans
+        # site-packages, and about half of what the freeze carries is resolved
+        # from the build machine by PyInstaller's dependency walk rather than
+        # from any wheel - which is how a GPL-3.0 libreadline came to be in
+        # every installer with the engine suite green. The artifact only
+        # exists here, and this job is what redistributes it.
+        working-directory: engine
+        run: uv run pytest tests/test_license_boundaries.py -q -rs
+
       - name: The frozen engine actually runs
         # An installer whose engine cannot start is the exact failure this
         # target exists to prevent, and it is invisible until someone
