@@ -7,12 +7,15 @@ SpeechGen backend later.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
+
+log = logging.getLogger(__name__)
 
 # Style-brief keywords → Kokoro voice ids (proper voice picker UI is Phase 1).
 # Explicit gender words outrank tone words so "deep female voice" never
@@ -26,52 +29,83 @@ _VOICE_MAP = [
     ("deep", "am_onyx"),
     ("energetic", "af_bella"),
 ]
-_DEFAULT_VOICE = "af_sarah"
+DEFAULT_VOICE = "af_sarah"
 
 #: Kokoro voice ids encode their language and gender in the first two
-#: characters — `bf_emma` is British female, `am_onyx` American male. The
-#: language half decides which phoneme set espeak produces, so it is not
-#: cosmetic: synthesising a British voice with American phonemes is what this
-#: engine did while the language was hardcoded.
+#: characters — `bf_emma` is British female, `am_onyx` American male. These
+#: are the espeak codes the ids map onto; the English names for them live in
+#: the desktop's i18n catalog, because the wire carries ids and the client
+#: does the labelling (see `voices.json`, pinned by test_ui_contract.py).
 _VOICE_LANGUAGES = {
-    "a": ("en-us", "American English"),
-    "b": ("en-gb", "British English"),
-    "e": ("es", "Spanish"),
-    "f": ("fr-fr", "French"),
-    "h": ("hi", "Hindi"),
-    "i": ("it", "Italian"),
-    "j": ("ja", "Japanese"),
-    "p": ("pt-br", "Portuguese"),
-    "z": ("cmn", "Mandarin"),
+    "a": "en-us",
+    "b": "en-gb",
+    "e": "es",
+    "f": "fr-fr",
+    "h": "hi",
+    "i": "it",
+    "j": "ja",
+    "p": "pt-br",
+    "z": "cmn",
 }
 _GENDERS = {"f": "female", "m": "male"}
 
-#: Where a voice id does not follow the convention, rather than guessing.
-_UNKNOWN_LANGUAGE = ("en-us", "unknown")
+#: espeak phonemizes the *text*, and the narration text is always English —
+#: the script LLM writes English and a node carries no language of its own.
+#: Only the two English variants may reach `create(lang=...)`: a Japanese
+#: code makes espeak spell English out letter by letter ("ˈeɪtʃ ˈiː ˈɛl"),
+#: and fr/hi/cmn emit literal "(en)" switch markers that survive Kokoro's
+#: vocab filter and get voiced. A voice's own language is still reported by
+#: `describe_voice` — it just cannot decide how English text is read.
+_SPEAKABLE_CODES = frozenset({"en-us", "en-gb"})
+_FALLBACK_CODE = "en-us"
+
+
+def _scheme_of(voice_id: str) -> str | None:
+    """The espeak code a well-formed id encodes, or None.
+
+    The whole `<language><gender>_` shape has to be there before the first
+    letter is trusted: `jenny` starts with `j`, and filing it under Japanese
+    is the guess this returns None to avoid.
+    """
+    if voice_id[2:3] != "_" or voice_id[1:2] not in _GENDERS:
+        return None
+    return _VOICE_LANGUAGES.get(voice_id[:1])
 
 
 def language_of(voice_id: str) -> str:
-    """The espeak language code to phonemize this voice's text with."""
-    return _VOICE_LANGUAGES.get(voice_id[:1], _UNKNOWN_LANGUAGE)[0]
+    """The espeak language code to phonemize this voice's English text with.
+
+    British voices read English as British — the fix this exists for. Every
+    other voice reads it as American, because the alternative is not an
+    accent but an unintelligible rendering; see `_SPEAKABLE_CODES`.
+    """
+    code = _scheme_of(voice_id)
+    return code if code in _SPEAKABLE_CODES else _FALLBACK_CODE
 
 
-def describe_voice(voice_id: str) -> dict[str, str]:
+def describe_voice(voice_id: str) -> dict[str, str | None]:
     """One voice, as the API and a picker need it.
 
     Derived from the id rather than a table of 54 entries: the pack ships
     more voices than any hand-written list would stay current with, and the
     naming convention is the pack's own.
+
+    Everything here is an id, not display copy: `language_code` is an espeak
+    code and `gender` a bare token, both labelled client-side out of
+    `i18n/en/voices.json`. An engine that sent "American English" would put
+    the one untranslatable string in the app on the picker. An id outside
+    the scheme reports null rather than a guess — null is what the catalog
+    renders as "unknown", and it cannot be mistaken for a real code.
     """
-    code, language = _VOICE_LANGUAGES.get(voice_id[:1], _UNKNOWN_LANGUAGE)
-    gender = _GENDERS.get(voice_id[1:2], "unknown")
+    code = _scheme_of(voice_id)
     # `af_sarah` -> `Sarah`. The id stays the identifier; this is for reading.
-    name = voice_id.split("_", 1)[-1].replace("-", " ").title() if "_" in voice_id else voice_id
+    # An id the scheme does not cover is shown as it is rather than reshaped.
+    stem = voice_id[3:] if code else ""
     return {
         "id": voice_id,
-        "name": name,
-        "language": language,
+        "name": stem.replace("-", " ").title() if stem else voice_id,
         "language_code": code,
-        "gender": gender,
+        "gender": _GENDERS[voice_id[1:2]] if code else None,
     }
 
 
@@ -80,7 +114,7 @@ def pick_voice(brief: str) -> str:
     for keyword, voice in _VOICE_MAP:
         if keyword in words:  # whole words only: "female" must not match "male"
             return voice
-    return _DEFAULT_VOICE
+    return DEFAULT_VOICE
 
 
 # Fallbacks when no manifest is available; normally the dests come from the
@@ -109,16 +143,31 @@ class KokoroBackend(ExecutionBackend):
         product shipped five voices out of the fifty-four this file has always
         contained, because the five were written down in a keyword table and
         nothing ever asked the pack what it held.
+
+        The names are the keys of the voices archive, so this reads that file
+        and not the 325 MB inference session beside it. Going through
+        `_load()` would cost ~1.1s and ~476 MB to answer with 54 strings,
+        pin the session for the life of the process, hold the archive open
+        against a later re-download, and — since `_lock` is an asyncio lock
+        this cannot take from a worker thread — race `_load()` into building
+        a second session while a narration job is loading the first.
         """
-        if not self.model_path.exists() or not self.voices_path.exists():
-            return []
+        return [describe_voice(voice_id) for voice_id in sorted(self._installed_ids())]
+
+    def _installed_ids(self) -> set[str]:
+        """The voice ids in the pack, or an empty set if it cannot be read."""
         try:
-            voices = self._load().get_voices()
-        except Exception:
-            # An unreadable pack is a readiness problem, reported by that
-            # surface. A picker asking what is available gets "nothing".
-            return []
-        return [describe_voice(voice_id) for voice_id in sorted(voices)]
+            import numpy as np
+
+            with np.load(self.voices_path) as archive:
+                return set(archive.files)
+        except Exception as exc:
+            # Absent is the ordinary first-run state; unreadable is not, and
+            # losing the reason for it silently is how a corrupt pack looks
+            # identical to a missing one. Either way a caller gets "nothing".
+            if self.voices_path.exists():
+                log.warning("kokoro voice pack at %s is unreadable: %s", self.voices_path, exc)
+            return set()
 
     def supports(self, kind: NodeKind) -> bool:
         # Claim narration only while the voice weights are on disk, live —
@@ -149,6 +198,18 @@ class KokoroBackend(ExecutionBackend):
         if not text:
             raise GenerationError("narration node has no text")
         voice = str(spec.params.get("voice_id") or pick_voice(str(spec.params.get("voice", ""))))
+        # kokoro-onnx meets an unknown voice as a bare `assert voice in
+        # self.voices`, which escapes as an AssertionError rather than this
+        # backend's error contract — so the board would show a stray
+        # assertion instead of a reason. Checked only when the pack could
+        # actually be read: an empty set means "unreadable", not "holds no
+        # voices", and must not reject everything.
+        installed = self._installed_ids()
+        if installed and voice not in installed:
+            raise GenerationError(
+                f"no voice {voice!r} in the installed pack - pick one of: "
+                f"{', '.join(sorted(installed)[:8])}..."
+            )
         # A raw /patch can carry a null/garbage speed; coerce safely.
         try:
             speed = float(spec.params.get("speed") or 1.0)

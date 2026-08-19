@@ -36,6 +36,7 @@ from .graph.editor import (
 )
 from .graph.model import (
     KEYFRAME_PORT,
+    NARRATION_VERSION,
     OPTIONAL_PORTS,
     SCENE_AUDIO_SUFFIX,
     Node,
@@ -674,16 +675,23 @@ class ProjectService:
             order.append(sid)
 
         aspect = graph.nodes["script"].params.get("aspect") or timeline.params.get("aspect")
+
         # Voice is a project-wide style choice; a new scene should speak
-        # like its neighbours, not fall back to the backend default.
-        voice = next(
-            (
-                node.params["voice"]
-                for node in graph.nodes.values()
-                if node.kind is NodeKind.NARRATION and node.params.get("voice")
-            ),
-            None,
-        )
+        # like its neighbours, not fall back to the backend default. That
+        # holds for an explicitly picked voice_id as well, and more sharply:
+        # it outranks the brief, so inheriting only `voice` would let the
+        # new scene speak in a different voice from every scene around it.
+        def inherited(key: str) -> str | None:
+            return next(
+                (
+                    node.params[key]
+                    for node in graph.nodes.values()
+                    if node.kind is NodeKind.NARRATION and node.params.get(key)
+                ),
+                None,
+            )
+
+        voice, voice_id = inherited("voice"), inherited("voice_id")
         keyframe_params = {"prompt": prompt}
         clip_params = {
             "prompt": prompt,
@@ -694,9 +702,11 @@ class ProjectService:
         if aspect:
             keyframe_params["aspect"] = aspect
             clip_params["aspect"] = aspect
-        narration_params: dict = {"text": narration}
+        narration_params: dict = {"text": narration, "narration_version": NARRATION_VERSION}
         if voice:
             narration_params["voice"] = voice
+        if voice_id:
+            narration_params["voice_id"] = voice_id
 
         kf_id, clip_id, narr_id = f"{sid}.keyframe", f"{sid}.clip", f"{sid}.narration"
         return [

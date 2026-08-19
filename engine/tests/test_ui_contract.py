@@ -434,7 +434,7 @@ def test_voice_swatches_match_the_kokoro_voice_map():
     swatch whose brief no longer picks its voice plays one speaker in the
     preview and renders another; a voice the map gained stays unofferable
     until the mirror moves with it."""
-    from localcut_engine.backends.kokoro import _DEFAULT_VOICE, _VOICE_MAP, pick_voice
+    from localcut_engine.backends.kokoro import DEFAULT_VOICE, _VOICE_MAP, pick_voice
 
     lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
     block = re.search(r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", lib, re.S)
@@ -450,11 +450,98 @@ def test_voice_swatches_match_the_kokoro_voice_map():
     # Every distinct engine voice is offered: a voice only reachable by
     # guessing the right keyword is not a picker.
     offered = {voice for _, voice in swatches}
-    engine_voices = {voice for _, voice in _VOICE_MAP} | {_DEFAULT_VOICE}
+    engine_voices = {voice for _, voice in _VOICE_MAP} | {DEFAULT_VOICE}
     assert offered == engine_voices, (
         f"swatches and kokoro disagree: only in UI {sorted(offered - engine_voices)}, "
         f"only in engine {sorted(engine_voices - offered)}"
     )
+
+
+_LANGUAGE_CODES = ("en-us", "en-gb", "es", "fr-fr", "hi", "it", "ja", "pt-br", "cmn")
+
+
+def test_every_swatch_has_a_preview_the_app_can_play():
+    """`VOICE_SAMPLES` builds a URL per swatch from `assets/voices/<id>.wav`,
+    so a swatch with no committed file is a 404 on press with nothing in the
+    suite to say so. The bytes themselves come from
+    engine/scripts/make-voice-samples.py, which renders them through the
+    same backend a project renders with — they were hand-made once, and the
+    British preview kept its American vowels when the phonemizer language
+    stopped being hardcoded."""
+    import wave
+
+    lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
+    block = re.search(r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", lib, re.S)
+    assert block, "lib/tools.ts no longer declares VOICE_SWATCHES"
+    voices = re.findall(r'voice:\s*"([^"]+)"', block.group(1))
+    assert voices, "VOICE_SWATCHES entries no longer match — update this test with it"
+
+    assets = _FORMATS.parents[1] / "assets" / "voices"
+    for voice in voices:
+        sample = assets / f"{voice}.wav"
+        assert sample.exists(), f"the {voice} swatch has no preview at {sample}"
+        with wave.open(str(sample)) as wav:
+            # What the engine writes: mono 24 kHz 16-bit. A preview in another
+            # format plays at the wrong pitch or not at all.
+            assert (wav.getnchannels(), wav.getframerate(), wav.getsampwidth()) == (1, 24000, 2)
+            assert wav.getnframes() > 0, f"{voice} preview is silent"
+
+
+def test_voice_language_codes_match_the_desktop_catalog():
+    """The wire carries espeak codes; the English for them lives in the
+    desktop's voices.json. A code the catalog lacks renders as a raw
+    `pt-br` in the picker, and a catalog entry no voice id can produce is
+    dead copy — this is the boundary no build step reconciles."""
+    import json
+
+    from localcut_engine.backends.kokoro import _GENDERS, _VOICE_LANGUAGES
+
+    catalog_path = _FORMATS.parents[1] / "i18n" / "en" / "voices.json"
+    assert catalog_path.exists(), "the desktop has no voices.json catalog"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    assert set(catalog["languages"]) == set(_VOICE_LANGUAGES.values()), (
+        f"catalog and engine disagree on language codes: "
+        f"only in UI {sorted(set(catalog['languages']) - set(_VOICE_LANGUAGES.values()))}, "
+        f"only in engine {sorted(set(_VOICE_LANGUAGES.values()) - set(catalog['languages']))}"
+    )
+    assert set(catalog["genders"]) == set(_GENDERS.values())
+    # An id outside the scheme reports null for both, which the picker has
+    # to have words for — otherwise the row renders blank.
+    assert catalog["unknownLanguage"] and catalog["unknownGender"]
+
+
+def test_the_engine_sends_no_display_copy_with_the_voices():
+    """Everything in a voice record is an id the client labels. A field of
+    English here would be the one string in the app with no `t()` key —
+    the reason status words cross the wire as `skipped` and read "not
+    needed" only in the UI."""
+    from localcut_engine.backends.kokoro import describe_voice
+
+    assert set(describe_voice("af_sarah")) == {"id", "name", "language_code", "gender"}
+    for voice_id in ("af_sarah", "bm_george", "zf_xiaobei", "jenny", ""):
+        described = describe_voice(voice_id)
+        assert described["language_code"] in (None, *_LANGUAGE_CODES), described
+        assert described["gender"] in (None, "female", "male"), described
+
+
+def test_swatch_voice_names_match_what_the_engine_derives():
+    """`home.voiceNames` labels the five swatches, and `describe_voice`
+    derives a name for all fifty-four. Both reach the same user, so a
+    rename on one side shows one speaker under two names — the drift the
+    contract tests in this file exist for."""
+    import json
+
+    from localcut_engine.backends.kokoro import describe_voice
+
+    home = json.loads(
+        (_FORMATS.parents[1] / "i18n" / "en" / "home.json").read_text(encoding="utf-8")
+    )
+    for voice_id, label in home["voiceNames"].items():
+        assert describe_voice(voice_id)["name"] == label, (
+            f"home.json calls {voice_id} {label!r}, the engine derives "
+            f"{describe_voice(voice_id)['name']!r}"
+        )
 
 
 def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():

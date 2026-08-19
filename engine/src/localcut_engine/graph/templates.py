@@ -15,6 +15,7 @@ from ..schema import Screenplay
 from .model import (
     EDL_VERSION,
     KEYFRAME_PORT,
+    NARRATION_VERSION,
     MUSIC_PORT,
     SCENE_AUDIO_SUFFIX,
     CAPTIONS_PORT,
@@ -89,6 +90,11 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
                     params={
                         "text": str(params.get("text", "")),
                         "voice": str(params.get("voice", "narrator")),
+                        # Stamped at creation for the reason edl_version is:
+                        # the migration that back-fills it changes the node
+                        # hash, so a node minted without it would have its
+                        # artifact re-addressed the first time it reloaded.
+                        "narration_version": NARRATION_VERSION,
                     },
                 )
             )
@@ -345,14 +351,21 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             graph.edges = [e for e in graph.edges if stale_take not in (e.src, e.dst)]
             graph.nodes.pop(stale_take)
 
-        # Speech speed has no screenplay source — it exists only because the
-        # user set it. Like seeds, pins and timeline edits, it has to survive
-        # a re-expansion; otherwise the node hash reverts to the pre-edit
-        # value, the cached pre-edit audio is served, and the Inspector
-        # quietly shows 1.0 again.
-        narration_params: dict = {"text": scene.narration, "voice": screenplay.style.voice}
-        if (existing := graph.nodes.get(narr_id)) and "speed" in existing.params:
-            narration_params["speed"] = existing.params["speed"]
+        narration_params: dict = {
+            "text": scene.narration,
+            "voice": screenplay.style.voice,
+            "narration_version": NARRATION_VERSION,
+        }
+        # Speech speed and an explicitly picked voice have no screenplay
+        # source — they exist only because the user set them. Like seeds,
+        # pins and timeline edits, they have to survive a re-expansion;
+        # otherwise the node hash reverts to the pre-edit value, the cached
+        # pre-edit audio is served, and the Inspector quietly shows 1.0
+        # again.
+        existing = graph.nodes.get(narr_id)
+        for carried in ("speed", "voice_id"):
+            if existing and carried in existing.params:
+                narration_params[carried] = existing.params[carried]
         _ensure_node(graph, narr_id, NodeKind.NARRATION, params=narration_params)
         _ensure_edge(graph, "script", kf_id)
         _ensure_edge(graph, "script", narr_id)

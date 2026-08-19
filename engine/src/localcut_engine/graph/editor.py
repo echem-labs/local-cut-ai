@@ -20,6 +20,7 @@ whole cast of scenes from a new screenplay.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -41,7 +42,7 @@ from .patch import PatchOp
 EDITABLE_PARAMS: dict[NodeKind, frozenset[str]] = {
     NodeKind.KEYFRAME: frozenset({"prompt"}),
     NodeKind.CLIP: frozenset({"prompt", "motion", "duration_s"}),
-    NodeKind.NARRATION: frozenset({"text", "voice", "speed"}),
+    NodeKind.NARRATION: frozenset({"text", "voice", "speed", "voice_id"}),
     NodeKind.MUSIC: frozenset({"brief"}),
     NodeKind.THUMBNAIL: frozenset({"prompt"}),
     NodeKind.TIMELINE: frozenset(
@@ -58,6 +59,12 @@ _MAX_TEXT = 2000
 _MAX_OVERLAY = 200
 _CLIP_MIN_S, _CLIP_MAX_S = 1.0, 15.0
 _SPEED_MIN, _SPEED_MAX = 0.5, 1.5
+# A pack voice id, the shape /voices enumerates. Bounded here because it
+# is persisted onto the node and reaches the backend as a lookup key —
+# the same reason ToolRequest bounds `model`. Membership in the pack is
+# the backend's to answer (it owns the file); this bounds the shape so a
+# path fragment or a novel cannot be stored as a voice in the first place.
+_VOICE_ID_RE = re.compile(r"[a-z0-9_-]{1,40}")
 
 SUGGEST_SCENE_SYSTEM_PROMPT = """You are helping build one scene of a short video from a \
 picture the user just supplied. You are told what the video is about, what the scenes before \
@@ -344,6 +351,12 @@ def _sanitize(  # noqa: PLR0911 — one clause per param family
         except (TypeError, ValueError):
             warnings.append(f"{label}: not a number")
             return _DROP
+    if kind is NodeKind.NARRATION and key == "voice_id":
+        # fullmatch, not match: `$` would also accept a trailing newline.
+        if isinstance(value, str) and _VOICE_ID_RE.fullmatch(value):
+            return value
+        warnings.append(f"{label}: not a voice id")
+        return _DROP
     if kind is NodeKind.NARRATION and key == "speed":
         try:
             return min(_SPEED_MAX, max(_SPEED_MIN, float(value)))
