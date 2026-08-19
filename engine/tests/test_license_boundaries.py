@@ -311,82 +311,59 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
         )
 
 
-#: What the frozen engine ships on Linux, normalised. This is the artifact the
-#: installers carry, and it is not the same set as the installed closure: about
-#: half of these are resolved from the build machine by PyInstaller's
-#: dependency walk rather than from any wheel, so no scan of site-packages can
-#: see them. `libreadline` is the reason this matters — GPL-3.0, pulled in by
-#: CPython's `readline` module, in every installer built today.
+#: What each platform's frozen engine ships, normalised. This is the artifact
+#: the installers carry, and it is not the installed closure: PyInstaller
+#: resolves some of it from the build machine rather than from any wheel, so
+#: no scan of site-packages can reach it. On the Linux runner that is five
+#: libraries, three of which carry copyleft terms — libstdc++ and libgcc_s
+#: under the GCC runtime exception, and glibc's libmvec.
 #:
-#: Keyed by platform because the answer is per-platform and pretending
-#: otherwise is how a Linux inventory becomes a false statement about a Windows
-#: build. A platform with no record here fails rather than skips: the whole
-#: point is that a library nobody has looked at cannot arrive quietly, and the
-#: failure prints the list to record.
+#: Recorded from a real `package.yml` run, not from a developer machine. That
+#: distinction is the whole point and it is easy to get wrong: transcribed from
+#: an Ubuntu desktop this set had 73 entries, 29 of which the headless runner
+#: does not build in at all -- libreadline, libpulse, the X11 set -- because
+#: the desktop had those system libraries installed and the runner does not.
+#: A record taken from the wrong machine reports a licence change on every
+#: build.
+#:
+#: Keyed by platform because the answer differs sharply: 44 libraries on Linux,
+#: 29 on macOS, 81 on Windows, and `libespeak-ng` ships on Linux alone.
 _FROZEN_LIBRARIES = {
     "linux": frozenset(
         {
-            "libFLAC",
             "libSvtAv1Enc",
-            "libX11",
-            "libX11-xcb",
             "libXau",
-            "libXdmcp",
-            "libapparmor",
             "libasound",
-            "libasyncns",
             "libavcodec",
             "libavdevice",
             "libavfilter",
             "libavformat",
             "libavutil",
-            "libbz2",
-            "libcrypto",
             "libctranslate2",
             "libdav1d",
-            "libdbus",
             "libdrm",
-            "libespeak-ng",
-            "libexpat",
-            "libffi",
             "libgcc_s",
             "libgfortran",
             "libgmp",
             "libgnutls",
             "libgomp",
             "libhogweed",
-            "liblzma",
             "libmp3lame",
-            "libmpg123",
             "libmvec",
             "libnettle",
-            "libogg",
             "libonnxruntime_providers_shared",
             "libopencore-amrnb",
             "libopencore-amrwb",
             "libopus",
-            "libpcaudio",
-            "libpulse",
-            "libpulse-simple",
-            "libpulsecommon",
             "libpython3",
             "libquadmath",
-            "libreadline",
             "libscipy_openblas64_",
             "libsharpyuv",
             "libsndfile",
-            "libsonic",
-            "libsqlite3",
-            "libssl",
             "libstdc++",
             "libswresample",
             "libswscale",
-            "libsystemd",
-            "libtinfo",
             "libunistring",
-            "libuuid",
-            "libvorbis",
-            "libvorbisenc",
             "libvpl",
             "libvpx",
             "libwebp",
@@ -398,7 +375,192 @@ _FROZEN_LIBRARIES = {
             "libxcb-shm",
             "libxcb-xfixes",
             "libz",
+        }
+    ),
+    "darwin": frozenset(
+        {
+            "libSvtAv1Enc",
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libcrypto",
+            "libctranslate2",
+            "libdav1d",
+            "liblzma",
+            "libmp3lame",
+            "libmpdec",
+            "libonnxruntime",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libsharpyuv",
+            "libsndfile",
+            "libsqlite3",
+            "libssl",
+            "libswresample",
+            "libswscale",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libx264",
+            "libx265",
             "libzstd",
+            "onnxruntime_pybind11_state",
+        }
+    ),
+    "win32": frozenset(
+        {
+            "MSVCP140_1",
+            "api-ms-win-core-console-l1",
+            "api-ms-win-core-datetime-l1",
+            "api-ms-win-core-debug-l1",
+            "api-ms-win-core-errorhandling-l1",
+            "api-ms-win-core-fibers-l1",
+            "api-ms-win-core-file-l1",
+            "api-ms-win-core-file-l2",
+            "api-ms-win-core-handle-l1",
+            "api-ms-win-core-heap-l1",
+            "api-ms-win-core-interlocked-l1",
+            "api-ms-win-core-kernel32-legacy-l1",
+            "api-ms-win-core-libraryloader-l1",
+            "api-ms-win-core-localization-l1",
+            "api-ms-win-core-memory-l1",
+            "api-ms-win-core-namedpipe-l1",
+            "api-ms-win-core-processenvironment-l1",
+            "api-ms-win-core-processthreads-l1",
+            "api-ms-win-core-profile-l1",
+            "api-ms-win-core-rtlsupport-l1",
+            "api-ms-win-core-string-l1",
+            "api-ms-win-core-synch-l1",
+            "api-ms-win-core-sysinfo-l1",
+            "api-ms-win-core-timezone-l1",
+            "api-ms-win-core-util-l1",
+            "api-ms-win-crt-conio-l1",
+            "api-ms-win-crt-convert-l1",
+            "api-ms-win-crt-environment-l1",
+            "api-ms-win-crt-filesystem-l1",
+            "api-ms-win-crt-heap-l1",
+            "api-ms-win-crt-locale-l1",
+            "api-ms-win-crt-math-l1",
+            "api-ms-win-crt-private-l1",
+            "api-ms-win-crt-process-l1",
+            "api-ms-win-crt-runtime-l1",
+            "api-ms-win-crt-stdio-l1",
+            "api-ms-win-crt-string-l1",
+            "api-ms-win-crt-time-l1",
+            "api-ms-win-crt-utility-l1",
+            "avcodec",
+            "avdevice",
+            "avfilter",
+            "avformat",
+            "avutil",
+            "ctranslate2",
+            "libSvtAv1Enc",
+            "libcrypto",
+            "libdav1d",
+            "libffi",
+            "libgcc_s_seh",
+            "libiconv",
+            "libiomp5md",
+            "libmp3lame",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libscipy_openblas64_",
+            "libsharpyuv",
+            "libsndfile",
+            "libssl",
+            "libstdc++",
+            "libvpl",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libwinpthread",
+            "libx264",
+            "libx265",
+            "msvcp140",
+            "onnxruntime",
+            "onnxruntime_providers_shared",
+            "python3",
+            "python314",
+            "pywintypes314",
+            "sqlite3",
+            "swresample",
+            "swscale",
+            "ucrtbase",
+            "vcruntime140",
+            "vcruntime140_1",
+            "zlib1",
+        }
+    ),
+}
+
+#: The members of each freeze that carry copyleft terms today, so that losing
+#: an annotation is a failure rather than a silent change to the shipped
+#: NOTICE. Also recorded from the same run: which libraries these are is a
+#: per-platform fact, and asserting a POSIX-spelled list everywhere fails on
+#: the platforms that simply do not ship them.
+_FROZEN_COPYLEFT = {
+    "linux": frozenset(
+        {
+            "libasound",
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libgcc_s",
+            "libgfortran",
+            "libgmp",
+            "libgnutls",
+            "libgomp",
+            "libhogweed",
+            "libmp3lame",
+            "libmvec",
+            "libnettle",
+            "libquadmath",
+            "libsndfile",
+            "libstdc++",
+            "libswresample",
+            "libswscale",
+            "libunistring",
+            "libx264",
+            "libx265",
+        }
+    ),
+    "darwin": frozenset(
+        {
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libmp3lame",
+            "libsndfile",
+            "libswresample",
+            "libswscale",
+            "libx264",
+            "libx265",
+        }
+    ),
+    "win32": frozenset(
+        {
+            "avcodec",
+            "avdevice",
+            "avfilter",
+            "avformat",
+            "avutil",
+            "libgcc_s_seh",
+            "libiconv",
+            "libmp3lame",
+            "libsndfile",
+            "libstdc++",
+            "libx264",
+            "libx265",
+            "swresample",
+            "swscale",
         }
     ),
 }
@@ -475,7 +637,7 @@ def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
     assert not unrecorded, (
         "the frozen engine ships a native library nobody has licensed. Unlike the "
         "closure tests, this covers what PyInstaller pulls from the build machine "
-        "- which is how a GPL-3.0 libreadline came to be in every installer. "
+        "- libstdc++, libgcc_s and libmvec reach the installers this way today. "
         "Establish each one's licence, then record it here and, if it is "
         "copyleft, in third_party_notices' terms table so the shipped NOTICE "
         f"names what it obliges: {sorted(unrecorded)}"
@@ -494,38 +656,35 @@ def test_the_frozen_engine_still_ships_what_was_recorded() -> None:
     )
 
 
-#: The same idea as `_MUST_STAY_ANNOTATED`, for the libraries only the freeze
-#: has. `libreadline` and `libpcaudio` are plain GPL-3.0 with no linking
-#: exception — the strongest terms in the box — and both are linked in from the
-#: build machine rather than carried by a wheel, so no scan of the closure can
-#: see them and the list above cannot name them. Deleting either row from the
-#: terms table left the whole suite green while the shipped NOTICE listed the
-#: library bare, which the document's own prose makes a claim that it is not
-#: copyleft.
-_MUST_STAY_ANNOTATED_IN_THE_FREEZE = _MUST_STAY_ANNOTATED | frozenset({"libreadline", "libpcaudio"})
-
-
 @pytest.mark.freeze
 def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
     """Silence beside a name in the NOTICE is a claim, not an omission.
 
     The generated document says copyleft libraries are named with what they
-    oblige, so a copyleft library listed bare reads as an assertion that it
-    carries no such terms. This checks the ones whose terms are strongest and
-    that are known to ship, against the accessor the document itself uses.
+    oblige, so one listed bare reads as an assertion that it carries no such
+    terms — in the text Apache-2.0 §4(d) obliges every redistributor to
+    reproduce. This pins the ones that carried terms when the record was taken,
+    so deleting a row from the terms table is a failure rather than a quiet
+    change to what ships.
 
-    Membership is tested on the same key `copyleft_note` looks the name up by,
-    not on the literal string: the freeze is spelled in the platform's own
-    dialect — Windows ships `x264-165.dll` where Linux ships `libx264.so.165` —
-    and a `lib`-prefixed comparison would report the strongest-licensed binary
-    in the box as absent from the one installer the per-platform generation
-    exists for.
+    Per-platform, because which libraries these are is a per-platform fact:
+    `libespeak-ng` is in the Linux freeze and in neither of the others, and a
+    single POSIX-spelled list asserted everywhere fails on the two platforms
+    that simply do not ship it. Membership is tested on the key `copyleft_note`
+    looks a name up by rather than on the literal string, so a platform
+    spelling its libraries differently is not read as an absence.
     """
+    recorded = _FROZEN_COPYLEFT.get(sys.platform)
+    assert recorded is not None, (
+        f"no copyleft record for {sys.platform!r} - record it alongside the "
+        "inventory, from a real packaging run"
+    )
     present = {annotation_key(name) for name in _frozen_libraries()}
-    for library in sorted(_MUST_STAY_ANNOTATED_IN_THE_FREEZE):
+    for library in sorted(recorded):
         assert annotation_key(library) in present, (
-            f"{library} is recorded as shipping in the frozen engine and is not "
-            "in it - prune the record deliberately, or find out where it went"
+            f"{library} is recorded as shipping in this platform's frozen engine "
+            "and is not in it - prune the record deliberately, or find out where "
+            "it went"
         )
         assert copyleft_note(library), (
             f"{library} ships in the frozen engine and third_party_notices no "
