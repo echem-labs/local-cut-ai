@@ -43,8 +43,7 @@ from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
-from ..backends.kokoro import _DEFAULT_VOICE as DEFAULT_VOICE
-from ..backends.kokoro import KokoroBackend
+from ..backends.kokoro import DEFAULT_VOICE, KokoroBackend
 from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..comfy import allowlist as comfy_allowlist
@@ -751,13 +750,43 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         fifty-four. A picker fed by the table can only ever offer the five,
         and nothing in the product would say the others existed.
 
-        Empty when the weights are not downloaded — the same shape, so a
-        caller renders "none installed" rather than special-casing an error.
-        `default` is what a narration node with no voice of its own gets.
+        `available` is the registry's answer for NARRATION, like
+        `/llm/models` for SCRIPT: voices are Kokoro's vocabulary alone, so a
+        chain that routes narration to Chatterbox or mock cannot honor a
+        pick, and a picker offering one there would lie. It is also false on
+        a machine with no weights, since `supports()` deliberately stops
+        claiming narration until they land — which of the two it is belongs
+        to the readiness surface, whose job is naming what to install.
+        Unavailable answers in the same shape as empty, so a caller renders
+        its empty state rather than special-casing an error.
+
+        `default` is the voice a narration node naming none falls back to,
+        and it is always one of `voices` or null: it is picked out of the
+        list rather than asserted beside it, so a pack that does not hold
+        the fallback cannot have it advertised. Naming a voice the pack
+        cannot synthesize is the thing this route must not do — kokoro-onnx
+        meets it as a bare `assert voice in self.voices`.
         """
-        backend = backends.find("kokoro")
-        installed = await asyncio.to_thread(backend.installed_voices) if backend else []
-        return {"voices": installed, "default": DEFAULT_VOICE if installed else None}
+
+        def narration_backend() -> KokoroBackend | None:
+            # The registered instance the scheduler would route to, not a
+            # lookup by name: `find` answers "is kokoro in the chain at all",
+            # which is a different question from "will a narration job land
+            # there". resolve() consults the liveness probe, so keep it off
+            # the loop like every other probe caller.
+            try:
+                backend = backends.resolve(NodeKind.NARRATION)
+            except GenerationError:
+                return None
+            return backend if isinstance(backend, KokoroBackend) else None
+
+        backend = await asyncio.to_thread(narration_backend)
+        if backend is None:
+            return {"available": False, "voices": [], "default": None}
+        installed = await asyncio.to_thread(backend.installed_voices)
+        ids = [voice["id"] for voice in installed]
+        default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
+        return {"available": True, "voices": installed, "default": default}
 
     def _defaults_payload(defaults: dict[str, str]) -> dict:
         """`auto` travels with every answer, GET and PUT alike: the picker

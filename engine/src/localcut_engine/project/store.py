@@ -25,7 +25,13 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from .. import __version__
-from ..graph.model import EDL_VERSION, GRAPH_VERSION, StoryGraph
+from ..graph.model import (
+    EDL_VERSION,
+    GRAPH_VERSION,
+    NARRATION_VERSION,
+    NodeKind,
+    StoryGraph,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -443,6 +449,15 @@ class ProjectStore:
         timeline = graph.nodes.get("timeline")
         if timeline is not None and timeline.params.get("edl_version") != EDL_VERSION:
             timeline.params["edl_version"] = EDL_VERSION
+        # The same migration for narration: stamping the current version is
+        # what invalidates audio synthesized by a build whose voice-to-
+        # language rule differed, since none of text/voice/speed changed.
+        for node in graph.nodes.values():
+            if (
+                node.kind is NodeKind.NARRATION
+                and node.params.get("narration_version") != NARRATION_VERSION
+            ):
+                node.params["narration_version"] = NARRATION_VERSION
         return graph
 
     def _load_sidecar(self, path: Path, model_cls, max_version: int, what: str):

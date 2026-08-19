@@ -521,3 +521,29 @@ def test_undo_does_not_replant_a_null_the_migration_removed(tmp_path):
     assert "captions" not in export
     assert "fps" not in export
     assert export.get("captions", "burn") == "burn"  # ffmpeg.py's own expression
+
+
+def test_loading_re_addresses_narration_written_before_the_language_fix(tmp_path):
+    """Audio rendered while every voice was phonemized as American is still
+    addressed by text/voice/speed, none of which changed — so without a
+    stamped version the existence cache serves it forever and the fix never
+    reaches an existing project. Back-filling on load is what moves the
+    hash, exactly as the timeline's edl_version does.
+    """
+    from localcut_engine.graph.model import NARRATION_VERSION, NodeKind
+
+    store = ProjectStore(tmp_path / "projects")
+    screenplay = Screenplay(
+        title="t",
+        scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
+    )
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+    narr_id = next(n.id for n in graph.nodes.values() if n.kind is NodeKind.NARRATION)
+    # A project written by the build that had no such field at all.
+    del graph.nodes[narr_id].params["narration_version"]
+    stale_hash = graph.output_hash(narr_id)
+    project = store.create(title="t", graph=graph)
+
+    reloaded = store.load_graph(project.id)
+    assert reloaded.nodes[narr_id].params["narration_version"] == NARRATION_VERSION
+    assert reloaded.output_hash(narr_id) != stale_hash

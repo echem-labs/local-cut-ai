@@ -43,6 +43,15 @@ OPTIONAL_PORTS = {MUSIC_PORT, TIMING_PORT, CAPTIONS_PORT}
 # v5: segments carry `srcs` — the sequential takes of a split scene).
 EDL_VERSION = 5
 
+# Part of every narration node's hash, for the same reason EDL_VERSION is
+# part of the timeline's: bumping it invalidates cached narration audio when
+# what the backend synthesizes changes for params that did not (v2: the
+# espeak language is derived from the voice, so British voices stopped being
+# read with American phonemes — the audio changes while text/voice/speed are
+# untouched, and without this the existence cache serves the old wav
+# forever).
+NARRATION_VERSION = 2
+
 # The project.json wire format. Distinct from EDL_VERSION (which only
 # invalidates a cached artifact hash) and from the app version in
 # manifest.json (which is written and never read).
