@@ -29,10 +29,17 @@ from pathlib import Path
 _PROJECT = "localcut-engine"
 
 _LICENCE_FILENAMES = re.compile(r"^(LICEN[CS]E|COPYING|NOTICE)", re.IGNORECASE)
-_SHARED_OBJECT = re.compile(r"\.(so|dylib|dll)(\.|$)")
-_HASH_SUFFIX = re.compile(r"-[0-9a-f]{6,}$")
-_VERSION_SUFFIX = re.compile(r"[-.][0-9][0-9.]*$")
-_ARCH_SUFFIX = re.compile(r"_(x86_64|aarch64|arm64|amd64)$")
+#: One pattern, used both to recognise a shared object and to strip its
+#: extension, so the two cannot drift apart.
+_SHARED_OBJECT = re.compile(r"\.(?:so|dylib|dll)(?:\.[0-9][0-9.]*)?$")
+
+#: Version, build-hash and arch suffixes, in any order and any number. A single
+#: greedy alternation rather than three patterns applied in sequence: sequencing
+#: made the answer depend on the order a wheel builder happened to stack them,
+#: so `libfoo_x86_64-abcdef12.so` normalised to `libfoo_x86_64` while
+#: `libfoo-abcdef12_x86_64.so` normalised to `libfoo` — one library entering the
+#: notices under two names.
+_BUILD_SUFFIX = re.compile(r"(?:-[0-9a-f]{6,}|[-.][0-9][0-9.]*|_(?:x86_64|aarch64|arm64|amd64))+$")
 
 #: Native libraries known to carry copyleft terms, and what each one obliges.
 #: Recorded rather than derived: a `.so` inside a wheel has no metadata to read,
@@ -69,13 +76,7 @@ COPYLEFT_LIBRARIES = {
 
 def _normalise_library(filename: str) -> str:
     """`libx264-d6533a8d.so.165` -> `libx264`."""
-    name = re.sub(r"\.(so|dylib|dll)(\.[0-9.]+)?$", "", filename)
-    name = _ARCH_SUFFIX.sub("", name)
-    while True:
-        stripped = _VERSION_SUFFIX.sub("", _HASH_SUFFIX.sub("", name))
-        if stripped == name:
-            return name
-        name = stripped
+    return _BUILD_SUFFIX.sub("", _SHARED_OBJECT.sub("", filename))
 
 
 def _requirement_names(dist: metadata.Distribution) -> list[str]:
