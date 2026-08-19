@@ -91,6 +91,21 @@ _ARCH_SUFFIX = re.compile(r"_(x86_64|aarch64|arm64|amd64|x64|x86)$", re.IGNORECA
 #: deprecated — still says where it lives, just under PEP 621's key instead.
 _URL_LABELS = ("homepage", "home-page", "home", "repository", "source", "source code")
 
+
+def annotation_key(library: str) -> str:
+    """The key the copyleft table holds a library under, from any spelling.
+
+    One definition rather than one per site: the table below is built with this
+    rule, `copyleft_note` reads it with this rule, and anything asking "does the
+    freeze carry x264" has to ask the same way or it is only comparing
+    spellings. Written out at each site instead, the three drift with nothing
+    going red — and the direction they drift in is the Windows installer losing
+    its annotations, which is the failure the per-platform generation exists to
+    prevent.
+    """
+    return library.lower().removeprefix("lib")
+
+
 #: Grouped so a note shared by several libraries is written once. Seven FFmpeg
 #: libraries carry the same sentence, and the failure mode of seven copies is
 #: correcting six of them — leaving one library quietly stating different
@@ -166,10 +181,10 @@ _COPYLEFT_TERMS = {
 #: `libavcodec.so.62`. Generating the document per platform is the whole
 #: reason this runs at build time, so a table that only knew the POSIX
 #: spelling would drop every copyleft annotation from the one installer the
-#: per-platform generation exists for. Stripping it once, here and in the
-#: lookup, is what keeps a new spelling from needing a new row.
+#: per-platform generation exists for. Stripping it once, through
+#: `annotation_key` below, is what keeps a new spelling from needing a new row.
 COPYLEFT_LIBRARIES = {
-    library.lower().removeprefix("lib"): note
+    annotation_key(library): note
     for libraries, note in _COPYLEFT_TERMS.items()
     for library in libraries
 }
@@ -177,7 +192,14 @@ COPYLEFT_LIBRARIES = {
 
 def _normalise_library(filename: str) -> str:
     """`libx264-d6533a8d.so.165` -> `libx264`."""
-    name = re.sub(r"\.(so|dylib|dll)(\.[0-9.]+)?$", "", filename, flags=re.IGNORECASE)
+    # Everything after the extension goes, not only an all-digit version. Real
+    # sonames carry tails that are not purely numeric -- `libx264.so.165rc`
+    # from a release-candidate build, `libaio.so.1t64` on Debian, mingw's
+    # `libfoo.dll.a` -- and leaving the extension attached is not cosmetic:
+    # `copyleft_note` looks the name up in a table keyed without it, so
+    # `libx264.so.165rc` would return None and ship in the notices with its
+    # GPL terms unnamed.
+    name = re.sub(r"\.(so|dylib|dll)(\..*)?$", "", filename, flags=re.IGNORECASE)
     while True:
         # The arch suffix is stripped inside the loop, not once ahead of it:
         # a wheel repaired by delvewheel spells the same library
@@ -192,7 +214,7 @@ def _normalise_library(filename: str) -> str:
 
 def copyleft_note(library: str) -> str | None:
     """What a normalised library name obliges, in either platform's spelling."""
-    return COPYLEFT_LIBRARIES.get(library.lower().removeprefix("lib"))
+    return COPYLEFT_LIBRARIES.get(annotation_key(library))
 
 
 def _requirement_names(

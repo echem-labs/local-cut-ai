@@ -523,6 +523,28 @@ def test_an_architecture_suffix_behind_a_hash_is_still_stripped() -> None:
         assert copyleft_note(_normalise_library(filename)), filename
 
 
+def test_a_soname_tail_that_is_not_all_digits_still_comes_off() -> None:
+    """A version is not always digits and dots, and the extension has to go.
+
+    The strip used to require the tail to be `[0-9.]`, so a soname carrying
+    anything else matched nothing and kept its extension — and the copyleft
+    table is keyed without one, so `copyleft_note` returned None and the
+    strongest-licensed binary in the box would have shipped in the notices
+    with its GPL terms unnamed. All three of these are real shapes: a
+    release-candidate FFmpeg build, Debian's t64 transition, and the mingw
+    import library beside a DLL.
+    """
+    for filename, expected in (
+        ("libx264.so.165rc", "libx264"),
+        ("libaio.so.1t64", "libaio"),
+        ("libsndfile.dll.a", "libsndfile"),
+    ):
+        assert _normalise_library(filename) == expected, filename
+    # The two that carry terms still reach them, which is what the strip is for.
+    assert copyleft_note(_normalise_library("libx264.so.165rc"))
+    assert copyleft_note(_normalise_library("libsndfile.dll.a"))
+
+
 def test_a_document_with_no_libraries_fails_the_build() -> None:
     """A heading with nothing under it is the empty file in another shape.
 
