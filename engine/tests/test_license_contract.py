@@ -1,12 +1,20 @@
-"""Pins the licence to one value across the five places that state it.
+"""Pins the licence to one value across the six places that state it.
 
 The repository declares its licence in the LICENSE text, in the engine's
-`pyproject.toml`, in the desktop's `package.json`, in the README and in
-NOTICE — five files, no build step reconciling them. That is the shape
+`pyproject.toml`, in the desktop's `package.json`, in the README, in NOTICE
+and in CONTRIBUTING.md — six files, no build step reconciling them. That is the shape
 CLAUDE.md gives a contract test, and the cost of drift is not cosmetic here:
 electron-builder reads `package.json` to stamp the `.deb` control file, so a
 manifest that disagrees with LICENSE ships a package making a false statement
 about its own terms.
+
+CONTRIBUTING.md is the one a contributor actually reads before granting
+anything: it is what GitHub surfaces on the New PR page, and the DCO sign-off
+it asks for is an assertion about the right to submit under *this* licence.
+It was the sixth statement and the only unpinned one, in a file that matched
+no path filter and no hook — so a PR editing it alone ran nothing at all, and
+a relicence could reconcile the other five and leave it telling every inbound
+contributor the old terms.
 
 NOTICE is pinned for the licence it names, not only for its copyright line.
 Apache-2.0 §4(d) makes NOTICE the one text every downstream redistributor is
@@ -19,9 +27,10 @@ are spread the length of the document rather than clustered at the top —
 every one of them sits in the header of a truncated copy, so pinning only
 those passes a LICENSE cut to a third of its length.
 
-`ci-engine.yml` and `.pre-commit-config.yaml` both name this module's four
+`ci-engine.yml` and `.pre-commit-config.yaml` both name this module's five
 out-of-engine inputs in their filters. They have to: LICENSE, NOTICE and
-README.md match no other workflow or hook in the repository at all, and
+README.md and CONTRIBUTING.md match no other workflow or hook in the
+repository at all, and
 `apps/desktop/package.json` matches only the desktop suite, which cannot run
 pytest. Keep the two lists in step with the constants below.
 """
@@ -41,6 +50,7 @@ _NOTICE = _ROOT / "NOTICE"
 _README = _ROOT / "README.md"
 _PYPROJECT = _ROOT / "engine" / "pyproject.toml"
 _PACKAGE_JSON = _ROOT / "apps" / "desktop" / "package.json"
+_CONTRIBUTING = _ROOT / "CONTRIBUTING.md"
 
 #: The one value every manifest must state, as an SPDX identifier.
 LICENSE_ID = "Apache-2.0"
@@ -121,3 +131,14 @@ def test_the_notice_carries_a_copyright_line_and_names_the_license() -> None:
     # The fifth place the licence is written down, and the one Apache-2.0
     # §4(d) obliges every redistributor to carry.
     assert "Apache License, Version 2.0" in text, "NOTICE does not name the Apache licence"
+
+
+def test_the_contributing_guide_names_the_same_license() -> None:
+    """The statement a contributor grants against, pinned like the other five."""
+    assert _CONTRIBUTING.exists(), "no CONTRIBUTING.md at the repository root"
+    text = _CONTRIBUTING.read_text(encoding="utf-8")
+    assert LICENSE_ID in text, (
+        f"CONTRIBUTING.md does not name {LICENSE_ID!r} - it is what GitHub shows on "
+        "the New PR page, and the DCO sign-off it asks for is an assertion about "
+        "the right to submit under this licence"
+    )
