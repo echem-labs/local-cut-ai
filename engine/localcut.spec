@@ -2,6 +2,9 @@
 # Build:  uv sync --group build && uv run pyinstaller --noconfirm localcut.spec
 # The desktop package picks the output up as an extraResource
 # (apps/desktop/electron-builder.yml).
+import sys
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_data_files
 
 # Package data read via importlib.resources at runtime: the default model
@@ -16,6 +19,26 @@ datas = collect_data_files("localcut_engine")
 # that drift apart, and the deb already asserts `License: Apache-2.0` in its
 # control file from apps/desktop/package.json.
 datas += [("../LICENSE", "."), ("../NOTICE", ".")]
+
+# The notices for everything the freeze redistributes *besides* our own code:
+# 70 Python distributions and the 41 native libraries their wheels carry, with
+# the licence texts each one obliges us to reproduce. Generated here rather
+# than committed because the answer is platform-specific — the `av` wheel
+# bundles a different FFmpeg per OS and architecture — so a file written on
+# one machine would misdescribe the installers built on the other two.
+#
+# Lands beside LICENSE and NOTICE, which on PyInstaller 6 means
+# resources/engine/_internal/ rather than the top of resources/engine —
+# COLLECT puts every data file there and only the executable stays above it.
+# That satisfies the obligation, which is that a copy accompany the
+# distribution, but it is worth writing down: the three files are one
+# directory deeper than the place someone would look for them.
+sys.path.insert(0, str(Path(SPECPATH) / "packaging"))
+from third_party_notices import write_notices  # noqa: E402  (needs the path above)
+
+_notices = Path(SPECPATH) / "build" / "THIRD-PARTY-NOTICES.txt"
+_notices.parent.mkdir(parents=True, exist_ok=True)
+datas += [(str(write_notices(_notices)), ".")]
 
 a = Analysis(
     ["packaging/entry.py"],
