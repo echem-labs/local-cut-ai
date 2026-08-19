@@ -46,10 +46,11 @@ since this paragraph is what anyone adding a sixth file reads first.
 
 `test_ui_contract.py` and `test_license_contract.py` read files outside
 `engine/` for the same reason and are gated the same way (`lib/tools.ts` and
-friends under its own `ui-contract` hook; LICENSE, NOTICE, README.md and the
-desktop's package.json under `license-contract`), so ci-engine.yml's filter is
-the union of the three lists rather than just these five -- an entry there
-that is not named above belongs to one of those two tests.
+friends under its own `ui-contract` hook; LICENSE, NOTICE, README.md,
+CONTRIBUTING.md and the desktop's package.json under `license-contract`), so
+ci-engine.yml's filter is the union of the three lists rather than just these
+five -- an entry there that is not named above belongs to one of those two
+tests.
 """
 
 from __future__ import annotations
