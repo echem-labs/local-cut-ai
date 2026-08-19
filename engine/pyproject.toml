@@ -3,6 +3,7 @@ name = "localcut-engine"
 version = "0.1.0"
 description = "LocalCut AI engine — Python orchestrator: story graph, job queue, model manager, provider adapters"
 requires-python = ">=3.13"
+license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.139.2",
     "uvicorn[standard]>=0.51.0",
