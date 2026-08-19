@@ -306,3 +306,170 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
             "longer names its terms, so the generated NOTICE lists it with "
             "nothing beside it — which reads as a claim that it is not copyleft."
         )
+
+
+#: What the frozen engine ships on Linux, normalised. This is the artifact the
+#: installers carry, and it is not the same set as the installed closure: about
+#: half of these are resolved from the build machine by PyInstaller's
+#: dependency walk rather than from any wheel, so no scan of site-packages can
+#: see them. `libreadline` is the reason this matters — GPL-3.0, pulled in by
+#: CPython's `readline` module, in every installer built today.
+#:
+#: Keyed by platform because the answer is per-platform and pretending
+#: otherwise is how a Linux inventory becomes a false statement about a Windows
+#: build. A platform with no record here fails rather than skips: the whole
+#: point is that a library nobody has looked at cannot arrive quietly, and the
+#: failure prints the list to record.
+_FROZEN_LIBRARIES = {
+    "linux": frozenset(
+        {
+            "libFLAC",
+            "libSvtAv1Enc",
+            "libX11",
+            "libX11-xcb",
+            "libXau",
+            "libXdmcp",
+            "libapparmor",
+            "libasound",
+            "libasyncns",
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libbz2",
+            "libcrypto",
+            "libctranslate2",
+            "libdav1d",
+            "libdbus",
+            "libdrm",
+            "libespeak-ng",
+            "libexpat",
+            "libffi",
+            "libgcc_s",
+            "libgfortran",
+            "libgmp",
+            "libgnutls",
+            "libgomp",
+            "libhogweed",
+            "liblzma",
+            "libmp3lame",
+            "libmpg123",
+            "libmvec",
+            "libnettle",
+            "libogg",
+            "libonnxruntime_providers_shared",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libpcaudio",
+            "libpulse",
+            "libpulse-simple",
+            "libpulsecommon",
+            "libpython3",
+            "libquadmath",
+            "libreadline",
+            "libscipy_openblas64_",
+            "libsharpyuv",
+            "libsndfile",
+            "libsonic",
+            "libsqlite3",
+            "libssl",
+            "libstdc++",
+            "libswresample",
+            "libswscale",
+            "libsystemd",
+            "libtinfo",
+            "libunistring",
+            "libuuid",
+            "libvorbis",
+            "libvorbisenc",
+            "libvpl",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libx264",
+            "libx265",
+            "libxcb",
+            "libxcb-shape",
+            "libxcb-shm",
+            "libxcb-xfixes",
+            "libz",
+            "libzstd",
+        }
+    ),
+}
+
+_FROZEN_TREE = Path(__file__).resolve().parents[1] / "dist" / "localcut" / "_internal"
+
+
+def _frozen_libraries() -> frozenset[str]:
+    """What the built artifact holds, or a skip if it has not been built.
+
+    The freeze is the thing that is redistributed, and until `pyinstaller` has
+    run there is nothing to inspect — so this skips on a plain checkout and
+    says so, rather than passing on an empty directory.
+    """
+    if not _FROZEN_TREE.is_dir():
+        pytest.skip(f"no frozen engine at {_FROZEN_TREE} - run pyinstaller to check the artifact")
+    return frozenset(bundled_libraries(str(p) for p in _FROZEN_TREE.rglob("*")))
+
+
+def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
+    """The guard the installed-closure tests cannot make.
+
+    They scan site-packages, which holds neither the system libraries
+    PyInstaller resolves from the build machine nor, necessarily, the same
+    versions. A library can therefore ship in every installer while every
+    other test in this file is green.
+    """
+    present = _frozen_libraries()
+    recorded = _FROZEN_LIBRARIES.get(sys.platform)
+    assert recorded is not None, (
+        f"no frozen inventory recorded for {sys.platform!r}. The freeze ships a "
+        "different set on each platform, so record this one after checking each "
+        f"library's licence: {sorted(present)}"
+    )
+    unrecorded = present - recorded
+    assert not unrecorded, (
+        "the frozen engine ships a native library nobody has licensed. Unlike the "
+        "closure tests, this covers what PyInstaller pulls from the build machine "
+        "- which is how a GPL-3.0 libreadline came to be in every installer. "
+        "Establish each one's licence, then record it here and, if it is "
+        "copyleft, in third_party_notices' terms table so the shipped NOTICE "
+        f"names what it obliges: {sorted(unrecorded)}"
+    )
+
+
+def test_the_frozen_engine_still_ships_what_was_recorded() -> None:
+    """The other direction: a library dropping out is a licence change too."""
+    present = _frozen_libraries()
+    recorded = _FROZEN_LIBRARIES.get(sys.platform)
+    if recorded is None:
+        pytest.skip(f"no frozen inventory recorded for {sys.platform!r}")
+    missing = recorded - present
+    assert not missing, (
+        "a library recorded as shipping in the frozen engine is no longer there. "
+        "If that is a dependency being dropped it is the fix landing and the "
+        f"entry should be pruned; if it merely moved, the record is wrong: {sorted(missing)}"
+    )
+
+
+def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
+    """Silence beside a name in the NOTICE is a claim, not an omission.
+
+    The generated document says copyleft libraries are named with what they
+    oblige, so a copyleft library listed bare reads as an assertion that it
+    carries no such terms. This checks the three whose terms are strongest and
+    that are known to ship, against the accessor the document itself uses.
+    """
+    present = _frozen_libraries()
+    for library in sorted(_MUST_STAY_ANNOTATED):
+        assert library in present, (
+            f"{library} is recorded as shipping in the frozen engine and is not "
+            "in it - prune the record deliberately, or find out where it went"
+        )
+        assert copyleft_note(library), (
+            f"{library} ships in the frozen engine and third_party_notices no "
+            "longer names its terms, so the NOTICE lists it with nothing beside it"
+        )
