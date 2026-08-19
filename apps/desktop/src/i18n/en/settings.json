@@ -236,9 +236,9 @@
     "copyTipHint": "App and engine versions, backend and hardware — as text on your clipboard.",
     "copied": "Copied",
     "licenses": "Open-source licenses",
-    "licensesTipHint": "Every bundled package, its version and its license.",
+    "licensesTipHint": "Versions and license texts for the packages the interface is built from.",
     "licensesTitle": "Open-source licenses",
-    "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors.",
+    "licensesIntro": "LocalCut AI is built with these open-source packages. Each remains under its own license, held by its respective authors, and every notice a package publishes is reproduced below.",
     "licensesClose": "Close",
     "diagApp": "App {version}",
     "diagEngine": "Engine {engine} · API v{api}",
@@ -281,9 +281,12 @@
     "linkWebsite": "Website",
     "linkDocs": "Documentation",
     "linkIssues": "Report an issue",
-    "fine": "© {year} · Built on open models — each one's license is shown where you download it.",
+    "fine": "© {year} Muhammad Hanzla Mateen · LocalCut AI is Apache-2.0 · Built on open models — each one's license is shown where you download it.",
     "machineLoading": "Reading this machine…",
-    "whatsNew": "What's new in {version} →"
+    "whatsNew": "What's new in {version} →",
+    "licensesNoText": "This package publishes no license file — see its repository.",
+    "licensesShowText": "License text",
+    "licensesTextAria": "License text for {name}"
   },
   "workflows": {
     "hint": "Custom ComfyUI graphs, and the third-party node packs they need. Only relevant if you run ComfyUI — everything ships working without any of this.",
