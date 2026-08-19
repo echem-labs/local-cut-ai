@@ -44,7 +44,7 @@ you touched. To run the gates by hand, in full:
 
 ```
 cd engine && uv run pytest -q -rs && uv run ruff check . && uv run ruff format --check .
-cd apps/desktop && npm run typecheck && npm test && npm run icon:check && npm run build
+cd ../apps/desktop && npm run typecheck && npm test && npm run icon:check && npm run build
 ```
 
 `icon:check` and `build` are easy to skip and are both CI gates: the app
