@@ -17,6 +17,18 @@ That appends `Signed-off-by: Your Name <your@email>`, which is the whole
 mechanism. CI checks it, because a policy nothing enforces lapses at the
 first hurried merge.
 
+It checks two things beyond the line being present, both of which
+`git commit -s` gets right on its own:
+
+- **It has to name you.** The line is compared against the commit's author
+  and committer, so a sign-off carried over from someone else's patch does
+  not stand in for yours — add your own `-s` on top when you cherry-pick or
+  apply a patch.
+- **It has to be a trailer**, meaning it sits in the message's last
+  paragraph. A sign-off quoted in the body, or one followed by a closing note
+  in a paragraph of its own, does not count; if you amend a message
+  afterwards, keep the sign-off at the bottom.
+
 ## Before you open a PR
 
 `CLAUDE.md` at the root is the real guide — it records the conventions that
