@@ -1,0 +1,18 @@
+Voice swatch samples
+====================
+
+af_bella.wav, af_sarah.wav, am_michael.wav, am_onyx.wav, bf_emma.wav
+
+These five two-second clips are not recordings of anyone. Each is synthesis
+output from the Kokoro-82M text-to-speech model, generated with the same
+voice pack the swatch it plays under resolves to, so that the preview a user
+hears matches what the engine will actually produce.
+
+Model:   Kokoro-82M (hexgrad)
+Source:  https://huggingface.co/hexgrad/Kokoro-82M
+License: Apache-2.0
+
+Recorded here because the alternative is five unexplained files of
+human-sounding speech inside an application that gates voice cloning on
+consent — which is exactly the question a reviewer should ask, and it
+deserves an answer that does not require reading the commit history.
