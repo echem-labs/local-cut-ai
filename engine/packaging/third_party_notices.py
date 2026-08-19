@@ -155,7 +155,14 @@ COPYLEFT_LIBRARIES = {
 
 def _normalise_library(filename: str) -> str:
     """`libx264-d6533a8d.so.165` -> `libx264`."""
-    name = re.sub(r"\.(so|dylib|dll)(\.[0-9.]+)?$", "", filename, flags=re.IGNORECASE)
+    # Everything after the extension goes, not only an all-digit version. Real
+    # sonames carry tails that are not purely numeric -- `libx264.so.165rc`
+    # from a release-candidate build, `libaio.so.1t64` on Debian, mingw's
+    # `libfoo.dll.a` -- and leaving the extension attached is not cosmetic:
+    # `copyleft_note` looks the name up in a table keyed without it, so
+    # `libx264.so.165rc` would return None and ship in the notices with its
+    # GPL terms unnamed.
+    name = re.sub(r"\.(so|dylib|dll)(\..*)?$", "", filename, flags=re.IGNORECASE)
     while True:
         # The arch suffix is stripped inside the loop, not once ahead of it:
         # a wheel repaired by delvewheel spells the same library
