@@ -16,6 +16,12 @@ name: CI (engine)
 # packaging-only PR renaming the binary in any of them matches no other
 # workflow at all, so without these lines it would merge having run no suite.
 #
+# test_license_contract.py is the second such reader, and the one whose inputs
+# sit at the repository root: LICENSE, NOTICE, README.md and the desktop's
+# package.json. Those four match no other workflow either -- an edit to the
+# README's License section or a deleted LICENSE runs nothing at all, and
+# package.json alone runs only ci-desktop, which cannot execute pytest.
+#
 # (Spelled out twice rather than shared through a YAML anchor: the workflow
 # parser does not expand anchors.)
 on:
@@ -30,6 +36,10 @@ on:
       - "apps/desktop/scripts/check-engine.mjs"
       - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
+      - "apps/desktop/package.json"
+      - "LICENSE"
+      - "NOTICE"
+      - "README.md"
   pull_request:
     paths:
       - "engine/**"
@@ -40,6 +50,10 @@ on:
       - "apps/desktop/scripts/check-engine.mjs"
       - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
+      - "apps/desktop/package.json"
+      - "LICENSE"
+      - "NOTICE"
+      - "README.md"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main

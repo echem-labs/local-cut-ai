@@ -101,6 +101,25 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # Third reader of files outside engine/, and the only one whose inputs
+      # are at the repository root. LICENSE, NOTICE and README.md match no
+      # other hook here at all; package.json runs the desktop hooks, which
+      # cannot read a licence. Same shape as the two above -- one test, in
+      # well under a second, rather than the whole engine suite.
+      - id: license-contract
+        name: licence contract (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q tests/test_license_contract.py'
+        language: system
+        files: |
+          (?x)^(
+            LICENSE
+            |NOTICE
+            |README\.md
+            |apps/desktop/package\.json
+          )$
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: desktop-typecheck
         name: desktop typecheck (tsc)
         entry: bash -c 'cd apps/desktop && npm run typecheck'
