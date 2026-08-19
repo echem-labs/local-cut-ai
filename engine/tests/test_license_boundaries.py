@@ -29,10 +29,17 @@ import ast
 import functools
 import importlib.metadata as metadata
 import re
-import sysconfig
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
+
+from third_party_notices import (  # noqa: E402  (needs the path above)
+    COPYLEFT_LIBRARIES,
+    bundled_libraries,
+)
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -136,55 +143,24 @@ _KNOWN_LIBRARIES = frozenset(
     }
 )
 
-#: The copyleft-licensed members of the inventory above. May shrink — that is
-#: what resolving the debt looks like — but must never grow.
-_KNOWN_COPYLEFT_LIBRARIES = frozenset(
-    {
-        # GPL-2.0-or-later, via av's FFmpeg. No encode in this product asks
-        # for them — but they are `DT_NEEDED` entries of `libavcodec`, so
-        # `import av` maps both into the engine's own address space whether or
-        # not anything calls them. Non-invocation is not the mitigation it
-        # reads as: linkage is what the licence question turns on.
-        "libx264",
-        "libx265",
-        "libespeak-ng",  # GPL-3.0, ctypes-loaded by kokoro-onnx's tokenizer.
-    }
-)
-
-#: One pattern, used both to recognise a shared object and to strip its
-#: extension. Written twice it drifts: adding `.pyd` to the detector alone
-#: would admit a file that then normalises with the extension still attached.
-_SHARED_OBJECT = re.compile(r"\.(?:so|dylib|dll)(?:\.[0-9][0-9.]*)?$")
-
-#: Version, build-hash and arch suffixes, in any order and any number. One
-#: greedy alternation rather than three patterns applied in sequence, because
-#: sequencing made the answer depend on the order a wheel builder happened to
-#: stack them: `libfoo_x86_64-abcdef12.so` normalised to `libfoo_x86_64` while
-#: `libfoo-abcdef12_x86_64.so` normalised to `libfoo`.
-_BUILD_SUFFIX = re.compile(r"(?:-[0-9a-f]{6,}|[-.][0-9][0-9.]*|_(?:x86_64|aarch64|arm64|amd64))+$")
-
-
-def _normalise(filename: str) -> str:
-    """`libx264-d6533a8d.so.165` -> `libx264`, `libgfortran-040eee7a.so.5.0.0` -> `libgfortran`."""
-    return _BUILD_SUFFIX.sub("", _SHARED_OBJECT.sub("", filename))
+#: The copyleft record is `third_party_notices.COPYLEFT_LIBRARIES` — the table
+#: that generates the NOTICE shipped beside the frozen engine. Derived rather
+#: than restated: a second list here would be a licence claim on the far side of
+#: a boundary no build step reconciles, and the two had already diverged (three
+#: entries against twenty-one) before this was noticed.
+_KNOWN_COPYLEFT_LIBRARIES = frozenset(COPYLEFT_LIBRARIES)
 
 
 @functools.cache
 def _bundled_libraries() -> frozenset[str]:
-    # platlib, not purelib: compiled artefacts are the whole subject here, and
-    # the two only coincide by accident of the venv scheme. On a distro split
-    # (`/usr/lib64/...` on the RPM family) purelib holds pure Python alone, and
-    # scanning it would report an empty closure as a clean one.
-    site_packages = Path(sysconfig.get_paths()["platlib"])
-    found: set[str] = set()
-    for path in site_packages.rglob("*"):
-        name = path.name
-        # `.abi3`/`.cpython-` files are a package's own extension modules, not
-        # third-party libraries riding along inside its wheel.
-        if not _SHARED_OBJECT.search(name) or ".abi3" in name or ".cpython-" in name:
-            continue
-        found.add(_normalise(name))
-    return frozenset(found)
+    """The closure the shipped notices are generated from.
+
+    Imported rather than reimplemented. This file used to carry its own
+    scanner and normaliser; the copy in `third_party_notices` walks the union
+    of `purelib` and `platlib` where this one walked a single key, so the guard
+    could pin a set the NOTICE did not describe.
+    """
+    return frozenset(bundled_libraries())
 
 
 def _installed_closure() -> frozenset[str]:
