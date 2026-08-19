@@ -225,7 +225,16 @@ def test_the_engine_spells_its_own_name_the_same_way_everywhere():
     # console script more directly than anything else here -- and nothing
     # builds it in CI, so a missed rename surfaces as a container that
     # restart-loops on "Failed to spawn" the first time someone deploys it.
-    _assert_spelled(REPO_ROOT / "engine" / "Dockerfile", name, {rf'"run",\s*"{q}",\s*"serve"': 1})
+    #
+    # `uv run` takes flags of its own before the command, so they are skipped
+    # over rather than spelled out: what this pins is the name, and a pattern
+    # that also pinned the flag list would go red for a change that has nothing
+    # to do with what the command is called.
+    _assert_spelled(
+        REPO_ROOT / "engine" / "Dockerfile",
+        name,
+        {rf'"run",\s*(?:"--[\w-]+",\s*)*"{q}",\s*"serve"': 1},
+    )
 
 
 @pytest.mark.skipif(not _DESKTOP.exists(), reason="desktop app not present beside the engine")

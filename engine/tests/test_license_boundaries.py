@@ -6,21 +6,25 @@ The first is the one the code already documents: ComfyUI is GPL-3.0, so the
 adapter talks to it over HTTP and never imports it. That held — but nothing
 asserted it, and it is one careless `import` away from being untrue.
 
-The second is the one nobody had looked at. The frozen engine redistributes
-its whole transitive closure, native libraries included, and GPL arrives
-through `pip` as readily as through a model card: `faster-whisper` pulls
-`av`, whose wheel bundles a full FFmpeg with the x264 and x265 encoders
-(video is encoded by shelling out to the user's own ffmpeg, so nothing here
-calls them — though `libavcodec` names them in its `DT_NEEDED`, so they load
-with it either way), and `kokoro-onnx` pulls `phonemizer-fork` plus
-`espeakng-loader`, which ships libespeak-ng. All of that is loaded in the
-engine's own process.
+The second is the one nobody had looked at. GPL arrives through `pip` as
+readily as through a model card: `faster-whisper` pulls `av`, whose wheel
+bundles a full FFmpeg with the x264 and x265 encoders, and `kokoro-onnx`
+pulls `phonemizer-fork` plus `espeakng-loader`, which ships libespeak-ng.
 
-So these tests do not pretend the closure is clean. They pin what is in it,
-so that the next `uv lock` cannot add to it silently: a new bundled library
+Which is why the two halves of this file measure two different things. The
+closure is what `uv sync` installs, `av` included; the freeze is what the
+installers carry, and `localcut.spec` excludes `av` from it — narration is
+decoded by shelling out to the ffmpeg binary the app already ships, so
+nothing imports PyAV and the wheel does not have to be in the box. A library
+can therefore be in the closure and not in the freeze, and conflating the two
+is how a document ends up naming GPL encoders that no installer contains.
+The espeak chain is in both: it is loaded in the engine's own process.
+
+So these tests do not pretend either set is clean. They pin what is in each,
+so that the next `uv lock` cannot add to them silently: a new bundled library
 fails here and gets a licence decision, and the recorded copyleft may shrink
-but never grow. Fixing the two chains is separate work; noticing a third one
-arrive is this file's job.
+but never grow. Fixing the espeak chain is separate work; noticing a third
+one arrive is this file's job.
 """
 
 from __future__ import annotations
@@ -326,93 +330,50 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
 #: A record taken from the wrong machine reports a licence change on every
 #: build.
 #:
-#: Keyed by platform because the answer differs sharply: 44 libraries on Linux,
-#: 29 on macOS, 81 on Windows, and `libespeak-ng` ships on Linux alone.
+#: Keyed by platform because the answer differs sharply: 12 libraries on Linux,
+#: 10 on macOS, 56 on Windows — most of the Windows set being UCRT and MSVC
+#: runtime pieces the other two take from the system.
+#:
+#: The `av` wheel is in none of them: `localcut.spec` excludes it, so the FFmpeg
+#: build it carries — 32 libraries on Linux, x264 and x265 among them — reaches
+#: no installer. It is still in the closure `_KNOWN_LIBRARIES` above records,
+#: because it is still faster-whisper's declared dependency and still installed
+#: for the tests. The two sets describing different things is why there are
+#: two: `libmp3lame` leaving this one while staying in that one is the freeze
+#: getting narrower, not a dependency going away.
 _FROZEN_LIBRARIES = {
     "linux": frozenset(
         {
-            "libSvtAv1Enc",
-            "libXau",
-            "libasound",
-            "libavcodec",
-            "libavdevice",
-            "libavfilter",
-            "libavformat",
-            "libavutil",
             "libctranslate2",
-            "libdav1d",
-            "libdrm",
             "libgcc_s",
             "libgfortran",
-            "libgmp",
-            "libgnutls",
             "libgomp",
-            "libhogweed",
-            "libmp3lame",
             "libmvec",
-            "libnettle",
             "libonnxruntime_providers_shared",
-            "libopencore-amrnb",
-            "libopencore-amrwb",
-            "libopus",
             "libpython3",
             "libquadmath",
             "libscipy_openblas64_",
-            "libsharpyuv",
             "libsndfile",
             "libstdc++",
-            "libswresample",
-            "libswscale",
-            "libunistring",
-            "libvpl",
-            "libvpx",
-            "libwebp",
-            "libwebpmux",
-            "libx264",
-            "libx265",
-            "libxcb",
-            "libxcb-shape",
-            "libxcb-shm",
-            "libxcb-xfixes",
             "libz",
         }
     ),
     "darwin": frozenset(
         {
-            "libSvtAv1Enc",
-            "libavcodec",
-            "libavdevice",
-            "libavfilter",
-            "libavformat",
-            "libavutil",
             "libcrypto",
             "libctranslate2",
-            "libdav1d",
             "liblzma",
-            "libmp3lame",
             "libmpdec",
             "libonnxruntime",
-            "libopencore-amrnb",
-            "libopencore-amrwb",
-            "libopus",
-            "libsharpyuv",
             "libsndfile",
             "libsqlite3",
             "libssl",
-            "libswresample",
-            "libswscale",
-            "libvpx",
-            "libwebp",
-            "libwebpmux",
-            "libx264",
-            "libx265",
             "libzstd",
             "onnxruntime_pybind11_state",
         }
     ),
     "win32": frozenset(
         {
-            "MSVCP140_1",
             "api-ms-win-core-console-l1",
             "api-ms-win-core-datetime-l1",
             "api-ms-win-core-debug-l1",
@@ -451,48 +412,24 @@ _FROZEN_LIBRARIES = {
             "api-ms-win-crt-string-l1",
             "api-ms-win-crt-time-l1",
             "api-ms-win-crt-utility-l1",
-            "avcodec",
-            "avdevice",
-            "avfilter",
-            "avformat",
-            "avutil",
             "ctranslate2",
-            "libSvtAv1Enc",
             "libcrypto",
-            "libdav1d",
             "libffi",
-            "libgcc_s_seh",
-            "libiconv",
             "libiomp5md",
-            "libmp3lame",
-            "libopencore-amrnb",
-            "libopencore-amrwb",
-            "libopus",
             "libscipy_openblas64_",
-            "libsharpyuv",
             "libsndfile",
             "libssl",
-            "libstdc++",
-            "libvpl",
-            "libvpx",
-            "libwebp",
-            "libwebpmux",
-            "libwinpthread",
-            "libx264",
-            "libx265",
             "msvcp140",
+            "MSVCP140_1",
             "onnxruntime",
             "onnxruntime_providers_shared",
             "python3",
             "python314",
             "pywintypes314",
             "sqlite3",
-            "swresample",
-            "swscale",
             "ucrtbase",
             "vcruntime140",
             "vcruntime140_1",
-            "zlib1",
         }
     ),
 }
@@ -505,62 +442,23 @@ _FROZEN_LIBRARIES = {
 _FROZEN_COPYLEFT = {
     "linux": frozenset(
         {
-            "libasound",
-            "libavcodec",
-            "libavdevice",
-            "libavfilter",
-            "libavformat",
-            "libavutil",
             "libgcc_s",
             "libgfortran",
-            "libgmp",
-            "libgnutls",
             "libgomp",
-            "libhogweed",
-            "libmp3lame",
             "libmvec",
-            "libnettle",
             "libquadmath",
             "libsndfile",
             "libstdc++",
-            "libswresample",
-            "libswscale",
-            "libunistring",
-            "libx264",
-            "libx265",
         }
     ),
     "darwin": frozenset(
         {
-            "libavcodec",
-            "libavdevice",
-            "libavfilter",
-            "libavformat",
-            "libavutil",
-            "libmp3lame",
             "libsndfile",
-            "libswresample",
-            "libswscale",
-            "libx264",
-            "libx265",
         }
     ),
     "win32": frozenset(
         {
-            "avcodec",
-            "avdevice",
-            "avfilter",
-            "avformat",
-            "avutil",
-            "libgcc_s_seh",
-            "libiconv",
-            "libmp3lame",
             "libsndfile",
-            "libstdc++",
-            "libx264",
-            "libx265",
-            "swresample",
-            "swscale",
         }
     ),
 }
