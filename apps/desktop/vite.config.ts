@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
@@ -7,10 +7,27 @@ import { dependencies, homepage, version } from "./package.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** Attribution list for Settings → About "Open-source licenses": the runtime
- * dependencies that actually ship in the renderer bundle, read from each
- * installed package's own package.json at build time — real versions and
- * SPDX ids, never hand-maintained. */
+/** Attribution list for Settings → About "Open-source licenses": everything
+ * that actually ships inside the renderer bundle, read at build time — real
+ * versions, SPDX ids and the license texts themselves, never hand-maintained.
+ *
+ * Three things this has to get right, each of which it got wrong before:
+ *
+ * - **The whole tree, not the direct deps.** Vite bundles transitively, so
+ *   `scheduler` and the `dockview-core` layer ship without appearing in
+ *   package.json. Listing only what we typed there under-reports what we
+ *   redistribute.
+ * - **Texts, not just identifiers.** MIT's one condition is that the notice
+ *   "shall be included in all copies"; an SPDX id is not that notice. esbuild
+ *   strips every `@license` comment from the bundle (`legalComments: "none"`
+ *   is Vite's default) and electron-builder excludes node_modules, so if the
+ *   text is not carried here it ships nowhere at all.
+ * - **Vendored assets count.** Inter is committed into the tree rather than
+ *   installed, and the voice swatch samples are generated audio. Neither has
+ *   a package.json to be discovered through, and both are redistributed.
+ *
+ * Sorted by code unit rather than `localeCompare`, so the list is identical
+ * on every machine that builds it. */
 function collectLicenses() {
   const asUrl = (repo: unknown): string => {
     const raw = typeof repo === "string" ? repo : ((repo as { url?: string })?.url ?? "");
@@ -30,19 +47,84 @@ function collectLicenses() {
     }
     return "See repository";
   };
-  return Object.keys(dependencies)
-    .map((name) => {
-      try {
-        const meta = JSON.parse(readFileSync(join(here, "node_modules", name, "package.json"), "utf8"));
-        return { name, version: meta.version as string, license: spdx(meta), repository: asUrl(meta.repository) };
-      } catch {
-        // Degraded path (deps not installed here / unreadable): show the declared
-        // range without its leading semver operator, not "^5.0.14".
-        const declared = dependencies[name as keyof typeof dependencies].replace(/^[\^~>=<\s]+/, "");
-        return { name, version: declared, license: "See repository", repository: "" };
+  // A package's own copy of its license, if it published one. Not every
+  // package does — the dockview family ships none — and inventing one would
+  // be worse than saying so, which `text: ""` lets the UI do.
+  const licenseText = (dir: string): string => {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      return "";
+    }
+    const file = names
+      .filter((n) => /^(LICEN[CS]E|COPYING)/i.test(n))
+      .sort()[0];
+    if (!file) return "";
+    try {
+      return readFileSync(join(dir, file), "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+
+  // Breadth-first over `dependencies` only: devDependencies do not ship, and
+  // optional/peer edges are not what Vite resolved into the bundle.
+  const collected = new Map<string, { name: string; version: string; license: string; repository: string; text: string }>();
+  const queue = Object.keys(dependencies);
+  while (queue.length) {
+    const name = queue.shift() as string;
+    if (collected.has(name)) continue;
+    const dir = join(here, "node_modules", name);
+    try {
+      const meta = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+      collected.set(name, {
+        name,
+        version: meta.version as string,
+        license: spdx(meta),
+        repository: asUrl(meta.repository),
+        text: licenseText(dir),
+      });
+      for (const dep of Object.keys(meta.dependencies ?? {})) {
+        if (!collected.has(dep)) queue.push(dep);
       }
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      // Degraded path (deps not installed here / unreadable): show the declared
+      // range without its leading semver operator, not "^5.0.14".
+      const declared = dependencies[name as keyof typeof dependencies]?.replace(/^[\^~>=<\s]+/, "") ?? "";
+      collected.set(name, { name, version: declared, license: "See repository", repository: "", text: "" });
+    }
+  }
+
+  // Redistributed but undiscoverable: no package.json sits above either of
+  // these, and both are inside the shipped bundle.
+  const vendored = [
+    {
+      name: "Inter",
+      version: "Variable",
+      license: "OFL-1.1",
+      repository: "https://github.com/rsms/inter",
+      text: licenseTextAt(join(here, "src", "assets", "fonts", "LICENSE.txt")),
+    },
+    {
+      name: "Kokoro-82M voice samples",
+      version: "af_bella, af_sarah, am_michael, am_onyx, bf_emma",
+      license: "Apache-2.0",
+      repository: "https://huggingface.co/hexgrad/Kokoro-82M",
+      text: licenseTextAt(join(here, "src", "assets", "voices", "PROVENANCE.txt")),
+    },
+  ];
+
+  return [...collected.values(), ...vendored].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** A license/provenance text read from an exact path rather than discovered. */
+function licenseTextAt(path: string): string {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 export default defineConfig({

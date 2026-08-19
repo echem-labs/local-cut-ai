@@ -1553,6 +1553,18 @@ export function Settings() {
                   <span className="badge">{dep.license}</span>
                 </div>
                 {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
+                {dep.text ? (
+                  // Collapsed by default: eight full license texts open at once
+                  // buries the list they belong to. `details` rather than a
+                  // custom disclosure so it is keyboard- and screen-reader
+                  // operable without any of our own state.
+                  <details className="lic-text">
+                    <summary>{t("settings.about.licensesShowText")}</summary>
+                    <pre>{dep.text}</pre>
+                  </details>
+                ) : (
+                  <p className="lic-none">{t("settings.about.licensesNoText")}</p>
+                )}
               </li>
             ))}
           </ul>

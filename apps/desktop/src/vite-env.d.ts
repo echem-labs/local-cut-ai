@@ -16,4 +16,8 @@ declare const __OSS_LICENSES__: ReadonlyArray<{
   version: string;
   license: string;
   repository: string;
+  /** The package's own license text. Empty when it published none — the
+   * dockview family is the case in point; the UI says so rather than
+   * implying the notice is absent by accident. */
+  text: string;
 }>;
