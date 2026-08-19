@@ -44,10 +44,12 @@ filter that omits one lets the drift this guards against merge without
 running. Both filters list all five; keep the count here honest with them,
 since this paragraph is what anyone adding a sixth file reads first.
 
-`test_ui_contract.py` reads desktop files for the same reason and is gated
-the same way (`lib/tools.ts` and friends, its own `ui-contract` hook), so
-ci-engine.yml's filter is the union of the two lists rather than just these
-five -- an entry there that is not named above belongs to that test.
+`test_ui_contract.py` and `test_license_contract.py` read files outside
+`engine/` for the same reason and are gated the same way (`lib/tools.ts` and
+friends under its own `ui-contract` hook; LICENSE, NOTICE, README.md and the
+desktop's package.json under `license-contract`), so ci-engine.yml's filter is
+the union of the three lists rather than just these five -- an entry there
+that is not named above belongs to one of those two tests.
 """
 
 from __future__ import annotations

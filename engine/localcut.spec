@@ -8,6 +8,15 @@ from PyInstaller.utils.hooks import collect_data_files
 # manifest and the ComfyUI workflow templates.
 datas = collect_data_files("localcut_engine")
 
+# Apache-2.0 §4(a) wants a copy of the licence to reach every recipient, and
+# §4(d) the NOTICE. This is the one place that satisfies both for all four
+# installers at once: electron-builder copies dist/localcut wholesale into
+# resources/engine, so the nsis exe, the dmg, the AppImage and the deb each
+# pick these up from here. Doing it per-target instead would be four edits
+# that drift apart, and the deb already asserts `License: Apache-2.0` in its
+# control file from apps/desktop/package.json.
+datas += [("../LICENSE", "."), ("../NOTICE", ".")]
+
 a = Analysis(
     ["packaging/entry.py"],
     pathex=[],
