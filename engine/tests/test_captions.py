@@ -363,3 +363,109 @@ def test_no_floor_keeps_the_conservative_behaviour():
 
     words = anchor_words_to_text([Word("flares", 1.0, 1.5)], "at solar flares")
     assert all(w.start >= 1.0 for w in words)
+
+
+def test_alignment_hands_the_model_samples_rather_than_a_path(tmp_path, monkeypatch):
+    """Whose decoder reads the narration, asserted where it is decided.
+
+    Handed a path, faster-whisper decodes it through PyAV — whose wheel bundles
+    a full FFmpeg build, libx264 and libx265 among it, for a code path this
+    engine has no other use for. Handed samples it decodes nothing, which is
+    what lets the freeze leave PyAV out entirely. A path reaching `transcribe`
+    puts 100 MB and two GPL video encoders back in the installer, and nothing
+    else in the suite would notice.
+    """
+    import numpy as np
+
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg")
+    seen: dict = {}
+
+    class _Model:
+        def transcribe(self, audio, **kwargs):
+            seen["audio"] = audio
+            return [], None
+
+    monkeypatch.setattr(AlignBackend, "_load", lambda self: _Model())
+    monkeypatch.setattr(
+        AlignBackend, "_decode", lambda self, path: np.zeros(16000, dtype=np.float32)
+    )
+    backend._align_one(tmp_path / "narration.wav", 0.0)
+
+    assert isinstance(seen["audio"], np.ndarray), (
+        "transcribe was handed something other than samples - PyAV decodes it"
+    )
+    assert seen["audio"].dtype == np.float32
+
+
+def test_a_narration_file_ffmpeg_cannot_read_is_a_generation_error(tmp_path):
+    """Decoding moved out of the library and into a subprocess, so its failure
+    has to be translated. A CalledProcessError escaping here reaches the board
+    as an unhandled crash rather than as a job that failed with a reason."""
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg")
+    not_audio = tmp_path / "narration.wav"
+    not_audio.write_text("this is not a wav file")
+
+    with pytest.raises(GenerationError, match="could not decode narration"):
+        backend._decode(not_audio)
+
+
+def test_a_missing_ffmpeg_is_a_generation_error_too(tmp_path):
+    """The other way the subprocess does not run. `ffmpeg` is resolved from
+    config and can be absent on a machine that never downloaded it."""
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg-that-is-not-installed")
+
+    with pytest.raises(GenerationError, match="could not decode narration"):
+        backend._decode(tmp_path / "narration.wav")
+
+
+@pytest.mark.skipif(not ALIGN_PRESENT, reason="alignment model files not downloaded")
+def test_alignment_still_works_with_pyav_unimportable(tmp_path):
+    """The condition the freeze actually ships, reproduced in a subprocess.
+
+    `localcut.spec` excludes `av` and a runtime hook puts a raising stub in
+    `sys.modules` under that name, because faster-whisper imports PyAV at
+    module scope and would otherwise fail outright. Nothing else here can
+    check that: this venv has the real PyAV installed, so every other test
+    passes whether or not the engine actually depends on it.
+
+    So: block the real package at the finder, install the same stub the hook
+    installs, and transcribe. If this passes, the frozen engine transcribes
+    without the 100 MB of GPL-carrying FFmpeg that wheel brings.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(f"""
+        import sys, types, importlib.abc, importlib.machinery
+        import numpy as np
+
+        class Blocked(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "av" or name.startswith("av."):
+                    raise ImportError("PyAV is not present in the freeze")
+                return None
+
+        sys.meta_path.insert(0, Blocked())
+        # Exactly what packaging/rthook_av.py does.
+        stub = types.ModuleType("av")
+        def _refuse(name):
+            raise RuntimeError("PyAV is deliberately not bundled")
+        stub.__getattr__ = _refuse
+        sys.modules.setdefault("av", stub)
+
+        from faster_whisper import WhisperModel
+        model = WhisperModel({str(MODELS_DIR / "asr" / "faster-whisper-base.en")!r},
+                             device="cpu", compute_type="int8")
+        # Silence is enough: the model must run, not recognise anything.
+        segments, _ = model.transcribe(np.zeros(16000, dtype=np.float32),
+                                       language="en", beam_size=1,
+                                       word_timestamps=True, vad_filter=False)
+        list(segments)
+        print("OK")
+    """)
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path
+    )
+    assert done.returncode == 0, f"transcription needs PyAV after all:\n{done.stderr[-2000:]}"
+    assert "OK" in done.stdout

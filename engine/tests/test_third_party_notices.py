@@ -29,6 +29,7 @@ from packaging.utils import canonicalize_name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
+    FREEZE_EXCLUDES,
     _LICENCE_FILENAMES,
     _SOURCE_FILENAMES,
     _is_own_metadata,
@@ -574,3 +575,57 @@ def test_it_writes_a_file_with_a_body(tmp_path: Path) -> None:
     # from the outside: the file exists, in the right place, saying nothing.
     assert len(text.splitlines()) > 500
     assert text.endswith("\n")
+
+
+class TestWhatIsKeptOutOfTheFreeze:
+    """`FREEZE_EXCLUDES` is the one list of what the installer does not carry.
+
+    Both ends read it — `localcut.spec` passes it to PyInstaller's `excludes`,
+    and `runtime_distributions()` drops whatever provides one — so the document
+    describes the installer rather than the build environment, which still has
+    every one of them installed.
+    """
+
+    def test_the_notices_do_not_claim_an_excluded_distribution(self):
+        # `av` is the case this exists for: faster-whisper requires it, so it
+        # is in the closure and in this venv, and it is not in the freeze. A
+        # notices file listing it would name a licence for something a
+        # recipient never received.
+        listed = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
+        for module in FREEZE_EXCLUDES:
+            for provider in metadata.packages_distributions().get(module, ()):
+                assert canonicalize_name(provider) not in listed, (
+                    f"{provider} is excluded from the freeze but the notices still list it"
+                )
+
+    def test_av_is_installed_here_so_the_filter_is_doing_something(self):
+        # Without this the test above passes in an environment that simply
+        # never had `av`, which is the shape that makes a filter look correct
+        # while doing nothing.
+        assert metadata.packages_distributions().get("av"), (
+            "av is not installed, so nothing proves the exclusion filter runs"
+        )
+
+    def test_the_spec_takes_its_excludes_from_this_list(self):
+        # The value would otherwise be written twice on either side of a
+        # boundary no build step reconciles: PyInstaller never reads this
+        # module's list, and this module never reads the spec.
+        spec = (Path(__file__).resolve().parents[1] / "localcut.spec").read_text()
+        assert "excludes=list(FREEZE_EXCLUDES)" in spec, (
+            "localcut.spec no longer derives its excludes from FREEZE_EXCLUDES"
+        )
+        assert "rthook_av.py" in spec, "the PyAV stub hook is not registered in the spec"
+
+    def test_the_stub_hook_refuses_rather_than_returning_something(self):
+        # The stub stands in for a package we removed. If it answered
+        # attribute lookups with a mock, a future faster-whisper that reaches
+        # for PyAV somewhere new would fail somewhere far away from the cause.
+        hook = (Path(__file__).resolve().parents[1] / "packaging" / "rthook_av.py").read_text()
+        namespace: dict = {}
+        exec(compile(hook, "rthook_av.py", "exec"), namespace)  # noqa: S102
+        # The module the hook built, not `sys.modules["av"]`: this test process
+        # has the real PyAV imported already (faster-whisper pulls it in), and
+        # the hook's `setdefault` deliberately leaves that one alone.
+        stub = namespace["_av"]
+        with pytest.raises(RuntimeError, match="deliberately not bundled"):
+            stub.open
