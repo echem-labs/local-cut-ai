@@ -128,6 +128,13 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
  *  the user an empty picker for a knob the engine does honor. */
 const SERVER_TASKS = ["text.llm", "vision.llm"];
 
+// Hoisted out of the component on purpose. `__OSS_LICENSES__` is a build-time
+// `define`, so the token is textually replaced by the whole array literal --
+// license texts included, tens of kilobytes of it. Left inside the JSX that
+// literal is re-evaluated into a fresh array of fresh objects on every render
+// of the dialog; up here it is built once, at module load.
+const OSS_LICENSES = __OSS_LICENSES__;
+
 /** Whether the LLM server's list holds a model name. Ollama reports a
  *  tagged name, so a perfectly good `qwen3.5:9b` has to match the
  *  `qwen3.5:9b:latest` it may list — an exact test declares that machine
@@ -1545,7 +1552,7 @@ export function Settings() {
           }
         >
           <ul className="licenses-list">
-            {__OSS_LICENSES__.map((dep) => (
+            {OSS_LICENSES.map((dep) => (
               <li key={dep.name}>
                 <div className="lic-head">
                   <span className="lic-name">{dep.name}</span>
@@ -1553,6 +1560,36 @@ export function Settings() {
                   <span className="badge">{dep.license}</span>
                 </div>
                 {dep.repository && <div className="lic-repo mono-id">{dep.repository}</div>}
+                {dep.text ? (
+                  // Collapsed by default: a screen of full license texts
+                  // open at once buries the list they belong to. `details`
+                  // rather than a custom disclosure so it is keyboard- and
+                  // screen-reader operable without any of our own state.
+                  <details className="lic-text">
+                    {/* Named per package: seven disclosures all reading
+                        "License text" tell a screen reader nothing about
+                        which notice each one opens, and the package name is
+                        in a sibling div that contributes no accessible name. */}
+                    <summary aria-label={t("settings.about.licensesTextAria", { name: dep.name })}>
+                      {t("settings.about.licensesShowText")}
+                    </summary>
+                    {/* Named, not made tabbable. Every text is taller than
+                        the 14rem box, so Chromium gives the pre its own focus
+                        stop (a childless scroller gets one since Chrome 127) —
+                        but that stop arrives anonymous, and `role`+`aria-label`
+                        is what tells a screen reader whose notice it landed
+                        in. A literal `tabIndex={0}` would be worse than
+                        nothing here: `Modal` picks initial focus with
+                        `.modal-body [tabindex]:not([tabindex="-1"])`, so the
+                        first — collapsed, unfocusable — pre would win that
+                        query and the dialog would open with focus nowhere. */}
+                    <pre role="note" aria-label={t("settings.about.licensesTextAria", { name: dep.name })}>
+                      {dep.text}
+                    </pre>
+                  </details>
+                ) : (
+                  <p className="lic-none">{t("settings.about.licensesNoText")}</p>
+                )}
               </li>
             ))}
           </ul>

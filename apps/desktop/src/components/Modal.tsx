@@ -124,7 +124,12 @@ export function Modal({
       // Focus trap: a modal that lets Tab walk out into the page behind it
       // is a modal only visually.
       const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        // `summary` is in the list because it is natively focusable without
+        // carrying a tabindex, so it is invisible to every other clause here.
+        // The licenses dialog's disclosures are the app's first ones, and they
+        // only wrap correctly today because a button happens to sit on either
+        // side of them — move the close control and Tab walks out.
+        'button, summary, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
       );
       if (!focusable || focusable.length === 0) return;
       const first = focusable[0];
