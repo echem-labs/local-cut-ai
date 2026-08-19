@@ -1,0 +1,92 @@
+name: DCO
+
+# Contributions come in under a Developer Certificate of Origin rather than a
+# CLA (CONTRIBUTING.md says why). The DCO is only a sign-off line, so it is
+# only worth anything if something checks for it — an unenforced policy is
+# discovered missing at the worst possible moment, which is when an outside
+# contribution needs its provenance established after the fact.
+#
+# Pull requests only: this checks the commits a PR proposes, and there is
+# nothing to gate on a push to main that has already merged.
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    name: every commit is signed off
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR's commits, not just the merge result — the sign-off is a
+          # per-commit assertion. Depth 0 so the base is present to diff from.
+          fetch-depth: 0
+
+      - name: Check Signed-off-by on each commit
+        shell: bash
+        # The base branch arrives through the environment, not spliced into the
+        # script body: `${{ }}` is substituted before bash parses the line, and
+        # git permits `$`, a backtick and a quote in a ref name.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base="origin/$BASE_REF"
+
+          # Resolve the base explicitly. `git rev-list` inside a process
+          # substitution cannot fail this step -- `set -e` and `pipefail` do not
+          # see the exit status of `<(...)` -- so an unresolvable base fed the
+          # loop nothing, `missing` stayed 0, and the job printed "all commits
+          # signed off" having examined no commits at all. A DCO check that
+          # passes vacuously is the exact failure this workflow exists to
+          # prevent, so the range is materialised where a failure is fatal.
+          git rev-parse --verify --quiet "$base^{commit}" > /dev/null || {
+            echo "::error::cannot resolve base ref '$base' - nothing was checked"
+            exit 1
+          }
+          # --no-merges: a merge commit carries the sign-offs of what it merges.
+          shas=$(git rev-list --no-merges "$base..HEAD")
+
+          missing=0
+          checked=0
+          for sha in $shas; do
+            checked=$((checked + 1))
+            # Read the message into a variable rather than piping it into grep.
+            # `grep -q` exits on its first match, `git log` then dies of SIGPIPE
+            # with 141, and `pipefail` promotes that to the pipeline's status --
+            # so under `if !` a commit message past the 64 KiB pipe buffer was
+            # reported as unsigned precisely because it *was* signed off.
+            body=$(git log -1 --format='%B' "$sha")
+            if ! grep -qiE '^Signed-off-by: .+ <.+@.+>' <<< "$body"; then
+              subject=$(git log -1 --format='%s' "$sha")
+              # A bare CR in a subject is passed through by git, and the runner
+              # splits its stdout on CR as well as LF - so an unsigned commit
+              # from a fork could emit its own `::` workflow commands here,
+              # including `::stop-commands::` to blank the real annotations.
+              subject=${subject//[$'\r\n']/ }
+              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line"
+              missing=1
+            fi
+          done
+
+          # An empty range is the other way this passes having checked nothing:
+          # a PR whose commits already landed on the base, or whose only content
+          # is a merge. `checked` was counted for the message and never asserted.
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::no commits were examined in $base..HEAD - refusing to report a pass"
+            exit 1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "Sign off with 'git commit -s' (amend with 'git commit -s --amend', or"
+            echo "rebase with 'git rebase --signoff $base'). See CONTRIBUTING.md."
+            exit 1
+          fi
+          echo "all $checked commits signed off"
