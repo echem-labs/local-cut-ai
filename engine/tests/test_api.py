@@ -1643,3 +1643,27 @@ async def test_the_board_says_whether_the_cut_burns_any_titles(client):
     )
     assert cleared.status_code == 200
     assert (await board())["has_onscreen_text"] is False
+
+
+async def test_voices_answers_the_same_shape_with_no_pack_installed(client):
+    """GET /voices under the test chain, which registers no Kokoro backend.
+
+    The empty answer is a list, not a 404 or an error: a machine that has not
+    downloaded the weights is the normal first-run state, and a picker should
+    render "none installed" from the same shape it renders a list from rather
+    than special-casing a failure.
+    """
+    response = await client.get("/voices")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["voices"] == []
+    # No default is offered for a pack that is not there — naming one would
+    # invite a caller to send a voice the engine cannot synthesize.
+    assert body["default"] is None
+
+
+async def test_voices_needs_the_token(client):
+    """Read-only, but still behind the bearer: every route on this engine is,
+    and an exception would be the one a scanner finds."""
+    response = await client.get("/voices", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code == 401

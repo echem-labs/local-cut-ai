@@ -9,7 +9,11 @@ from conftest import make_spec
 
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
-from localcut_engine.backends.kokoro import KokoroBackend
+from localcut_engine.backends.kokoro import (
+    KokoroBackend,
+    describe_voice,
+    language_of,
+)
 from localcut_engine.config import EngineConfig
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
@@ -104,3 +108,76 @@ async def test_chatterbox_requires_sample_and_reports_missing_package(tmp_path):
     # name the fix, not explode as an ImportError.
     with pytest.raises(GenerationError, match="chatterbox-tts"):
         await backend.execute(make_spec(NodeKind.NARRATION, {"text": "hi"}), ctx)
+
+
+# --- Voice enumeration -------------------------------------------------
+#
+# The pack has always held fifty-four voices and the product offered five,
+# because the five were written into a keyword table and nothing asked the
+# pack what it contained. These cover the reading of it, and the language
+# each voice's text has to be phonemized in — which was hardcoded to
+# American English for every one of them, British voices included.
+
+
+@pytest.mark.parametrize(
+    ("voice_id", "language", "code", "gender", "name"),
+    [
+        ("af_sarah", "American English", "en-us", "female", "Sarah"),
+        ("am_onyx", "American English", "en-us", "male", "Onyx"),
+        ("bf_emma", "British English", "en-gb", "female", "Emma"),
+        ("bm_george", "British English", "en-gb", "male", "George"),
+        ("jf_alpha", "Japanese", "ja", "female", "Alpha"),
+        ("zm_yunxi", "Mandarin", "cmn", "male", "Yunxi"),
+    ],
+)
+def test_a_voice_id_describes_itself(voice_id, language, code, gender, name):
+    described = describe_voice(voice_id)
+    assert described == {
+        "id": voice_id,
+        "name": name,
+        "language": language,
+        "language_code": code,
+        "gender": gender,
+    }
+
+
+def test_an_unconventional_id_is_reported_unknown_rather_than_guessed():
+    """A pack that adds a voice outside the naming scheme must not be
+    silently filed under whatever its first letter happens to collide with."""
+    described = describe_voice("custom-voice")
+    assert described["language"] == "unknown"
+    assert described["gender"] == "unknown"
+    assert described["id"] == "custom-voice"
+
+
+def test_british_voices_are_phonemized_as_british():
+    """The whole point of carrying a language per voice: every voice was
+    synthesized with American phonemes while this was a constant."""
+    assert language_of("bf_emma") == "en-gb"
+    assert language_of("bm_daniel") == "en-gb"
+    assert language_of("af_sarah") == "en-us"
+    # An id the scheme does not cover still has to synthesize something.
+    assert language_of("custom-voice") == "en-us"
+
+
+def test_no_pack_on_disk_enumerates_nothing(tmp_path):
+    """The picker's empty state, not an error: a machine that has not
+    downloaded the weights is normal, and the caller renders 'none
+    installed' from the same shape it renders a list from."""
+    backend = KokoroBackend(models_dir=tmp_path)
+    assert backend.installed_voices() == []
+
+
+@pytest.mark.skipif(not KOKORO_PRESENT, reason="Kokoro weights not on this machine")
+def test_the_installed_pack_is_read_rather_than_listed_in_source():
+    voices = KokoroBackend(models_dir=MODELS_DIR).installed_voices()
+    # The five the keyword table knows about are a strict subset of what the
+    # pack holds; if these ever match, the enumeration has stopped reading.
+    from localcut_engine.backends.kokoro import _VOICE_MAP
+
+    ids = {voice["id"] for voice in voices}
+    assert {voice for _, voice in _VOICE_MAP} < ids
+    assert len(voices) > 20, f"only {len(voices)} voices read from the installed pack"
+    # Every entry is usable by a picker without further lookup.
+    for voice in voices:
+        assert voice["id"] and voice["name"] and voice["language_code"]
