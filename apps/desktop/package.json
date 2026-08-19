@@ -2,6 +2,7 @@
   "name": "localcut-desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "LocalCut AI desktop shell \u2014 Electron + React frontend for the LocalCut engine",
   "main": "dist-electron/electron/main.js",
   "type": "commonjs",
