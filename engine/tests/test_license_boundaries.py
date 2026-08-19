@@ -26,6 +26,8 @@ arrive is this file's job.
 from __future__ import annotations
 
 import ast
+import functools
+import os
 import sys
 from pathlib import Path
 
@@ -34,6 +36,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
+    annotation_key,
     bundled_libraries,
     copyleft_note,
     runtime_distributions,
@@ -402,19 +405,63 @@ _FROZEN_LIBRARIES = {
 
 _FROZEN_TREE = Path(__file__).resolve().parents[1] / "dist" / "localcut" / "_internal"
 
+#: Set by `package.yml`, which is the only job where the freeze exists and the
+#: only one that redistributes it. Asked for explicitly rather than inferred
+#: from `dist/` being present, for two reasons that point the same way. A
+#: developer's `dist/` is gitignored and can be months old, and the pre-push
+#: hook runs this whole suite — so inferring would measure a stale artifact,
+#: against that developer's own system libraries rather than the build image's,
+#: and fail on `git push` for reasons that are not about this branch. And once
+#: the packaging job HAS asked, a tree that is missing or empty is a layout
+#: change, not an absence: skipping there would report success from the one
+#: place that can inspect the artifact, having inspected nothing.
+_FROZEN_ENGINE_ENV = "LOCALCUT_CHECK_FROZEN_ENGINE"
 
+
+@functools.cache
 def _frozen_libraries() -> frozenset[str]:
-    """What the built artifact holds, or a skip if it has not been built.
+    """What the built artifact holds, or a skip if this is not a packaging run.
 
-    The freeze is the thing that is redistributed, and until `pyinstaller` has
-    run there is nothing to inspect — so this skips on a plain checkout and
-    says so, rather than passing on an empty directory.
+    Cached: `_FROZEN_TREE` is the whole PyInstaller output and each of the
+    three callers below would otherwise walk it again to reach the same answer.
     """
-    if not _FROZEN_TREE.is_dir():
-        pytest.skip(f"no frozen engine at {_FROZEN_TREE} - run pyinstaller to check the artifact")
-    return frozenset(bundled_libraries(str(p) for p in _FROZEN_TREE.rglob("*")))
+    if not os.environ.get(_FROZEN_ENGINE_ENV):
+        pytest.skip(
+            f"{_FROZEN_ENGINE_ENV} is unset - run `pyinstaller localcut.spec` and set it "
+            "to check the artifact (package.yml does)"
+        )
+    assert _FROZEN_TREE.is_dir(), (
+        f"no frozen engine at {_FROZEN_TREE}, but {_FROZEN_ENGINE_ENV} says one was built. "
+        "PyInstaller's output layout has moved - fix the path rather than letting this "
+        "guard skip in the job that redistributes the artifact"
+    )
+    libraries = frozenset(bundled_libraries(str(p) for p in _FROZEN_TREE.rglob("*")))
+    assert libraries, (
+        f"{_FROZEN_TREE} holds no shared libraries at all. An empty scan subtracts to an "
+        "empty set, so the unrecorded-library check below would pass on it having looked "
+        "at nothing"
+    )
+    return libraries
 
 
+def _recorded_frozen_libraries() -> frozenset[str]:
+    """The inventory for this platform, or a failure naming what to record.
+
+    One definition, so both directions agree: a platform with no record fails
+    rather than skips, which is what `_FROZEN_LIBRARIES` above says it does.
+    Written twice, the drop-out direction skipped — so on the first build for a
+    new platform the half that catches a library *leaving* would not run.
+    """
+    recorded = _FROZEN_LIBRARIES.get(sys.platform)
+    assert recorded is not None, (
+        f"no frozen inventory recorded for {sys.platform!r}. The freeze ships a "
+        "different set on each platform, so record this one after checking each "
+        f"library's licence: {sorted(_frozen_libraries())}"
+    )
+    return recorded
+
+
+@pytest.mark.freeze
 def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
     """The guard the installed-closure tests cannot make.
 
@@ -424,13 +471,7 @@ def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
     other test in this file is green.
     """
     present = _frozen_libraries()
-    recorded = _FROZEN_LIBRARIES.get(sys.platform)
-    assert recorded is not None, (
-        f"no frozen inventory recorded for {sys.platform!r}. The freeze ships a "
-        "different set on each platform, so record this one after checking each "
-        f"library's licence: {sorted(present)}"
-    )
-    unrecorded = present - recorded
+    unrecorded = present - _recorded_frozen_libraries()
     assert not unrecorded, (
         "the frozen engine ships a native library nobody has licensed. Unlike the "
         "closure tests, this covers what PyInstaller pulls from the build machine "
@@ -441,13 +482,11 @@ def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
     )
 
 
+@pytest.mark.freeze
 def test_the_frozen_engine_still_ships_what_was_recorded() -> None:
     """The other direction: a library dropping out is a licence change too."""
     present = _frozen_libraries()
-    recorded = _FROZEN_LIBRARIES.get(sys.platform)
-    if recorded is None:
-        pytest.skip(f"no frozen inventory recorded for {sys.platform!r}")
-    missing = recorded - present
+    missing = _recorded_frozen_libraries() - present
     assert not missing, (
         "a library recorded as shipping in the frozen engine is no longer there. "
         "If that is a dependency being dropped it is the fix landing and the "
@@ -455,17 +494,36 @@ def test_the_frozen_engine_still_ships_what_was_recorded() -> None:
     )
 
 
+#: The same idea as `_MUST_STAY_ANNOTATED`, for the libraries only the freeze
+#: has. `libreadline` and `libpcaudio` are plain GPL-3.0 with no linking
+#: exception — the strongest terms in the box — and both are linked in from the
+#: build machine rather than carried by a wheel, so no scan of the closure can
+#: see them and the list above cannot name them. Deleting either row from the
+#: terms table left the whole suite green while the shipped NOTICE listed the
+#: library bare, which the document's own prose makes a claim that it is not
+#: copyleft.
+_MUST_STAY_ANNOTATED_IN_THE_FREEZE = _MUST_STAY_ANNOTATED | frozenset({"libreadline", "libpcaudio"})
+
+
+@pytest.mark.freeze
 def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
     """Silence beside a name in the NOTICE is a claim, not an omission.
 
     The generated document says copyleft libraries are named with what they
     oblige, so a copyleft library listed bare reads as an assertion that it
-    carries no such terms. This checks the three whose terms are strongest and
+    carries no such terms. This checks the ones whose terms are strongest and
     that are known to ship, against the accessor the document itself uses.
+
+    Membership is tested on the same key `copyleft_note` looks the name up by,
+    not on the literal string: the freeze is spelled in the platform's own
+    dialect — Windows ships `x264-165.dll` where Linux ships `libx264.so.165` —
+    and a `lib`-prefixed comparison would report the strongest-licensed binary
+    in the box as absent from the one installer the per-platform generation
+    exists for.
     """
-    present = _frozen_libraries()
-    for library in sorted(_MUST_STAY_ANNOTATED):
-        assert library in present, (
+    present = {annotation_key(name) for name in _frozen_libraries()}
+    for library in sorted(_MUST_STAY_ANNOTATED_IN_THE_FREEZE):
+        assert annotation_key(library) in present, (
             f"{library} is recorded as shipping in the frozen engine and is not "
             "in it - prune the record deliberately, or find out where it went"
         )
