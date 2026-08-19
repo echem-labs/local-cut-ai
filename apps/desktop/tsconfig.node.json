@@ -1,0 +1,23 @@
+{
+  // The build's own TypeScript: vite.config.ts and vitest.config.ts.
+  //
+  // `tsconfig.json` cannot cover them: it is the renderer's config, whose
+  // `include` is `src` and whose `types` is `vite/client` alone, so `node:fs`
+  // would not even resolve. Nothing else reads them either — Vite loads a
+  // config by transpiling it with esbuild, which strips the types without
+  // checking them. Without this project, `collectLicenses()` — a hundred
+  // lines deciding which third-party notices reach a user — is the one piece
+  // of code in this app no compiler reads.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "vitest.config.ts"]
+}
