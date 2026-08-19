@@ -17,6 +17,7 @@ from ..captions import Word, anchor_words_to_text, cues_to_srt, words_to_cues
 from ..graph.compiler import JobSpec
 from ..graph.model import DEFAULT_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
+from .ffmpeg import ffmpeg_available
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,12 @@ _DEFAULT_MODEL_DIR = "asr/faster-whisper-base.en"
 # A progress publish that cannot land within this is not worth blocking
 # transcription for — the SRT matters, the percentage does not.
 _PROGRESS_TIMEOUT_S = 5.0
+# Decoding runs about three orders of magnitude faster than real time, so this
+# is not a budget — it is the bound on a decode that has stopped making
+# progress at all. `synth()` runs on a worker thread that nothing can
+# interrupt, under the inference lock, so without it a stalled ffmpeg wedges
+# every later captions job and holds engine shutdown open behind it.
+_DECODE_TIMEOUT_S = 120.0
 
 
 class AlignBackend(ExecutionBackend):
@@ -45,8 +52,16 @@ class AlignBackend(ExecutionBackend):
 
     def supports(self, kind: NodeKind) -> bool:
         # Weights-gated like the other local backends: no whisper model on
-        # disk → captions fall through to the chain's fallback.
-        return kind is NodeKind.CAPTIONS and (self.model_dir / "model.bin").exists()
+        # disk → captions fall through to the chain's fallback. Binary-gated
+        # too, the same way FFmpegBackend gates assembly: narration reaches
+        # the model through the ffmpeg binary, so an aligner without one
+        # cannot serve the kind at all and claiming it would turn every
+        # captions job into a failure the readiness report called ready.
+        return (
+            kind is NodeKind.CAPTIONS
+            and (self.model_dir / "model.bin").exists()
+            and ffmpeg_available(self.ffmpeg_bin)
+        )
 
     def _load(self):
         if self._model is None:
@@ -136,21 +151,35 @@ class AlignBackend(ExecutionBackend):
         await ctx.progress(1.0)
         return out
 
-    def _decode(self, path: Path) -> "np.ndarray":
-        """Narration as mono float32 at 16 kHz, decoded by the ffmpeg binary.
+    def _decode(self, path: Path, sample_rate: int) -> np.ndarray:
+        """Narration as mono float32 at the model's own rate, via ffmpeg.
 
         Handed a path, faster-whisper decodes it through PyAV, whose wheel
         bundles a full FFmpeg build - libx264 and libx265 among it. Handed an
         array it decodes nothing. Shelling out is what upstream's own docstring
-        points at for this, and it is the same ffmpeg this engine already
-        assembles video with, so there is one decoder in the product rather
-        than two.
+        points at for this, and it is the same binary the rest of the engine
+        already assembles video with.
+
+        `sample_rate` is the model's, not a constant: faster-whisper divides
+        `len(audio)` by its feature extractor's rate to place every word, and
+        does that whether or not it did the decoding. A rate written here
+        instead would scale every caption timestamp by the ratio the day the
+        two disagreed, with a well-formed SRT and no error to show for it.
         """
         try:
             out = subprocess.run(
                 [
                     self.ffmpeg_bin,
                     "-nostdin",
+                    "-hide_banner",
+                    # Leaves the failure alone on stderr, which is what the
+                    # tail below reports. The banner, the stream dump and the
+                    # `\r`-terminated progress line are all lines to
+                    # `splitlines()`, and the progress line is the *last* of
+                    # them once a run has produced any output - so the message
+                    # would be a byte count rather than a reason.
+                    "-v",
+                    "error",
                     "-threads",
                     "0",
                     "-i",
@@ -162,12 +191,20 @@ class AlignBackend(ExecutionBackend):
                     "-acodec",
                     "pcm_s16le",
                     "-ar",
-                    "16000",
+                    str(sample_rate),
                     "-",
                 ],
                 capture_output=True,
                 check=False,
+                timeout=_DECODE_TIMEOUT_S,
             )
+        except subprocess.TimeoutExpired as exc:
+            # Raised after the child has been killed and reaped, so nothing is
+            # left running behind the failure.
+            raise GenerationError(
+                "could not decode narration for alignment: ffmpeg did not finish within "
+                f"{_DECODE_TIMEOUT_S:.0f}s"
+            ) from exc
         except OSError as exc:
             # `check=False` covers a non-zero exit, not a binary that is not
             # there: the exec itself fails and raises before there is a
@@ -181,13 +218,23 @@ class AlignBackend(ExecutionBackend):
             raise GenerationError(
                 f"could not decode narration for alignment: {detail[-1] if detail else 'ffmpeg failed'}"
             )
+        if not out.stdout or len(out.stdout) % 2:
+            # A zero-exit decode that yielded no whole samples: an input whose
+            # audio stream is empty, or output cut mid-sample. Left to run,
+            # `transcribe` finds nothing in it and the job publishes an SRT
+            # with that scene missing, reports success, and caches the answer
+            # under the output hash forever.
+            raise GenerationError(
+                "could not decode narration for alignment: ffmpeg produced "
+                f"{len(out.stdout)} bytes, which is not a whole 16-bit sample stream"
+            )
         # s16 -> f32 on the same scale faster-whisper's own decoder uses.
         return np.frombuffer(out.stdout, np.int16).astype(np.float32) / 32768.0
 
     def _align_one(self, path: Path, offset: float) -> list[Word]:
         model = self._load()
         segments, _ = model.transcribe(
-            self._decode(path),
+            self._decode(path, model.feature_extractor.sampling_rate),
             language="en",
             beam_size=1,
             word_timestamps=True,

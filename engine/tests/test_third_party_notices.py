@@ -17,6 +17,7 @@ closure.
 
 from __future__ import annotations
 
+import ast
 import importlib.metadata as metadata
 import re
 import sys
@@ -41,6 +42,7 @@ from third_party_notices import (  # noqa: E402  (needs the path above)
     licence_classifiers,
     licence_texts,
     runtime_distributions,
+    shipped_distributions,
     site_package_roots,
     write_notices,
 )
@@ -581,7 +583,7 @@ class TestWhatIsKeptOutOfTheFreeze:
     """`FREEZE_EXCLUDES` is the one list of what the installer does not carry.
 
     Both ends read it — `localcut.spec` passes it to PyInstaller's `excludes`,
-    and `runtime_distributions()` drops whatever provides one — so the document
+    and `shipped_distributions()` drops whatever provides one — so the document
     describes the installer rather than the build environment, which still has
     every one of them installed.
     """
@@ -591,12 +593,30 @@ class TestWhatIsKeptOutOfTheFreeze:
         # is in the closure and in this venv, and it is not in the freeze. A
         # notices file listing it would name a licence for something a
         # recipient never received.
-        listed = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
-        for module in FREEZE_EXCLUDES:
-            for provider in metadata.packages_distributions().get(module, ()):
-                assert canonicalize_name(provider) not in listed, (
-                    f"{provider} is excluded from the freeze but the notices still list it"
-                )
+        shipped = {canonicalize_name(d.metadata["Name"]) for d in shipped_distributions()}
+        walked = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
+        assert "av" not in shipped, "PyAV is excluded from the freeze but the notices still list it"
+        # Asserted from the other side too, because a walk that stopped
+        # reaching `av` at all would satisfy the line above while the filter
+        # did nothing: `av` has to be in the closure for its absence from the
+        # shipped set to mean the subtraction ran.
+        assert "av" in walked, "the closure no longer reaches PyAV, so nothing proves the filter"
+
+    def test_the_closure_the_licence_guards_read_is_not_narrowed_by_the_excludes(self):
+        # `test_no_distribution_declares_copyleft_outside_the_recorded_set`
+        # walks `runtime_distributions()` to force a decision on every
+        # dependency declaring GPL terms. Subtracting the freeze's excludes
+        # there would let a name added to FREEZE_EXCLUDES carry a new copyleft
+        # dependency past that guard — while `uv sync` and the Docker image
+        # still install it.
+        walked = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
+        excluded = {
+            canonicalize_name(provider)
+            for module in FREEZE_EXCLUDES
+            for provider in metadata.packages_distributions().get(module, ())
+        }
+        assert excluded, "no FREEZE_EXCLUDES entry resolves to a distribution — test is stale"
+        assert excluded <= walked, f"{sorted(excluded - walked)} left the closure the guards read"
 
     def test_av_is_installed_here_so_the_filter_is_doing_something(self):
         # Without this the test above passes in an environment that simply
@@ -610,22 +630,64 @@ class TestWhatIsKeptOutOfTheFreeze:
         # The value would otherwise be written twice on either side of a
         # boundary no build step reconciles: PyInstaller never reads this
         # module's list, and this module never reads the spec.
+        #
+        # Read off the ast rather than out of the text, for the reason
+        # test_license_boundaries states about its own guard: a substring test
+        # cannot tell live code from a line someone commented out while
+        # debugging a build, and a commented-out `runtime_hooks` ships a freeze
+        # that dies on faster-whisper's module-scope `import av`.
         spec = (Path(__file__).resolve().parents[1] / "localcut.spec").read_text()
-        assert "excludes=list(FREEZE_EXCLUDES)" in spec, (
-            "localcut.spec no longer derives its excludes from FREEZE_EXCLUDES"
+        analysis = next(
+            node
+            for node in ast.walk(ast.parse(spec))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Analysis"
         )
-        assert "rthook_av.py" in spec, "the PyAV stub hook is not registered in the spec"
+        arguments = {keyword.arg: keyword.value for keyword in analysis.keywords}
+        excludes = arguments.get("excludes")
+        assert (
+            isinstance(excludes, ast.Call)
+            and getattr(excludes.func, "id", None) == "list"
+            and [getattr(arg, "id", None) for arg in excludes.args] == ["FREEZE_EXCLUDES"]
+        ), "localcut.spec no longer derives its excludes from FREEZE_EXCLUDES"
+        hooks = ast.unparse(arguments.get("runtime_hooks") or ast.Constant(""))
+        assert "rthook_av.py" in hooks, "the PyAV stub hook is not registered in the spec"
+        # Anchored to SPECPATH, because PyInstaller resolves a relative
+        # `scripts` entry against the spec's directory but pushes a runtime
+        # hook through a bare `os.path.abspath` — which resolves against the
+        # working directory. Spelled relative, the hook is found only when
+        # pyinstaller runs from `engine/`.
+        assert "SPECPATH" in hooks, (
+            "the runtime hook path is not anchored at SPECPATH, so it resolves "
+            "against the working directory instead of the spec's own"
+        )
 
-    def test_the_stub_hook_refuses_rather_than_returning_something(self):
+    def test_the_stub_hook_registers_a_module_that_refuses(self, monkeypatch):
         # The stub stands in for a package we removed. If it answered
         # attribute lookups with a mock, a future faster-whisper that reaches
         # for PyAV somewhere new would fail somewhere far away from the cause.
         hook = (Path(__file__).resolve().parents[1] / "packaging" / "rthook_av.py").read_text()
+        # Run against a `sys.modules` this test owns, because the hook's whole
+        # job is a side effect on that dict. Asserting on the module object the
+        # hook happens to build leaves the registration untested - delete the
+        # `setdefault` and the freeze ships a hook that builds a stub and
+        # throws it away, with the suite green. Executing it against the live
+        # dict is not free either: on a checkout with no ASR weights nothing
+        # has imported PyAV yet, so the raising stub would outlive this test in
+        # a process every later test shares.
+        monkeypatch.setitem(sys.modules, "av", None)
+        del sys.modules["av"]
+
         namespace: dict = {}
         exec(compile(hook, "rthook_av.py", "exec"), namespace)  # noqa: S102
-        # The module the hook built, not `sys.modules["av"]`: this test process
-        # has the real PyAV imported already (faster-whisper pulls it in), and
-        # the hook's `setdefault` deliberately leaves that one alone.
-        stub = namespace["_av"]
+
+        stub = sys.modules["av"]
+        assert stub is namespace["_av"], "the hook built a stub and never registered it"
         with pytest.raises(RuntimeError, match="deliberately not bundled"):
             stub.open
+        # Dunders answer rather than refuse. `inspect.getmodule` walks every
+        # entry in sys.modules asking `hasattr(module, "__file__")` and
+        # `pickle` probes modules inside an `except AttributeError`, so a stub
+        # that raises out of those puts "PyAV is deliberately not bundled" on
+        # an unrelated traceback anywhere in the frozen engine.
+        assert getattr(stub, "__file__", None) is None
+        assert repr(stub) == "<module 'av'>"
