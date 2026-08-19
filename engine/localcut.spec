@@ -54,9 +54,15 @@ a = Analysis(
 # link in from the build machine rather than riding inside a wheel. Deriving
 # the list from site-packages instead missed 33 of the 73 in the last Linux
 # freeze, `libreadline` (plain GPL-3.0, no linking exception) among them.
+#
+# Both TOCs, not just `a.binaries`: Analysis splits the collected set by
+# typecode, keeping BINARY and EXTENSION in `binaries` and putting everything
+# else — symlinks, and any shared library a hook collected as package data —
+# into `datas`. Reading one of the two would describe most of the freeze and
+# call it all of it.
 _notices = Path(SPECPATH) / "build" / "THIRD-PARTY-NOTICES.txt"
 _notices.parent.mkdir(parents=True, exist_ok=True)
-write_notices(_notices, bundled_libraries(dest for dest, _src, _kind in a.binaries))
+write_notices(_notices, bundled_libraries(dest for dest, _src, _kind in a.binaries + a.datas))
 a.datas += [("THIRD-PARTY-NOTICES.txt", str(_notices), "DATA")]
 
 pyz = PYZ(a.pure)

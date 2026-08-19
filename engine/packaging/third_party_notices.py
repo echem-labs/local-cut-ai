@@ -11,7 +11,7 @@ Generated at freeze time rather than committed, because the answer is not the
 same on every platform: the `av` wheel bundles a different set of FFmpeg
 libraries per OS and architecture, so a file generated on Linux would
 under-report what a Windows installer actually contains. `localcut.spec` calls
-`write_notices()` and hands the result to PyInstaller as data.
+`write_notices()` after `Analysis` and adds the file it wrote to the TOC.
 
 Scoped to the runtime closure, walked from the project's own dependencies —
 the build environment also holds pytest, ruff and PyInstaller, none of which
@@ -20,10 +20,13 @@ than more complete. The extras the project asks for are part of that closure:
 `uvicorn[standard]` installs uvloop, httptools and watchfiles, and the freeze
 carries all three.
 
-The native library list comes from what PyInstaller actually collected, not
-from a scan of site-packages. Most of what the installers carry links in from
-the system rather than riding inside a wheel — on Linux that is 33 of 73
-libraries, `libreadline` among them — and a scan sees none of it.
+The native library list the installers get comes from what PyInstaller
+actually collected, which `localcut.spec` hands over. Most of what they carry
+links in from the system rather than riding inside a wheel — on Linux that is
+33 of 73 libraries, `libreadline` among them — and a scan of site-packages
+sees none of it. That scan remains the default, so the answer is still
+available outside a build; it describes the wheels rather than the freeze,
+and nothing that ships is generated from it.
 """
 
 from __future__ import annotations
@@ -37,16 +40,29 @@ from pathlib import Path
 
 _PROJECT = "localcut-engine"
 
-# Anchored at both ends so `licenses.py` — a module, not a notice — cannot
-# match on its first seven characters. Anything after the word has to start
-# with a separator: LICENSE.txt, LICENSE-APACHE, COPYING.LESSER all do.
-_LICENCE_FILENAMES = re.compile(r"(LICEN[CS]E|COPYING|NOTICE)([-._].*)?", re.IGNORECASE)
+# Guesswork, so it is anchored at both ends: `licenses.py` — a module, not a
+# notice — must not match on its first seven characters. Anything after the
+# word has to start with a separator: LICENSE.txt, LICENSE-APACHE,
+# COPYING.LESSER all do. Only the fallback scan over `dist.files` uses this;
+# a `License-File` the wheel declared is a statement, not a guess, and
+# second-guessing it is how numpy's `dragon4_LICENSE.txt` went missing.
+_LICENCE_FILENAMES = re.compile(r"(LICEN[CS]E|COPYING|NOTICE)S?[0-9]*([-._].*)?", re.IGNORECASE)
+
+#: Extensions a notice never carries. `av` declares `AUTHORS.py` as a licence
+#: file — the script that generates `AUTHORS.rst` — and a hundred lines of
+#: Python is not a notice however it came to be recorded. This is also what
+#: keeps `licenses.py` out now that the plural is accepted above.
+_SOURCE_FILENAMES = re.compile(r"\.(py|pyc|pyi|pyx|c|h|cpp|sh|bat|ps1|html)$", re.IGNORECASE)
 _SHARED_OBJECT = re.compile(r"\.(so|dylib|dll)(\.|$)", re.IGNORECASE)
-_HASH_SUFFIX = re.compile(r"-[0-9a-f]{6,}$")
+# Case-insensitive alongside the extension strip above, and for the same
+# reason: a Windows TOC entry can arrive as `LIBSNDFILE_X64.DLL`, and a suffix
+# pattern that only knows lower case leaves the arch and the repair hash
+# stapled to the name — which is a name no table can hold.
+_HASH_SUFFIX = re.compile(r"-[0-9a-f]{6,}$", re.IGNORECASE)
 _VERSION_SUFFIX = re.compile(r"[-.][0-9][0-9.]*$")
 # `x64`/`x86` are the spellings Windows wheels use — `libsndfile_x64.dll`
 # is how the `soundfile` wheel names the LGPL library it carries there.
-_ARCH_SUFFIX = re.compile(r"_(x86_64|aarch64|arm64|amd64|x64|x86)$")
+_ARCH_SUFFIX = re.compile(r"_(x86_64|aarch64|arm64|amd64|x64|x86)$", re.IGNORECASE)
 
 #: Project-URL labels that name the project itself, best first. A wheel that
 #: publishes no `Home-page` — most of this closure, the field having been
@@ -88,9 +104,13 @@ _COPYLEFT_TERMS = {
         "libgfortran",
         "libstdc++",
         "libgcc_s",
-        # MinGW spells the GCC runtime `libgcc_s_seh-1.dll`, which shares no
-        # stem with the POSIX `libgcc_s.so.1`, so it needs its own key.
+        # MinGW names the GCC runtime after the exception model it was built
+        # with — `libgcc_s_seh-1.dll` on x86_64, `dw2` on 32-bit, `sjlj` on
+        # the older toolchains — and none of those shares a stem with the
+        # POSIX `libgcc_s.so.1`, so each needs its own key.
         "libgcc_s_seh",
+        "libgcc_s_dw2",
+        "libgcc_s_sjlj",
     ): "GPL-3.0-or-later WITH GCC-exception-3.1",
     (
         "libgomp",
@@ -118,36 +138,39 @@ _COPYLEFT_TERMS = {
 #: Recorded rather than derived: a `.so` inside a wheel has no metadata to read,
 #: so the only alternative to a table is silence about the strongest terms in
 #: the box.
-COPYLEFT_LIBRARIES = {
-    library: note for libraries, note in _COPYLEFT_TERMS.items() for library in libraries
-}
-
-#: The same table keyed the way Windows spells these: `avcodec-62.dll`, not
+#:
+#: Keyed without the `lib` prefix, because that prefix is the part of the name
+#: the platform decides: Windows ships `avcodec-62.dll` where Linux ships
 #: `libavcodec.so.62`. Generating the document per platform is the whole
-#: reason this runs at build time, so a lookup that only knew the POSIX
+#: reason this runs at build time, so a table that only knew the POSIX
 #: spelling would drop every copyleft annotation from the one installer the
-#: per-platform generation exists for.
-_COPYLEFT_BY_STEM = {
-    key.lower().removeprefix("lib"): note for key, note in COPYLEFT_LIBRARIES.items()
+#: per-platform generation exists for. Stripping it once, here and in the
+#: lookup, is what keeps a new spelling from needing a new row.
+COPYLEFT_LIBRARIES = {
+    library.lower().removeprefix("lib"): note
+    for libraries, note in _COPYLEFT_TERMS.items()
+    for library in libraries
 }
 
 
 def _normalise_library(filename: str) -> str:
     """`libx264-d6533a8d.so.165` -> `libx264`."""
     name = re.sub(r"\.(so|dylib|dll)(\.[0-9.]+)?$", "", filename, flags=re.IGNORECASE)
-    name = _ARCH_SUFFIX.sub("", name)
     while True:
-        stripped = _VERSION_SUFFIX.sub("", _HASH_SUFFIX.sub("", name))
+        # The arch suffix is stripped inside the loop, not once ahead of it:
+        # a wheel repaired by delvewheel spells the same library
+        # `libsndfile_x64-<hash>.dll`, so the arch only reaches the end of the
+        # name after the hash has come off. Stripping it once left
+        # `libsndfile_x64`, which the copyleft table above does not hold.
+        stripped = _ARCH_SUFFIX.sub("", _VERSION_SUFFIX.sub("", _HASH_SUFFIX.sub("", name)))
         if stripped == name:
             return name
         name = stripped
 
 
 def copyleft_note(library: str) -> str | None:
-    """What a normalised library name obliges, in either spelling."""
-    return COPYLEFT_LIBRARIES.get(library) or _COPYLEFT_BY_STEM.get(
-        library.lower().removeprefix("lib")
-    )
+    """What a normalised library name obliges, in either platform's spelling."""
+    return COPYLEFT_LIBRARIES.get(library.lower().removeprefix("lib"))
 
 
 def _requirement_names(
@@ -218,6 +241,18 @@ def runtime_distributions() -> list[metadata.Distribution]:
     return [seen[k] for k in sorted(seen)]
 
 
+def _is_own_metadata(location: str) -> bool:
+    """Is this the distribution's own dist-info, rather than a vendored one?
+
+    `".dist-info" in location` is a substring test, and a vendored package
+    carries its own dist-info inside the package tree —
+    `setuptools/_vendor/autocommand-2.2.2.dist-info/LICENSE` would sort into
+    the bucket meant for the distribution's own text and stand in for it,
+    which is the swap the ordering exists to prevent.
+    """
+    return location.split("/", 1)[0].endswith(".dist-info")
+
+
 def licence_texts(dist: metadata.Distribution) -> list[str]:
     """Every licence text a distribution published, from wherever the wheel put it.
 
@@ -228,38 +263,54 @@ def licence_texts(dist: metadata.Distribution) -> list[str]:
 
     Modern wheels (PEP 639) record the files in metadata; older ones just drop
     them in the dist-info; a few put them nowhere but the package directory,
-    which is where `onnxruntime` keeps the only copy of its MIT text.
+    which is where `onnxruntime` keeps the only copy of its MIT text. All
+    three are read, because a wheel that records one does not thereby stop
+    shipping the others: `soundfile` records only its own BSD licence, while
+    the LGPL-2.1 that its bundled libsndfile obliges sits unrecorded in
+    `_soundfile_data/COPYING`. Returning at the declaration shipped a document
+    that named LGPL terms for a dozen libraries and reproduced them for none.
     """
-    declared: list[str] = []
+    texts: list[str] = []
+    seen: set[str] = set()
+
+    def keep(body: str | None) -> None:
+        stripped = (body or "").strip()
+        if stripped and stripped not in seen:
+            seen.add(stripped)
+            texts.append(stripped)
+
     for name in dist.metadata.get_all("License-File") or []:
-        if not _LICENCE_FILENAMES.fullmatch(name.rsplit("/", 1)[-1]):
+        # A declaration is authoritative about *which* files, so the scan's
+        # filename rule does not overrule it: numpy declares
+        # `dragon4_LICENSE.txt`, a separate third-party notice, and `av`,
+        # `PyJWT` and `sse-starlette` each declare an `AUTHORS` — the
+        # copyright-holder list a BSD notice exists to carry. Only source
+        # files are still refused.
+        if _SOURCE_FILENAMES.search(name.rsplit("/", 1)[-1]):
             continue
         try:
-            text = dist.read_text(f"licenses/{name}") or dist.read_text(name)
+            keep(dist.read_text(f"licenses/{name}") or dist.read_text(name))
         except (OSError, ValueError):
-            text = None
-        if text and text.strip():
-            declared.append(text.strip())
-    if declared:
-        return declared
+            continue
 
-    # Nothing recorded. Look at what was installed, preferring the dist-info
-    # over the package directory so a vendored licence never stands in for the
-    # distribution's own.
+    # Then what was installed, declared or not — dist-info first, so the
+    # distribution's own text leads and a vendored one is an addition rather
+    # than a stand-in.
     in_dist_info: list[str] = []
     in_package: list[str] = []
     for path in dist.files or []:
         location = str(path)
-        if not _LICENCE_FILENAMES.fullmatch(location.rsplit("/", 1)[-1]):
+        basename = location.rsplit("/", 1)[-1]
+        if not _LICENCE_FILENAMES.fullmatch(basename) or _SOURCE_FILENAMES.search(basename):
             continue
         try:
             body = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError, ValueError):
             continue
-        if not (body and body.strip()):
-            continue
-        (in_dist_info if ".dist-info" in location else in_package).append(body.strip())
-    return in_dist_info or in_package
+        (in_dist_info if _is_own_metadata(location) else in_package).append(body)
+    for body in in_dist_info + in_package:
+        keep(body)
+    return texts
 
 
 def _project_url(dist: metadata.Distribution) -> str:
@@ -267,12 +318,34 @@ def _project_url(dist: metadata.Distribution) -> str:
     home = (dist.metadata.get("Home-page") or "").strip()
     if home:
         return home
-    entries = [entry.partition(",") for entry in dist.metadata.get_all("Project-URL") or []]
+    urls: dict[str, str] = {}
+    for entry in dist.metadata.get_all("Project-URL") or []:
+        # `Label, URL` — but a wheel that wrote only the URL still said where
+        # it lives, and partitioning on a comma that is not there puts the
+        # whole value in the label. That left "names no project URL" printed
+        # against a project that names one.
+        label, separator, url = entry.partition(",")
+        if not separator:
+            label, url = "", entry
+        urls.setdefault(label.strip().lower(), url.strip())
     for label in _URL_LABELS:
-        for name, _, url in entries:
-            if name.strip().lower() == label:
-                return url.strip()
-    return entries[0][2].strip() if entries else ""
+        if urls.get(label):
+            return urls[label]
+    return next((url for url in urls.values() if url), "")
+
+
+def licence_classifiers(dist: metadata.Distribution) -> list[str]:
+    """The leaf of every `License ::` classifier the wheel carries.
+
+    Shared with the tests rather than copied into them: this is the rule the
+    document applies, and two statements of one rule drift without either
+    side going red.
+    """
+    return [
+        value.split(" :: ")[-1]
+        for key, value in dist.metadata.items()
+        if key == "Classifier" and value.startswith("License ::")
+    ]
 
 
 def _declared_licence(dist: metadata.Distribution, has_text: bool) -> str:
@@ -290,11 +363,7 @@ def _declared_licence(dist: metadata.Distribution, has_text: bool) -> str:
     expression = meta.get("License-Expression")
     if expression:
         return expression
-    classifiers = [
-        v.split(" :: ")[-1]
-        for k, v in meta.items()
-        if k == "Classifier" and v.startswith("License ::")
-    ]
+    classifiers = licence_classifiers(dist)
     declared = (meta.get("License") or "").strip()
     # Some wheels put the entire licence text in the License field, which is
     # not a name and does not belong on this line.
@@ -356,6 +425,18 @@ def bundled_libraries(filenames: Iterable[str] | None = None) -> list[str]:
 
 def build_notices(libraries: list[str] | None = None) -> str:
     """The whole document, as it should land beside LICENSE in the freeze."""
+    if libraries is None:
+        libraries = bundled_libraries()
+    if not libraries:
+        # Same reasoning as the LookupError in the walk, for the other half of
+        # the document: a heading and a four-line preamble with nothing under
+        # them still ship, and still read as compliance from the outside.
+        # Checked before anything is built, so it fails in the first second
+        # rather than after every licence file has been read.
+        raise LookupError(
+            "no native libraries were found, so the bundled-libraries section "
+            "would ship as a heading with nothing under it"
+        )
     lines = [
         "THIRD-PARTY NOTICES — LocalCut AI engine",
         "=" * 72,
@@ -397,8 +478,6 @@ def build_notices(libraries: list[str] | None = None) -> str:
             )
         lines.append("")
 
-    if libraries is None:
-        libraries = bundled_libraries()
     lines += ["", "BUNDLED NATIVE LIBRARIES", "-" * 72, ""]
     lines += [
         "These ship as part of the freeze rather than as packages of their",
