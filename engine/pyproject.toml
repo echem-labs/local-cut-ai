@@ -49,3 +49,11 @@ target-version = "py313"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  # Tests that inspect the PyInstaller artifact rather than the checkout.
+  # `package.yml` selects them with `-m freeze`, because it is the only job
+  # where the freeze exists and it runs on all three platforms - where the
+  # rest of test_license_boundaries.py, whose inventories are POSIX-spelled
+  # and Linux-only, cannot pass.
+  "freeze: needs a built freeze; selected by the packaging workflow",
+]

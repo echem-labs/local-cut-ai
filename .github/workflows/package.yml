@@ -117,6 +117,30 @@ jobs:
           uv sync --all-groups
           uv run pyinstaller --noconfirm localcut.spec
 
+      - name: Nothing unlicensed ships in the freeze
+        # The one place this can be asked. Every other licence guard scans
+        # site-packages, and about half of what the freeze carries is resolved
+        # from the build machine by PyInstaller's dependency walk rather than
+        # from any wheel, so no scan of the closure can reach them: libstdc++,
+        # libgcc_s and glibc's libmvec ship this way today, all three carrying
+        # copyleft terms. The artifact only exists here, and this job is what
+        # redistributes it.
+        #
+        # `-m freeze`, not the whole module: the rest of it is the closure
+        # guard, whose inventories are POSIX-spelled and were only ever
+        # validated on Linux (ci-engine is ubuntu-only). Running the file would
+        # fail the macOS and Windows legs on `libavcodec` vs `avcodec-62.dll`,
+        # here, before the installer is built - so the dmg and the exe would
+        # never be produced and `release` would never run.
+        working-directory: engine
+        env:
+          # Turns the guard's skip into a failure. `dist/` exists by now, so a
+          # tree it cannot find means PyInstaller's layout moved - and a licence
+          # guard that skips in the job that redistributes the artifact reports
+          # success having inspected nothing.
+          LOCALCUT_CHECK_FROZEN_ENGINE: "1"
+        run: uv run pytest tests/test_license_boundaries.py -q -rs -m freeze
+
       - name: The frozen engine actually runs
         # An installer whose engine cannot start is the exact failure this
         # target exists to prevent, and it is invisible until someone
@@ -139,6 +163,12 @@ jobs:
           # requests only. A tag build is the last point at which committed
           # icons that no longer match branding/logo.svg can still be caught.
           npm run icon:check
+          # Same argument, same last point. The attribution list is collected
+          # at build time from whatever node_modules this runner installed,
+          # and a collector that degrades produces an installer that ships
+          # license notices for only some of what is inside it. Nothing in
+          # `vite build` fails when that happens - this is the check that does.
+          npm run notices:check
           npm run ${{ matrix.script }}
 
       - name: Show what was produced
