@@ -3876,6 +3876,47 @@ button.link:hover {
   word-break: break-all;
 }
 
+.lic-text {
+  margin-top: var(--space-2);
+}
+
+.lic-text > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  /* The marker is the only affordance here, so it stays; the focus ring is
+     what a keyboard user navigates by. */
+  width: fit-content;
+}
+
+.lic-text > summary:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--accent-glow);
+}
+
+.lic-text pre {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  max-height: 14rem;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  /* License texts are hard-wrapped at ~70 columns already; preserving that
+     and letting long URLs wrap is closer to the source than re-flowing. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lic-none {
+  margin: var(--space-2) 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .btn-danger {
   display: inline-flex;
   align-items: center;
