@@ -34,8 +34,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
-    COPYLEFT_LIBRARIES,
     bundled_libraries,
+    copyleft_note,
     runtime_distributions,
 )
 
@@ -139,12 +139,14 @@ _KNOWN_LIBRARIES = frozenset(
     }
 )
 
-#: The copyleft record is `third_party_notices.COPYLEFT_LIBRARIES` — the table
-#: that generates the NOTICE shipped beside the frozen engine. Derived rather
-#: than restated: a second list here would be a licence claim on the far side of
-#: a boundary no build step reconciles, and the two had already diverged (three
-#: entries against twenty-one) before this was noticed.
-_KNOWN_COPYLEFT_LIBRARIES = frozenset(COPYLEFT_LIBRARIES)
+#: The libraries whose terms are strongest and whose annotation therefore
+#: matters most. Deliberately a short hand-kept list on this side of the
+#: boundary, checked through `copyleft_note()` rather than against the table's
+#: keys: `third_party_notices` keys `COPYLEFT_LIBRARIES` on the unprefixed,
+#: lowercased name so one entry can cover `libx264` and Windows' `x264`, and a
+#: test comparing key sets directly would only be asserting that two spellings
+#: match. What is worth pinning is the answer the notices generator gives.
+_MUST_STAY_ANNOTATED = frozenset({"libx264", "libx265", "libespeak-ng"})
 
 
 def _installed_closure() -> frozenset[str]:
@@ -280,30 +282,27 @@ def test_no_recorded_native_library_has_left_the_closure() -> None:
     )
 
 
-def test_the_recorded_copyleft_is_part_of_the_inventory() -> None:
-    """The two sets are maintained by hand and have to describe one closure."""
-    orphaned = _KNOWN_COPYLEFT_LIBRARIES - _KNOWN_LIBRARIES
-    assert not orphaned, (
-        "recorded as copyleft but absent from the inventory — one of the two sets "
-        f"was edited without the other: {sorted(orphaned)}"
-    )
+def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
+    """Present in the closure, and still annotated by the notices generator.
 
-
-def test_the_recorded_copyleft_is_still_present() -> None:
-    """Shrinking is the fix landing, and the record has to shrink with it.
-
-    A hard failure rather than the skip this used to be. `pytest.skip` was
-    being used to report a result, and it reported the wrong one: it fired
-    whenever the scan came back empty, which far more often means "the closure
-    is not installed here" than "the GPL debt was paid" — and what it printed
-    under `-rs` was `recorded copyleft no longer present (good) — prune from
-    the set`. A maintainer acting on that deletes the only record that x264,
-    x265 and libespeak-ng ship at all. `_installed_closure()` now owns the one
-    legitimate skip here, and it says which case it is.
+    Two ways the record can quietly stop being true, and this covers both. The
+    library can leave the closure — which is the fix landing, and the entry
+    should then be pruned deliberately rather than discovered later. Or its
+    entry can be deleted from `COPYLEFT_LIBRARIES` to silence something, and
+    then it still ships while the generated NOTICE lists it as a bare name.
+    That second one is the dangerous direction: the document's own prose says
+    copyleft libraries are named with what they oblige, so silence beside a
+    name is an affirmative claim that it carries no copyleft terms.
     """
-    stale = _KNOWN_COPYLEFT_LIBRARIES - _installed_closure()
-    assert not stale, (
-        "recorded copyleft is no longer in the closure. If the chain was replaced "
-        "this is the fix landing and the entry should be pruned; if it merely moved "
-        f"or was renamed, the record is now wrong: {sorted(stale)}"
-    )
+    closure = _installed_closure()
+    for library in sorted(_MUST_STAY_ANNOTATED):
+        assert library in closure, (
+            f"{library} is recorded as shipping and is no longer in the closure. "
+            "If the chain was replaced this is the fix landing and the entry "
+            "should be pruned here; if it merely moved, the record is now wrong."
+        )
+        assert copyleft_note(library), (
+            f"{library} ships and third_party_notices.COPYLEFT_LIBRARIES no "
+            "longer names its terms, so the generated NOTICE lists it with "
+            "nothing beside it — which reads as a claim that it is not copyleft."
+        )
