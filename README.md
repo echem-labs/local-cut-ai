@@ -236,4 +236,10 @@ lack it — `GET /system` reports this as `ffmpeg_drawtext`).
 
 ## License
 
-TBD.
+Apache-2.0 — see [LICENSE](LICENSE). Contributions are accepted under the
+Developer Certificate of Origin: sign off your commits with `git commit -s`.
+
+The licence covers this repository's own source. It does not extend to the
+model weights the app downloads, which carry their own terms (SDXL and
+LTX-Video in particular are gated or non-OSI), nor to media generated with
+them.
