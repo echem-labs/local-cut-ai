@@ -102,7 +102,7 @@ repos:
         stages: [pre-push]
 
       # Third reader of files outside engine/, and the only one whose inputs
-      # are at the repository root. LICENSE, NOTICE and README.md match no
+      # are at the repository root. LICENSE, NOTICE, README.md and CONTRIBUTING.md match no
       # other hook here at all; package.json runs the desktop hooks, which
       # cannot read a licence. Same shape as the two above -- one test, in
       # well under a second, rather than the whole engine suite.
@@ -115,6 +115,7 @@ repos:
             LICENSE
             |NOTICE
             |README\.md
+            |CONTRIBUTING\.md
             |apps/desktop/package\.json
           )$
         pass_filenames: false
