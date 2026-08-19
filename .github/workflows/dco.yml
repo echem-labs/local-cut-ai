@@ -64,15 +64,38 @@ jobs:
             # with 141, and `pipefail` promotes that to the pipeline's status --
             # so under `if !` a commit message past the 64 KiB pipe buffer was
             # reported as unsigned precisely because it *was* signed off.
-            body=$(git log -1 --format='%B' "$sha")
-            if ! grep -qiE '^Signed-off-by: .+ <.+@.+>' <<< "$body"; then
+            # The sign-off has to name the person who wrote the commit. A
+            # bare shape check accepts a trailer naming anyone -- a quoted
+            # upstream sign-off carried along by a cherry-pick or `git am`
+            # certifies nothing about the person submitting it, and
+            # `Signed-off-by: a <b@c>` satisfies a `.+ <.+@.+>` pattern
+            # outright. Comparing against the author (and the committer, so a
+            # rebase or a patch applied on someone's behalf still passes) is
+            # what makes the trailer an assertion rather than a decoration.
+            # `%(trailers:...)` also reads only real trailers, so a sign-off
+            # quoted in the middle of a body no longer counts.
+            mapfile -t signers < <(
+              git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha"
+            )
+            author=$(git log -1 --format='%an <%ae>' "$sha")
+            committer=$(git log -1 --format='%cn <%ce>' "$sha")
+            signed=0
+            for signer in "${signers[@]}"; do
+              [ -n "$signer" ] || continue
+              shopt -s nocasematch
+              if [[ "$signer" == "$author" || "$signer" == "$committer" ]]; then
+                signed=1
+              fi
+              shopt -u nocasematch
+            done
+            if [ "$signed" -eq 0 ]; then
               subject=$(git log -1 --format='%s' "$sha")
               # A bare CR in a subject is passed through by git, and the runner
               # splits its stdout on CR as well as LF - so an unsigned commit
               # from a fork could emit its own `::` workflow commands here,
               # including `::stop-commands::` to blank the real annotations.
               subject=${subject//[$'\r\n']/ }
-              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line"
+              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line matching its author ($author)"
               missing=1
             fi
           done
@@ -86,7 +109,8 @@ jobs:
           fi
           if [ "$missing" -ne 0 ]; then
             echo "Sign off with 'git commit -s' (amend with 'git commit -s --amend', or"
-            echo "rebase with 'git rebase --signoff $base'). See CONTRIBUTING.md."
+            echo "rebase with 'git rebase --signoff $base'). The line has to name"
+            echo "the commit's own author. See CONTRIBUTING.md."
             exit 1
           fi
           echo "all $checked commits signed off"
