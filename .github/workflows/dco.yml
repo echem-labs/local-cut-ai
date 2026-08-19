@@ -57,45 +57,68 @@ jobs:
 
           missing=0
           checked=0
+          # A sign-off has to BE a trailer and has to NAME the person who wrote
+          # the commit. `%(trailers:...)` reads only the message's trailer
+          # block, so a sign-off quoted in the middle of a body no longer
+          # counts, and comparing the value against the author (and against the
+          # committer, so a rebase or a patch applied on someone's behalf still
+          # passes) is what makes the trailer an assertion rather than a
+          # decoration -- a trailer naming a third party certifies nothing
+          # about the person submitting it.
+          #
+          # What this does NOT catch, despite the temptation to claim it:
+          # `git cherry-pick` and `git am` both preserve the author, so an
+          # upstream sign-off travels with the very author it names and matches.
+          # Carrying someone else's patch still needs your own `-s` on top; the
+          # gate that would enforce it is the committer, and the committer is
+          # set by the same person as the trailer.
+          #
+          # The shape is still required alongside the identity: equality alone
+          # accepts `x <x>` whenever `user.email` is spelled that way too, and
+          # naming a contactable identity was the one real property of the
+          # `.+ <.+@.+>` pattern this replaced.
+          ident='^.+ <.+@.+>$'
           for sha in $shas; do
             checked=$((checked + 1))
-            # Read the message into a variable rather than piping it into grep.
-            # `grep -q` exits on its first match, `git log` then dies of SIGPIPE
-            # with 141, and `pipefail` promotes that to the pipeline's status --
-            # so under `if !` a commit message past the 64 KiB pipe buffer was
-            # reported as unsigned precisely because it *was* signed off.
-            # The sign-off has to name the person who wrote the commit. A
-            # bare shape check accepts a trailer naming anyone -- a quoted
-            # upstream sign-off carried along by a cherry-pick or `git am`
-            # certifies nothing about the person submitting it, and
-            # `Signed-off-by: a <b@c>` satisfies a `.+ <.+@.+>` pattern
-            # outright. Comparing against the author (and the committer, so a
-            # rebase or a patch applied on someone's behalf still passes) is
-            # what makes the trailer an assertion rather than a decoration.
-            # `%(trailers:...)` also reads only real trailers, so a sign-off
-            # quoted in the middle of a body no longer counts.
-            mapfile -t signers < <(
-              git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha"
-            )
+            # Materialised into a variable, not read through `<(...)`: a process
+            # substitution's exit status is invisible to `set -e` and `pipefail`
+            # alike -- see the base-ref note above -- and a `git log` that died
+            # here would read as a commit carrying no sign-off at all. It also
+            # keeps `git log` out of a pipeline, which is what the SIGPIPE bug
+            # this loop used to have was made of: `grep -q` exits on its first
+            # match, `git log` then dies with 141, `pipefail` promotes that to
+            # the pipeline's status, and a message past the 64 KiB pipe buffer
+            # was reported as unsigned precisely because it *was* signed off.
+            #
+            # `unfold` joins a trailer split across continuation lines. Without
+            # it `mapfile` splits one value into two, neither of which can ever
+            # equal an ident.
+            signers=$(git log -1 --format='%(trailers:key=Signed-off-by,valueonly,unfold)' "$sha")
             author=$(git log -1 --format='%an <%ae>' "$sha")
             committer=$(git log -1 --format='%cn <%ce>' "$sha")
+            mapfile -t signer_lines <<< "$signers"
             signed=0
-            for signer in "${signers[@]}"; do
-              [ -n "$signer" ] || continue
-              shopt -s nocasematch
+            shopt -s nocasematch
+            for signer in "${signer_lines[@]}"; do
+              [[ "$signer" =~ $ident ]] || continue
               if [[ "$signer" == "$author" || "$signer" == "$committer" ]]; then
                 signed=1
               fi
-              shopt -u nocasematch
             done
+            shopt -u nocasematch
             if [ "$signed" -eq 0 ]; then
               subject=$(git log -1 --format='%s' "$sha")
               # A bare CR in a subject is passed through by git, and the runner
               # splits its stdout on CR as well as LF - so an unsigned commit
               # from a fork could emit its own `::` workflow commands here,
               # including `::stop-commands::` to blank the real annotations.
+              # The author reaches the same line and is just as much the
+              # submitter's to choose: git strips only `\n`, `<` and `>` from an
+              # ident, and a CR in the middle of a name survives verbatim. Every
+              # value that reaches an annotation gets the same scrub.
               subject=${subject//[$'\r\n']/ }
-              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by line matching its author ($author)"
+              author=${author//[$'\r\n']/ }
+              echo "::error::${sha:0:8} \"$subject\" has no Signed-off-by trailer naming its author ($author)"
               missing=1
             fi
           done
@@ -110,7 +133,9 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             echo "Sign off with 'git commit -s' (amend with 'git commit -s --amend', or"
             echo "rebase with 'git rebase --signoff $base'). The line has to name"
-            echo "the commit's own author. See CONTRIBUTING.md."
+            echo "the commit's own author, and has to sit in the message's last"
+            echo "paragraph - a trailer, not a line quoted in the body. See"
+            echo "CONTRIBUTING.md."
             exit 1
           fi
           echo "all $checked commits signed off"
