@@ -28,6 +28,52 @@ _VOICE_MAP = [
 ]
 _DEFAULT_VOICE = "af_sarah"
 
+#: Kokoro voice ids encode their language and gender in the first two
+#: characters — `bf_emma` is British female, `am_onyx` American male. The
+#: language half decides which phoneme set espeak produces, so it is not
+#: cosmetic: synthesising a British voice with American phonemes is what this
+#: engine did while the language was hardcoded.
+_VOICE_LANGUAGES = {
+    "a": ("en-us", "American English"),
+    "b": ("en-gb", "British English"),
+    "e": ("es", "Spanish"),
+    "f": ("fr-fr", "French"),
+    "h": ("hi", "Hindi"),
+    "i": ("it", "Italian"),
+    "j": ("ja", "Japanese"),
+    "p": ("pt-br", "Portuguese"),
+    "z": ("cmn", "Mandarin"),
+}
+_GENDERS = {"f": "female", "m": "male"}
+
+#: Where a voice id does not follow the convention, rather than guessing.
+_UNKNOWN_LANGUAGE = ("en-us", "unknown")
+
+
+def language_of(voice_id: str) -> str:
+    """The espeak language code to phonemize this voice's text with."""
+    return _VOICE_LANGUAGES.get(voice_id[:1], _UNKNOWN_LANGUAGE)[0]
+
+
+def describe_voice(voice_id: str) -> dict[str, str]:
+    """One voice, as the API and a picker need it.
+
+    Derived from the id rather than a table of 54 entries: the pack ships
+    more voices than any hand-written list would stay current with, and the
+    naming convention is the pack's own.
+    """
+    code, language = _VOICE_LANGUAGES.get(voice_id[:1], _UNKNOWN_LANGUAGE)
+    gender = _GENDERS.get(voice_id[1:2], "unknown")
+    # `af_sarah` -> `Sarah`. The id stays the identifier; this is for reading.
+    name = voice_id.split("_", 1)[-1].replace("-", " ").title() if "_" in voice_id else voice_id
+    return {
+        "id": voice_id,
+        "name": name,
+        "language": language,
+        "language_code": code,
+        "gender": gender,
+    }
+
 
 def pick_voice(brief: str) -> str:
     words = set(re.findall(r"[a-z]+", brief.lower()))
@@ -55,6 +101,24 @@ class KokoroBackend(ExecutionBackend):
         )
         self._engine = None
         self._lock = asyncio.Lock()
+
+    def installed_voices(self) -> list[dict[str, str]]:
+        """Every voice in the installed pack, or nothing if it is not on disk.
+
+        Read from the pack itself rather than from a list in the source: the
+        product shipped five voices out of the fifty-four this file has always
+        contained, because the five were written down in a keyword table and
+        nothing ever asked the pack what it held.
+        """
+        if not self.model_path.exists() or not self.voices_path.exists():
+            return []
+        try:
+            voices = self._load().get_voices()
+        except Exception:
+            # An unreadable pack is a readiness problem, reported by that
+            # surface. A picker asking what is available gets "nothing".
+            return []
+        return [describe_voice(voice_id) for voice_id in sorted(voices)]
 
     def supports(self, kind: NodeKind) -> bool:
         # Claim narration only while the voice weights are on disk, live —
@@ -95,7 +159,9 @@ class KokoroBackend(ExecutionBackend):
             import soundfile as sf
 
             engine = self._load()
-            samples, sample_rate = engine.create(text, voice=voice, speed=speed, lang="en-us")
+            samples, sample_rate = engine.create(
+                text, voice=voice, speed=speed, lang=language_of(voice)
+            )
             sf.write(str(target), samples, sample_rate)
 
         # ONNX inference is blocking; one at a time keeps memory bounded.

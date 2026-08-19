@@ -43,6 +43,7 @@ from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
+from ..backends.kokoro import _DEFAULT_VOICE as DEFAULT_VOICE
 from ..backends.kokoro import KokoroBackend
 from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
@@ -740,6 +741,23 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 "samples": len(samples),
             }
         return {"etas": etas}
+
+    @app.get("/voices", dependencies=[Authed])
+    async def voices() -> dict:
+        """Every narration voice the installed pack actually holds.
+
+        Read from the pack, not from a list here: the keyword table that
+        resolves a style brief names five voices, and the shipped pack holds
+        fifty-four. A picker fed by the table can only ever offer the five,
+        and nothing in the product would say the others existed.
+
+        Empty when the weights are not downloaded — the same shape, so a
+        caller renders "none installed" rather than special-casing an error.
+        `default` is what a narration node with no voice of its own gets.
+        """
+        backend = backends.find("kokoro")
+        installed = await asyncio.to_thread(backend.installed_voices) if backend else []
+        return {"voices": installed, "default": DEFAULT_VOICE if installed else None}
 
     def _defaults_payload(defaults: dict[str, str]) -> dict:
         """`auto` travels with every answer, GET and PUT alike: the picker
