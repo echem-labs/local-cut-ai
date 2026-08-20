@@ -3,13 +3,12 @@
     apps/desktop/src/assets/voices/<voice>.wav   one per lib/tools.ts swatch
 
 The previews exist so a brief can be heard before it is rendered, which
-only works while they are synthesized the same way a render is. They were
-generated once by hand, and when the phonemizer language stopped being
-hardcoded to American English the British swatch kept the American vowels
-it had been baked with -- the preview and the render disagreed, with
-nothing to catch it. This script is the answer to that: the previews are
-derived from the same backend the engine renders with, so re-running it
-reproduces them rather than reproducing whatever was done the first time.
+only works while they are synthesized the same way a render is. A preview
+made by hand cannot hold that: nothing tells anyone it has drifted from
+what the engine now produces, and the drift is audible only to a user
+comparing the swatch with the finished cut. So the previews are derived
+from the same backend the engine renders with, through the same manifest
+paths, and re-running this reproduces them.
 
 Needs the Kokoro pack (`localcut download kokoro-82m`); the previews ship
 as committed bytes, so run this and commit the result after any change to
@@ -28,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "engine" / "src"))
 
+from localcut_engine.api.app import _model_dests  # noqa: E402
 from localcut_engine.backends.base import ExecutionContext  # noqa: E402
 from localcut_engine.backends.kokoro import KokoroBackend  # noqa: E402
 from localcut_engine.config import EngineConfig  # noqa: E402
@@ -59,7 +59,15 @@ def swatch_voices() -> list[str]:
 
 
 async def main() -> int:
-    backend = KokoroBackend(models_dir=EngineConfig.from_env().resolved_models_dir)
+    # Constructed the way _build_backends constructs it, manifest dests and
+    # all: a backend probing the packaged fallback paths would render the
+    # committed previews from a pack the engine no longer narrates with, or
+    # report no pack at all on a machine where narration works.
+    config = EngineConfig.from_env()
+    backend = KokoroBackend(
+        models_dir=config.resolved_models_dir,
+        file_dests=_model_dests(config, "kokoro-82m"),
+    )
     installed = {voice["id"] for voice in backend.installed_voices()}
     if not installed:
         raise SystemExit("no Kokoro pack found - run: localcut download kokoro-82m")
@@ -77,11 +85,11 @@ async def main() -> int:
             seed=0,
             input_hashes={},
         )
+        # execute() publishes at <output_dir>/<output_hash>.wav, and the app
+        # loads these by voice id -- so the id is passed as the hash and the
+        # file lands under the name the swatch asks for.
         rendered = await backend.execute(spec, ExecutionContext(output_dir=ASSETS))
-        # execute() publishes under the content hash; the app loads these by
-        # voice id, and the id IS the hash above, so this only fixes the suffix.
-        rendered.replace(ASSETS / f"{voice}.wav")
-        print(f"  {voice}.wav")
+        print(f"  {rendered.name}")
     return 0
 
 

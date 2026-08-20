@@ -1696,11 +1696,15 @@ def _stub_narration(monkeypatch, voice_ids):
     resolve() hands back, precisely so a chain that narrates on another
     backend cannot be reported as offering these voices.
     """
-    from localcut_engine.backends.kokoro import KokoroBackend, describe_voice
     from pathlib import Path
 
+    from localcut_engine.backends.kokoro import KokoroBackend
+
     backend = KokoroBackend(models_dir=Path("/nonexistent"))
-    monkeypatch.setattr(backend, "installed_voices", lambda: [describe_voice(v) for v in voice_ids])
+    # The pack file is stubbed, not the reading of it: `installed_voices` is
+    # where the ids are sorted and described, so stubbing that would pin the
+    # route to an order and a record shape it can never actually serve.
+    monkeypatch.setattr(backend, "_installed_ids", lambda: set(voice_ids))
     monkeypatch.setattr(
         "localcut_engine.backends.base.BackendRegistry.resolve",
         lambda self, kind, model=None: backend,
@@ -1718,8 +1722,10 @@ async def test_voices_never_names_a_default_the_pack_does_not_hold(client, monke
     _stub_narration(monkeypatch, ("bm_george", "bf_emma"))
     body = (await client.get("/voices")).json()
     assert body["available"] is True
-    assert [voice["id"] for voice in body["voices"]] == ["bm_george", "bf_emma"]
-    assert body["default"] == "bm_george"
+    # Sorted, not pack order: a set has none, and this is a serialized
+    # payload a picker renders in the order it arrives.
+    assert [voice["id"] for voice in body["voices"]] == ["bf_emma", "bm_george"]
+    assert body["default"] == "bf_emma"
     assert body["default"] in [voice["id"] for voice in body["voices"]]
 
 

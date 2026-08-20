@@ -25,13 +25,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from .. import __version__
-from ..graph.model import (
-    EDL_VERSION,
-    GRAPH_VERSION,
-    NARRATION_VERSION,
-    NodeKind,
-    StoryGraph,
-)
+from ..graph.model import GRAPH_VERSION, StoryGraph, migrate_graph
 
 logger = logging.getLogger(__name__)
 
@@ -442,23 +436,12 @@ class ProjectStore:
                 f"(project format v{version}, this engine reads up to v{GRAPH_VERSION}) — "
                 "update the engine to open it. It has not been modified."
             )
-        graph = StoryGraph.model_validate(raw)
-        # EDL schema migration: stamping the current version changes the
-        # timeline's hash, which is exactly what invalidates cached EDLs
-        # written by older builds (absent or stale edl_version).
-        timeline = graph.nodes.get("timeline")
-        if timeline is not None and timeline.params.get("edl_version") != EDL_VERSION:
-            timeline.params["edl_version"] = EDL_VERSION
-        # The same migration for narration: stamping the current version is
-        # what invalidates audio synthesized by a build whose voice-to-
-        # language rule differed, since none of text/voice/speed changed.
-        for node in graph.nodes.values():
-            if (
-                node.kind is NodeKind.NARRATION
-                and node.params.get("narration_version") != NARRATION_VERSION
-            ):
-                node.params["narration_version"] = NARRATION_VERSION
-        return graph
+        # Behaviour-version migration: stamping the current versions changes
+        # the timeline's and every narration node's hash, which is exactly
+        # what invalidates the EDLs and the audio older builds cached. It is
+        # shared with the restore and import routes, which replace params
+        # wholesale from a document this never saw.
+        return migrate_graph(StoryGraph.model_validate(raw))
 
     def _load_sidecar(self, path: Path, model_cls, max_version: int, what: str):
         """Shared discipline for the history/takes sidecar files.

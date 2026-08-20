@@ -112,11 +112,10 @@ async def test_chatterbox_requires_sample_and_reports_missing_package(tmp_path):
 
 # --- Voice enumeration -------------------------------------------------
 #
-# The pack has always held fifty-four voices and the product offered five,
-# because the five were written into a keyword table and nothing asked the
-# pack what it contained. These cover the reading of it, and the language
-# each voice's text has to be phonemized in — which was hardcoded to
-# American English for every one of them, British voices included.
+# The installed pack holds an order of magnitude more voices than the
+# keyword table that resolves a style brief names, so what the product can
+# offer depends on reading the pack. These cover that reading, and the
+# language each voice's text is phonemized in, which the voice decides.
 
 
 @pytest.mark.parametrize(
@@ -165,8 +164,8 @@ def test_an_unconventional_id_is_reported_unknown_rather_than_guessed(voice_id):
 
 
 def test_british_voices_are_phonemized_as_british():
-    """The whole point of carrying a language per voice: every voice was
-    synthesized with American phonemes while this was a constant."""
+    """The whole point of carrying a language per voice: a British voice
+    reading American phonemes is the one thing a per-voice language buys."""
     assert language_of("bf_emma") == "en-gb"
     assert language_of("bm_daniel") == "en-gb"
     assert language_of("af_sarah") == "en-us"
@@ -214,11 +213,10 @@ def test_the_installed_pack_is_read_rather_than_listed_in_source():
 async def test_the_voice_decides_the_language_synthesis_is_asked_for(tmp_path, monkeypatch):
     """Pins `lang` at the call site, not just in the helper.
 
-    `language_of` had tests of its own while `create()` was still reached
-    with a constant, so reverting the one line that carries it left the
-    suite green — the bug this change exists to fix could come back
-    untouched. Driving `execute()` with a stand-in engine is what closes
-    that: it asserts what Kokoro is actually asked for.
+    Testing `language_of` alone leaves the one line that carries its answer
+    into `create()` free to regress with the suite still green. Driving
+    `execute()` with a stand-in engine is what closes that: it asserts what
+    Kokoro is actually asked for.
     """
     import numpy as np
 
@@ -256,10 +254,10 @@ async def test_the_voice_decides_the_language_synthesis_is_asked_for(tmp_path, m
 def test_enumeration_does_not_build_an_inference_session(tmp_path, monkeypatch):
     """Reading 54 names must not construct the 325 MB ONNX session.
 
-    Going through `_load()` cost ~1.1s and ~476 MB to answer a read-only
-    listing, cached the session for the life of the process, held the
+    Going through `_load()` costs ~1.1s and ~476 MB to answer a read-only
+    listing, caches the session for the life of the process, holds the
     voices archive open against a later re-download, and — `_lock` being an
-    asyncio lock a worker thread cannot take — raced a narration job into
+    asyncio lock a worker thread cannot take — races a narration job into
     building a second session. The names are keys in the voices archive.
     """
     backend = KokoroBackend(models_dir=tmp_path)
@@ -271,18 +269,31 @@ def test_enumeration_does_not_build_an_inference_session(tmp_path, monkeypatch):
     assert backend.installed_voices() == []
     assert backend._engine is None
 
-    if KOKORO_PRESENT:
-        real = KokoroBackend(models_dir=MODELS_DIR)
-        monkeypatch.setattr(real, "_load", explode)
-        assert len(real.installed_voices()) > 20
-        assert real._engine is None
+
+@pytest.mark.skipif(not KOKORO_PRESENT, reason="Kokoro weights not on this machine")
+def test_enumerating_a_real_pack_does_not_build_an_inference_session(monkeypatch):
+    """The half of the rule above that only a real pack can exercise: an
+    empty models dir never reaches `_load()` however enumeration is written,
+    so it cannot fail a regression that routes it back through the session.
+
+    A marker, not an `if`: a skip has to be readable from `pytest -q -rs`,
+    or a check that did not run reports as a check that passed.
+    """
+    backend = KokoroBackend(models_dir=MODELS_DIR)
+
+    def explode():
+        raise AssertionError("installed_voices must not load the inference session")
+
+    monkeypatch.setattr(backend, "_load", explode)
+    assert len(backend.installed_voices()) > 20
+    assert backend._engine is None
 
 
 async def test_an_unknown_voice_fails_with_a_reason_not_an_assertion(tmp_path, monkeypatch):
     """kokoro-onnx guards its voice lookup with a bare `assert`, which would
     reach the board as a stray AssertionError rather than this backend's
-    error contract. Now that /voices publishes ids a client can send back,
-    a stale one is an ordinary mistake and has to read like one."""
+    error contract. /voices publishes ids a client sends back, so a stale
+    one is an ordinary mistake and has to read like one."""
     backend = KokoroBackend(models_dir=tmp_path)
     monkeypatch.setattr(backend, "_installed_ids", lambda: {"af_sarah", "bf_emma"})
     spec = make_spec(
@@ -319,3 +330,61 @@ async def test_an_unreadable_pack_does_not_reject_every_voice(tmp_path, monkeypa
     )
     await backend.execute(spec, ExecutionContext(output_dir=tmp_path))
     assert calls == ["af_sarah"]
+
+
+@pytest.mark.parametrize(
+    ("voice_id", "gender", "name"),
+    [("xf_nova", "female", "Nova"), ("qm_teodor", "male", "Teodor")],
+)
+def test_a_voice_under_an_unknown_language_still_reports_its_gender_and_name(
+    voice_id, gender, name
+):
+    """The language table is the one thing a well-formed id can outrun: the
+    pack has gained languages before, and this file names nine. Reading the
+    three parts of the id independently is what keeps such a voice a usable
+    row in a picker — an unknown language, not an unknown voice.
+    """
+    assert describe_voice(voice_id) == {
+        "id": voice_id,
+        "name": name,
+        "language_code": None,
+        "gender": gender,
+    }
+    # And its English is still read as English rather than by a letter the
+    # table happens not to cover.
+    assert language_of(voice_id) == "en-us"
+
+
+@pytest.mark.parametrize(
+    ("speed", "asked"),
+    [(3, 2.0), (99.0, 2.0), (0.1, 0.5), (-5, 0.5), (float("inf"), 2.0), (float("nan"), 0.5)],
+)
+async def test_a_speed_outside_the_synthesizers_range_is_clamped_not_asserted(
+    tmp_path, monkeypatch, speed, asked
+):
+    """kokoro-onnx guards `speed` with a bare assert two lines above the
+    voice one, and only the LLM-editor path clamps — a raw /patch and a
+    template both reach here with whatever they carry. An unclamped value
+    escapes as an AssertionError rather than this backend's error contract,
+    and only after the 325 MB session has been built for a job that cannot
+    run.
+    """
+    import numpy as np
+
+    calls = []
+
+    class FakeEngine:
+        def create(self, text, voice, speed, lang):
+            calls.append(speed)
+            return np.zeros(2400, dtype="float32"), 24000
+
+    backend = KokoroBackend(models_dir=tmp_path)
+    monkeypatch.setattr(backend, "_load", lambda: FakeEngine())
+    spec = make_spec(
+        NodeKind.NARRATION,
+        {"text": "hello", "voice_id": "af_sarah", "speed": speed},
+        node_id="s1.narration",
+        output_hash="e" * 64,
+    )
+    await backend.execute(spec, ExecutionContext(output_dir=tmp_path))
+    assert calls == [asked]

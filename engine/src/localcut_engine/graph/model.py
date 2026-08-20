@@ -46,10 +46,9 @@ EDL_VERSION = 5
 # Part of every narration node's hash, for the same reason EDL_VERSION is
 # part of the timeline's: bumping it invalidates cached narration audio when
 # what the backend synthesizes changes for params that did not (v2: the
-# espeak language is derived from the voice, so British voices stopped being
-# read with American phonemes — the audio changes while text/voice/speed are
-# untouched, and without this the existence cache serves the old wav
-# forever).
+# espeak language is derived from the voice, so a British voice is read with
+# British phonemes — the audio differs while text/voice/speed are identical,
+# and without this the existence cache would serve the earlier wav forever).
 NARRATION_VERSION = 2
 
 # The project.json wire format. Distinct from EDL_VERSION (which only
@@ -236,3 +235,41 @@ class StoryGraph(BaseModel):
         ).hexdigest()
         memo[node_id] = digest
         return digest
+
+
+#: The behaviour versions folded into a node's content address, by kind. A
+#: version here is not configuration the user or a backend reads: it exists
+#: so that a change to how a kind is produced re-addresses artifacts whose
+#: params did not move.
+_PARAM_VERSIONS: dict[NodeKind, tuple[str, int]] = {
+    NodeKind.TIMELINE: ("edl_version", EDL_VERSION),
+    NodeKind.NARRATION: ("narration_version", NARRATION_VERSION),
+}
+
+
+def migrate_params(kind: NodeKind, params: dict[str, Any]) -> dict[str, Any]:
+    """`params` with this build's behaviour version stamped on, in place."""
+    versioned = _PARAM_VERSIONS.get(kind)
+    if versioned is not None:
+        key, value = versioned
+        if params.get(key) != value:
+            params[key] = value
+    return params
+
+
+def migrate_graph(graph: StoryGraph) -> StoryGraph:
+    """Stamp this build's behaviour versions onto every node, in place.
+
+    The stamp is part of the node's content address, so applying it is what
+    stops an artifact produced by a build with different behaviour from
+    being served as current. That artifact is still on disk, so this has to
+    run at every route a graph enters the engine by — a load, a restore, a
+    template import — and beside every op that replaces a node's params
+    wholesale. A route that skips it lands the node back on the older
+    address, finds the older artifact cached, and queues no job to replace
+    it, while the next load stamps it again and moves the node to an address
+    nothing has rendered.
+    """
+    for node in graph.nodes.values():
+        migrate_params(node.kind, node.params)
+    return graph
