@@ -30,6 +30,21 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY src ./src
 RUN uv sync --frozen --no-dev
 
+# PyAV arrives as a faster-whisper dependency, and its wheel carries a whole
+# FFmpeg build - libx264 and libx265 among it - which would put back into this
+# image, in the engine's own process, exactly what the LGPL-only ffmpeg above
+# exists to keep out of it. Nothing here calls PyAV: narration is decoded with
+# that ffmpeg. faster-whisper still imports it at module scope, so a stub
+# answers for the name; `av_stub.py` says why it is a file here and a runtime
+# hook in the freeze. The import at the end fails the build rather than the
+# first captions job if the stub ever stops being enough.
+COPY packaging/av_stub.py ./packaging/
+RUN uv pip uninstall av \
+    && uv run --no-sync python -c "import pathlib, shutil, site; \
+shutil.copy('packaging/av_stub.py', pathlib.Path(site.getsitepackages()[0]) / 'av.py')" \
+    && rm -rf packaging \
+    && uv run --no-sync python -c "import faster_whisper"
+
 # Run as an unprivileged user: a network-reachable service that shells out to
 # ffmpeg and parses untrusted input must never be root. /data is owned by it,
 # and a named volume (compose default) inherits that ownership on first use.
@@ -47,4 +62,11 @@ EXPOSE 7830
 
 # --token comes from LOCALCUT_TOKEN (compose enforces it); network bind
 # serves HTTPS with a self-signed cert pinned by the pairing code.
-ENTRYPOINT ["uv", "run", "localcut", "serve", "--host", "0.0.0.0"]
+#
+# --no-sync: `uv run` reconciles the environment against the lock before it
+# runs anything, and the lock still contains PyAV - it is faster-whisper's
+# dependency and dropping it from the lock would drop it for the tests too. A
+# plain `uv run` here would reinstall the wheel on every container start,
+# putting the GPL FFmpeg build back at runtime and leaving a build that looks
+# clean when it is inspected.
+ENTRYPOINT ["uv", "run", "--no-sync", "localcut", "serve", "--host", "0.0.0.0"]

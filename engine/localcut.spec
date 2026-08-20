@@ -35,7 +35,11 @@ datas += [("../LICENSE", "."), ("../NOTICE", ".")]
 # distribution, but it is worth writing down: the three files are one
 # directory deeper than the place someone would look for them.
 sys.path.insert(0, str(Path(SPECPATH) / "packaging"))
-from third_party_notices import bundled_libraries, write_notices  # noqa: E402
+from third_party_notices import (  # noqa: E402
+    FREEZE_EXCLUDES,
+    bundled_libraries,
+    write_notices,
+)
 
 a = Analysis(
     ["packaging/entry.py"],
@@ -44,8 +48,17 @@ a = Analysis(
     datas=datas,
     hiddenimports=[],
     hookspath=[],
-    runtime_hooks=[],
-    excludes=[],
+    # Absolute, unlike the script above it: PyInstaller joins a relative
+    # `scripts` entry onto the spec's own directory, but a runtime hook goes
+    # through a bare `os.path.abspath`, which resolves against the working
+    # directory instead. Spelled relative, the hook is found only when
+    # pyinstaller is run from `engine/` — and a same-named file under some
+    # other working directory would be taken in its place.
+    runtime_hooks=[str(Path(SPECPATH) / "packaging" / "rthook_av.py")],
+    # Read from third_party_notices so the notices document and the freeze
+    # cannot disagree about what is in the installer. See FREEZE_EXCLUDES for
+    # what each one is and why it is out.
+    excludes=list(FREEZE_EXCLUDES),
     noarchive=False,
 )
 

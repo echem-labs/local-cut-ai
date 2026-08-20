@@ -40,6 +40,28 @@ from pathlib import Path
 
 _PROJECT = "localcut-engine"
 
+#: Modules deliberately kept out of the freeze, and why. `localcut.spec` passes
+#: these to PyInstaller's `excludes`, and `shipped_distributions()` drops
+#: whatever distribution provides one — so the document the spec generates
+#: describes the installer rather than the build environment, which still has
+#: all of it installed.
+#:
+#: One list, read from both ends. Written twice it would drift, and the
+#: direction it drifts in is the dangerous one: a notice claiming a licence for
+#: something that is not there is a smaller problem than the freeze quietly
+#: regaining a dependency this file still says was removed.
+FREEZE_EXCLUDES: dict[str, str] = {
+    # A hard requirement of faster-whisper (`av>=11`) that we never call: the
+    # aligner decodes with the ffmpeg binary and hands `transcribe()` an array,
+    # and `decode_audio` is the only thing in that package reaching PyAV.
+    # Its wheel bundles a full FFmpeg — libx264 and libx265 among it.
+    "av": "PyAV; faster-whisper's decode path, replaced by the ffmpeg binary",
+    # CPython's readline module links libreadline, which is GPL-3.0-or-later
+    # with no linking exception. The engine is a server and a non-interactive
+    # CLI; nothing here reads a line from a terminal.
+    "readline": "CPython's readline module; links GPL-3.0-or-later libreadline",
+}
+
 # Guesswork, so it is anchored at both ends: `licenses.py` — a module, not a
 # notice — must not match on its first seven characters. Anything after the
 # word has to start with a separator: LICENSE.txt, LICENSE-APACHE,
@@ -110,11 +132,11 @@ _COPYLEFT_TERMS = {
         "libasound",
         "libiconv",
     ): "LGPL-2.1-or-later — bundled inside the `av` wheel's FFmpeg build",
-    ("libmp3lame",): "LGPL-2.0-or-later — bundled inside the `av` wheel's FFmpeg build",
+    ("libmp3lame",): "LGPL-2.0-or-later — linked into libsndfile, inside the `soundfile` wheel",
     ("libespeak-ng",): "GPL-3.0 — bundled inside the `espeakng-loader` wheel",
     ("libpcaudio",): "GPL-3.0-or-later — espeak-ng's audio output library",
     ("libsndfile",): "LGPL-2.1-or-later — bundled inside the `soundfile` wheel",
-    ("libmpg123",): "LGPL-2.1-only — via the `soundfile` wheel's libsndfile",
+    ("libmpg123",): "LGPL-2.1-only — linked into libsndfile, inside the `soundfile` wheel",
     (
         "libgfortran",
         "libstdc++",
@@ -166,6 +188,43 @@ COPYLEFT_LIBRARIES = {
     for libraries, note in _COPYLEFT_TERMS.items()
     for library in libraries
 }
+
+#: Libraries that ship linked *into* another one instead of as a file of their
+#: own, keyed by the library carrying them.
+#:
+#: Nothing that scans filenames can find these, because there is no filename:
+#: `soundfile`'s libsndfile is built with LAME and mpg123 compiled in, and the
+#: wheel ships one binary. Both are LGPL, both are redistributed, and until the
+#: `av` wheel left the freeze both happened to be named anyway — PyAV's FFmpeg
+#: build carried its own `libmp3lame` as a separate file, so the row appeared
+#: for the wrong reason. Dropping PyAV took the row with it and left the code
+#: still shipping, which is the one direction this document must never move in.
+#:
+#: Checked in each platform's wheel rather than assumed from the Linux one:
+#: libsndfile_arm64.dylib and libsndfile_x64.dll carry LAME's and mpg123's
+#: version strings and symbol tables too.
+_LINKED_INTO = {
+    "libsndfile": ("libmp3lame", "libmpg123"),
+}
+
+
+def statically_linked(libraries: Iterable[str]) -> list[str]:
+    """Libraries carried inside the given ones, that are not among them already.
+
+    `libmp3lame` can also arrive as a file in its own right — a system copy
+    pulled in beside libsndfile on a machine that has one — and listing it
+    twice would read as two different components rather than one named twice.
+    """
+    present = {annotation_key(library) for library in libraries}
+    return sorted(
+        {
+            guest
+            for host, guests in _LINKED_INTO.items()
+            if annotation_key(host) in present
+            for guest in guests
+            if annotation_key(guest) not in present
+        }
+    )
 
 
 def _normalise_library(filename: str) -> str:
@@ -261,6 +320,40 @@ def runtime_distributions() -> list[metadata.Distribution]:
         seen.setdefault(key, dist)
         queue.extend(_requirement_names(dist, extras))
     return [seen[k] for k in sorted(seen)]
+
+
+def shipped_distributions() -> list[metadata.Distribution]:
+    """The closure minus whatever the freeze leaves behind.
+
+    A separate walk rather than a filter inside `runtime_distributions()`,
+    because the unfiltered closure is what the licence guards read:
+    `test_no_distribution_declares_copyleft_outside_the_recorded_set` iterates
+    it to force a decision on every dependency that declares GPL terms, and
+    subtracting there would let a name added to `FREEZE_EXCLUDES` walk a new
+    copyleft dependency straight past the tripwire — which is still installed
+    by `uv sync` and still in the Docker image.
+
+    Filtered at the end rather than skipped in the walk: an excluded
+    distribution's own requirements may be shared with something that does
+    ship, and cutting the branch would drop those too.
+
+    Which distribution provides an excluded module is resolved rather than
+    listed, because the two namespaces are not the same: `excludes` names
+    modules, the walk yields distributions, and `readline` is a stdlib module
+    with no distribution behind it at all. `packages_distributions` maps one
+    to the other.
+    """
+    from packaging.utils import canonicalize_name
+
+    providers = metadata.packages_distributions()
+    excluded = {
+        canonicalize_name(name) for module in FREEZE_EXCLUDES for name in providers.get(module, ())
+    }
+    return [
+        dist
+        for dist in runtime_distributions()
+        if canonicalize_name(dist.metadata["Name"]) not in excluded
+    ]
 
 
 def _is_own_metadata(location: str) -> bool:
@@ -446,7 +539,16 @@ def bundled_libraries(filenames: Iterable[str] | None = None) -> list[str]:
 
 
 def build_notices(libraries: list[str] | None = None) -> str:
-    """The whole document, as it should land beside LICENSE in the freeze."""
+    """The whole document, as it should land beside LICENSE in the freeze.
+
+    Both halves describe the same thing, which is whichever thing `libraries`
+    describes. Handed what PyInstaller collected, this is the installer, so the
+    distributions half subtracts what the freeze excludes. Left to the
+    site-packages fallback it is the closure, wheels and all — and the same
+    subtraction would name `libx264` under BUNDLED NATIVE LIBRARIES, annotated
+    "bundled inside the `av` wheel", while claiming PyAV is not here.
+    """
+    describes_the_freeze = libraries is not None
     if libraries is None:
         libraries = bundled_libraries()
     if not libraries:
@@ -472,7 +574,7 @@ def build_notices(libraries: list[str] | None = None) -> str:
         "",
     ]
 
-    distributions = runtime_distributions()
+    distributions = shipped_distributions() if describes_the_freeze else runtime_distributions()
     lines += ["", "PYTHON DISTRIBUTIONS", "-" * 72, ""]
     for dist in distributions:
         name = dist.metadata["Name"]
@@ -512,6 +614,18 @@ def build_notices(libraries: list[str] | None = None) -> str:
     for library in libraries:
         note = copyleft_note(library)
         lines.append(f"  {library}" + (f" — {note}" if note else ""))
+    carried = statically_linked(libraries)
+    if carried:
+        lines += [
+            "",
+            "  Compiled into one of the above rather than shipped beside it, so",
+            "  they have no file of their own to list — redistributed all the",
+            "  same:",
+            "",
+        ]
+        for library in carried:
+            note = copyleft_note(library)
+            lines.append(f"  {library}" + (f" — {note}" if note else ""))
     lines.append("")
 
     return "\n".join(lines) + "\n"
