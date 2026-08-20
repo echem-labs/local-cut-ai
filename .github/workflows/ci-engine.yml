@@ -16,6 +16,12 @@ name: CI (engine)
 # packaging-only PR renaming the binary in any of them matches no other
 # workflow at all, so without these lines it would merge having run no suite.
 #
+# test_ui_contract.py is the other, and its inputs are named by directory
+# rather than one by one: it pins the engine's ids against the desktop's
+# label catalogs and against the committed voice previews, so a PR that only
+# renames a catalog key or deletes a preview matches apps/desktop/** alone --
+# vitest and tsc, neither of which can run pytest.
+#
 # test_license_contract.py is the second such reader, and the one whose inputs
 # sit at the repository root: LICENSE, NOTICE, README.md, CONTRIBUTING.md and
 # the desktop's package.json. Those five match no other workflow either -- an
@@ -37,6 +43,8 @@ on:
       - "apps/desktop/scripts/check-engine.mjs"
       - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
+      - "apps/desktop/src/i18n/en/**"
+      - "apps/desktop/src/assets/voices/**"
       - "apps/desktop/package.json"
       - "LICENSE"
       - "NOTICE"
@@ -52,6 +60,8 @@ on:
       - "apps/desktop/scripts/check-engine.mjs"
       - "apps/desktop/src/lib/tools.ts"
       - "apps/desktop/src/screens/Settings.tsx"
+      - "apps/desktop/src/i18n/en/**"
+      - "apps/desktop/src/assets/voices/**"
       - "apps/desktop/package.json"
       - "LICENSE"
       - "NOTICE"

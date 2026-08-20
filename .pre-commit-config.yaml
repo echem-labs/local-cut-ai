@@ -96,7 +96,8 @@ repos:
           (?x)^apps/desktop/src/(
             lib/(formats|tools)\.ts
             |api/(client|types)\.ts
-            |i18n/en/(status|notices|tools|project)\.json
+            |i18n/en/[a-z]+\.json
+            |assets/voices/.+\.wav
           )$
         pass_filenames: false
         stages: [pre-push]

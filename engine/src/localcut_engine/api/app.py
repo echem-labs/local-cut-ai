@@ -760,30 +760,41 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         Unavailable answers in the same shape as empty, so a caller renders
         its empty state rather than special-casing an error.
 
-        `default` is the voice a narration node naming none falls back to,
-        and it is always one of `voices` or null: it is picked out of the
-        list rather than asserted beside it, so a pack that does not hold
-        the fallback cannot have it advertised. Naming a voice the pack
-        cannot synthesize is the thing this route must not do — kokoro-onnx
-        meets it as a bare `assert voice in self.voices`.
+        `default` is the voice a narration node whose style brief matches no
+        keyword falls back to — NOT the voice every node naming no `voice_id`
+        gets. That one is `pick_voice(brief)`, which is per-node: the five
+        Home swatches each write a brief that resolves elsewhere. A picker
+        labelling an Auto option from this field would name the wrong voice
+        for four of those five, so `default` is the pack's fallback and
+        nothing more.
+
+        It is always one of `voices` or null: it is picked out of the list
+        rather than asserted beside it, so a pack that does not hold the
+        fallback cannot have it advertised. Naming a voice the pack cannot
+        synthesize is the thing this route must not do — kokoro-onnx meets
+        it as a bare `assert voice in self.voices`.
         """
 
-        def narration_backend() -> KokoroBackend | None:
+        def enumerate_pack() -> list[dict[str, str]] | None:
             # The registered instance the scheduler would route to, not a
             # lookup by name: `find` answers "is kokoro in the chain at all",
             # which is a different question from "will a narration job land
-            # there". resolve() consults the liveness probe, so keep it off
-            # the loop like every other probe caller.
+            # there".
+            #
+            # One hop, not two: resolving and then reading the pack are
+            # contiguous blocking work, and the archive read is the reason
+            # either is off the loop.
             try:
                 backend = backends.resolve(NodeKind.NARRATION)
             except GenerationError:
                 return None
-            return backend if isinstance(backend, KokoroBackend) else None
+            if not isinstance(backend, KokoroBackend):
+                return None
+            return backend.installed_voices()
 
-        backend = await asyncio.to_thread(narration_backend)
-        if backend is None:
+        installed = await asyncio.to_thread(enumerate_pack)
+        if installed is None:
             return {"available": False, "voices": [], "default": None}
-        installed = await asyncio.to_thread(backend.installed_voices)
         ids = [voice["id"] for voice in installed]
         default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
         return {"available": True, "voices": installed, "default": default}

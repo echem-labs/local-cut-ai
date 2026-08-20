@@ -59,27 +59,29 @@ _GENDERS = {"f": "female", "m": "male"}
 _SPEAKABLE_CODES = frozenset({"en-us", "en-gb"})
 _FALLBACK_CODE = "en-us"
 
+#: The speeds kokoro-onnx accepts, guarded there by a bare assert. Anything
+#: outside is clamped rather than allowed to reach it.
+_SPEED_FLOOR, _SPEED_CEILING = 0.5, 2.0
 
-def _scheme_of(voice_id: str) -> str | None:
-    """The espeak code a well-formed id encodes, or None.
 
-    The whole `<language><gender>_` shape has to be there before the first
-    letter is trusted: `jenny` starts with `j`, and filing it under Japanese
-    is the guess this returns None to avoid.
-    """
-    if voice_id[2:3] != "_" or voice_id[1:2] not in _GENDERS:
-        return None
-    return _VOICE_LANGUAGES.get(voice_id[:1])
+#: The whole `<language><gender>_<stem>` shape, matched before any single
+#: letter is trusted: `jenny` starts with `j`, and filing it under Japanese
+#: is the guess this pattern exists to avoid. Each group is then read on its
+#: own, so a pack carrying a language prefix this file does not know still
+#: reports that voice's gender and name and reports only its language as
+#: unknown. Used with `fullmatch`, so a trailing newline is not an id.
+_VOICE_ID_SCHEME = re.compile(r"([a-z])([fm])_(.+)")
 
 
 def language_of(voice_id: str) -> str:
     """The espeak language code to phonemize this voice's English text with.
 
-    British voices read English as British — the fix this exists for. Every
-    other voice reads it as American, because the alternative is not an
-    accent but an unintelligible rendering; see `_SPEAKABLE_CODES`.
+    British voices read English as British. Every other voice reads it as
+    American, because the alternative is not an accent but an unintelligible
+    rendering; see `_SPEAKABLE_CODES`.
     """
-    code = _scheme_of(voice_id)
+    scheme = _VOICE_ID_SCHEME.fullmatch(voice_id)
+    code = _VOICE_LANGUAGES.get(scheme.group(1)) if scheme else None
     return code if code in _SPEAKABLE_CODES else _FALLBACK_CODE
 
 
@@ -93,19 +95,26 @@ def describe_voice(voice_id: str) -> dict[str, str | None]:
     Everything here is an id, not display copy: `language_code` is an espeak
     code and `gender` a bare token, both labelled client-side out of
     `i18n/en/voices.json`. An engine that sent "American English" would put
-    the one untranslatable string in the app on the picker. An id outside
-    the scheme reports null rather than a guess — null is what the catalog
-    renders as "unknown", and it cannot be mistaken for a real code.
+    the one untranslatable string in the app on the picker. A language the
+    table does not name reports null rather than a guess — null is what the
+    catalog renders as "unknown", and it cannot be mistaken for a real code.
+
+    `name` is the stem, and the stem alone is NOT unique across the pack:
+    `am_santa`, `em_santa` and `pm_santa` all read "Santa". A picker showing
+    one flat list has to qualify it with `language_code`; `id` is the only
+    field that identifies a voice.
     """
-    code = _scheme_of(voice_id)
-    # `af_sarah` -> `Sarah`. The id stays the identifier; this is for reading.
-    # An id the scheme does not cover is shown as it is rather than reshaped.
-    stem = voice_id[3:] if code else ""
+    scheme = _VOICE_ID_SCHEME.fullmatch(voice_id)
+    if scheme is None:
+        # An id outside the scheme is shown as it is rather than reshaped.
+        return {"id": voice_id, "name": voice_id, "language_code": None, "gender": None}
+    language, gender, stem = scheme.groups()
     return {
         "id": voice_id,
-        "name": stem.replace("-", " ").title() if stem else voice_id,
-        "language_code": code,
-        "gender": _GENDERS[voice_id[1:2]] if code else None,
+        # `af_sarah` -> `Sarah`. The id stays the identifier; this is for reading.
+        "name": stem.replace("-", " ").title(),
+        "language_code": _VOICE_LANGUAGES.get(language),
+        "gender": _GENDERS[gender],
     }
 
 
@@ -139,10 +148,10 @@ class KokoroBackend(ExecutionBackend):
     def installed_voices(self) -> list[dict[str, str]]:
         """Every voice in the installed pack, or nothing if it is not on disk.
 
-        Read from the pack itself rather than from a list in the source: the
-        product shipped five voices out of the fifty-four this file has always
-        contained, because the five were written down in a keyword table and
-        nothing ever asked the pack what it held.
+        Read from the pack itself rather than from a list in the source: it
+        holds an order of magnitude more voices than the keyword table above
+        names, and a hand-written list cannot stay current with a file the
+        user downloads.
 
         The names are the keys of the voices archive, so this reads that file
         and not the 325 MB inference session beside it. Going through
@@ -210,11 +219,19 @@ class KokoroBackend(ExecutionBackend):
                 f"no voice {voice!r} in the installed pack - pick one of: "
                 f"{', '.join(sorted(installed)[:8])}..."
             )
-        # A raw /patch can carry a null/garbage speed; coerce safely.
+        # A raw /patch can carry a null/garbage speed; coerce safely, then
+        # clamp. kokoro-onnx meets an out-of-range speed with a bare assert
+        # two lines above the voice one, so an unclamped value escapes as an
+        # AssertionError rather than this backend's error contract — and only
+        # after the 325 MB session has been built for a job that cannot run.
+        # This is the synthesizer's own range; the product's tighter bound is
+        # the editor's, and clamping to it here would silently rewrite a
+        # speed a client set deliberately. NaN falls out at the floor.
         try:
             speed = float(spec.params.get("speed") or 1.0)
         except (TypeError, ValueError):
             speed = 1.0
+        speed = min(_SPEED_CEILING, max(_SPEED_FLOOR, speed))
 
         def synth(target: Path) -> None:
             import soundfile as sf

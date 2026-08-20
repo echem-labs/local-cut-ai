@@ -17,6 +17,7 @@ import pytest
 
 from localcut_engine.events import EventBus
 from localcut_engine.graph.editor import Edit, EditPlan
+from localcut_engine.graph.model import StoryGraph
 from localcut_engine.graph.patch import PatchOp
 from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
 from localcut_engine.jobs.queue import JobQueue
@@ -523,12 +524,13 @@ def test_undo_does_not_replant_a_null_the_migration_removed(tmp_path):
     assert export.get("captions", "burn") == "burn"  # ffmpeg.py's own expression
 
 
-def test_loading_re_addresses_narration_written_before_the_language_fix(tmp_path):
-    """Audio rendered while every voice was phonemized as American is still
-    addressed by text/voice/speed, none of which changed — so without a
-    stamped version the existence cache serves it forever and the fix never
-    reaches an existing project. Back-filling on load is what moves the
-    hash, exactly as the timeline's edl_version does.
+def test_loading_re_addresses_narration_a_lower_version_rendered(tmp_path):
+    """Audio synthesized under an older voice-to-language rule is still
+    addressed by text/voice/speed, none of which move when that rule
+    changes — so without a stamped version the existence cache serves it
+    forever and the change never reaches an existing project. Back-filling
+    on load is what moves the hash, exactly as edl_version does for the
+    timeline.
     """
     from localcut_engine.graph.model import NARRATION_VERSION, NodeKind
 
@@ -547,3 +549,36 @@ def test_loading_re_addresses_narration_written_before_the_language_fix(tmp_path
     reloaded = store.load_graph(project.id)
     assert reloaded.nodes[narr_id].params["narration_version"] == NARRATION_VERSION
     assert reloaded.output_hash(narr_id) != stale_hash
+
+
+def test_undo_does_not_revert_a_narration_to_a_superseded_version(tmp_path):
+    """A snapshot carries whatever behaviour versions the build that wrote
+    it stamped, and a restore replaces every node's params wholesale — so
+    without the migration one Ctrl+Z lands the node back on the address of
+    audio this build no longer produces. That address still has its
+    artifact, so it is a cache hit, nothing re-renders, and the next load
+    stamps the node onto an address nothing has rendered at all: the node
+    reads unrendered with no job running. Same shape as the null rule two
+    tests up, reached through a version stamp.
+    """
+    from localcut_engine.graph.model import NARRATION_VERSION, NodeKind
+
+    service, project_id = _service(tmp_path)
+    graph = service.store.load_graph(project_id)
+    narr_id = next(n.id for n in graph.nodes.values() if n.kind is NodeKind.NARRATION)
+    service.patch(project_id, [PatchOp(op="set_params", node_id=narr_id, params={"text": "two"})])
+
+    # The snapshot as the previous build wrote it: no version on the node.
+    history = service.store.load_history(project_id)
+    del history.undo[-1].graph["nodes"][narr_id]["params"]["narration_version"]
+    service.store.save_history(project_id, history)
+
+    service.undo(project_id)
+
+    restored = json.loads((service.store._dir(project_id) / "project.json").read_text())
+    assert restored["nodes"][narr_id]["params"]["narration_version"] == NARRATION_VERSION
+    # And the hash the undo enqueued against is the one the next load reads,
+    # rather than flapping between two addresses across a reload.
+    assert service.store.load_graph(project_id).output_hash(narr_id) == StoryGraph.model_validate(
+        restored
+    ).output_hash(narr_id)

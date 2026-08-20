@@ -402,10 +402,10 @@ def test_export_encode_params_reject_off_menu_values():
 
 def test_a_picked_voice_is_editable_and_bounded():
     """`/voices` publishes ids a client sends back, so `voice_id` has to be
-    settable — it was enumerable but unwritable, which made the picker's
-    whole vocabulary unreachable. It is bounded for the reason ToolRequest
-    bounds `model`: the value is persisted onto the node and reaches the
-    backend as a lookup key."""
+    settable — a vocabulary the engine enumerates and no route accepts is
+    not a picker. It is bounded for the reason ToolRequest bounds `model`:
+    the value is persisted onto the node and reaches the backend as a lookup
+    key, and the model writing it on this path is told no vocabulary."""
     graph = make_graph()
     ops, warnings = compile_edits(
         graph,

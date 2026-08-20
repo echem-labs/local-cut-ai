@@ -362,10 +362,10 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         # otherwise the node hash reverts to the pre-edit value, the cached
         # pre-edit audio is served, and the Inspector quietly shows 1.0
         # again.
-        existing = graph.nodes.get(narr_id)
-        for carried in ("speed", "voice_id"):
-            if existing and carried in existing.params:
-                narration_params[carried] = existing.params[carried]
+        existing = graph.nodes.get(narr_id).params if narr_id in graph.nodes else {}
+        narration_params.update(
+            {key: existing[key] for key in ("speed", "voice_id") if key in existing}
+        )
         _ensure_node(graph, narr_id, NodeKind.NARRATION, params=narration_params)
         _ensure_edge(graph, "script", kf_id)
         _ensure_edge(graph, "script", narr_id)

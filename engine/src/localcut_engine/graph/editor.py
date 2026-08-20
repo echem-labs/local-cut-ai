@@ -59,11 +59,13 @@ _MAX_TEXT = 2000
 _MAX_OVERLAY = 200
 _CLIP_MIN_S, _CLIP_MAX_S = 1.0, 15.0
 _SPEED_MIN, _SPEED_MAX = 0.5, 1.5
-# A pack voice id, the shape /voices enumerates. Bounded here because it
-# is persisted onto the node and reaches the backend as a lookup key —
-# the same reason ToolRequest bounds `model`. Membership in the pack is
-# the backend's to answer (it owns the file); this bounds the shape so a
-# path fragment or a novel cannot be stored as a voice in the first place.
+# A pack voice id, the shape /voices enumerates. Bounded on this path
+# because it is persisted onto the node and reaches the backend as a lookup
+# key, and the model writing it is told no vocabulary — the same reason
+# ToolRequest bounds `model`, and the same editor-only reach `speed` and
+# `text` have. Membership in the pack is the backend's to answer, which it
+# does at render; this only keeps a path fragment or a novel out of the
+# shape of a voice.
 _VOICE_ID_RE = re.compile(r"[a-z0-9_-]{1,40}")
 
 SUGGEST_SCENE_SYSTEM_PROMPT = """You are helping build one scene of a short video from a \
@@ -235,6 +237,10 @@ visual style unless asked to change it. "motion" is a short camera direction.
 - narration "text" is spoken aloud. The video's length follows narration length, so to make \
 the video shorter, shorten narration text or remove scenes. narration "speed" is the speech \
 rate (1.0 normal, 0.5-1.5).
+- narration "voice" is a free-text style brief ("warm female narrator") and is what to edit \
+when the instruction describes a voice. narration "voice_id" names one exact speaker in the \
+installed voice pack and overrides the brief; only ever copy a voice_id already shown in the \
+view, never invent or guess one, because an id the pack does not hold fails the render.
 - on-screen text lives in the timeline node's "overlays" (scene id -> text), not on clips.
 - the timeline's "order" lists scene ids in play order; "transitions" maps a scene id to the \
 transition out of that scene: one of cut, crossfade, dip; "trims" maps a scene id to \

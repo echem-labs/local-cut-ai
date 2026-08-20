@@ -662,7 +662,7 @@ def test_a_picked_voice_survives_a_re_expansion():
     """Like speed, an explicitly picked voice has no screenplay source — it
     exists only because the user chose it. Dropping it on re-expansion
     reverts the node hash, so the cached pre-pick audio is served and the
-    picker quietly shows the brief's voice again."""
+    picker shows the brief's voice again with nothing to say why."""
     from localcut_engine.graph.model import NARRATION_VERSION
 
     screenplay = mock_screenplay("octopuses", target_duration_s=30, aspect="16:9", seed=1)

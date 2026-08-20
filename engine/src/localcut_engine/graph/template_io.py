@@ -40,7 +40,15 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .. import __version__, jsondoc
 from ..aspects import EXPORT_RESOLUTIONS
-from .model import GRAPH_VERSION, VOICE_REF_PORT, Edge, Node, NodeKind, StoryGraph
+from .model import (
+    GRAPH_VERSION,
+    VOICE_REF_PORT,
+    Edge,
+    Node,
+    NodeKind,
+    StoryGraph,
+    migrate_graph,
+)
 from .patch import TRANSIENT_PARAMS, stored_params
 
 # The template wire format. Same contract as GRAPH_VERSION: a document from a
@@ -350,11 +358,20 @@ def from_template(document: Any) -> GraphTemplate:
 
 
 def build_graph(template: GraphTemplate) -> StoryGraph:
-    """The StoryGraph a validated template describes."""
-    return StoryGraph(
-        version=GRAPH_VERSION,
-        nodes={nid: node.model_copy(deep=True) for nid, node in template.nodes.items()},
-        edges=[e.model_copy() for e in template.edges],
+    """The StoryGraph a validated template describes.
+
+    Migrated on the way in, because a template is a document this build did
+    not write: the importer enqueues against the graph it returns, so a
+    document carrying an older behaviour version (or none) would render its
+    narration at one address and be re-addressed by the first load
+    afterwards, orphaning the audio the import just paid for.
+    """
+    return migrate_graph(
+        StoryGraph(
+            version=GRAPH_VERSION,
+            nodes={nid: node.model_copy(deep=True) for nid, node in template.nodes.items()},
+            edges=[e.model_copy() for e in template.edges],
+        )
     )
 
 
