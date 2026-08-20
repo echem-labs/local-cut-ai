@@ -331,6 +331,56 @@ describe("a graph patch from the canvas", () => {
 });
 
 /**
+ * Picking a narration voice.
+ *
+ * `voice_id` is part of the node's content address, so both directions move
+ * it — and only one of them can move it BACK. `set_params` reads a null as
+ * "remove the key", so clearing a pick lands on the params a brief-only
+ * render already used and hits its cached audio; storing an explicit null
+ * would be a third state no earlier render can match, which is the failure
+ * the engine's own normalize_params exists to prevent.
+ */
+describe("setVoice", () => {
+  it("sends the picked id", async () => {
+    const patch = vi.fn().mockResolvedValue(undefined);
+    const client = fakeClient({
+      patch,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: { scenes: [] } }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(await useApp.getState().setVoice("s1.narration", "bf_emma")).toBeNull();
+    expect(patch).toHaveBeenCalledWith("p1", [
+      { op: "set_params", node_id: "s1.narration", params: { voice_id: "bf_emma" } },
+    ]);
+  });
+
+  it("clears a pick with null rather than an empty string", async () => {
+    const patch = vi.fn().mockResolvedValue(undefined);
+    const client = fakeClient({
+      patch,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: { scenes: [] } }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    await useApp.getState().setVoice("s1.narration", null);
+
+    const params = patch.mock.calls[0][1][0].params;
+    expect(params).toEqual({ voice_id: null });
+    // "" would be stored and would hash differently from absent, so the
+    // audio rendered before the pick could never be a cache hit again.
+    expect(params.voice_id).not.toBe("");
+  });
+
+  it("reports a refusal rather than throwing", async () => {
+    const client = fakeClient({ patch: vi.fn().mockRejectedValue(new Error("node is pinned")) });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(await useApp.getState().setVoice("s1.narration", "bf_emma")).toBe("node is pinned");
+  });
+});
+
+/**
  * Clearing the quick-tool history.
  *
  * The loop reuses DELETE /projects/{id} rather than adding a bulk route,

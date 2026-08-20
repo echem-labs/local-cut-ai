@@ -55,6 +55,8 @@ const VIDEO_KINDS = [
   "timeline",
   "export",
 ];
+import { useVoices } from "../lib/useVoices";
+import { VoicePicker } from "../components/VoicePicker";
 import { EMPTY_TOOL_OPTIONS, useApp } from "../store";
 
 /** The bundled 2-second samples the voice swatches play. Resolved at build
@@ -111,8 +113,18 @@ export function Home() {
   const tiles = useTileLifecycle();
   const { guard, dialog: readinessDialog } = useReadinessGuard("home");
 
-  const { prompt, tool, toolInput, voice, motion, scriptModel, toolAspect, toolDuration, clipSeconds } =
-    homeDraft;
+  const {
+    prompt,
+    tool,
+    toolInput,
+    voice,
+    voiceId,
+    motion,
+    scriptModel,
+    toolAspect,
+    toolDuration,
+    clipSeconds,
+  } = homeDraft;
   // This video's choices, falling back to the saved baseline. `??` and not
   // `||`: a duration of 0 would never reach the engine, but neither should a
   // legitimate falsy override be mistaken for "unset".
@@ -133,16 +145,18 @@ export function Home() {
   // affordance instead of a play icon that no longer tells the truth.
   const swatchAudioRef = useRef<HTMLAudioElement | null>(null);
   const [swatchPlaying, setSwatchPlaying] = useState<string | null>(null);
-  const playSwatch = (voiceId: string) => {
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const voices = useVoices(tool === "voiceover");
+  const playSwatch = (swatchVoice: string) => {
     swatchAudioRef.current?.pause();
-    if (swatchPlaying === voiceId) {
+    if (swatchPlaying === swatchVoice) {
       setSwatchPlaying(null);
       return;
     }
-    const audio = new Audio(VOICE_SAMPLES[voiceId]);
+    const audio = new Audio(VOICE_SAMPLES[swatchVoice]);
     swatchAudioRef.current = audio;
     audio.addEventListener("ended", () => setSwatchPlaying(null));
-    setSwatchPlaying(voiceId);
+    setSwatchPlaying(swatchVoice);
     // play() returns undefined in environments without media (jsdom).
     const request = audio.play();
     if (request)
@@ -266,7 +280,14 @@ export function Home() {
         tool,
         {
           ...(tool === "voiceover"
-            ? { text: toolInput.trim(), ...(effectiveVoice ? { voice: effectiveVoice } : {}) }
+            ? {
+                text: toolInput.trim(),
+                ...(effectiveVoice ? { voice: effectiveVoice } : {}),
+                // Only an explicit pick travels: absent leaves the node on
+                // the hash a brief-only render used, where null would be a
+                // third state neither the engine nor the cache knows.
+                ...(voiceId ? { voice_id: voiceId } : {}),
+              }
             : { prompt: toolInput.trim() }),
           ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
           ...(tool === "clip" ? { duration_s: seconds, aspect: toolAspect } : {}),
@@ -530,6 +551,19 @@ export function Home() {
               ))}
             </div>
           )}
+          {activeTool.kind === "voiceover" && voiceOpen && voices && (
+            <VoicePicker
+              voices={voices}
+              value={voiceId}
+              onPick={(picked) => {
+                // A pick outranks the brief, so clearing the brief with it
+                // keeps the panel honest: one voice is chosen, one way.
+                setHomeDraft(picked ? { voiceId: picked, voice: "" } : { voiceId: null });
+                setVoiceOpen(false);
+              }}
+              onClose={() => setVoiceOpen(false)}
+            />
+          )}
           {activeTool.kind === "voiceover" && (
             <div className="voice-swatches" role="group" aria-label={t("home.voiceSwatchesAria")}>
               {VOICE_SWATCHES.map((swatch) => {
@@ -565,6 +599,18 @@ export function Home() {
                   </span>
                 );
               })}
+              {/* The five swatches are the fast path and keep their bundled
+                  samples; the pack holds fifty-four, and the rest are one
+                  press away rather than unreachable. */}
+              {voices?.available && (
+                <button className="swatch-more" onClick={() => setVoiceOpen(true)}>
+                  {voiceId
+                    ? t("voices.current", {
+                        name: voices.voices.find((v) => v.id === voiceId)?.name ?? voiceId,
+                      })
+                    : t("voices.more", { count: voices.voices.length })}
+                </button>
+              )}
             </div>
           )}
           {activeTool.kind === "clip" && (

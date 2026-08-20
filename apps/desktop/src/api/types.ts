@@ -574,3 +574,36 @@ export interface TemplateImport {
   cloud_models: string[];
   dropped_assets: number;
 }
+
+/** One narration voice the installed pack holds.
+ *
+ * Every field except `name` is an id, not display copy: the engine sends
+ * `language_code` (an espeak code) and `gender` (a bare token) and the
+ * client labels them out of `i18n/en/voices.json`, the way status words are
+ * labelled. `language_code` and `gender` are null for an id outside the
+ * pack's `<language><gender>_name` scheme — the engine reports that rather
+ * than guessing from a letter that happens to collide.
+ *
+ * `name` is derived from the id and is NOT unique: the shipped pack has
+ * three Santas and two Alphas. `id` is the only identifier.
+ */
+export interface Voice {
+  id: string;
+  name: string;
+  language_code: string | null;
+  gender: string | null;
+}
+
+/** What the narration pack offers.
+ *
+ * `available` is the registry's answer for narration, not "are there files
+ * on disk": a chain that narrates on another backend cannot honor a pick,
+ * and it is false before the weights land too. Which of the two it is
+ * belongs to the readiness surface. `default` is always a member of
+ * `voices`, or null.
+ */
+export interface Voices {
+  available: boolean;
+  voices: Voice[];
+  default: string | null;
+}

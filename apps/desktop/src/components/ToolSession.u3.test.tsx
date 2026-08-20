@@ -48,6 +48,10 @@ function mountSession(
     client: {
       artifactUrl: () => "http://engine/a",
       artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
+      // The voiceover window offers the voice picker, which asks the engine
+      // what the pack holds the moment it mounts.
+      voices: vi.fn().mockResolvedValue({ available: false, voices: [], default: null }),
+      voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
     },
     jobs: [],
     allJobs: [],
