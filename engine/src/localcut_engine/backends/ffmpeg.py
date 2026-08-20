@@ -100,6 +100,20 @@ async def _terminating(process: asyncio.subprocess.Process):
         raise
 
 
+def ffmpeg_available(ffmpeg_bin: str) -> bool:
+    """Whether this name resolves to an ffmpeg the engine can actually run.
+
+    Both halves are needed: the managed download sits at an absolute path
+    outside PATH, and the bare `ffmpeg` default has to be looked up. Shared
+    rather than repeated because three answers have to agree — assembly's
+    claim on its kinds, the aligner's claim on captions (it decodes narration
+    through this binary), and the readiness row that explains a machine
+    without one. Two of them disagreeing is a kind advertised as ready whose
+    every job dies at the first decode.
+    """
+    return Path(ffmpeg_bin).exists() or shutil.which(ffmpeg_bin) is not None
+
+
 def _filter_path(path: Path) -> str:
     """A filesystem path safe to embed in a single-quoted ffmpeg filtergraph
     option (ass=, drawtext textfile=). ffmpeg accepts forward slashes on
@@ -174,9 +188,7 @@ class FFmpegBackend(ExecutionBackend):
         # Binary-gated: without an ffmpeg on disk (managed download) or on
         # PATH, assembly falls through to the chain's fallback instead of
         # failing — and starts claiming the moment the download lands.
-        return kind in _KINDS and (
-            Path(self.ffmpeg_bin).exists() or shutil.which(self.ffmpeg_bin) is not None
-        )
+        return kind in _KINDS and ffmpeg_available(self.ffmpeg_bin)
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         match spec.kind:

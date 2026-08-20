@@ -638,3 +638,39 @@ async def test_project_readiness_honors_node_overrides(client):
     # An unknown project answers 404, not an empty report.
     missing = await client.get("/projects/0123456789/readiness")
     assert missing.status_code == 404
+
+
+async def test_captions_names_the_missing_ffmpeg_rather_than_a_model_it_already_has(tmp_path):
+    """The aligner decodes narration through the ffmpeg binary, so weights
+    alone do not make captions renderable.
+
+    Two wrong answers sit either side of this one. Claiming the kind on the
+    weights alone reports `ready` for a kind whose every job dies at the first
+    decode. Declining it and saying nothing lets `_missing_model_row` read the
+    decline as missing weights - which offers a 140 MB download of a model
+    already sitting on disk, and leaves the binary that is actually missing
+    unmentioned.
+    """
+    weights = tmp_path / "models" / "asr" / "faster-whisper-base.en"
+    weights.mkdir(parents=True)
+    for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt"):
+        (weights / name).touch()
+    config = EngineConfig(
+        data_dir=tmp_path,
+        models_dir=str(tmp_path / "models"),
+        backend="local,mock",
+        llm_url="http://127.0.0.1:9/v1",
+        comfyui_url="http://127.0.0.1:9",
+        ffmpeg_bin=str(tmp_path / "missing" / _FFMPEG_EXE),
+    )
+    rows = _by_kind(
+        await readiness_rows(config, _build_backends(config), [(NodeKind.CAPTIONS, None)])
+    )
+    assert rows["captions"]["reason"] == "no_ffmpeg"
+    assert rows["captions"]["fix"] == {"type": "install_ffmpeg"}
+
+    config = config.model_copy(update={"ffmpeg_bin": _planted_ffmpeg(tmp_path)})
+    rows = _by_kind(
+        await readiness_rows(config, _build_backends(config), [(NodeKind.CAPTIONS, None)])
+    )
+    assert rows["captions"]["verdict"] == "ready", "the binary landed and the row did not follow"
