@@ -31,6 +31,17 @@ _VOICE_MAP = [
 ]
 DEFAULT_VOICE = "af_sarah"
 
+#: The shape of a voice id, anchored so it can be a pydantic path param as
+#: well as an editor guard. Keep the `$` and match it with `fullmatch`:
+#: Python's `$` also matches before a trailing newline, and the rust engine
+#: pydantic uses reads the same text as end-of-text.
+VOICE_ID_PATTERN = r"^[a-z0-9_-]{1,40}$"
+
+#: The line every voice preview says. One sentence for all of them, so the
+#: only difference a listener hears is the voice; "last" and "passed" are
+#: the vowels the English variants actually disagree on.
+PREVIEW_LINE = "The last of the light passed over the water, and the harbour went quiet."
+
 #: Kokoro voice ids encode their language and gender in the first two
 #: characters — `bf_emma` is British female, `am_onyx` American male. These
 #: are the espeak codes the ids map onto; the English names for them live in
@@ -201,6 +212,27 @@ class KokoroBackend(ExecutionBackend):
 
             self._engine = Kokoro(str(self.model_path), str(self.voices_path))
         return self._engine
+
+    async def render_preview(self, voice_id: str, out_dir: Path) -> Path:
+        """`PREVIEW_LINE` in one voice, published in `out_dir` under its id.
+
+        Goes through `execute`, not around it: a preview a caller auditions
+        has to be produced the way a render is, or the picker auditions one
+        thing and the project renders another — which is the defect the
+        bundled swatch samples already had once. `publishing` gives it the
+        same temp-then-rename, so two callers asking for the same voice at
+        once cannot serve each other a half-written file.
+        """
+        spec = JobSpec(
+            node_id="voice-preview",
+            kind=NodeKind.NARRATION,
+            output_hash=voice_id,
+            params={"text": PREVIEW_LINE, "voice_id": voice_id},
+            model=None,
+            seed=0,
+            input_hashes={},
+        )
+        return await self.execute(spec, ExecutionContext(output_dir=out_dir))
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         text = str(spec.params.get("text", "")).strip()

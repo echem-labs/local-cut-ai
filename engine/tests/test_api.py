@@ -1747,3 +1747,75 @@ async def test_voices_needs_the_token(client):
     and an exception would be the one a scanner finds."""
     response = await client.get("/voices", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+
+
+async def test_voice_preview_renders_once_and_is_served_from_disk_after(client, monkeypatch):
+    """The first audition of a voice pays for a synthesis; every later one is
+    a file read. Without the cache a picker would re-synthesize on every
+    press, and a user comparing two voices presses several times a second."""
+    import wave
+
+    from localcut_engine.backends.kokoro import KokoroBackend
+
+    renders: list[str] = []
+
+    async def fake_render(self, voice_id, out_dir):
+        renders.append(voice_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / f"{voice_id}.wav"
+        with wave.open(str(target), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b"\0\0" * 2400)
+        return target
+
+    monkeypatch.setattr(KokoroBackend, "render_preview", fake_render)
+    _stub_narration(monkeypatch, ("bf_emma",))
+
+    first = await client.get("/voices/bf_emma/preview")
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "audio/wav"
+    assert first.content[:4] == b"RIFF"
+    second = await client.get("/voices/bf_emma/preview")
+    assert second.status_code == 200
+    assert second.content == first.content
+    assert renders == ["bf_emma"], "the second audition re-synthesized"
+
+
+async def test_voice_preview_is_a_404_when_the_pack_does_not_hold_it(client, monkeypatch):
+    """The ordinary answer to a client holding a list from before the pack
+    changed - not a 500, and not a rendered substitute voice."""
+    from localcut_engine.backends.base import GenerationError
+    from localcut_engine.backends.kokoro import KokoroBackend
+
+    async def refuse(self, voice_id, out_dir):
+        raise GenerationError(f"no voice {voice_id!r} in the installed pack")
+
+    monkeypatch.setattr(KokoroBackend, "render_preview", refuse)
+    _stub_narration(monkeypatch, ("af_sarah",))
+
+    response = await client.get("/voices/zz_nobody/preview")
+    assert response.status_code == 404
+    assert "zz_nobody" in response.json()["detail"]
+
+
+async def test_voice_preview_is_a_404_when_narration_will_not_use_the_pack(client):
+    """The test chain narrates on mock, so there is no pack to audition."""
+    response = await client.get("/voices/bf_emma/preview")
+    assert response.status_code == 404
+
+
+async def test_voice_preview_refuses_a_path_that_is_not_a_voice_id(client):
+    """The id reaches a filename, so its shape is bounded at the route. A
+    traversal must not resolve, and must not reach the backend to find out."""
+    for path in ("..%2F..%2Fetc%2Fpasswd", "BF_EMMA", "bf%20emma", "x" * 41):
+        response = await client.get(f"/voices/{path}/preview")
+        assert response.status_code in (404, 422), path
+
+
+async def test_voice_preview_needs_the_token(client):
+    response = await client.get(
+        "/voices/bf_emma/preview", headers={"Authorization": "Bearer wrong"}
+    )
+    assert response.status_code == 401

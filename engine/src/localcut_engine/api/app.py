@@ -43,7 +43,7 @@ from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
-from ..backends.kokoro import DEFAULT_VOICE, KokoroBackend
+from ..backends.kokoro import DEFAULT_VOICE, VOICE_ID_PATTERN, KokoroBackend
 from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..comfy import allowlist as comfy_allowlist
@@ -201,6 +201,7 @@ NodeId = Annotated[str, PathParam(pattern=NODE_ID_PATTERN)]
 OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
 JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
 ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+VoiceId = Annotated[str, PathParam(pattern=VOICE_ID_PATTERN)]
 
 # Node kinds that render as jobs, in pipeline order — the Settings backend
 # panel shows this list verbatim (scene/asset nodes never reach a backend).
@@ -798,6 +799,43 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         ids = [voice["id"] for voice in installed]
         default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
         return {"available": True, "voices": installed, "default": default}
+
+    @app.get("/voices/{voice_id}/preview", dependencies=[Authed])
+    async def voice_preview(voice_id: VoiceId) -> FileResponse:
+        """One voice saying the same line, so a picker can be auditioned.
+
+        Synthesized here rather than shipped with the client: the pack holds
+        fifty-four voices and which ones are installed is a property of this
+        machine, so a bundled set would be both large and wrong — and a
+        preview rendered by a different build than the project is the drift
+        the swatch samples already had once.
+
+        Published under the voice id and served from disk afterwards. The
+        first audition of a voice pays for a synthesis, every later one is a
+        file read, and a re-download of the pack replaces the audio because
+        the id is the name.
+        """
+        previews = config.data_dir / "previews"
+
+        def narration_kokoro() -> KokoroBackend | None:
+            try:
+                backend = backends.resolve(NodeKind.NARRATION)
+            except GenerationError:
+                return None
+            return backend if isinstance(backend, KokoroBackend) else None
+
+        backend = await asyncio.to_thread(narration_kokoro)
+        if backend is None:
+            raise HTTPException(status_code=404, detail="no voice pack is serving narration")
+        cached = previews / f"{voice_id}.wav"
+        if not await asyncio.to_thread(cached.exists):
+            # An id outside the pack is a 404, not a 500: it is the ordinary
+            # answer to a client holding a list from before a pack changed.
+            try:
+                await backend.render_preview(voice_id, previews)
+            except GenerationError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(cached, media_type="audio/wav", filename=f"{voice_id}.wav")
 
     def _defaults_payload(defaults: dict[str, str]) -> dict:
         """`auto` travels with every answer, GET and PUT alike: the picker

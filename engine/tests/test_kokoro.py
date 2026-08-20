@@ -10,6 +10,7 @@ from conftest import make_spec
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.backends.kokoro import (
+    PREVIEW_LINE,
     KokoroBackend,
     describe_voice,
     language_of,
@@ -388,3 +389,54 @@ async def test_a_speed_outside_the_synthesizers_range_is_clamped_not_asserted(
     )
     await backend.execute(spec, ExecutionContext(output_dir=tmp_path))
     assert calls == [asked]
+
+
+def test_a_voice_id_pattern_is_anchored_and_read_with_fullmatch():
+    """The pattern is shared with a pydantic path param, so its text has to
+    mean the same thing to both engines. Python's `$` also matches before a
+    trailing newline; the rust engine pydantic uses reads it as end-of-text
+    and has no `\\Z`, so `fullmatch` is what makes the two agree."""
+    import re
+
+    from localcut_engine.backends.kokoro import VOICE_ID_PATTERN
+
+    pattern = re.compile(VOICE_ID_PATTERN)
+    assert VOICE_ID_PATTERN.startswith("^") and VOICE_ID_PATTERN.endswith("$")
+    assert pattern.fullmatch("bf_emma")
+    for bad in ("bf_emma\n", "../etc/passwd", "BF_EMMA", "", "x" * 41, "a b"):
+        assert not pattern.fullmatch(bad), bad
+
+
+async def test_a_preview_is_rendered_the_way_a_project_renders_it(tmp_path, monkeypatch):
+    """A preview auditioned in a picker has to come off the same path a
+    render does. Going around `execute` is how the bundled swatch samples
+    drifted from what the engine produced; this asserts the call reaches it,
+    carrying the preview line and the voice asked for."""
+    import numpy as np
+
+    calls = []
+
+    class FakeEngine:
+        def create(self, text, voice, speed, lang):
+            calls.append({"text": text, "voice": voice, "speed": speed, "lang": lang})
+            return np.zeros(2400, dtype="float32"), 24000
+
+    backend = KokoroBackend(models_dir=tmp_path)
+    monkeypatch.setattr(backend, "_load", lambda: FakeEngine())
+    monkeypatch.setattr(backend, "_installed_ids", lambda: {"bf_emma"})
+
+    rendered = await backend.render_preview("bf_emma", tmp_path / "previews")
+    # Published under the id, so the id is the cache key and a re-downloaded
+    # pack replaces the audio rather than accumulating beside it.
+    assert rendered.name == "bf_emma.wav"
+    assert rendered.exists()
+    assert calls == [{"text": PREVIEW_LINE, "voice": "bf_emma", "speed": 1.0, "lang": "en-gb"}], (
+        calls
+    )
+
+
+async def test_a_preview_of_a_voice_the_pack_lacks_is_refused(tmp_path, monkeypatch):
+    backend = KokoroBackend(models_dir=tmp_path)
+    monkeypatch.setattr(backend, "_installed_ids", lambda: {"af_sarah"})
+    with pytest.raises(GenerationError, match="no voice 'bf_emma'"):
+        await backend.render_preview("bf_emma", tmp_path / "previews")
