@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from .backends.base import BackendRegistry, GenerationError
+from .backends.ffmpeg import ffmpeg_available
 from .config import EngineConfig
 from .graph.model import NodeKind
 from .manifest.capability import COMFY_TASKS, installed_by_task, installed_comfy_models
@@ -416,6 +417,20 @@ def _missing_model_row(
     )
 
 
+def _transcribe_weights_installed(snap: _Snapshot, config: EngineConfig) -> bool:
+    """Whether anything the aligner could load is on disk.
+
+    Read off the manifest rather than `snap.installed`, which holds only the
+    ComfyUI kinds — captions has never had an entry there, so a membership
+    test against it answers False on a fully downloaded machine.
+    """
+    tasks = _DOWNLOAD_TASKS[NodeKind.CAPTIONS]
+    return any(
+        entry.task in tasks and is_downloaded(entry, config.resolved_models_dir)
+        for entry in snap.entries
+    )
+
+
 def _comfy_row(snap: _Snapshot, config: EngineConfig, kind: NodeKind, model: str | None) -> dict:
     """ComfyUI won the kind. What it will actually load depends on the
     node's model and on `_template_path`'s fallback chain, not on the fact
@@ -526,6 +541,26 @@ def _local_row(
                 reason=("llm_server_down" if backends.find("llm") else "backend_not_configured"),
                 backend=name,
                 model=model,
+            )
+        if (
+            kind is NodeKind.CAPTIONS
+            and not ffmpeg_available(config.resolved_ffmpeg_bin)
+            and _transcribe_weights_installed(snap, config)
+        ):
+            # Weights are installed and the aligner is in the chain, so the
+            # only thing left that can have declined captions is the ffmpeg
+            # binary it decodes narration through — the same shape as the
+            # ComfyUI branch in `_missing_model_row`. Gated on the weights
+            # because a machine with neither is better told about the model:
+            # `_missing_model_row` names one it can download, and this row
+            # would replace that with a binary no download supplies.
+            return _row(
+                kind,
+                verdict="placeholder",
+                reason="no_ffmpeg",
+                backend=name,
+                model=model,
+                fix={"type": "install_ffmpeg"},
             )
         return _missing_model_row(
             snap, backends, kind, verdict="placeholder", backend=name, model=model
