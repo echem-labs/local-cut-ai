@@ -17,7 +17,9 @@ closure.
 
 from __future__ import annotations
 
+import ast
 import importlib.metadata as metadata
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -29,6 +31,8 @@ from packaging.utils import canonicalize_name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
+    FREEZE_EXCLUDES,
+    _LINKED_INTO,
     _LICENCE_FILENAMES,
     _SOURCE_FILENAMES,
     _is_own_metadata,
@@ -40,7 +44,9 @@ from third_party_notices import (  # noqa: E402  (needs the path above)
     licence_classifiers,
     licence_texts,
     runtime_distributions,
+    shipped_distributions,
     site_package_roots,
+    statically_linked,
     write_notices,
 )
 
@@ -596,3 +602,236 @@ def test_it_writes_a_file_with_a_body(tmp_path: Path) -> None:
     # from the outside: the file exists, in the right place, saying nothing.
     assert len(text.splitlines()) > 500
     assert text.endswith("\n")
+
+
+class TestWhatIsKeptOutOfTheFreeze:
+    """`FREEZE_EXCLUDES` is the one list of what the installer does not carry.
+
+    Both ends read it — `localcut.spec` passes it to PyInstaller's `excludes`,
+    and `shipped_distributions()` drops whatever provides one — so the document
+    describes the installer rather than the build environment, which still has
+    every one of them installed.
+    """
+
+    def test_the_notices_do_not_claim_an_excluded_distribution(self):
+        # `av` is the case this exists for: faster-whisper requires it, so it
+        # is in the closure and in this venv, and it is not in the freeze. A
+        # notices file listing it would name a licence for something a
+        # recipient never received.
+        shipped = {canonicalize_name(d.metadata["Name"]) for d in shipped_distributions()}
+        walked = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
+        assert "av" not in shipped, "PyAV is excluded from the freeze but the notices still list it"
+        # Asserted from the other side too, because a walk that stopped
+        # reaching `av` at all would satisfy the line above while the filter
+        # did nothing: `av` has to be in the closure for its absence from the
+        # shipped set to mean the subtraction ran.
+        assert "av" in walked, "the closure no longer reaches PyAV, so nothing proves the filter"
+
+    def test_the_closure_the_licence_guards_read_is_not_narrowed_by_the_excludes(self):
+        # `test_no_distribution_declares_copyleft_outside_the_recorded_set`
+        # walks `runtime_distributions()` to force a decision on every
+        # dependency declaring GPL terms. Subtracting the freeze's excludes
+        # there would let a name added to FREEZE_EXCLUDES carry a new copyleft
+        # dependency past that guard — while `uv sync` and the Docker image
+        # still install it.
+        walked = {canonicalize_name(d.metadata["Name"]) for d in runtime_distributions()}
+        excluded = {
+            canonicalize_name(provider)
+            for module in FREEZE_EXCLUDES
+            for provider in metadata.packages_distributions().get(module, ())
+        }
+        assert excluded, "no FREEZE_EXCLUDES entry resolves to a distribution — test is stale"
+        assert excluded <= walked, f"{sorted(excluded - walked)} left the closure the guards read"
+
+    def test_av_is_installed_here_so_the_filter_is_doing_something(self):
+        # Without this the test above passes in an environment that simply
+        # never had `av`, which is the shape that makes a filter look correct
+        # while doing nothing.
+        assert metadata.packages_distributions().get("av"), (
+            "av is not installed, so nothing proves the exclusion filter runs"
+        )
+
+    def test_the_spec_takes_its_excludes_from_this_list(self):
+        # The value would otherwise be written twice on either side of a
+        # boundary no build step reconciles: PyInstaller never reads this
+        # module's list, and this module never reads the spec.
+        #
+        # Read off the ast rather than out of the text, for the reason
+        # test_license_boundaries states about its own guard: a substring test
+        # cannot tell live code from a line someone commented out while
+        # debugging a build, and a commented-out `runtime_hooks` ships a freeze
+        # that dies on faster-whisper's module-scope `import av`.
+        spec = (Path(__file__).resolve().parents[1] / "localcut.spec").read_text()
+        analysis = next(
+            node
+            for node in ast.walk(ast.parse(spec))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Analysis"
+        )
+        arguments = {keyword.arg: keyword.value for keyword in analysis.keywords}
+        excludes = arguments.get("excludes")
+        assert (
+            isinstance(excludes, ast.Call)
+            and getattr(excludes.func, "id", None) == "list"
+            and [getattr(arg, "id", None) for arg in excludes.args] == ["FREEZE_EXCLUDES"]
+        ), "localcut.spec no longer derives its excludes from FREEZE_EXCLUDES"
+        hooks = ast.unparse(arguments.get("runtime_hooks") or ast.Constant(""))
+        assert "rthook_av.py" in hooks, "the PyAV stub hook is not registered in the spec"
+        # Anchored to SPECPATH, because PyInstaller resolves a relative
+        # `scripts` entry against the spec's directory but pushes a runtime
+        # hook through a bare `os.path.abspath` — which resolves against the
+        # working directory. Spelled relative, the hook is found only when
+        # pyinstaller runs from `engine/`.
+        assert "SPECPATH" in hooks, (
+            "the runtime hook path is not anchored at SPECPATH, so it resolves "
+            "against the working directory instead of the spec's own"
+        )
+
+    def test_the_stub_hook_registers_a_module_that_refuses(self, monkeypatch):
+        # The stub stands in for a package we removed. If it answered
+        # attribute lookups with a mock, a future faster-whisper that reaches
+        # for PyAV somewhere new would fail somewhere far away from the cause.
+        hook = (Path(__file__).resolve().parents[1] / "packaging" / "rthook_av.py").read_text()
+        # Run against a `sys.modules` this test owns, because the hook's whole
+        # job is a side effect on that dict. Asserting on the module object the
+        # hook happens to build leaves the registration untested - delete the
+        # `setdefault` and the freeze ships a hook that builds a stub and
+        # throws it away, with the suite green. Executing it against the live
+        # dict is not free either: on a checkout with no ASR weights nothing
+        # has imported PyAV yet, so the raising stub would outlive this test in
+        # a process every later test shares.
+        monkeypatch.setitem(sys.modules, "av", None)
+        del sys.modules["av"]
+
+        namespace: dict = {}
+        exec(compile(hook, "rthook_av.py", "exec"), namespace)  # noqa: S102
+
+        stub = sys.modules["av"]
+        assert stub is namespace["_av"], "the hook built a stub and never registered it"
+        with pytest.raises(RuntimeError, match="deliberately not bundled"):
+            stub.open
+        # Dunders answer rather than refuse. `inspect.getmodule` walks every
+        # entry in sys.modules asking `hasattr(module, "__file__")` and
+        # `pickle` probes modules inside an `except AttributeError`, so a stub
+        # that raises out of those puts "PyAV is deliberately not bundled" on
+        # an unrelated traceback anywhere in the frozen engine.
+        assert getattr(stub, "__file__", None) is None
+        assert repr(stub) == "<module 'av'>"
+
+
+class TestWhatShipsInsideSomethingElse:
+    """Libraries with no file of their own still have to be named.
+
+    Everything else in this module answers "what is in the box" by looking at
+    filenames, which is the right question for a directory of `.so`s and the
+    wrong one for a static link: `soundfile`'s libsndfile is built with LAME
+    and mpg123 compiled in and ships as a single binary. Both are LGPL and both
+    are redistributed, so a document assembled from filenames alone is silent
+    about them.
+    """
+
+    def test_a_library_compiled_into_another_one_is_named(self):
+        # Named through the carrier, so the claim is conditional on the
+        # carrier actually shipping rather than asserted unconditionally.
+        assert statically_linked(["libsndfile"]) == ["libmp3lame", "libmpg123"]
+        assert statically_linked(["libctranslate2"]) == []
+
+    def test_the_document_carries_them_under_a_heading_that_says_why(self):
+        document = build_notices(["libsndfile", "libctranslate2"])
+        for library in ("libmp3lame", "libmpg123"):
+            assert f"  {library} — " in document, f"{library} ships and the notices do not name it"
+        assert "no file of their own" in document, (
+            "the carried libraries are listed with the rest, so the document "
+            "reads as though a file was found for them"
+        )
+
+    def test_one_that_also_ships_as_a_file_is_not_named_twice(self):
+        # A machine with a system libsndfile pulls its dependencies in beside
+        # it, so `libmp3lame` can arrive as a file as well. Listed from both
+        # places it reads as two components rather than one named twice.
+        assert statically_linked(["libsndfile", "libmp3lame"]) == ["libmpg123"]
+        document = build_notices(["libsndfile", "libmp3lame"])
+        assert document.count("  libmp3lame — ") == 1
+
+    def test_the_carrier_really_carries_them(self):
+        # The rest of this class asserts the plumbing. This asserts the fact,
+        # which is the half that can quietly stop being true: an upstream
+        # `soundfile` that dropped mp3 support, or linked LAME dynamically,
+        # would leave the document naming something the box no longer has.
+        # Read out of the installed binary rather than recorded here, so the
+        # next wheel is what answers.
+        carrier = next(
+            (
+                path
+                for root in site_package_roots()
+                for path in (root / "_soundfile_data").glob("libsndfile*")
+                if path.is_file()
+            ),
+            None,
+        )
+        if carrier is None:
+            pytest.skip("the soundfile wheel's libsndfile is not installed here")
+        blob = carrier.read_bytes()
+        for library, marker in (("libmp3lame", b"LAME3."), ("libmpg123", b"mpg123")):
+            assert marker in blob, (
+                f"{carrier.name} no longer contains {library}, which _LINKED_INTO "
+                f"says it carries - prune the entry rather than shipping a "
+                f"notice for something that is not there"
+            )
+
+    def test_each_one_is_named_with_its_terms(self):
+        # Same rule the collected libraries are held to: listed bare, a
+        # copyleft library reads as a claim that it carries no such terms.
+        for guests in _LINKED_INTO.values():
+            for guest in guests:
+                assert copyleft_note(guest), f"{guest} is listed with nothing beside it"
+
+
+class TestTheContainerKeepsPyAVOutToo:
+    """The image is the second thing that redistributes this closure.
+
+    `localcut.spec` keeps PyAV out of the installers; without the same move
+    here, `uv sync` puts its FFmpeg build - x264 and x265 among it - into an
+    image whose own ffmpeg is pinned to an LGPL build precisely to keep them
+    out.
+    """
+
+    @staticmethod
+    def _stub():
+        path = Path(__file__).resolve().parents[1] / "packaging" / "av_stub.py"
+        spec = importlib.util.spec_from_file_location("av_stub_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_it_refuses_a_real_pyav_attribute(self):
+        with pytest.raises(RuntimeError, match="deliberately not bundled"):
+            self._stub().open
+
+    def test_it_answers_the_lookups_a_module_is_expected_to_answer(self):
+        # Same reasoning as the freeze's hook: `__path__` in particular is read
+        # inside an `except AttributeError` to decide whether `import av.audio`
+        # is a submodule import, so refusing there raises a RuntimeError out of
+        # a statement an `except ImportError` is written to catch.
+        stub = self._stub()
+        assert getattr(stub, "__path__", None) is None
+        assert isinstance(repr(stub), str)
+
+    def test_the_dockerfile_drops_pyav_and_puts_the_stub_in_its_place(self):
+        dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+        assert "uv pip uninstall av" in dockerfile, "the image still installs PyAV"
+        assert "packaging/av_stub.py" in dockerfile, (
+            "PyAV is uninstalled with nothing standing in for it, so "
+            "faster-whisper's module-scope import fails at the first captions job"
+        )
+
+    def test_the_entrypoint_does_not_put_it_back(self):
+        # `uv run` reconciles the environment against the lock before running
+        # anything, and the lock still contains PyAV - it is faster-whisper's
+        # dependency and dropping it there would drop it for the tests. Without
+        # --no-sync the wheel is reinstalled on every container start, so the
+        # image is clean when it is inspected and not when it runs.
+        dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+        entrypoint = next(line for line in dockerfile.splitlines() if line.startswith("ENTRYPOINT"))
+        assert '"--no-sync"' in entrypoint, (
+            "the entrypoint re-syncs from the lock, which reinstalls PyAV at runtime"
+        )

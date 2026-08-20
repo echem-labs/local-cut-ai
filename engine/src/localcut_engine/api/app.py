@@ -386,6 +386,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     AlignBackend(
                         models_dir=config.resolved_models_dir,
                         file_dests=_model_dests(config, "faster-whisper-base-en"),
+                        ffmpeg_bin=config.resolved_ffmpeg_bin,
                     )
                 )
             case "ffmpeg":

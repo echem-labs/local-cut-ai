@@ -1,6 +1,12 @@
 """Caption assembly units (pure functions) and the alignment backend —
 real synthesis+alignment only where the model files are present."""
 
+import os
+import shutil
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 from conftest import make_spec
 
@@ -22,6 +28,12 @@ from localcut_engine.graph.model import CAPTIONS_PORT, NodeKind
 
 MODELS_DIR = EngineConfig.from_env().resolved_models_dir
 ALIGN_PRESENT = (MODELS_DIR / "asr" / "faster-whisper-base.en" / "model.bin").exists()
+# Same resolution the assembly suite uses: the managed download this repo
+# installs sits outside PATH on a dev box, so `shutil.which` alone reports it
+# absent and every decode test below would pass through the branch that says
+# ffmpeg is missing.
+FFMPEG = os.environ.get("LOCALCUT_FFMPEG_BIN") or shutil.which("ffmpeg")
+RTHOOK = Path(__file__).resolve().parents[1] / "packaging" / "rthook_av.py"
 KOKORO_PRESENT = (MODELS_DIR / "tts" / "kokoro-v1.0.onnx").exists() and (
     MODELS_DIR / "tts" / "voices-v1.0.bin"
 ).exists()
@@ -284,8 +296,8 @@ async def test_missing_model_gives_actionable_error(tmp_path):
 
 
 @pytest.mark.skipif(
-    not (ALIGN_PRESENT and KOKORO_PRESENT),
-    reason="alignment/tts model files not downloaded",
+    not (ALIGN_PRESENT and KOKORO_PRESENT and FFMPEG),
+    reason="alignment/tts model files not downloaded, or no ffmpeg",
 )
 async def test_real_narration_aligns_to_timed_captions(tmp_path):
     """Kokoro speaks a known line; faster-whisper must return word-timed cues
@@ -311,7 +323,7 @@ async def test_real_narration_aligns_to_timed_captions(tmp_path):
     edl_path = tmp_path / "e.timeline.json"
     edl_path.write_text(json.dumps(edl))
 
-    backend = AlignBackend(models_dir=MODELS_DIR)
+    backend = AlignBackend(models_dir=MODELS_DIR, ffmpeg_bin=FFMPEG)
     out = await backend.execute(
         make_spec(NodeKind.CAPTIONS, output_hash="c" * 64),
         ExecutionContext(output_dir=tmp_path, input_artifacts={"default": edl_path}),
@@ -363,3 +375,282 @@ def test_no_floor_keeps_the_conservative_behaviour():
 
     words = anchor_words_to_text([Word("flares", 1.0, 1.5)], "at solar flares")
     assert all(w.start >= 1.0 for w in words)
+
+
+def test_alignment_hands_the_model_samples_rather_than_a_path(tmp_path, monkeypatch):
+    """Whose decoder reads the narration, asserted where it is decided.
+
+    Handed a path, faster-whisper decodes it through PyAV — whose wheel bundles
+    a full FFmpeg build, libx264 and libx265 among it, for a code path this
+    engine has no other use for. Handed samples it decodes nothing, which is
+    what lets the freeze leave PyAV out entirely. A path reaching `transcribe`
+    puts 100 MB and two GPL video encoders back in the installer, and nothing
+    else in the suite would notice.
+    """
+    import numpy as np
+
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg")
+    seen: dict = {}
+
+    class _Model:
+        feature_extractor = SimpleNamespace(sampling_rate=16000)
+
+        def transcribe(self, audio, **kwargs):
+            seen["audio"] = audio
+            return [], None
+
+    monkeypatch.setattr(AlignBackend, "_load", lambda self: _Model())
+    monkeypatch.setattr(
+        AlignBackend, "_decode", lambda self, path, rate: np.zeros(rate, dtype=np.float32)
+    )
+    backend._align_one(tmp_path / "narration.wav", 0.0)
+
+    assert isinstance(seen["audio"], np.ndarray), (
+        "transcribe was handed something other than samples - PyAV decodes it"
+    )
+    assert seen["audio"].dtype == np.float32
+
+
+def test_the_decode_rate_is_the_model_s_own(tmp_path, monkeypatch):
+    """faster-whisper divides the sample count by its feature extractor's rate
+    to place every word, and does that whether or not it decoded the audio.
+
+    So a rate written down beside the decode rather than read from the model
+    is a value written twice across a boundary nothing reconciles: let the two
+    disagree and every caption timestamp is scaled by the ratio, in a
+    well-formed SRT with nothing on its face to say the timings are wrong.
+    """
+    import numpy as np
+
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg")
+    asked: dict = {}
+
+    class _Model:
+        # Deliberately not 16 kHz: a decode that ignores the model answers
+        # this test correctly by accident.
+        feature_extractor = SimpleNamespace(sampling_rate=8000)
+
+        def transcribe(self, audio, **kwargs):
+            return [], None
+
+    def _decode(self, path, rate):
+        asked["rate"] = rate
+        return np.zeros(rate, dtype=np.float32)
+
+    monkeypatch.setattr(AlignBackend, "_load", lambda self: _Model())
+    monkeypatch.setattr(AlignBackend, "_decode", _decode)
+    backend._align_one(tmp_path / "narration.wav", 0.0)
+
+    assert asked["rate"] == 8000, "narration is decoded at a rate the model does not use"
+
+
+@pytest.mark.skipif(FFMPEG is None, reason="ffmpeg not installed")
+def test_a_narration_file_ffmpeg_cannot_read_is_a_generation_error(tmp_path):
+    """Decoding is a subprocess, so its failure has to be translated at the
+    boundary or it reaches the board as an unhandled crash rather than as a job
+    that failed with a reason.
+
+    Gated on ffmpeg, and asserted against the other branch's wording: without a
+    binary this takes the "could not be run" path the next test covers, and
+    reports the exit-status path as covered without ever entering it.
+    """
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin=FFMPEG)
+    not_audio = tmp_path / "narration.wav"
+    not_audio.write_text("this is not a wav file")
+
+    with pytest.raises(GenerationError, match="could not decode narration") as raised:
+        backend._decode(not_audio, 16000)
+    assert "could not be run" not in str(raised.value), (
+        "ffmpeg never ran, so this is not the exit-status branch it claims to cover"
+    )
+
+
+def test_a_missing_ffmpeg_is_a_generation_error_too(tmp_path):
+    """The other way the subprocess does not run. `ffmpeg` is resolved from
+    config and can be absent on a machine that never downloaded it."""
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin="ffmpeg-that-is-not-installed")
+
+    with pytest.raises(GenerationError, match="could not be run"):
+        backend._decode(tmp_path / "narration.wav", 16000)
+
+
+@pytest.mark.skipif(FFMPEG is None, reason="ffmpeg not installed")
+def test_a_decode_that_yields_no_samples_fails_rather_than_captioning_nothing(tmp_path):
+    """ffmpeg exits 0 having written nothing for an input whose audio stream
+    holds no samples. Passed on, `transcribe` finds no words in it, the job
+    publishes an SRT with that scene simply missing and reports success, and
+    the empty answer is cached under the output hash for good - the one
+    failure mode a captions job has no way to show the reader."""
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin=FFMPEG)
+    empty = tmp_path / "narration.wav"
+    subprocess.run(
+        [
+            FFMPEG,
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=16000:cl=mono",
+            "-t",
+            "0",
+            "-c:a",
+            "pcm_s16le",
+            str(empty),
+        ],
+        check=True,
+    )
+
+    with pytest.raises(GenerationError, match="not a whole 16-bit sample stream"):
+        backend._decode(empty, 16000)
+
+
+def test_alignment_claims_captions_only_where_it_can_decode_them(tmp_path):
+    """The aligner reads narration through the ffmpeg binary, so weights alone
+    are not enough to serve the kind.
+
+    Claiming it without one is worse than not claiming it: the chain's
+    fallback is never consulted and the readiness report says `ready` for a
+    kind whose every job dies at decode. `FFmpegBackend.supports` gates the
+    same binary for the same reason.
+    """
+    (tmp_path / "asr" / "faster-whisper-base.en").mkdir(parents=True)
+    (tmp_path / "asr" / "faster-whisper-base.en" / "model.bin").touch()
+
+    assert AlignBackend(models_dir=tmp_path, ffmpeg_bin=FFMPEG or "ffmpeg").supports(
+        NodeKind.CAPTIONS
+    ) is (FFMPEG is not None)
+    assert not AlignBackend(
+        models_dir=tmp_path, ffmpeg_bin=str(tmp_path / "missing" / "ffmpeg")
+    ).supports(NodeKind.CAPTIONS)
+
+
+@pytest.mark.skipif(not ALIGN_PRESENT, reason="alignment model files not downloaded")
+def test_alignment_still_works_with_pyav_unimportable(tmp_path):
+    """The condition the freeze actually ships, reproduced in a subprocess.
+
+    `localcut.spec` excludes `av` and a runtime hook puts a raising stub in
+    `sys.modules` under that name, because faster-whisper imports PyAV at
+    module scope and would otherwise fail outright. Nothing else here can
+    check that: this venv has the real PyAV installed, so every other test
+    passes whether or not the engine actually depends on it.
+
+    So: block the real package at the finder, run the shipped hook, and
+    transcribe. If this passes, the frozen engine transcribes without the
+    100 MB of GPL-carrying FFmpeg that wheel brings.
+
+    The hook file is read and executed rather than retyped here: a second
+    stub written out inline is a copy of the thing under test, and no change
+    to the one that actually ships could make this go red.
+    """
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(f"""
+        import sys, importlib.abc
+        import numpy as np
+
+        class Blocked(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "av" or name.startswith("av."):
+                    raise ImportError("PyAV is not present in the freeze")
+                return None
+
+        sys.meta_path.insert(0, Blocked())
+        source = open({str(RTHOOK)!r}, encoding="utf-8").read()
+        exec(compile(source, "rthook_av.py", "exec"), {{}})
+        assert "av" in sys.modules, "the hook registered nothing under the name"
+
+        from faster_whisper import WhisperModel
+        model = WhisperModel({str(MODELS_DIR / "asr" / "faster-whisper-base.en")!r},
+                             device="cpu", compute_type="int8")
+        # Silence is enough: the model must run, not recognise anything.
+        segments, _ = model.transcribe(np.zeros(16000, dtype=np.float32),
+                                       language="en", beam_size=1,
+                                       word_timestamps=True, vad_filter=False)
+        list(segments)
+        print("OK")
+    """)
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path, timeout=300
+    )
+    assert done.returncode == 0, f"transcription needs PyAV after all:\n{done.stderr[-2000:]}"
+    assert "OK" in done.stdout
+
+
+def test_faster_whisper_imports_with_pyav_absent(tmp_path):
+    """The half of the claim above that needs no model weights.
+
+    CI downloads none, so the transcription test skips there and the freeze's
+    load-bearing assumption - that `import faster_whisper` survives PyAV being
+    excluded - is gated on a machine nobody runs. This part is unskippable:
+    block the real package, run the shipped hook, import the library.
+    """
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(f"""
+        import sys, importlib.abc
+
+        class Blocked(importlib.abc.MetaPathFinder):
+            def find_spec(self, name, path=None, target=None):
+                if name == "av" or name.startswith("av."):
+                    raise ImportError("PyAV is not present in the freeze")
+                return None
+
+        sys.meta_path.insert(0, Blocked())
+        exec(compile(open({str(RTHOOK)!r}, encoding="utf-8").read(), "rthook_av.py", "exec"), {{}})
+        import faster_whisper
+        # The stub stands where a module stands: refusing a `hasattr` or a
+        # `repr` puts this message on an unrelated traceback somewhere else
+        # entirely, because `inspect` and `pickle` walk all of sys.modules.
+        assert repr(sys.modules["av"]) == "<module 'av'>"
+        assert getattr(sys.modules["av"], "__file__", None) is None
+        print("OK")
+    """)
+    done = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, cwd=tmp_path, timeout=120
+    )
+    assert done.returncode == 0, (
+        f"faster-whisper cannot import without PyAV:\n{done.stderr[-2000:]}"
+    )
+    assert "OK" in done.stdout
+
+
+@pytest.mark.skipif(FFMPEG is None, reason="ffmpeg not installed")
+def test_a_real_decode_returns_the_scale_and_the_rate_it_was_asked_for(tmp_path):
+    """The one path nothing else here runs.
+
+    Both failure branches are covered above and the round trip is not: the
+    only success path is inside `test_real_narration_aligns_to_timed_captions`,
+    which needs model weights CI does not download. So `-ar`, `-f s16le` and
+    the `/ 32768.0` that turns them back into faster-whisper's own scale are
+    three values a change could silently move - into captions that are still
+    well-formed and timed against the wrong clock.
+
+    Written here rather than synthesised by ffmpeg, because the assertion is
+    about amplitude and `sine` emits at -18 dBFS - which passes whether or not
+    the conversion scales at all.
+    """
+    import wave
+
+    import numpy as np
+
+    backend = AlignBackend(models_dir=tmp_path, ffmpeg_bin=FFMPEG)
+    full_scale = tmp_path / "narration.wav"
+    with wave.open(str(full_scale), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        # Alternating peaks: a square wave at the Nyquist limit, so every
+        # sample sits at an end of the 16-bit range.
+        handle.writeframes(np.tile(np.array([32767, -32768], np.int16), 16000).tobytes())
+
+    samples = backend._decode(full_scale, 16000)
+    assert samples.dtype == np.float32
+    assert samples.shape == (32000,), "the decode did not honour the rate it was given"
+    # s16 handed on unscaled would come back around 32767 instead.
+    assert 0.99 < float(np.abs(samples).max()) <= 1.0
+
+    assert backend._decode(full_scale, 8000).shape == (16000,), "the rate is not reaching ffmpeg"
