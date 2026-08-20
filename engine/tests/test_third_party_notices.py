@@ -56,12 +56,18 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #: The document is generated per platform precisely so each installer
 #: describes itself, and this box only ever builds the POSIX one — so the
 #: other two spellings need a written-down set or nothing here covers them.
+#:
+#: A sample rather than the whole set: `_FROZEN_LIBRARIES["win32"]` in
+#: test_license_boundaries is the complete Windows inventory, and duplicating
+#: 56 entries here would be a second record to keep in step. What this needs is
+#: one name of each *shape* the normaliser has to survive — a wheel-private
+#: directory, an arch suffix, a dotted version tail — carrying a library that
+#: is really in that inventory.
 _WINDOWS_COLLECTED = (
-    "av.libs/avcodec-62.dll",
-    "av.libs/x264-165.dll",
-    "av.libs/libiconv-2-6ce5f4ff92ada49d6f23a8e413455502.dll",
-    "espeakng_loader/espeak-ng.dll",
     "_soundfile_data/libsndfile_x64.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "ctranslate2.dll",
+    "msvcp140.dll",
     "python314.dll",
 )
 
@@ -406,7 +412,16 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
     the way the Windows document would.
     """
     libraries = bundled_libraries(_WINDOWS_COLLECTED)
-    assert "avcodec" in libraries and "x264" in libraries, libraries
+    # The fixture has to survive the normaliser before it can test anything:
+    # a name it mangled would drop out here and leave the check below looking
+    # at a shorter list rather than failing.
+    assert set(libraries) == {
+        "api-ms-win-crt-runtime-l1",
+        "ctranslate2",
+        "libsndfile",
+        "msvcp140",
+        "python314",
+    }, libraries
     listed = _library_rows(build_notices(libraries))
     assert not [library for library in libraries if library not in listed]
 
@@ -448,25 +463,62 @@ def test_the_copyleft_libraries_are_named_with_what_they_oblige(document: str) -
 def test_the_copyleft_terms_survive_the_windows_spelling() -> None:
     """The document is generated per platform so each installer describes itself.
 
-    `avcodec-62.dll` and `libavcodec.so.62` are one library; if only one of
-    the two spellings reaches the table, the Windows installer lists FFmpeg,
-    x264 and espeak-ng with none of their terms beside them.
+    `libsndfile_x64.dll` and `libsndfile.so.1` are one library, and only one of
+    the two spellings is what this box ever sees. If the other does not reach
+    the table, the Windows installer lists it bare — which reads as a claim
+    that it carries no copyleft terms, in the document that exists to say
+    otherwise.
+
+    libsndfile is the whole assertion because after PyAV left the freeze it is
+    the whole answer: `_FROZEN_COPYLEFT["win32"]` holds one name. The table
+    still knows FFmpeg's and x264's Windows spellings, and
+    `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` covers that
+    — as a fact about the table, not a claim that they ship.
     """
     libraries = bundled_libraries(_WINDOWS_COLLECTED)
     rows = _library_rows(build_notices(libraries))
-    for library in ("avcodec", "x264", "espeak-ng", "libsndfile", "libiconv"):
-        assert rows.get(library), f"{library} ships on Windows with no terms named"
+    assert rows.get("libsndfile"), "libsndfile ships on Windows with no terms named"
 
 
-def test_the_copyleft_table_still_holds_the_terms_the_freeze_turns_on() -> None:
+def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
+    """The lookup has to answer for names no freeze here will ever produce.
+
+    Kept separate from what ships. These libraries are in the installed
+    closure, not in any installer, so asserting them through a collected-file
+    fixture would be asserting a Windows installer contains PyAV's FFmpeg —
+    which is what the exclusion exists to make false. What is still worth
+    pinning is that the table is keyed by `annotation_key` rather than by the
+    POSIX filename, so the day one of them returns to a freeze it is annotated
+    on every platform rather than on one.
+    """
+    collected = (
+        "av.libs/avcodec-62.dll",
+        "av.libs/x264-165.dll",
+        "av.libs/libiconv-2-6ce5f4ff92ada49d6f23a8e413455502.dll",
+    )
+    # Through the real path, because the normaliser is half of what is being
+    # tested: `copyleft_note` is keyed on the stem and gets there from a
+    # filename only via `bundled_libraries`.
+    for library in bundled_libraries(collected):
+        note = copyleft_note(library)
+        assert note, f"{library} has no entry under its Windows spelling"
+        assert "GPL" in note, f"{library}'s note no longer names a GPL obligation"
+
+
+def test_the_copyleft_table_still_holds_the_terms_the_closure_turns_on() -> None:
     """Deleting a table entry is invisible to the test above.
 
     That one loops over the libraries the table still names, so a library
     dropped from the table simply leaves the loop and the document goes on
-    listing it bare. These are the entries the repo's licensing position rests
-    on — GPL encoders linked into FFmpeg, and the GPL-3.0 speech synthesiser —
-    so losing one silently changes what the installers may be redistributed
-    under.
+    listing it bare.
+
+    The *closure*, not the freeze: `uv sync` installs PyAV and espeakng-loader,
+    so these are loaded in the engine's own process when it runs from a
+    checkout, and `build_notices()` with no arguments describes exactly that.
+    Which of them reach an installer is a narrower question and a different
+    record — `_FROZEN_LIBRARIES` in test_license_boundaries. Naming the wrong
+    one here is how a docstring ends up asserting the repo ships GPL encoders
+    it does not.
     """
     for library in ("libx264", "libx265", "libavcodec", "libespeak-ng", "libreadline"):
         note = copyleft_note(library)
