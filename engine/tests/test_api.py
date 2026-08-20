@@ -1643,3 +1643,107 @@ async def test_the_board_says_whether_the_cut_burns_any_titles(client):
     )
     assert cleared.status_code == 200
     assert (await board())["has_onscreen_text"] is False
+
+
+async def test_voices_is_unavailable_when_narration_will_not_use_the_pack(client):
+    """GET /voices under the test chain, whose narration lands on mock.
+
+    `available` is false and the answer is still a list, not a 404: a picker
+    renders its empty state from the same shape it renders voices from.
+    """
+    response = await client.get("/voices")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is False
+    assert body["voices"] == []
+    # No default is offered for a pack that is not there — naming one would
+    # invite a caller to send a voice the engine cannot synthesize.
+    assert body["default"] is None
+
+
+async def test_voices_is_unavailable_when_the_pack_is_not_downloaded(tmp_path):
+    """A *registered* Kokoro over an empty models dir — not the absent-
+    backend case above.
+
+    These are different causes reaching the same answer, and the chain-only
+    test never calls `installed_voices()` at all. `supports()` stops
+    claiming narration until the weights land, so resolve falls through to
+    mock and a picker is told plainly that a pick cannot be honored; which
+    of the two causes it is belongs to the readiness surface.
+    """
+    config = EngineConfig(
+        data_dir=tmp_path, token="test-token", backend="kokoro,mock", models_dir=tmp_path / "m"
+    )
+    app = create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+        app.router.lifespan_context(app),
+    ):
+        body = (await http.get("/voices")).json()
+    assert body == {"available": False, "voices": [], "default": None}
+
+
+def _stub_narration(monkeypatch, voice_ids):
+    """A registered Kokoro whose pack holds exactly `voice_ids`.
+
+    A real instance, not a stand-in: the route isinstance-checks what
+    resolve() hands back, precisely so a chain that narrates on another
+    backend cannot be reported as offering these voices.
+    """
+    from pathlib import Path
+
+    from localcut_engine.backends.kokoro import KokoroBackend
+
+    backend = KokoroBackend(models_dir=Path("/nonexistent"))
+    # The pack file is stubbed, not the reading of it: `installed_voices` is
+    # where the ids are sorted and described, so stubbing that would pin the
+    # route to an order and a record shape it can never actually serve.
+    monkeypatch.setattr(backend, "_installed_ids", lambda: set(voice_ids))
+    monkeypatch.setattr(
+        "localcut_engine.backends.base.BackendRegistry.resolve",
+        lambda self, kind, model=None: backend,
+    )
+    return backend
+
+
+async def test_voices_never_names_a_default_the_pack_does_not_hold(client, monkeypatch):
+    """`default` is picked out of `voices`, not asserted beside it.
+
+    A pack variant that renames or drops `af_sarah` still enumerates fine,
+    and naming it anyway would hand a picker an id whose synthesis dies on
+    kokoro-onnx's bare `assert voice in self.voices`.
+    """
+    _stub_narration(monkeypatch, ("bm_george", "bf_emma"))
+    body = (await client.get("/voices")).json()
+    assert body["available"] is True
+    # Sorted, not pack order: a set has none, and this is a serialized
+    # payload a picker renders in the order it arrives.
+    assert [voice["id"] for voice in body["voices"]] == ["bf_emma", "bm_george"]
+    assert body["default"] == "bf_emma"
+    assert body["default"] in [voice["id"] for voice in body["voices"]]
+
+
+async def test_voices_prefers_the_fallback_voice_when_the_pack_holds_it(client, monkeypatch):
+    from localcut_engine.backends import kokoro as kokoro_mod
+
+    _stub_narration(monkeypatch, ("am_onyx", "af_sarah", "bf_emma"))
+    body = (await client.get("/voices")).json()
+    assert body["default"] == kokoro_mod.DEFAULT_VOICE
+    # Every entry a picker renders is an id it can label, with no display
+    # copy the engine chose for it.
+    for voice in body["voices"]:
+        assert set(voice) == {"id", "name", "language_code", "gender"}
+        assert voice["id"] and voice["name"] and voice["language_code"]
+
+
+async def test_voices_needs_the_token(client):
+    """Read-only, but still behind the bearer: every route on this engine is,
+    and an exception would be the one a scanner finds."""
+    response = await client.get("/voices", headers={"Authorization": "Bearer wrong"})
+    assert response.status_code == 401

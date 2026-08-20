@@ -398,3 +398,29 @@ def test_export_encode_params_reject_off_menu_values():
     )
     assert not ops
     assert len(warnings) == 2
+
+
+def test_a_picked_voice_is_editable_and_bounded():
+    """`/voices` publishes ids a client sends back, so `voice_id` has to be
+    settable — a vocabulary the engine enumerates and no route accepts is
+    not a picker. It is bounded for the reason ToolRequest bounds `model`:
+    the value is persisted onto the node and reaches the backend as a lookup
+    key, and the model writing it on this path is told no vocabulary."""
+    graph = make_graph()
+    ops, warnings = compile_edits(
+        graph,
+        plan({"action": "update", "node_id": "s1.narration", "params": {"voice_id": "bf_emma"}}),
+    )
+    apply_patch(graph, ops)
+    assert graph.nodes["s1.narration"].params["voice_id"] == "bf_emma"
+    assert not warnings
+
+    for bad in ("../../etc/passwd", "af_sarah\n", "Bf Emma", "x" * 41, 7, ["af_sarah"]):
+        graph = make_graph()
+        ops, warnings = compile_edits(
+            graph,
+            plan({"action": "update", "node_id": "s1.narration", "params": {"voice_id": bad}}),
+        )
+        apply_patch(graph, ops)
+        assert "voice_id" not in graph.nodes["s1.narration"].params, bad
+        assert any("voice_id" in w for w in warnings), bad

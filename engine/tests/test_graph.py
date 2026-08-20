@@ -606,3 +606,72 @@ def test_expansion_does_not_replant_a_null_the_user_can_never_clear():
     graph.nodes["export"].params["fps"] = 30
     expand_screenplay(graph, mock_screenplay("p", 24, "9:16", seed=0))
     assert graph.nodes["export"].params["fps"] == 30
+
+
+def test_a_narration_version_bump_re_addresses_cached_audio():
+    """The language a voice is phonemized with is derived inside the
+    backend, not stored in params — so a change to that rule produces
+    different audio for a node whose text, voice and speed are identical,
+    and the existence cache would serve the old wav forever. Carrying the
+    version in params is what moves the hash, the way edl_version does for
+    the timeline.
+    """
+    from localcut_engine.graph.model import NARRATION_VERSION
+
+    g = StoryGraph()
+    g.add_node(Node(id="script", kind=NodeKind.SCRIPT, params={"prompt": "p"}))
+    g.add_node(
+        Node(
+            id="s1.narration",
+            kind=NodeKind.NARRATION,
+            params={"text": "hi", "voice": "british", "narration_version": NARRATION_VERSION},
+        )
+    )
+    g.connect("script", "s1.narration")
+    current = g.output_hash("s1.narration")
+
+    g.nodes["s1.narration"].params["narration_version"] = NARRATION_VERSION - 1
+    assert g.output_hash("s1.narration") != current
+    # And audio from before the field existed at all is re-addressed too.
+    del g.nodes["s1.narration"].params["narration_version"]
+    assert g.output_hash("s1.narration") != current
+
+
+def test_every_narration_node_a_template_builds_carries_its_version():
+    """Stamped at creation, not only back-filled on load: a node minted
+    without it has its artifact re-addressed the first time the project
+    reloads, which orphans the audio the job just rendered."""
+    from localcut_engine.graph.model import NARRATION_VERSION
+
+    screenplay = mock_screenplay("octopuses", target_duration_s=30, aspect="16:9", seed=1)
+    graphs = [
+        expand_screenplay(prompt_template_graph("p"), screenplay),
+        tool_graph("voiceover", {"text": "one small step"}),
+    ]
+    narration_nodes = [
+        node for g in graphs for node in g.nodes.values() if node.kind is NodeKind.NARRATION
+    ]
+    assert narration_nodes, "no narration nodes to check"
+    for node in narration_nodes:
+        assert node.params.get("narration_version") == NARRATION_VERSION, (
+            f"{node.id} was built without narration_version"
+        )
+
+
+def test_a_picked_voice_survives_a_re_expansion():
+    """Like speed, an explicitly picked voice has no screenplay source — it
+    exists only because the user chose it. Dropping it on re-expansion
+    reverts the node hash, so the cached pre-pick audio is served and the
+    picker shows the brief's voice again with nothing to say why."""
+    from localcut_engine.graph.model import NARRATION_VERSION
+
+    screenplay = mock_screenplay("octopuses", target_duration_s=30, aspect="16:9", seed=1)
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+    narr_id = next(n.id for n in graph.nodes.values() if n.kind is NodeKind.NARRATION)
+    graph.nodes[narr_id].params["voice_id"] = "bm_george"
+    graph.nodes[narr_id].params["speed"] = 1.2
+
+    again = expand_screenplay(graph, screenplay)
+    assert again.nodes[narr_id].params["voice_id"] == "bm_george"
+    assert again.nodes[narr_id].params["speed"] == 1.2
+    assert again.nodes[narr_id].params["narration_version"] == NARRATION_VERSION

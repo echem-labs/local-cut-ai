@@ -36,11 +36,13 @@ from .graph.editor import (
 )
 from .graph.model import (
     KEYFRAME_PORT,
+    NARRATION_VERSION,
     OPTIONAL_PORTS,
     SCENE_AUDIO_SUFFIX,
     Node,
     NodeKind,
     StoryGraph,
+    migrate_graph,
     scene_sort_key,
 )
 from .graph.patch import (
@@ -674,15 +676,25 @@ class ProjectService:
             order.append(sid)
 
         aspect = graph.nodes["script"].params.get("aspect") or timeline.params.get("aspect")
+
         # Voice is a project-wide style choice; a new scene should speak
-        # like its neighbours, not fall back to the backend default.
-        voice = next(
+        # like its neighbours, not fall back to the backend default. That
+        # holds for an explicitly picked voice_id as well, and more sharply:
+        # it outranks the brief, so inheriting only `voice` would let the
+        # new scene speak in a different voice from every scene around it.
+        #
+        # Both keys come off the SAME node. Two independent scans would take
+        # the brief from the first scene that carries one and the pick from
+        # whatever later scene was overridden, minting a pair that exists on
+        # no scene and giving the new one the overridden scene's voice.
+        voice, voice_id = next(
             (
-                node.params["voice"]
+                (node.params.get("voice"), node.params.get("voice_id"))
                 for node in graph.nodes.values()
-                if node.kind is NodeKind.NARRATION and node.params.get("voice")
+                if node.kind is NodeKind.NARRATION
+                and (node.params.get("voice") or node.params.get("voice_id"))
             ),
-            None,
+            (None, None),
         )
         keyframe_params = {"prompt": prompt}
         clip_params = {
@@ -694,9 +706,11 @@ class ProjectService:
         if aspect:
             keyframe_params["aspect"] = aspect
             clip_params["aspect"] = aspect
-        narration_params: dict = {"text": narration}
+        narration_params: dict = {"text": narration, "narration_version": NARRATION_VERSION}
         if voice:
             narration_params["voice"] = voice
+        if voice_id:
+            narration_params["voice_id"] = voice_id
 
         kf_id, clip_id, narr_id = f"{sid}.keyframe", f"{sid}.clip", f"{sid}.narration"
         return [
@@ -1095,10 +1109,18 @@ class ProjectService:
         before the rule existed re-plants `{"captions": None}` on the export,
         which silently stops burning the captions the user asked for and
         lands on a hash no cached export can match.
+
+        `migrate_graph` is here for the same reason and arrives the same
+        way: a snapshot carries whatever behaviour versions the build that
+        wrote it stamped, so restoring one un-migrated puts the node back on
+        an address whose artifact this build would no longer produce — and
+        the caller enqueues against exactly this graph, so the stale
+        artifact is a cache hit and nothing re-renders.
         """
         graph = StoryGraph.model_validate(dump)
         for node in graph.nodes.values():
             node.params = without_nulls(node.params)
+        migrate_graph(graph)
         check_restorable(graph)
         return graph
 
