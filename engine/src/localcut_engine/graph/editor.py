@@ -32,6 +32,7 @@ from ..aspects import (
     EXPORT_USER_PARAMS,
     EXPORT_VIDEO_KBPS_BOUNDS,
 )
+from ..backends.kokoro import VOICE_ID_PATTERN
 from .model import NodeKind, StoryGraph, scene_sort_key
 from .templates import DEFAULT_CLIP_S, MAX_CLIP_S
 from .patch import PatchOp
@@ -66,7 +67,7 @@ _SPEED_MIN, _SPEED_MAX = 0.5, 1.5
 # `text` have. Membership in the pack is the backend's to answer, which it
 # does at render; this only keeps a path fragment or a novel out of the
 # shape of a voice.
-_VOICE_ID_RE = re.compile(r"[a-z0-9_-]{1,40}")
+_VOICE_ID_RE = re.compile(VOICE_ID_PATTERN)
 
 SUGGEST_SCENE_SYSTEM_PROMPT = """You are helping build one scene of a short video from a \
 picture the user just supplied. You are told what the video is about, what the scenes before \
