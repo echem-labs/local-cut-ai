@@ -1263,6 +1263,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         prompt: str | None = Field(default=None, max_length=4000)
         text: str | None = Field(default=None, max_length=4000)
         voice: str = "narrator"
+        # Voiceover only: an exact pack voice, which outranks the brief above.
+        # Bounded like `model` because it is persisted onto the node and
+        # reaches the backend as a lookup key; membership in the pack is the
+        # backend's to answer, and it does at render.
+        voice_id: str | None = Field(default=None, pattern=VOICE_ID_PATTERN)
         aspect: str = "16:9"
         target_duration_s: int = Field(default=60, ge=5, le=1200)
         style_preset: str = "cinematic"

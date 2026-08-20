@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Dices, FolderPlus, Mic, Repeat } from "lucide-react";
+import { AudioLines, Dices, FolderPlus, Mic, Repeat } from "lucide-react";
 import type { Screenplay, TakeInfo } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
@@ -7,6 +7,7 @@ import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { isDone, isSettled } from "../lib/status";
 import { useMenuFit } from "../lib/useMenuFit";
+import { useVoices } from "../lib/useVoices";
 import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
 import { ModelsPopover } from "./ModelsPopover";
@@ -14,6 +15,7 @@ import { ReadinessBanner, useReadinessGuard } from "./Readiness";
 import { StatusRing } from "./StatusRing";
 import { Tip } from "./Tooltip";
 import { PromotedTo } from "./Provenance";
+import { VoicePicker } from "./VoicePicker";
 import { Waveform } from "./Waveform";
 
 /** True when the page's h1 already says these words — exactly, or as the
@@ -179,6 +181,7 @@ export function ToolSession() {
     regenerate,
     enhance,
     refineTool,
+    setVoice,
     selectTake,
     addToProject,
     applySessionVoiceClone,
@@ -195,6 +198,11 @@ export function ToolSession() {
   const [refineError, setRefineError] = useState<string | null>(null);
   // Menus/dialogs local to this page. `null` string states double as
   // "closed"; a message is the store convention for a refusal.
+  // The voice this voiceover speaks in, changeable without leaving the
+  // window: re-rendering one in another voice is the reason to be here, and
+  // sending the user back to Home to do it would lose the text they refined.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const fit = useMenuFit();
   const [addResult, setAddResult] = useState<string | null>(null);
@@ -268,6 +276,7 @@ export function ToolSession() {
   // own params. prompt (visual tools) / text (voiceover) / brief (music) —
   // one of the three is the thing that was asked for. The KEY travels too:
   // it is what the composer's "update & re-render" writes back via /patch.
+  const voices = useVoices(tool === "voiceover");
   const params = node?.params ?? {};
   const recipeKey =
     (["prompt", "text", "brief"] as const).find(
@@ -643,6 +652,18 @@ export function ToolSession() {
                   </button>
                 </Tip>
               )}
+              {tool === "voiceover" && voices?.available && (
+                <Tip label={t("voices.changeAria")} hint={t("voices.pickerSubtitle")} side="top">
+                  <button
+                    className="btn-ghost"
+                    onClick={() => setVoiceOpen(true)}
+                    aria-label={t("voices.changeAria")}
+                  >
+                    <AudioLines size={13} strokeWidth={1.8} aria-hidden="true" />
+                    {t("voices.change")}
+                  </button>
+                </Tip>
+              )}
               {tool === "voiceover" && (
                 <Tip
                   label={t("toolSession.cloneVoiceTitle")}
@@ -715,6 +736,24 @@ export function ToolSession() {
               <p className="hint" role="status">
                 {addResult}
               </p>
+            )}
+            {voiceOpen && voices && (
+              <VoicePicker
+                voices={voices}
+                value={typeof params.voice_id === "string" ? params.voice_id : null}
+                onPick={async (voiceId) => {
+                  setVoiceOpen(false);
+                  // A pick re-renders: the voice is part of the node's hash,
+                  // so the artifact on screen is not what this now asks for.
+                  setVoiceError(await setVoice(node.node_id, voiceId));
+                }}
+                onClose={() => setVoiceOpen(false)}
+              />
+            )}
+            {voiceError && (
+              <div className="banner error" role="status">
+                {voiceError}
+              </div>
             )}
             {cloneOpen && tool === "voiceover" && (
               <div className="clone-panel">

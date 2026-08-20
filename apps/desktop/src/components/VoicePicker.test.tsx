@@ -1,0 +1,150 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import type { Voice, Voices } from "../api/types";
+import { useApp } from "../store";
+import { VoicePicker, ambiguousNames, groupByLanguage, languageLabel } from "./VoicePicker";
+
+/**
+ * The pack ships fifty-four voices whose derived names are NOT unique — three
+ * Santas, two Alphas, two Doras — and whose language is an id the client has
+ * to label. Both are properties a picker has to survive, and neither is
+ * visible from the five voices the swatches happen to offer.
+ */
+
+function voice(id: string, name: string, code: string | null, gender: string | null): Voice {
+  return { id, name, language_code: code, gender };
+}
+
+const PACK: Voice[] = [
+  voice("af_sarah", "Sarah", "en-us", "female"),
+  voice("am_santa", "Santa", "en-us", "male"),
+  voice("bf_emma", "Emma", "en-gb", "female"),
+  voice("em_santa", "Santa", "es", "male"),
+  voice("jf_alpha", "Alpha", "ja", "female"),
+  voice("hf_alpha", "Alpha", "hi", "female"),
+  voice("jenny", "jenny", null, null),
+];
+
+function payload(extra: Partial<Voices> = {}): Voices {
+  return { available: true, voices: PACK, default: "af_sarah", ...extra };
+}
+
+function mountClient() {
+  useApp.setState({
+    client: {
+      voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
+    },
+  } as never);
+}
+
+describe("telling voices apart", () => {
+  it("prints the id only for names another installed voice also has", () => {
+    const ambiguous = ambiguousNames(PACK);
+    // Two Santas and two Alphas: without the id these are four rows a user
+    // cannot choose between.
+    expect([...ambiguous].sort()).toEqual(["am_santa", "em_santa", "hf_alpha", "jf_alpha"]);
+    // Unique names stay clean — the id would be noise on every other row.
+    expect(ambiguous.has("af_sarah")).toBe(false);
+    expect(ambiguous.has("bf_emma")).toBe(false);
+  });
+
+  it("groups by language label, with the unrecognised group last", () => {
+    const groups = groupByLanguage(PACK);
+    // By the words on screen, not the codes behind them: sorting on the code
+    // puts Mandarin above both Englishes (`cmn` < `en-`), which is not an
+    // order a reader can see a reason for.
+    expect(groups.map(([code]) => languageLabel(code))).toEqual([
+      "American English",
+      "British English",
+      "Hindi",
+      "Japanese",
+      "Spanish",
+      "unknown",
+    ]);
+    // The codes fall wherever their labels put them — `es` after `ja` here.
+    expect(groups.map(([code]) => code)).toEqual(["en-us", "en-gb", "hi", "ja", "es", null]);
+    expect(groups.at(-1)?.[1].map((v) => v.id)).toEqual(["jenny"]);
+  });
+
+  it("labels a language from the catalog and falls back to the code itself", () => {
+    expect(languageLabel("en-gb")).toBe("British English");
+    // A code the catalog has not learned yet renders as the code. A blank
+    // column would be worse: the row would say nothing at all.
+    expect(languageLabel("qq-zz")).toBe("qq-zz");
+    expect(languageLabel(null)).toBe("unknown");
+  });
+});
+
+describe("the picker", () => {
+  it("offers every installed voice and reports the pick by id", async () => {
+    mountClient();
+    const onPick = vi.fn();
+    render(
+      <VoicePicker voices={payload()} value={null} onPick={onPick} onClose={() => {}} />,
+    );
+    await userEvent.click(screen.getByText("Emma"));
+    // The id, never the name: two voices share a name and only the id is an
+    // identifier the engine can synthesize.
+    expect(onPick).toHaveBeenCalledWith("bf_emma");
+  });
+
+  it("offers going back to the project's voice, and reports that as null", async () => {
+    mountClient();
+    const onPick = vi.fn();
+    render(
+      <VoicePicker voices={payload()} value="bf_emma" onPick={onPick} onClose={() => {}} />,
+    );
+    await userEvent.click(screen.getByText("Follow the project"));
+    // null, not "" — the store clears the key with it, which is what puts
+    // the node back on the hash its brief-only render already used.
+    expect(onPick).toHaveBeenCalledWith(null);
+  });
+
+  it("auditions a voice from the engine rather than a bundled file", async () => {
+    mountClient();
+    const play = vi.fn().mockResolvedValue(undefined);
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "Audio",
+      class {
+        constructor(src: string) {
+          sources.push(src);
+        }
+        play = play;
+        pause = vi.fn();
+        addEventListener = vi.fn();
+      },
+    );
+    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    await userEvent.click(screen.getByLabelText("Hear Emma"));
+    expect(sources).toEqual(["http://engine/voices/bf_emma/preview"]);
+    vi.unstubAllGlobals();
+  });
+
+  it("searches the id as well as the name", async () => {
+    mountClient();
+    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    // "bf" is how someone who knows the pack asks for British female; a
+    // picker matching only the display name would answer nothing.
+    await userEvent.type(screen.getByLabelText(/Search voices/), "bf_");
+    expect(screen.getByText("Emma")).toBeTruthy();
+    expect(screen.queryByText("Sarah")).toBeNull();
+  });
+
+  it("says a pick cannot be honored rather than showing an empty list", () => {
+    mountClient();
+    render(
+      <VoicePicker
+        voices={payload({ available: false, voices: [], default: null })}
+        value={null}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
+    // "none installed" would be a guess: the chain may narrate elsewhere.
+    expect(screen.getByText("Narration is not using the voice pack")).toBeTruthy();
+    expect(screen.queryByLabelText(/Search voices/)).toBeNull();
+  });
+});

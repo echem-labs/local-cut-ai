@@ -225,6 +225,11 @@ export interface HomeDraft {
   style: string | null;
   mode: "prompt" | "beginner" | null;
   voice: string;
+  /** An exact pack voice, picked rather than described. Outranks
+   * `voice` at render, so the two are shown together and the picked
+   * one is what a preview plays. Null is the ordinary state: most
+   * voiceovers are asked for by brief. */
+  voiceId: string | null;
   motion: string;
   /** Script tool's model pick; "" = the engine's configured default. */
   scriptModel: string;
@@ -419,6 +424,14 @@ interface AppState {
    * input field (prompt / text / brief). The /patch re-plan marks the node
    * dirty and queues the re-render — no second call. */
   refineTool: (nodeId: string, key: string, value: string) => Promise<string | null>;
+  /** Pick the voice a narration node speaks in, or clear the pick.
+   *
+   * `null` clears it, and clears it by REMOVING the key rather than
+   * storing null — `set_params` reads a null that way on purpose, so a
+   * node put back on the project's voice lands on the same hash as one
+   * that never carried a pick, and the audio already rendered for that
+   * state is a cache hit again instead of a re-render. */
+  setVoice: (nodeId: string, voiceId: string | null) => Promise<string | null>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** The Story Graph behind the board, for the flowchart view. Null until
@@ -642,6 +655,7 @@ const EMPTY_DRAFT: HomeDraft = {
   style: null,
   mode: null,
   voice: "",
+  voiceId: null,
   motion: "",
   scriptModel: "",
   ...EMPTY_TOOL_OPTIONS,
@@ -1891,6 +1905,20 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     dismissActionError: () => set({ actionError: null }),
+
+    setVoice: async (nodeId, voiceId) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.patch(currentProject.id, [
+          { op: "set_params", node_id: nodeId, params: { voice_id: voiceId } },
+        ]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
 
     refineTool: async (nodeId, key, value) => {
       const { client, currentProject } = get();

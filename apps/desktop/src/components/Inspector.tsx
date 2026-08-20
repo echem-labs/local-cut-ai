@@ -8,10 +8,12 @@ import { PhotoThumb } from "./PhotoThumb";
 import { t } from "../i18n";
 import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
+import { useVoices } from "../lib/useVoices";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
+import { VoicePicker } from "./VoicePicker";
 import { InfoDot, Tip } from "./Tooltip";
 import { useApp } from "../store";
 
@@ -48,6 +50,13 @@ export function Inspector() {
   const [model, setModel] = useState("");
   const [motion, setMotion] = useState("");
   const [voice, setVoice] = useState("");
+  // The explicitly picked voice, or null for "follow the project".
+  // Held like every other field on this panel and written on apply,
+  // so one Apply covers the brief and the pick together rather than
+  // the pick landing a render the rest of the panel has not asked for.
+  const [voiceId, setVoiceId] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const voices = useVoices(tab === "voice");
   const [speed, setSpeed] = useState("");
   const [duration, setDuration] = useState("");
   const [trimIn, setTrimIn] = useState("");
@@ -137,7 +146,10 @@ export function Inspector() {
   }, [activeId, activeNode?.params.motion]);
   useEffect(() => {
     setVoice(String(activeNode?.params.voice ?? ""));
-  }, [activeId, activeNode?.params.voice]);
+    setVoiceId(
+      typeof activeNode?.params.voice_id === "string" ? activeNode.params.voice_id : null,
+    );
+  }, [activeId, activeNode?.params.voice, activeNode?.params.voice_id]);
   useEffect(() => {
     setSpeed(activeNode?.params.speed != null ? String(activeNode.params.speed) : "1.0");
   }, [activeId, activeNode?.params.speed]);
@@ -249,6 +261,13 @@ export function Inspector() {
     }
     if (tab === "voice") {
       if (voice !== String(activeNode.params.voice ?? "")) params.voice = voice;
+      const storedVoiceId =
+        typeof activeNode.params.voice_id === "string" ? activeNode.params.voice_id : null;
+      // null travels: `set_params` reads it as "remove the key", which puts
+      // the node back on the hash it had before any pick — so the audio
+      // already rendered for the brief is a cache hit rather than a
+      // re-render. Storing null instead would be a third, novel state.
+      if (voiceId !== storedVoiceId) params.voice_id = voiceId;
       const rate = Number.parseFloat(speed);
       if (Number.isFinite(rate)) {
         const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate));
@@ -500,6 +519,39 @@ export function Inspector() {
                 placeholder={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
+              {voices?.available && (
+                <div className="voice-pick">
+                  <span className="voice-pick-current">
+                    {voiceId
+                      ? t("voices.current", {
+                          name: voices.voices.find((v) => v.id === voiceId)?.name ?? voiceId,
+                        })
+                      : t("voices.currentFollowing")}
+                  </span>
+                  <button className="btn-ghost" disabled={pinned} onClick={() => setVoiceOpen(true)}>
+                    {t("voices.change")}
+                  </button>
+                </div>
+              )}
+              {/* A picked voice outranks the brief at render, so a brief
+                  edited under one changes nothing audible. Saying so is the
+                  only place a user can find that out. */}
+              {voiceId && voice.trim() && (
+                <div className="hint" role="note">
+                  {t("voices.overridesBrief")}
+                </div>
+              )}
+              {voiceOpen && voices && (
+                <VoicePicker
+                  voices={voices}
+                  value={voiceId}
+                  onPick={(picked) => {
+                    setVoiceId(picked);
+                    setVoiceOpen(false);
+                  }}
+                  onClose={() => setVoiceOpen(false)}
+                />
+              )}
             </div>
           )}
 
