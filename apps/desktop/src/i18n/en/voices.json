@@ -1,0 +1,22 @@
+{
+  "languages": {
+    "en-us": "American English",
+    "en-gb": "British English",
+    "es": "Spanish",
+    "fr-fr": "French",
+    "hi": "Hindi",
+    "it": "Italian",
+    "ja": "Japanese",
+    "pt-br": "Portuguese",
+    "cmn": "Mandarin"
+  },
+  "genders": {
+    "female": "female",
+    "male": "male"
+  },
+  "unknownLanguage": "unknown",
+  "unknownGender": "unknown",
+  "noneInstalled": "No voices in the installed pack",
+  "unavailable": "Narration is not using the voice pack",
+  "unavailableHint": "Readiness shows what it will use, and what to install."
+}

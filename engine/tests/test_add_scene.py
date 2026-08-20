@@ -134,6 +134,29 @@ def test_added_scene_speaks_with_the_project_voice(tmp_path):
     ].params.get("voice")
 
 
+def test_added_scene_inherits_an_explicitly_picked_voice(tmp_path):
+    """`voice_id` outranks the style brief, so inheriting only `voice` lets
+    the new scene fall back to whatever the brief resolves to and speak in a
+    different voice from every scene around it — the failure the brief
+    propagation above exists to prevent, reached through the field that
+    beats it."""
+    service, pid = _service(tmp_path)
+    graph = service.store.load_graph(pid)
+    service.patch(
+        pid,
+        [
+            PatchOp(
+                op="set_params",
+                node_id="s1.narration",
+                params={**graph.nodes["s1.narration"].params, "voice_id": "bm_george"},
+            )
+        ],
+    )
+    _add(service, pid, narration="hello")
+    graph = service.store.load_graph(pid)
+    assert graph.nodes["s2.narration"].params.get("voice_id") == "bm_george"
+
+
 def test_add_scene_is_undoable(tmp_path):
     service, pid = _service(tmp_path)
     _add(service, pid, prompt="x")
@@ -331,3 +354,30 @@ def test_add_scene_refuses_a_keyframe_source_that_is_not_there(tmp_path):
 
     graph = service.store.load_graph(pid)
     assert not [n for n in graph.nodes if n.startswith("s2.")]
+
+
+def test_an_added_scene_takes_both_voice_fields_from_one_scene(tmp_path):
+    """`voice_id` outranks the brief, so the two have to be inherited
+    together. Resolving them with independent scans takes the brief from
+    the first scene that has one and the pick from whatever later scene was
+    overridden, minting a pair that exists on no scene and giving the new
+    scene the overridden scene's voice while its neighbours keep theirs.
+    """
+    service, pid = _service(tmp_path, scenes=3)
+    graph = service.store.load_graph(pid)
+    service.patch(
+        pid,
+        [
+            PatchOp(op="set_params", node_id="s1.narration", params={"voice": "energetic host"}),
+            PatchOp(op="set_params", node_id="s3.narration", params={"voice_id": "bm_george"}),
+        ],
+    )
+    _add(service, pid, narration="hello")
+
+    graph = service.store.load_graph(pid)
+    added = graph.nodes["s4.narration"].params
+    source = graph.nodes["s1.narration"].params
+    assert (added.get("voice"), added.get("voice_id")) == (
+        source.get("voice"),
+        source.get("voice_id"),
+    )

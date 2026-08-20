@@ -428,20 +428,33 @@ def test_tool_clip_seconds_match_the_tool_route():
     assert float(bounds.group(2)) == float(api.group(2)), "UI clip maximum drifted from the API"
 
 
+def _voice_swatches() -> list[tuple[str, str]]:
+    """The (brief, voice) pairs lib/tools.ts offers, parsed once.
+
+    Through `_ts_source`, so a doc comment carrying `] as const` cannot end
+    the block match early and leave a caller asserting over a truncated
+    list. One parse, because two copies of this regex drift apart under a
+    reformat and the one that stops matching returns nothing rather than
+    failing.
+    """
+    block = re.search(
+        r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", _ts_source("lib", "tools.ts"), re.S
+    )
+    assert block, "lib/tools.ts no longer declares VOICE_SWATCHES — update this test with it"
+    swatches = re.findall(r'\{\s*brief:\s*"([^"]+)",\s*voice:\s*"([^"]+)"', block.group(1))
+    assert swatches, "VOICE_SWATCHES entries no longer match — update this test with it"
+    return swatches
+
+
 def test_voice_swatches_match_the_kokoro_voice_map():
     """The voiceover panel's swatches are briefs the engine's keyword map
     resolves — lib/tools.ts VOICE_SWATCHES mirrors kokoro's _VOICE_MAP. A
     swatch whose brief no longer picks its voice plays one speaker in the
     preview and renders another; a voice the map gained stays unofferable
     until the mirror moves with it."""
-    from localcut_engine.backends.kokoro import _DEFAULT_VOICE, _VOICE_MAP, pick_voice
+    from localcut_engine.backends.kokoro import DEFAULT_VOICE, _VOICE_MAP, pick_voice
 
-    lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
-    block = re.search(r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", lib, re.S)
-    assert block, "lib/tools.ts no longer declares VOICE_SWATCHES — update this test with it"
-    swatches = re.findall(r'\{\s*brief:\s*"([^"]+)",\s*voice:\s*"([^"]+)"', block.group(1))
-    assert swatches, "VOICE_SWATCHES entries no longer match — update this test with it"
-
+    swatches = _voice_swatches()
     for brief, voice in swatches:
         assert pick_voice(brief) == voice, (
             f"the brief {brief!r} resolves to {pick_voice(brief)!r} engine-side, "
@@ -450,11 +463,135 @@ def test_voice_swatches_match_the_kokoro_voice_map():
     # Every distinct engine voice is offered: a voice only reachable by
     # guessing the right keyword is not a picker.
     offered = {voice for _, voice in swatches}
-    engine_voices = {voice for _, voice in _VOICE_MAP} | {_DEFAULT_VOICE}
+    engine_voices = {voice for _, voice in _VOICE_MAP} | {DEFAULT_VOICE}
     assert offered == engine_voices, (
         f"swatches and kokoro disagree: only in UI {sorted(offered - engine_voices)}, "
         f"only in engine {sorted(engine_voices - offered)}"
     )
+
+
+def test_every_swatch_has_a_preview_the_app_can_play():
+    """`VOICE_SAMPLES` builds a URL per swatch from `assets/voices/<id>.wav`,
+    so a swatch with no committed file is a 404 on press with nothing in the
+    suite to say so. The bytes themselves come from
+    engine/scripts/make-voice-samples.py, which renders them through the
+    same backend a project renders with — a preview that no longer matches
+    the render is what these files exist to rule out, and only committed
+    bytes ship."""
+    import wave
+
+    assets = _FORMATS.parents[1] / "assets" / "voices"
+    for _, voice in _voice_swatches():
+        sample = assets / f"{voice}.wav"
+        assert sample.exists(), f"the {voice} swatch has no preview at {sample}"
+        with wave.open(str(sample)) as wav:
+            # What the engine writes: mono 24 kHz 16-bit. A preview in another
+            # format plays at the wrong pitch or not at all.
+            assert (wav.getnchannels(), wav.getframerate(), wav.getsampwidth()) == (1, 24000, 2)
+            assert wav.getnframes() > 0, f"{voice} preview is silent"
+
+
+def test_voice_language_codes_match_the_desktop_catalog():
+    """The wire carries espeak codes; the English for them lives in the
+    desktop's voices.json. A code the catalog lacks renders as a raw
+    `pt-br` in the picker, and a catalog entry no voice id can produce is
+    dead copy — this is the boundary no build step reconciles."""
+    import json
+
+    from localcut_engine.backends.kokoro import _GENDERS, _VOICE_LANGUAGES
+
+    catalog_path = _FORMATS.parents[1] / "i18n" / "en" / "voices.json"
+    assert catalog_path.exists(), "the desktop has no voices.json catalog"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+
+    assert set(catalog["languages"]) == set(_VOICE_LANGUAGES.values()), (
+        f"catalog and engine disagree on language codes: "
+        f"only in UI {sorted(set(catalog['languages']) - set(_VOICE_LANGUAGES.values()))}, "
+        f"only in engine {sorted(set(_VOICE_LANGUAGES.values()) - set(catalog['languages']))}"
+    )
+    assert set(catalog["genders"]) == set(_GENDERS.values())
+    # An id outside the scheme reports null for both, which the picker has
+    # to have words for — otherwise the row renders blank.
+    assert catalog["unknownLanguage"] and catalog["unknownGender"]
+
+
+def test_the_engine_sends_no_display_copy_with_the_voices():
+    """Everything in a voice record is an id the client labels. A field of
+    English here would be the one string in the app with no `t()` key —
+    the reason status words cross the wire as `skipped` and read "not
+    needed" only in the UI."""
+    from localcut_engine.backends.kokoro import _GENDERS, _VOICE_LANGUAGES, describe_voice
+
+    assert set(describe_voice("af_sarah")) == {"id", "name", "language_code", "gender"}
+    # Read off the engine's own table rather than repeated: a fourth copy of
+    # the code list, bound by nothing, would go stale on the next language
+    # the pack gains and leave this passing without checking it.
+    for voice_id in ("af_sarah", "bm_george", "zf_xiaobei", "jenny", ""):
+        described = describe_voice(voice_id)
+        assert described["language_code"] in (None, *_VOICE_LANGUAGES.values()), described
+        assert described["gender"] in (None, *_GENDERS.values()), described
+
+
+def test_swatch_voice_names_match_what_the_engine_derives():
+    """`home.voiceNames` labels the five swatches, and `describe_voice`
+    derives a name for all fifty-four. Both reach the same user, so a
+    rename on one side shows one speaker under two names — the drift the
+    contract tests in this file exist for."""
+    import json
+
+    from localcut_engine.backends.kokoro import describe_voice
+
+    home = json.loads(
+        (_FORMATS.parents[1] / "i18n" / "en" / "home.json").read_text(encoding="utf-8")
+    )
+    for voice_id, label in home["voiceNames"].items():
+        assert describe_voice(voice_id)["name"] == label, (
+            f"home.json calls {voice_id} {label!r}, the engine derives "
+            f"{describe_voice(voice_id)['name']!r}"
+        )
+
+
+def test_ci_runs_this_module_for_the_desktop_files_it_reads():
+    """A contract test that cannot fire is not a contract.
+
+    The assertions above read the desktop's label catalogs and its committed
+    voice previews, and a PR touching only those matches `apps/desktop/**` —
+    ci-desktop, which runs vitest and tsc, neither of which can execute
+    pytest. So ci-engine's path filter and the pre-push hook have to name
+    them, the way they already name lib/tools.ts. Both are checked: the hook
+    is what catches it before the push, and the workflow is what catches a
+    PR opened from a machine without the hook installed.
+    """
+    root = Path(__file__).resolve().parents[2]
+    reads = [
+        "apps/desktop/src/lib/tools.ts",
+        "apps/desktop/src/i18n/en/voices.json",
+        "apps/desktop/src/i18n/en/home.json",
+        f"apps/desktop/src/assets/voices/{_voice_swatches()[0][1]}.wav",
+    ]
+
+    workflow = (root / ".github" / "workflows" / "ci-engine.yml").read_text(encoding="utf-8")
+    globs = re.findall(r'^\s+- "([^"]+)"$', workflow, re.M)
+    assert globs, "ci-engine.yml no longer lists quoted paths — update this test with it"
+    matchers = [
+        re.compile(re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$")
+        for glob in globs
+    ]
+
+    hook_block = re.search(
+        r"id: ui-contract.*?files: \|\n(.*?)\n\s*pass_filenames",
+        (root / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
+        re.S,
+    )
+    assert hook_block, "the ui-contract hook no longer declares a files: pattern"
+    hook = re.compile("".join(hook_block.group(1).split()))
+
+    for path in reads:
+        assert any(m.match(path) for m in matchers), (
+            f"ci-engine.yml's path filter does not name {path}, which this module reads — "
+            "a change to it would run no suite that can check this contract"
+        )
+        assert hook.match(path), f"the ui-contract pre-push hook does not name {path}"
 
 
 def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():

@@ -43,7 +43,7 @@ from ..backends.chatterbox import ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
-from ..backends.kokoro import KokoroBackend
+from ..backends.kokoro import DEFAULT_VOICE, KokoroBackend
 from ..backends.llm import EDIT_MAX_TOKENS, LLMScriptBackend
 from ..backends.mock import MockBackend
 from ..comfy import allowlist as comfy_allowlist
@@ -740,6 +740,64 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 "samples": len(samples),
             }
         return {"etas": etas}
+
+    @app.get("/voices", dependencies=[Authed])
+    async def voices() -> dict:
+        """Every narration voice the installed pack actually holds.
+
+        Read from the pack, not from a list here: the keyword table that
+        resolves a style brief names five voices, and the shipped pack holds
+        fifty-four. A picker fed by the table can only ever offer the five,
+        and nothing in the product would say the others existed.
+
+        `available` is the registry's answer for NARRATION, like
+        `/llm/models` for SCRIPT: voices are Kokoro's vocabulary alone, so a
+        chain that routes narration to Chatterbox or mock cannot honor a
+        pick, and a picker offering one there would lie. It is also false on
+        a machine with no weights, since `supports()` deliberately stops
+        claiming narration until they land — which of the two it is belongs
+        to the readiness surface, whose job is naming what to install.
+        Unavailable answers in the same shape as empty, so a caller renders
+        its empty state rather than special-casing an error.
+
+        `default` is the voice a narration node whose style brief matches no
+        keyword falls back to — NOT the voice every node naming no `voice_id`
+        gets. That one is `pick_voice(brief)`, which is per-node: the five
+        Home swatches each write a brief that resolves elsewhere. A picker
+        labelling an Auto option from this field would name the wrong voice
+        for four of those five, so `default` is the pack's fallback and
+        nothing more.
+
+        It is always one of `voices` or null: it is picked out of the list
+        rather than asserted beside it, so a pack that does not hold the
+        fallback cannot have it advertised. Naming a voice the pack cannot
+        synthesize is the thing this route must not do — kokoro-onnx meets
+        it as a bare `assert voice in self.voices`.
+        """
+
+        def enumerate_pack() -> list[dict[str, str]] | None:
+            # The registered instance the scheduler would route to, not a
+            # lookup by name: `find` answers "is kokoro in the chain at all",
+            # which is a different question from "will a narration job land
+            # there".
+            #
+            # One hop, not two: resolving and then reading the pack are
+            # contiguous blocking work, and the archive read is the reason
+            # either is off the loop.
+            try:
+                backend = backends.resolve(NodeKind.NARRATION)
+            except GenerationError:
+                return None
+            if not isinstance(backend, KokoroBackend):
+                return None
+            return backend.installed_voices()
+
+        installed = await asyncio.to_thread(enumerate_pack)
+        if installed is None:
+            return {"available": False, "voices": [], "default": None}
+        ids = [voice["id"] for voice in installed]
+        default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
+        return {"available": True, "voices": installed, "default": default}
 
     def _defaults_payload(defaults: dict[str, str]) -> dict:
         """`auto` travels with every answer, GET and PUT alike: the picker

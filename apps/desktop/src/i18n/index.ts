@@ -34,6 +34,7 @@ import notify from "./en/notify.json";
 import drop from "./en/drop.json";
 import failure from "./en/failure.json";
 import publish from "./en/publish.json";
+import voices from "./en/voices.json";
 
 /** LocalCut AI internationalization.
  *
@@ -86,6 +87,7 @@ const en = {
   failure,
   publish,
   readiness,
+  voices,
 };
 
 export type Catalog = typeof en;

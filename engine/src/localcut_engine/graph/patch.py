@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph
+from .model import VOICE_REF_PORT, Node, NodeKind, StoryGraph, migrate_params
 
 # Params the server owns and a client patch may never set — otherwise the
 # consent affirmation stamped by the asset-upload route (voice_consent) could
@@ -210,7 +210,7 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # Same discipline as set_params: a client must not be able to
                 # smuggle a server-owned flag (e.g. voice_consent) in on a
                 # freshly added node, nor a null that no later edit can clear.
-                op.node.params = stored_params(op.node.params)
+                op.node.params = migrate_params(op.node.kind, stored_params(op.node.params))
                 # `pinned`/`frozen_hash` are server-owned for the same reason
                 # and on the same node: the `pin` op computes the hash itself
                 # from the live graph, and `from_template` zeroes both. A
@@ -292,7 +292,13 @@ def apply_patch(graph: StoryGraph, ops: list[PatchOp]) -> set[str]:
                 # the right way round — restoring the null would put back a
                 # value that silently turns captions off and that no later
                 # edit can clear.
-                node.params = stored_params(op.params)
+                #
+                # `migrate_params` is the second, for the same reason: a take
+                # recorded by a build whose behaviour version was lower names
+                # an artifact this build would no longer produce, so it
+                # re-renders once rather than restoring audio the current
+                # engine considers wrong.
+                node.params = migrate_params(node.kind, stored_params(op.params))
                 node.seed = op.seed if op.seed is not None else 0
                 node.model = op.model
             case "add_scene":

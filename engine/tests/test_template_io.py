@@ -462,3 +462,28 @@ def test_a_document_nested_too_deeply_is_refused_not_crashed():
 
     with pytest.raises(TemplateError, match="nested too deeply"):
         from_template(document)
+
+
+def test_an_imported_narration_node_carries_this_builds_version():
+    """A template is a document this build did not write, and the importer
+    enqueues against the graph it returns — so a narration node arriving
+    with an older behaviour version (or none) would render at one address
+    and be re-addressed by the first load afterwards, orphaning the audio
+    the import just paid for. Migrating on the way in is what makes the
+    import's own render the one that counts.
+    """
+    from localcut_engine.graph.model import NARRATION_VERSION
+
+    graph = _graph()
+    graph.add_node(
+        Node(id="s1.narration", kind=NodeKind.NARRATION, params={"text": "hi", "voice": "warm"})
+    )
+    graph.connect("script", "s1.narration")
+    document = to_template(graph, name="t").model_dump()
+    # A template written before the field existed at all.
+    document["nodes"]["s1.narration"]["params"].pop("narration_version", None)
+
+    built = build_graph(from_template(document))
+
+    assert built.nodes["s1.narration"].params["narration_version"] == NARRATION_VERSION
+    assert built.output_hash("s1.narration") != graph.output_hash("s1.narration")
