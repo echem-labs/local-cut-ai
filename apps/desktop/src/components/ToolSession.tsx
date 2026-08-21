@@ -182,8 +182,6 @@ export function ToolSession() {
     regenerate,
     enhance,
     refineTool,
-    setVoice,
-    setVoiceBrief,
     selectTake,
     addToProject,
     applySessionVoiceClone,
@@ -204,7 +202,14 @@ export function ToolSession() {
   // window: re-rendering one in another voice is the reason to be here, and
   // sending the user back to Home to do it would lose the text they refined.
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
+  // The voice the composer will send, held beside the text rather than
+  // applied on the click that chose it: a voice costs a synthesis, and
+  // comparing four of them would otherwise spend four renders. Both halves
+  // travel out together through "update & re-render".
+  const [voiceDraft, setVoiceDraft] = useState<{ brief: string; voiceId: string | null }>({
+    brief: "",
+    voiceId: null,
+  });
   const [addOpen, setAddOpen] = useState(false);
   const fit = useMenuFit();
   const [addResult, setAddResult] = useState<string | null>(null);
@@ -294,15 +299,15 @@ export function ToolSession() {
     setRefineError(null);
   }, [recipe]);
 
-  // The refusal a pick reported, dropped once the node's voice has actually
-  // moved — the same rule as the composer's error above. Without it a
-  // "node is pinned" banner outlives the pin, and nothing on the page can
-  // dismiss it: the picker closes before the refusal is even known.
+  // The voice the node actually holds, which the draft follows the way the
+  // composer's text follows the recipe: an update landing (or a take swap)
+  // moves it, and the engine's answer is what the next choice starts from.
   const pickedVoice = typeof params.voice_id === "string" ? params.voice_id : null;
   const voiceBrief = typeof params.voice === "string" ? params.voice : "";
   useEffect(() => {
-    setVoiceError(null);
-  }, [pickedVoice, node?.node_id]);
+    setVoiceDraft({ brief: voiceBrief, voiceId: pickedVoice });
+  }, [voiceBrief, pickedVoice]);
+  const voiceMoved = voiceDraft.brief !== voiceBrief || voiceDraft.voiceId !== pickedVoice;
 
   if (!tool || !node)
     // The dialog rides along: a board poll can drop the aux node while the
@@ -364,12 +369,23 @@ export function ToolSession() {
   };
 
   const sendRefine = async () => {
-    if (!recipeKey || refining) return;
+    if (refining) return;
     const value = refineDraft.trim();
-    if (!value || value === recipe) return;
+    if (!value) return;
+    // Only what moved: an unchanged key would be sent back at the value it
+    // already holds, which patches and re-plans for nothing.
+    const changes: Record<string, unknown> = {};
+    if (recipeKey && value !== recipe) changes[recipeKey] = value;
+    if (voiceMoved) {
+      // Empty brief and cleared pick both go as null — `set_params` removes
+      // the key, which is the state a render before either choice used.
+      changes.voice = voiceDraft.brief.trim() || null;
+      changes.voice_id = voiceDraft.voiceId;
+    }
+    if (Object.keys(changes).length === 0) return;
     setRefining(true);
     try {
-      setRefineError(await refineTool(node.node_id, recipeKey, value));
+      setRefineError(await refineTool(node.node_id, changes));
     } finally {
       setRefining(false);
     }
@@ -740,24 +756,17 @@ export function ToolSession() {
             {voiceOpen && voices && (
               <VoicePicker
                 voices={voices}
-                value={pickedVoice}
+                value={voiceDraft.voiceId}
                 // A session speaks for one node; the project it sits in is
                 // the session itself, so there is nothing to follow. The
                 // swatch row below is what drops a pick here.
                 canFollow={false}
-                onPick={async (voiceId) => {
+                onPick={(voiceId) => {
                   setVoiceOpen(false);
-                  // A pick re-renders: the voice is part of the node's hash,
-                  // so the artifact on screen is not what this now asks for.
-                  setVoiceError(await setVoice(node.node_id, voiceId));
+                  setVoiceDraft((draft) => ({ ...draft, voiceId }));
                 }}
                 onClose={() => setVoiceOpen(false)}
               />
-            )}
-            {voiceError && (
-              <div className="banner error" role="status">
-                {voiceError}
-              </div>
             )}
             {cloneOpen && tool === "voiceover" && (
               <div className="clone-panel">
@@ -836,16 +845,13 @@ export function ToolSession() {
               {tool === "voiceover" && (
                 <VoiceSwatches
                   voices={voices}
-                  brief={voiceBrief}
-                  voiceId={pickedVoice}
-                  onPickBrief={async (brief) => {
-                    setVoiceError(null);
-                    setVoiceError(await setVoiceBrief(node.node_id, brief));
-                  }}
-                  onOpenPicker={() => {
-                    setVoiceError(null);
-                    setVoiceOpen(true);
-                  }}
+                  brief={voiceDraft.brief}
+                  voiceId={voiceDraft.voiceId}
+                  // A brief and a pick are two answers to one question and
+                  // the pick is read first, so choosing one drops the other
+                  // rather than leaving the draft holding both.
+                  onPickBrief={(brief) => setVoiceDraft({ brief, voiceId: null })}
+                  onOpenPicker={() => setVoiceOpen(true)}
                 />
               )}
               <div className="row">
@@ -865,7 +871,11 @@ export function ToolSession() {
                   <button
                     className="btn-primary"
                     onClick={() => void sendRefine()}
-                    disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
+                    disabled={
+                      refining ||
+                      !refineDraft.trim() ||
+                      (refineDraft.trim() === recipe && !voiceMoved)
+                    }
                   >
                     {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
                   </button>

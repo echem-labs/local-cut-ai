@@ -421,9 +421,16 @@ interface AppState {
    * (a tool panel) is being swapped for another. */
   dismissActionError: () => void;
   /** The session composer's "update & re-render": rewrite the tool node's
-   * input field (prompt / text / brief). The /patch re-plan marks the node
-   * dirty and queues the re-render — no second call. */
-  refineTool: (nodeId: string, key: string, value: string) => Promise<string | null>;
+   * params — its input field (prompt / text / brief), and for a voiceover
+   * the voice beside it. The /patch re-plan marks the node dirty and
+   * queues the re-render — no second call.
+   *
+   * Everything that moved goes in ONE patch, because that re-plan fires
+   * per patch: a line and a voice sent apart render once in between, in
+   * the voice that was just replaced. A null value removes its key, which
+   * is how a picked `voice_id` is dropped back onto the params a
+   * brief-only render already used. */
+  refineTool: (nodeId: string, params: Record<string, unknown>) => Promise<string | null>;
   /** Pick the voice a narration node speaks in, or clear the pick.
    *
    * `null` clears it, and clears it by REMOVING the key rather than
@@ -431,13 +438,6 @@ interface AppState {
    * node put back on the project's voice lands on the same hash as one
    * that never carried a pick, and the audio already rendered for that
    * state is a cache hit again instead of a re-render. */
-  setVoice: (nodeId: string, voiceId: string | null) => Promise<string | null>;
-  /** Describe the voice instead of picking one: writes the brief and drops
-   * any picked id, in a single patch. Both move together because the
-   * engine reads the pick first — sent as two patches, the node spends the
-   * gap carrying the new brief under the old pick, and every patch
-   * re-plans. */
-  setVoiceBrief: (nodeId: string, brief: string) => Promise<string | null>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** The Story Graph behind the board, for the flowchart view. Null until
@@ -1912,43 +1912,11 @@ export const useApp = create<AppState>((set, get) => {
 
     dismissActionError: () => set({ actionError: null }),
 
-    setVoice: async (nodeId, voiceId) => {
+    refineTool: async (nodeId, params) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return t("errors.engineUnavailable");
       try {
-        await client.patch(currentProject.id, [
-          { op: "set_params", node_id: nodeId, params: { voice_id: voiceId } },
-        ]);
-        await get().refreshBoard();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
-    },
-
-    setVoiceBrief: async (nodeId, brief) => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        await client.patch(currentProject.id, [
-          // null removes the key, which is what puts the node back on the
-          // hash a brief-only render already used — see setVoice above.
-          { op: "set_params", node_id: nodeId, params: { voice: brief, voice_id: null } },
-        ]);
-        await get().refreshBoard();
-        return null;
-      } catch (err) {
-        return messageOf(err);
-      }
-    },
-
-    refineTool: async (nodeId, key, value) => {
-      const { client, currentProject } = get();
-      if (!client || !currentProject) return t("errors.engineUnavailable");
-      try {
-        await client.patch(currentProject.id, [
-          { op: "set_params", node_id: nodeId, params: { [key]: value } },
-        ]);
+        await client.patch(currentProject.id, [{ op: "set_params", node_id: nodeId, params }]);
         await get().refreshBoard();
         return null;
       } catch (err) {
