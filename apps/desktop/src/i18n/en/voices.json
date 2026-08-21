@@ -47,8 +47,12 @@
   "current": "Voice: {name}",
   "currentFollowing": "Voice: follows the project",
   "currentFollowingNamed": "Voice: follows the project \u00b7 {name}",
-  "currentEveryScene": "Voice: {name} \u00b7 every scene",
-  "currentFollowingEveryScene": "Voice: follows the project \u00b7 every scene",
+  "confirmTitle_one": "Use {name} for the only scene?",
+  "confirmTitle_other": "Use {name} for all {count} scenes?",
+  "confirmClearTitle_one": "Put the only scene back to following the project?",
+  "confirmClearTitle_other": "Put all {count} scenes back to following the project?",
+  "confirmBody": "Their narration re-renders. The scene descriptions are left alone.",
+  "confirmAction": "Use {name}",
   "overridesBrief": "This scene uses the picked voice; the description above is not used while one is picked.",
   "more": "All {count} voices\u2026"
 }

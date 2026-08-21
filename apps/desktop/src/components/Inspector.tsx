@@ -5,7 +5,7 @@ import { inspectorTitle } from "../help/terms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FailureCard } from "./FailureCard";
 import { PhotoThumb } from "./PhotoThumb";
-import { t } from "../i18n";
+import { plural, t } from "../i18n";
 import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
 import { useVoices } from "../lib/useVoices";
@@ -30,6 +30,7 @@ export function Inspector() {
     selectedNode,
     select,
     applyNode,
+    setProjectVoice,
     togglePin,
     regenerate,
     applyTimeline,
@@ -55,10 +56,12 @@ export function Inspector() {
   // so one Apply covers the brief and the pick together rather than
   // the pick landing a render the rest of the panel has not asked for.
   const [voiceId, setVoiceId] = useState<string | null>(null);
-  // Whether the staged pick is this scene's or the project's. Staged like
-  // the pick itself rather than applied on the click: it rides out with
-  // Apply, in the same patch, so one decision is one re-plan.
-  const [voiceEveryScene, setVoiceEveryScene] = useState(false);
+  // A project-wide pick waiting on its own answer. It does NOT stage: this
+  // panel's Apply means this scene, and a button cannot quietly grow to
+  // mean nine of them. So the ask happens where the choice was made, and
+  // writes on its own.
+  const [voicePending, setVoicePending] = useState<{ voiceId: string | null } | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const voices = useVoices(tab === "voice");
   const [speed, setSpeed] = useState("");
@@ -149,14 +152,20 @@ export function Inspector() {
   const followedVoice =
     typeof activeNode?.params.voice_id === "string" ? null : (activeNode?.resolved_voice ?? null);
   const voiceLine = voiceId
-    ? t(voiceEveryScene ? "voices.currentEveryScene" : "voices.current", {
-        name: voiceName(voiceId),
-      })
-    : voiceEveryScene
-      ? t("voices.currentFollowingEveryScene")
-      : followedVoice
-        ? t("voices.currentFollowingNamed", { name: voiceName(followedVoice) })
-        : t("voices.currentFollowing");
+    ? t("voices.current", { name: voiceName(voiceId) })
+    : followedVoice
+      ? t("voices.currentFollowingNamed", { name: voiceName(followedVoice) })
+      : t("voices.currentFollowing");
+  // The scenes a project-wide pick would reach. A scene whose narration
+  // was removed has nothing to speak with and is not one of them.
+  const narratingScenes = (board?.scenes ?? []).filter((scene) => scene.narration).length;
+
+  // The refusal lands on the panel rather than in the dialog, which is
+  // gone by then: a "node is pinned" the user cannot see is a change they
+  // believe happened.
+  const useEverywhere = async (voiceId: string | null) => {
+    setVoiceError(await setProjectVoice(voiceId));
+  };
 
   // Each field re-seeds on active-node change AND when ITS OWN server value
   // moves — never when a sibling field does, so unsaved typing survives
@@ -178,7 +187,6 @@ export function Inspector() {
     setVoice(String(activeNode?.params.voice ?? ""));
   }, [activeId, activeNode?.params.voice]);
   useEffect(() => {
-    setVoiceEveryScene(false);
     setVoiceId(
       typeof activeNode?.params.voice_id === "string" ? activeNode.params.voice_id : null,
     );
@@ -278,7 +286,6 @@ export function Inspector() {
   const apply = () => {
     if (!activeNode) return;
     const params: Record<string, unknown> = {};
-    const alsoParams: Record<string, Record<string, unknown>> = {};
     if (prompt !== String(activeNode.params[contentKey] ?? "")) params[contentKey] = prompt;
     if (tab === "motion") {
       if (motion !== String(activeNode.params.motion ?? "")) params.motion = motion;
@@ -302,18 +309,6 @@ export function Inspector() {
       // already rendered for the brief is a cache hit rather than a
       // re-render. Storing null instead would be a third, novel state.
       if (voiceId !== storedVoiceId) params.voice_id = voiceId;
-      if (voiceEveryScene) {
-        // Every OTHER scene that still narrates. This node's own voice is
-        // in `params` above, and a scene whose narration was removed has
-        // nothing to speak with.
-        for (const other of board?.scenes ?? []) {
-          const narration = other.narration;
-          if (!narration || narration.node_id === activeNode.node_id) continue;
-          const held =
-            typeof narration.params.voice_id === "string" ? narration.params.voice_id : null;
-          if (held !== voiceId) (alsoParams[narration.node_id] ??= {}).voice_id = voiceId;
-        }
-      }
       const rate = Number.parseFloat(speed);
       if (Number.isFinite(rate)) {
         const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate));
@@ -324,7 +319,6 @@ export function Inspector() {
     const modelValue = model.trim() || null;
     void applyNode(activeNode.node_id, {
       params,
-      ...(Object.keys(alsoParams).length > 0 ? { alsoParams } : {}),
       seed: Number.isFinite(seedValue) && seedValue !== activeNode.seed ? seedValue : undefined,
       model: modelEditable && modelValue !== activeNode.model ? modelValue : undefined,
     });
@@ -603,12 +597,44 @@ export function Inspector() {
                   // a pick to.
                   scope="project"
                   onPick={(picked, everyScene) => {
-                    setVoiceId(picked);
-                    setVoiceEveryScene(everyScene);
                     setVoiceOpen(false);
+                    setVoiceError(null);
+                    // A project-wide pick asks first and writes itself; a
+                    // scene's own stages, like every other edit here.
+                    if (everyScene) setVoicePending({ voiceId: picked });
+                    else setVoiceId(picked);
                   }}
                   onClose={() => setVoiceOpen(false)}
                 />
+              )}
+              {voicePending && (
+                // The repo's confirmation shell, not a private one: it owns
+                // the focus trap, Escape, and pointing focus at Cancel.
+                <ConfirmDialog
+                  title={
+                    voicePending.voiceId
+                      ? plural("voices.confirmTitle", narratingScenes, {
+                          name: voiceName(voicePending.voiceId),
+                        })
+                      : plural("voices.confirmClearTitle", narratingScenes)
+                  }
+                  message={t("voices.confirmBody")}
+                  confirmLabel={
+                    voicePending.voiceId
+                      ? t("voices.confirmAction", { name: voiceName(voicePending.voiceId) })
+                      : t("voices.followProject")
+                  }
+                  onCancel={() => setVoicePending(null)}
+                  onConfirm={() => {
+                    setVoicePending(null);
+                    void useEverywhere(voicePending.voiceId);
+                  }}
+                />
+              )}
+              {voiceError && (
+                <p className="hint error-text" role="alert">
+                  {voiceError}
+                </p>
               )}
             </div>
           )}

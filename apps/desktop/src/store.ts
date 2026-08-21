@@ -431,6 +431,15 @@ interface AppState {
    * is how a picked `voice_id` is dropped back onto the params a
    * brief-only render already used. */
   refineTool: (nodeId: string, params: Record<string, unknown>) => Promise<string | null>;
+  /** Give every scene the same narrator.
+   *
+   * A project's voice is the screenplay's style brief, which nothing can
+   * edit — so this writes the PICK each scene carries instead, which is
+   * also the half that survives a re-script. One patch, because it is one
+   * decision: sent per scene, each re-plans and the project renders
+   * part-way through the change. Scenes already on that voice are left
+   * out, so re-picking does not re-address audio that already matches. */
+  setProjectVoice: (voiceId: string | null) => Promise<string | null>;
   /** Pick the voice a narration node speaks in, or clear the pick.
    *
    * `null` clears it, and clears it by REMOVING the key rather than
@@ -463,12 +472,6 @@ interface AppState {
       params?: Record<string, unknown>;
       seed?: number;
       model?: string | null;
-      /** Params for OTHER nodes, folded into the same patch — keyed by node
-       * id. For an edit that is one decision across several nodes: setting
-       * a project's narrator touches every scene, and a patch each would
-       * re-plan between them, rendering the project part-way through the
-       * change. */
-      alsoParams?: Record<string, Record<string, unknown>>;
     },
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
@@ -1922,6 +1925,30 @@ export const useApp = create<AppState>((set, get) => {
 
     dismissActionError: () => set({ actionError: null }),
 
+    setProjectVoice: async (voiceId) => {
+      const { client, currentProject, board } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      const ops: Parameters<EngineClient["patch"]>[1] = [];
+      for (const scene of board?.scenes ?? []) {
+        const narration = scene.narration;
+        if (!narration) continue;
+        const held =
+          typeof narration.params.voice_id === "string" ? narration.params.voice_id : null;
+        // null travels as null: `set_params` removes the key, putting the
+        // node back on the hash its brief-only render already used.
+        if (held !== voiceId)
+          ops.push({ op: "set_params", node_id: narration.node_id, params: { voice_id: voiceId } });
+      }
+      if (ops.length === 0) return null;
+      try {
+        await client.patch(currentProject.id, ops);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
     refineTool: async (nodeId, params) => {
       const { client, currentProject } = get();
       if (!client || !currentProject) return t("errors.engineUnavailable");
@@ -2146,9 +2173,6 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (changes.model !== undefined) {
         ops.push({ op: "set_model", node_id: nodeId, model: changes.model });
-      }
-      for (const [id, params] of Object.entries(changes.alsoParams ?? {})) {
-        if (Object.keys(params).length > 0) ops.push({ op: "set_params", node_id: id, params });
       }
       if (ops.length === 0) return;
       await client.patch(currentProject.id, ops);
