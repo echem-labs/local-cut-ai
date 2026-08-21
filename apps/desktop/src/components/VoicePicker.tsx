@@ -81,17 +81,27 @@ function matches(voice: Voice, query: string): boolean {
 /** Choose one of the installed narration voices, auditioning before picking.
  *
  * `value` is the explicitly picked id, or null for "whatever the brief
- * resolves to" — which is a real choice and stays selectable, because
- * clearing a pick is how a scene goes back to speaking like the project.
+ * resolves to".
+ *
+ * `canFollow` says whether that null is offered as a row of its own, and
+ * only a scene in a project can say yes: clearing a pick there is how the
+ * scene goes back to speaking like the rest of the project, which is a
+ * choice with a name a reader recognises. Home's quick tool and a tool
+ * session each speak for a single node whose "project" is its own session
+ * — the row would name a fallback that does not exist. Those two carry the
+ * swatch row instead, and a swatch is what drops a pick. Required rather
+ * than defaulted: a surface that gains a picker has to answer this.
  */
 export function VoicePicker({
   voices,
   value,
+  canFollow,
   onPick,
   onClose,
 }: {
   voices: Voices;
   value: string | null;
+  canFollow: boolean;
   onPick: (voiceId: string | null) => void;
   onClose: () => void;
 }) {
@@ -179,14 +189,16 @@ export function VoicePicker({
           </label>
 
           <div className="voice-list" role="group" aria-label={t("voices.listAria")}>
-            <button
-              className={`voice-row${value === null ? " active" : ""}`}
-              onClick={() => onPick(null)}
-            >
-              <span className="voice-row-name">{t("voices.followProject")}</span>
-              <span className="voice-row-meta">{t("voices.followProjectHint")}</span>
-              {value === null && <Check size={14} strokeWidth={2} aria-hidden="true" />}
-            </button>
+            {canFollow && (
+              <button
+                className={`voice-row${value === null ? " active" : ""}`}
+                onClick={() => onPick(null)}
+              >
+                <span className="voice-row-name">{t("voices.followProject")}</span>
+                <span className="voice-row-meta">{t("voices.followProjectHint")}</span>
+                {value === null && <Check size={14} strokeWidth={2} aria-hidden="true" />}
+              </button>
+            )}
 
             {groups.map(([code, group]) => (
               <div key={code ?? "unknown"} className="voice-group">

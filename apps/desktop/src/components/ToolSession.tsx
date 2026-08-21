@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AudioLines, Dices, FolderPlus, Mic, Repeat } from "lucide-react";
+import { Dices, FolderPlus, Mic, Repeat } from "lucide-react";
 import type { Screenplay, TakeInfo } from "../api/types";
 import { m, t } from "../i18n";
 import { useApp } from "../store";
@@ -16,6 +16,7 @@ import { StatusRing } from "./StatusRing";
 import { Tip } from "./Tooltip";
 import { PromotedTo } from "./Provenance";
 import { VoicePicker } from "./VoicePicker";
+import { VoiceSwatches } from "./VoiceSwatches";
 import { Waveform } from "./Waveform";
 
 /** True when the page's h1 already says these words — exactly, or as the
@@ -182,6 +183,7 @@ export function ToolSession() {
     enhance,
     refineTool,
     setVoice,
+    setVoiceBrief,
     selectTake,
     addToProject,
     applySessionVoiceClone,
@@ -297,6 +299,7 @@ export function ToolSession() {
   // "node is pinned" banner outlives the pin, and nothing on the page can
   // dismiss it: the picker closes before the refusal is even known.
   const pickedVoice = typeof params.voice_id === "string" ? params.voice_id : null;
+  const voiceBrief = typeof params.voice === "string" ? params.voice : "";
   useEffect(() => {
     setVoiceError(null);
   }, [pickedVoice, node?.node_id]);
@@ -661,21 +664,6 @@ export function ToolSession() {
                   </button>
                 </Tip>
               )}
-              {tool === "voiceover" && voices?.available && (
-                <Tip label={t("voices.changeAria")} hint={t("voices.pickerSubtitle")} side="top">
-                  <button
-                    className="btn-ghost"
-                    onClick={() => {
-                      setVoiceError(null);
-                      setVoiceOpen(true);
-                    }}
-                    aria-label={t("voices.changeAria")}
-                  >
-                    <AudioLines size={13} strokeWidth={1.8} aria-hidden="true" />
-                    {t("voices.change")}
-                  </button>
-                </Tip>
-              )}
               {tool === "voiceover" && (
                 <Tip
                   label={t("toolSession.cloneVoiceTitle")}
@@ -753,6 +741,10 @@ export function ToolSession() {
               <VoicePicker
                 voices={voices}
                 value={pickedVoice}
+                // A session speaks for one node; the project it sits in is
+                // the session itself, so there is nothing to follow. The
+                // swatch row below is what drops a pick here.
+                canFollow={false}
                 onPick={async (voiceId) => {
                   setVoiceOpen(false);
                   // A pick re-renders: the voice is part of the node's hash,
@@ -831,6 +823,28 @@ export function ToolSession() {
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
                       void sendRefine();
+                  }}
+                />
+              )}
+              {/* Under the text it speaks, in the same box and the same
+                  order as Home's panel: the two surfaces make the same
+                  choice, so making it should not look like two different
+                  jobs. Unlike Home's, a choice here lands on a node that
+                  already has audio, so it re-renders on the spot — the
+                  reason to change a voice from this window rather than
+                  starting the voiceover again. */}
+              {tool === "voiceover" && (
+                <VoiceSwatches
+                  voices={voices}
+                  brief={voiceBrief}
+                  voiceId={pickedVoice}
+                  onPickBrief={async (brief) => {
+                    setVoiceError(null);
+                    setVoiceError(await setVoiceBrief(node.node_id, brief));
+                  }}
+                  onOpenPicker={() => {
+                    setVoiceError(null);
+                    setVoiceOpen(true);
                   }}
                 />
               )}
