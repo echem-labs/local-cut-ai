@@ -45,9 +45,11 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-**ffmpeg must be on `PATH`** or ~20 assembly tests skip rather than fail, and
+**ffmpeg must be on `PATH`** or the assembly tests skip rather than fail, and
 the suite reads green while testing no assembly at all. That is why `-rs` is
-not optional.
+not optional. (No count here on purpose: `ci-engine.yml` states one, and a
+second copy of a number nothing reconciles is the drift this repo writes
+contract tests to prevent.)
 
 Desktop (from `apps/desktop/`):
 
@@ -83,9 +85,14 @@ second way into the data directory, and an agent's mutations land at the same
 
 ```
 engine_info · list_projects · create_project · get_project · get_graph
-approve · start_render · render_status · export_video
+approve · start_render · render_status · cancel_render · export_video
 edit_project · apply_edit · patch_project · undo · redo · project_history
 ```
+
+(That list is pinned against the registered tools by
+`test_mcp.py::test_the_agents_file_lists_the_toolset_it_documents`, because a
+toolset written down twice is a list that goes stale in the copy a reader
+trusts.)
 
 Natural-language edits are propose-then-act: `edit_project` returns a plan,
 and `apply_edit` requires the previewed scope and revision.
