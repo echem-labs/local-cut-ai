@@ -10,9 +10,13 @@ import { useApp } from "../store";
  * caller that collapses them shows "no voices installed" during the first
  * frame of every mount.
  *
- * Shared rather than repeated because three surfaces offer this picker, and
- * the answer is per-engine, not per-surface: a fetch in each of them would
- * ask the same question three times and let them disagree about it.
+ * One hook rather than three copies of the effect, but NOT one shared
+ * answer: each consumer holds its own, and `enabled` going false and true
+ * again asks the engine afresh. That is deliberate rather than merely
+ * unimplemented — which voices are installed is a property of the machine
+ * and changes under a running app when a pack finishes downloading, so a
+ * cached first answer would leave the picker empty for the session. The
+ * three surfaces are never mounted at once, so nothing here asks twice over.
  */
 export function useVoices(enabled = true): Voices | null {
   const [voices, setVoices] = useState<Voices | null>(null);

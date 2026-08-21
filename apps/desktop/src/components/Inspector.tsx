@@ -146,10 +146,12 @@ export function Inspector() {
   }, [activeId, activeNode?.params.motion]);
   useEffect(() => {
     setVoice(String(activeNode?.params.voice ?? ""));
+  }, [activeId, activeNode?.params.voice]);
+  useEffect(() => {
     setVoiceId(
       typeof activeNode?.params.voice_id === "string" ? activeNode.params.voice_id : null,
     );
-  }, [activeId, activeNode?.params.voice, activeNode?.params.voice_id]);
+  }, [activeId, activeNode?.params.voice_id]);
   useEffect(() => {
     setSpeed(activeNode?.params.speed != null ? String(activeNode.params.speed) : "1.0");
   }, [activeId, activeNode?.params.speed]);
@@ -535,8 +537,12 @@ export function Inspector() {
               )}
               {/* A picked voice outranks the brief at render, so a brief
                   edited under one changes nothing audible. Saying so is the
-                  only place a user can find that out. */}
-              {voiceId && voice.trim() && (
+                  only place a user can find that out — but only alongside the
+                  row that names the pick and the button that clears it, which
+                  are behind the same guard. Announcing that the brief is
+                  ignored with no way to see or drop the pick is worse than
+                  saying nothing. */}
+              {voices?.available && voiceId && voice.trim() && (
                 <div className="hint" role="note">
                   {t("voices.overridesBrief")}
                 </div>

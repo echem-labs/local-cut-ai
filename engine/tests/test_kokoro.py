@@ -10,10 +10,12 @@ from conftest import make_spec
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.backends.kokoro import (
+    NARRATION_VERSION,
     PREVIEW_LINE,
     KokoroBackend,
     describe_voice,
     language_of,
+    preview_stem,
 )
 from localcut_engine.config import EngineConfig
 from localcut_engine.graph.compiler import JobSpec
@@ -426,13 +428,48 @@ async def test_a_preview_is_rendered_the_way_a_project_renders_it(tmp_path, monk
     monkeypatch.setattr(backend, "_installed_ids", lambda: {"bf_emma"})
 
     rendered = await backend.render_preview("bf_emma", tmp_path / "previews")
-    # Published under the id, so the id is the cache key and a re-downloaded
-    # pack replaces the audio rather than accumulating beside it.
-    assert rendered.name == "bf_emma.wav"
+    # Published under the id AND the narration version, so a bump re-renders
+    # the audition instead of serving audio no project matches any more.
+    assert rendered.name == f"bf_emma.v{NARRATION_VERSION}.wav"
     assert rendered.exists()
     assert calls == [{"text": PREVIEW_LINE, "voice": "bf_emma", "speed": 1.0, "lang": "en-gb"}], (
         calls
     )
+
+
+async def test_a_preview_is_addressed_by_the_narration_version_it_was_made_with(monkeypatch):
+    """The version is in the NAME, not merely in the params.
+
+    `narration_version` is not read at synthesis - it exists to address the
+    audio - so a preview cache keyed on the voice alone would serve a v2 wav
+    to a picker auditioning for a v3 render. That is the drift the whole
+    route exists to prevent, and only the filename can prevent it.
+    """
+    from localcut_engine.backends import kokoro
+
+    assert preview_stem("bf_emma") == f"bf_emma.v{NARRATION_VERSION}"
+    monkeypatch.setattr(kokoro, "NARRATION_VERSION", NARRATION_VERSION + 1)
+    assert preview_stem("bf_emma") != f"bf_emma.v{NARRATION_VERSION}"
+
+
+async def test_a_swatch_sample_is_filed_under_the_bare_voice_id(tmp_path, monkeypatch):
+    """The five bundled swatch wavs are loaded by the desktop as `<id>.wav`
+    and pinned there by test_ui_contract, so the script that regenerates them
+    overrides the engine's versioned preview name. They are committed rather
+    than cached, which is why the version that keeps the engine's cache
+    honest would only break these."""
+    import numpy as np
+
+    class FakeEngine:
+        def create(self, text, voice, speed, lang):
+            return np.zeros(2400, dtype="float32"), 24000
+
+    backend = KokoroBackend(models_dir=tmp_path)
+    monkeypatch.setattr(backend, "_load", lambda: FakeEngine())
+    monkeypatch.setattr(backend, "_installed_ids", lambda: {"af_sarah"})
+
+    rendered = await backend.render_preview("af_sarah", tmp_path / "assets", stem="af_sarah")
+    assert rendered.name == "af_sarah.wav"
 
 
 async def test_a_preview_of_a_voice_the_pack_lacks_is_refused(tmp_path, monkeypatch):

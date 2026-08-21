@@ -87,15 +87,11 @@ function matches(voice: Voice, query: string): boolean {
 export function VoicePicker({
   voices,
   value,
-  fallbackName,
   onPick,
   onClose,
 }: {
   voices: Voices;
   value: string | null;
-  /** What the no-explicit-pick row says it will use — the voice the brief
-   * resolves to. Shown, not guessed at: the engine owns that resolution. */
-  fallbackName?: string;
   onPick: (voiceId: string | null) => void;
   onClose: () => void;
 }) {
@@ -137,14 +133,21 @@ export function VoicePicker({
     // failure here is the engine saying it cannot, and the row has to say so
     // rather than leaving a play button that silently does nothing.
     audio.addEventListener("error", () => {
+      // Both updaters are guarded, and for one reason: `audition` only
+      // PAUSES the element it supersedes, so an abandoned request can still
+      // fail seconds later. An unguarded setFailed would put "could not play
+      // this one" on a row while a different voice is audibly playing.
       setPlaying((current) => (current === voiceId ? null : current));
-      setFailed(voiceId);
+      setFailed((current) => (audioRef.current === audio ? voiceId : current));
     });
     setPlaying(voiceId);
     const request = audio.play();
     if (request)
       void request.catch(() => {
-        /* autoplay policy or a missing device — the pick still works */
+        // Autoplay policy or a missing device. It rejects the promise
+        // without firing `error`, so this is the only thing that can put
+        // the row back — otherwise it shows a Stop that stops nothing.
+        setPlaying((current) => (current === voiceId ? null : current));
       });
   };
 
@@ -181,11 +184,7 @@ export function VoicePicker({
               onClick={() => onPick(null)}
             >
               <span className="voice-row-name">{t("voices.followProject")}</span>
-              <span className="voice-row-meta">
-                {fallbackName
-                  ? t("voices.followProjectUsing", { name: fallbackName })
-                  : t("voices.followProjectHint")}
-              </span>
+              <span className="voice-row-meta">{t("voices.followProjectHint")}</span>
               {value === null && <Check size={14} strokeWidth={2} aria-hidden="true" />}
             </button>
 
@@ -244,7 +243,12 @@ export function VoicePicker({
             ))}
             {shown.length === 0 && (
               <p className="quiet" role="status">
-                {t("voices.noMatch", { query: query.trim() })}
+                {/* An available pack with no voices is a pack that could not
+                    be read, not a search that missed — reporting a miss
+                    against an empty query would describe the wrong thing. */}
+                {voices.voices.length === 0
+                  ? t("voices.noneInstalled")
+                  : t("voices.noMatch", { query: query.trim() })}
               </p>
             )}
           </div>

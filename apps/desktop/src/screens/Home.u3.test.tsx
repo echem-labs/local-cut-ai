@@ -181,6 +181,39 @@ describe("the voiceover panel", () => {
     await vi.waitFor(() => expect(createTool).toHaveBeenCalled());
     expect(createTool.mock.calls[0][1]).toMatchObject({ text: "Hello there", voice: "deep" });
   });
+
+  /**
+   * A picked voice and a brief are two answers to one question, and the
+   * engine only ever hears the pick: `kokoro.execute` resolves
+   * `voice_id or pick_voice(voice)`. So the panel must never hold both -
+   * whichever the user touched last is the one that survives, or a swatch
+   * lights up as chosen while another voice is what actually speaks.
+   */
+  it("clears a picked voice when a swatch brief is chosen instead", () => {
+    seed();
+    openTool("voiceover", { toolInput: "Hello there", voiceId: "bf_emma" });
+    render(<Home />);
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    expect(useApp.getState().homeDraft.voice).toBe("deep");
+    // Without this the Onyx swatch renders active while bf_emma still wins.
+    expect(useApp.getState().homeDraft.voiceId).toBeNull();
+  });
+
+  /**
+   * The panel's options describe THAT run and go back to their starting
+   * values with the text - and this one is persisted, so a pick left behind
+   * is not merely stale for the next voiceover but for every later session.
+   */
+  it("forgets a picked voice once the run is away", async () => {
+    const createTool = seed();
+    openTool("voiceover", { toolInput: "Hello there", voiceId: "bf_emma" });
+    render(<Home />);
+    fireEvent.click(screen.getByText("Generate voiceover"));
+    await vi.waitFor(() => expect(createTool).toHaveBeenCalled());
+    expect(createTool.mock.calls[0][1]).toMatchObject({ voice_id: "bf_emma" });
+    await vi.waitFor(() => expect(useApp.getState().homeDraft.toolInput).toBe(""));
+    expect(useApp.getState().homeDraft.voiceId).toBeNull();
+  });
 });
 
 describe("the music panel", () => {

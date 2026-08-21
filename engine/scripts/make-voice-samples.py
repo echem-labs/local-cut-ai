@@ -68,7 +68,9 @@ async def main() -> int:
     for voice in swatch_voices():
         if voice not in installed:
             raise SystemExit(f"the pack has no voice {voice!r}, which a swatch offers")
-        rendered = await backend.render_preview(voice, ASSETS)
+        # Under the bare id, not the engine's versioned preview name: these
+        # five are bundled with the desktop and loaded as `<id>.wav`.
+        rendered = await backend.render_preview(voice, ASSETS, stem=voice)
         print(f"  {rendered.name}")
     return 0
 
