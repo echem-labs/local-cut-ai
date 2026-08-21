@@ -43,6 +43,7 @@ function scene(id: string, narration: NodeState | null) {
 }
 
 let applyNode: ReturnType<typeof vi.fn>;
+let setProjectVoice: ReturnType<typeof vi.fn>;
 
 /** Two scenes, so "every scene" has somewhere to reach.
  *
@@ -51,6 +52,7 @@ let applyNode: ReturnType<typeof vi.fn>;
  */
 function mount(over: Partial<NodeState> = {}, held: string | null = null) {
   applyNode = vi.fn();
+  setProjectVoice = vi.fn().mockResolvedValue(null);
   const picked = held ? { voice_id: held } : {};
   const board: Board = {
     scenes: [
@@ -63,6 +65,7 @@ function mount(over: Partial<NodeState> = {}, held: string | null = null) {
     board,
     selectedNode: "s1.narration",
     applyNode,
+    setProjectVoice,
     client: {
       voices: vi.fn().mockResolvedValue(PACK),
       voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
@@ -102,37 +105,76 @@ describe("what the scene sounds like", () => {
 });
 
 describe("choosing for the whole project", () => {
-  async function pick(name: string, everyScene: boolean, held: string | null = null) {
+  async function open(everyScene: boolean, held: string | null = null) {
     mount({}, held);
     fireEvent.click(await screen.findByText("Change voice"));
     if (everyScene) fireEvent.click(screen.getByLabelText("Use this voice for every scene"));
-    fireEvent.click(screen.getByText(name));
-    fireEvent.click(screen.getByText("Apply & regenerate"));
-    await waitFor(() => expect(applyNode).toHaveBeenCalled());
-    return applyNode.mock.calls[0];
   }
 
-  it("writes only this scene when it was not asked for", async () => {
-    const [nodeId, changes] = await pick("Emma", false);
-    expect(nodeId).toBe("s1.narration");
-    expect(changes.params).toMatchObject({ voice_id: "bf_emma" });
-    expect(changes.alsoParams).toBeUndefined();
+  it("writes only this scene when it was not asked for, and waits for Apply", async () => {
+    await open(false);
+    fireEvent.click(screen.getByText("Emma"));
+    // A pick for one scene is an edit like any other on this panel: it
+    // stages, and Apply sends it with whatever else was typed.
+    expect(setProjectVoice).not.toHaveBeenCalled();
+    expect(applyNode).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Apply & regenerate"));
+    await waitFor(() => expect(applyNode).toHaveBeenCalled());
+    expect(applyNode.mock.calls[0][0]).toBe("s1.narration");
+    expect(applyNode.mock.calls[0][1].params).toMatchObject({ voice_id: "bf_emma" });
   });
 
-  it("writes every other scene's narration in the same call", async () => {
-    const [nodeId, changes] = await pick("Emma", true);
-    expect(nodeId).toBe("s1.narration");
-    expect(changes.params).toMatchObject({ voice_id: "bf_emma" });
-    // One patch, so one re-plan: sent as a patch per scene, each lands
-    // separately and the project renders part-way through the change.
-    expect(changes.alsoParams).toEqual({ "s2.narration": { voice_id: "bf_emma" } });
+  it("asks before rewriting scenes the panel is not about", async () => {
+    await open(true);
+    fireEvent.click(screen.getByText("Emma"));
+    // "Apply & regenerate" means this scene, and it has to keep meaning
+    // that: a project-wide change asks for itself, where it is chosen.
+    expect(setProjectVoice).not.toHaveBeenCalled();
+    expect(await screen.findByText("Use Emma for all 2 scenes?")).toBeInTheDocument();
   });
 
-  it("clears every scene's pick when the follow row is the one chosen", async () => {
-    const [, changes] = await pick("Follow the project", true, "af_sarah");
-    // null removes the key, which is what puts each node back on the hash
-    // its brief-only render already used.
-    expect(changes.params).toMatchObject({ voice_id: null });
-    expect(changes.alsoParams).toEqual({ "s2.narration": { voice_id: null } });
+  it("writes every scene once the ask is answered", async () => {
+    await open(true);
+    fireEvent.click(screen.getByText("Emma"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use Emma" }));
+    await waitFor(() => expect(setProjectVoice).toHaveBeenCalledWith("bf_emma"));
+    // Not through the scene's own Apply: the two are separate decisions
+    // made at separate moments now.
+    expect(applyNode).not.toHaveBeenCalled();
+  });
+
+  it("leaves everything alone when the ask is declined", async () => {
+    await open(true);
+    fireEvent.click(screen.getByText("Emma"));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(setProjectVoice).not.toHaveBeenCalled();
+
+    // And the scene keeps the voice it had: a cancelled project-wide pick
+    // must not leave a scene-sized one staged behind it.
+    fireEvent.click(screen.getByText("Apply & regenerate"));
+    await waitFor(() => expect(applyNode).toHaveBeenCalled());
+    expect(applyNode.mock.calls[0][1].params.voice_id).toBeUndefined();
+  });
+
+  it("names the ask for what clearing does", async () => {
+    await open(true, "af_sarah");
+    fireEvent.click(screen.getByText("Follow the project"));
+    expect(
+      await screen.findByText("Put all 2 scenes back to following the project?"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Follow the project" }));
+    await waitFor(() => expect(setProjectVoice).toHaveBeenCalledWith(null));
+  });
+
+  it("reports a refusal on the panel the pick was made from", async () => {
+    await open(true);
+    // Set after the mount that creates it. The dialog is gone by the time
+    // the answer arrives, so a refusal that only lived there would be a
+    // change the user believes happened.
+    setProjectVoice.mockResolvedValue("node is pinned");
+    fireEvent.click(screen.getByText("Emma"));
+    fireEvent.click(await screen.findByRole("button", { name: "Use Emma" }));
+    expect(await screen.findByText("node is pinned")).toBeInTheDocument();
   });
 });
