@@ -76,6 +76,13 @@ class EngineConfig(BaseModel):
         return self.data_dir / "queue.db"
 
     @property
+    def previews_dir(self) -> Path:
+        """Auditioned voice previews, engine-wide rather than per-project: a
+        preview is a property of the installed pack, and every project
+        auditions the same voices out of it."""
+        return self.data_dir / "previews"
+
+    @property
     def resolved_models_dir(self) -> Path:
         return self.models_dir if self.models_dir is not None else self.data_dir / "models"
 

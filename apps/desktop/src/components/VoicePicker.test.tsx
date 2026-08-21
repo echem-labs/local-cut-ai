@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Voice, Voices } from "../api/types";
 import { useApp } from "../store";
@@ -78,6 +78,13 @@ describe("telling voices apart", () => {
 });
 
 describe("the picker", () => {
+  // In teardown, not at the end of the test that stubs: an assertion that
+  // throws before the last line would otherwise leave the fake `Audio`
+  // installed for every test after it in this file.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("offers every installed voice and reports the pick by id", async () => {
     mountClient();
     const onPick = vi.fn();
@@ -120,7 +127,41 @@ describe("the picker", () => {
     render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
     await userEvent.click(screen.getByLabelText("Hear Emma"));
     expect(sources).toEqual(["http://engine/voices/bf_emma/preview"]);
+  });
+
+  it("puts the row back when playback is refused rather than leaving a stop", async () => {
+    mountClient();
+    // A rejected play() fires no `error` event - autoplay policy and a
+    // missing output device both land here - so nothing else can clear the
+    // row, and it would keep offering a Stop that stops nothing.
+    vi.stubGlobal(
+      "Audio",
+      class {
+        play = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
+        pause = vi.fn();
+        addEventListener = vi.fn();
+      },
+    );
+    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    await userEvent.click(screen.getByLabelText("Hear Emma"));
+    await vi.waitFor(() => expect(screen.getByLabelText("Hear Emma")).toBeTruthy());
+    expect(screen.queryByLabelText("Stop Emma")).toBeNull();
     vi.unstubAllGlobals();
+  });
+
+  it("says an unreadable pack is empty rather than reporting a search miss", () => {
+    mountClient();
+    // `available: true` with no voices is a pack that could not be read, not
+    // a query that matched nothing - and the query here is empty.
+    render(
+      <VoicePicker
+        voices={payload({ voices: [], default: null })}
+        value={null}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByText("No voices in the installed pack")).toBeTruthy();
   });
 
   it("searches the id as well as the name", async () => {

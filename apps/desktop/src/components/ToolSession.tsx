@@ -292,6 +292,15 @@ export function ToolSession() {
     setRefineError(null);
   }, [recipe]);
 
+  // The refusal a pick reported, dropped once the node's voice has actually
+  // moved — the same rule as the composer's error above. Without it a
+  // "node is pinned" banner outlives the pin, and nothing on the page can
+  // dismiss it: the picker closes before the refusal is even known.
+  const pickedVoice = typeof params.voice_id === "string" ? params.voice_id : null;
+  useEffect(() => {
+    setVoiceError(null);
+  }, [pickedVoice, node?.node_id]);
+
   if (!tool || !node)
     // The dialog rides along: a board poll can drop the aux node while the
     // gate is open, and unmounting it there would discard the held
@@ -656,7 +665,10 @@ export function ToolSession() {
                 <Tip label={t("voices.changeAria")} hint={t("voices.pickerSubtitle")} side="top">
                   <button
                     className="btn-ghost"
-                    onClick={() => setVoiceOpen(true)}
+                    onClick={() => {
+                      setVoiceError(null);
+                      setVoiceOpen(true);
+                    }}
                     aria-label={t("voices.changeAria")}
                   >
                     <AudioLines size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -740,7 +752,7 @@ export function ToolSession() {
             {voiceOpen && voices && (
               <VoicePicker
                 voices={voices}
-                value={typeof params.voice_id === "string" ? params.voice_id : null}
+                value={pickedVoice}
                 onPick={async (voiceId) => {
                   setVoiceOpen(false);
                   // A pick re-renders: the voice is part of the node's hash,

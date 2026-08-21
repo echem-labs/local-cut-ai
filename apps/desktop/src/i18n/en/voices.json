@@ -25,7 +25,6 @@
   "searchAria": "Search voices by name, language or id",
   "listAria": "Installed voices",
   "followProject": "Follow the project",
-  "followProjectUsing": "Speaks as {name}, like the rest of the project",
   "followProjectHint": "Speaks like the rest of the project",
   "playAria": "Hear {name}",
   "stopAria": "Stop {name}",

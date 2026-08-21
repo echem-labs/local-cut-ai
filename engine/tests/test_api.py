@@ -1755,14 +1755,17 @@ async def test_voice_preview_renders_once_and_is_served_from_disk_after(client, 
     press, and a user comparing two voices presses several times a second."""
     import wave
 
-    from localcut_engine.backends.kokoro import KokoroBackend
+    from localcut_engine.backends.kokoro import KokoroBackend, preview_stem
 
     renders: list[str] = []
 
     async def fake_render(self, voice_id, out_dir):
         renders.append(voice_id)
         out_dir.mkdir(parents=True, exist_ok=True)
-        target = out_dir / f"{voice_id}.wav"
+        # Named the way the backend names it: the route looks the cache up
+        # by `preview_stem`, so a fake filing it elsewhere would re-render
+        # every time and still pass a weaker assertion.
+        target = out_dir / f"{preview_stem(voice_id)}.wav"
         with wave.open(str(target), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
@@ -1781,6 +1784,9 @@ async def test_voice_preview_renders_once_and_is_served_from_disk_after(client, 
     assert second.status_code == 200
     assert second.content == first.content
     assert renders == ["bf_emma"], "the second audition re-synthesized"
+    # inline, not attachment: this is fed to an <audio> element, and the
+    # artifact route sets the same for the same reason.
+    assert first.headers["content-disposition"].startswith("inline")
 
 
 async def test_voice_preview_is_a_404_when_the_pack_does_not_hold_it(client, monkeypatch):
@@ -1806,12 +1812,26 @@ async def test_voice_preview_is_a_404_when_narration_will_not_use_the_pack(clien
     assert response.status_code == 404
 
 
-async def test_voice_preview_refuses_a_path_that_is_not_a_voice_id(client):
+async def test_voice_preview_refuses_a_path_that_is_not_a_voice_id(client, monkeypatch):
     """The id reaches a filename, so its shape is bounded at the route. A
-    traversal must not resolve, and must not reach the backend to find out."""
-    for path in ("..%2F..%2Fetc%2Fpasswd", "BF_EMMA", "bf%20emma", "x" * 41):
+    traversal must not resolve, and must not reach the backend to find out.
+
+    Narration is stubbed on purpose. Without it every request 404s at "no
+    voice pack is serving narration" before the id is looked at, and the
+    test passes just as green with no pattern on the path param at all -
+    which is the one thing it exists to check.
+    """
+    _stub_narration(monkeypatch, ("bf_emma",))
+    # A separator never reaches the route: Starlette's `str` converter does
+    # not match one, so the path finds no route rather than a bounded id.
+    for path in ("..%2F..%2Fetc%2Fpasswd", "..%2F..%2Fbf_emma"):
         response = await client.get(f"/voices/{path}/preview")
-        assert response.status_code in (404, 422), path
+        assert response.status_code == 404, path
+    # Everything else is refused BY THE PATTERN - 422, not the backend's
+    # 404. `bf_emma\n` is the one worth naming: `$` alone would accept it.
+    for path in ("BF_EMMA", "bf%20emma", "x" * 41, "bf_emma%0A", "bf.emma"):
+        response = await client.get(f"/voices/{path}/preview")
+        assert response.status_code == 422, path
 
 
 async def test_voice_preview_needs_the_token(client):

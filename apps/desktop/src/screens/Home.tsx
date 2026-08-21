@@ -310,6 +310,7 @@ export function Home() {
         setHomeDraft({
           toolInput: "",
           voice: "",
+          voiceId: null,
           motion: "",
           scriptModel: "",
           toolAspect: EMPTY_TOOL_OPTIONS.toolAspect,
@@ -591,7 +592,11 @@ export function Home() {
                     </button>
                     <button
                       className="swatch-name"
-                      onClick={() => setHomeDraft({ voice: swatch.brief })}
+                      // Clears the pick for the reason picking clears the
+                      // brief: a picked voice outranks a brief at render, so
+                      // leaving both would light this swatch up while another
+                      // voice is what actually speaks.
+                      onClick={() => setHomeDraft({ voice: swatch.brief, voiceId: null })}
                       aria-label={t("home.voiceSwatchAria", { name })}
                     >
                       {name}

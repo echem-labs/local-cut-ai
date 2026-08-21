@@ -8788,19 +8788,22 @@ a.icon-btn-sm {
   top: 0;
   z-index: 1;
   padding: var(--space-2) var(--space-1) var(--space-1);
-  background: var(--surface-0);
+  /* The dialog's own surface: these scroll over the modal, not the app. */
+  background: var(--surface-2);
 }
 
 .voice-row-wrap {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  border: 1px solid transparent;
   border-radius: var(--radius-s);
 }
 
 .voice-row-wrap.active,
 .voice-row.active {
-  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  background: var(--accent-muted);
 }
 
 .voice-row {
@@ -8809,7 +8812,7 @@ a.icon-btn-sm {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-s);
   background: transparent;
   color: var(--text-primary);
@@ -8819,7 +8822,7 @@ a.icon-btn-sm {
 }
 
 .voice-row:hover {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .voice-row-name {
@@ -8836,6 +8839,25 @@ a.icon-btn-sm {
   padding-right: var(--space-2);
   color: var(--status-failed);
   font-size: var(--text-xs);
+}
+
+/* The picker reuses this class outside `.voice-swatch`, which is where its
+   looks used to come from — so the shared part lives here and the swatch
+   keeps its divider in the descendant rule above. */
+.swatch-play {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+}
+
+.swatch-play:hover {
+  color: var(--text-primary);
 }
 
 /* the way into the full pack from the five-swatch fast path */
