@@ -333,6 +333,61 @@ describe("add to project", () => {
   });
 });
 
+/**
+ * Choosing the voice from inside the session.
+ *
+ * Re-rendering a voiceover in another voice is the reason to be on this
+ * page at all, so the choice is the same row Home offers — five swatches
+ * with bundled samples and a way into the rest of the pack — rather than a
+ * button whose only job is to open a dialog.
+ */
+describe("the voiceover session's voice row", () => {
+  const withPack = {
+    client: {
+      artifactUrl: () => "http://engine/a",
+      artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
+      voices: vi.fn().mockResolvedValue({
+        available: true,
+        voices: [{ id: "bf_emma", name: "Emma", language_code: "en-gb", gender: "female" }],
+        default: "bf_emma",
+      }),
+      voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
+    },
+  };
+
+  it("offers the swatches Home offers, in place of a button to a dialog", async () => {
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), withPack);
+    expect(screen.getByLabelText("Use the Onyx voice")).toBeInTheDocument();
+    // The full pack is still one press away — it is the entry point that
+    // moved, not the picker.
+    expect(await screen.findByText("All 1 voices…")).toBeInTheDocument();
+    expect(screen.queryByText("Change voice")).toBeNull();
+  });
+
+  it("re-renders in a swatch's voice and drops the pick that outranked it", () => {
+    const setVoiceBrief = vi.fn().mockResolvedValue(null);
+    mountSession(
+      "voiceover",
+      node("voiceover", { params: { text: "hello", voice_id: "bf_emma" } }),
+      { ...withPack, setVoiceBrief },
+    );
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    // Both in one call: the brief alone would be read under the old pick,
+    // which is the voice the user just replaced.
+    expect(setVoiceBrief).toHaveBeenCalledWith("voiceover", "deep");
+  });
+
+  it("reports a refusal where the pick's own refusals go", async () => {
+    const setVoiceBrief = vi.fn().mockResolvedValue("node is pinned");
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
+      ...withPack,
+      setVoiceBrief,
+    });
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    expect(await screen.findByText("node is pinned")).toBeInTheDocument();
+  });
+});
+
 describe("the clone picker", () => {
   it("keeps the sample chooser behind the consent affirmation", () => {
     mountSession("voiceover", node("voiceover", { params: { text: "hello" } }));

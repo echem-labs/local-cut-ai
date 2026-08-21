@@ -533,7 +533,7 @@ def test_the_engine_sends_no_display_copy_with_the_voices():
 
 
 def test_swatch_voice_names_match_what_the_engine_derives():
-    """`home.voiceNames` labels the five swatches, and `describe_voice`
+    """`voices.names` labels the five swatches, and `describe_voice`
     derives a name for all fifty-four. Both reach the same user, so a
     rename on one side shows one speaker under two names — the drift the
     contract tests in this file exist for."""
@@ -541,12 +541,12 @@ def test_swatch_voice_names_match_what_the_engine_derives():
 
     from localcut_engine.backends.kokoro import describe_voice
 
-    home = json.loads(
-        (_FORMATS.parents[1] / "i18n" / "en" / "home.json").read_text(encoding="utf-8")
+    catalog = json.loads(
+        (_FORMATS.parents[1] / "i18n" / "en" / "voices.json").read_text(encoding="utf-8")
     )
-    for voice_id, label in home["voiceNames"].items():
+    for voice_id, label in catalog["names"].items():
         assert describe_voice(voice_id)["name"] == label, (
-            f"home.json calls {voice_id} {label!r}, the engine derives "
+            f"voices.json calls {voice_id} {label!r}, the engine derives "
             f"{describe_voice(voice_id)['name']!r}"
         )
 
@@ -566,7 +566,6 @@ def test_ci_runs_this_module_for_the_desktop_files_it_reads():
     reads = [
         "apps/desktop/src/lib/tools.ts",
         "apps/desktop/src/i18n/en/voices.json",
-        "apps/desktop/src/i18n/en/home.json",
         f"apps/desktop/src/assets/voices/{_voice_swatches()[0][1]}.wav",
     ]
 

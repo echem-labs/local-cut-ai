@@ -26,6 +26,17 @@
   "listAria": "Installed voices",
   "followProject": "Follow the project",
   "followProjectHint": "Speaks like the rest of the project",
+  "swatchesAria": "Voice previews",
+  "swatchAria": "Use the {name} voice",
+  "samplePlayAria": "Play a sample of the {name} voice",
+  "sampleStopAria": "Stop the {name} sample",
+  "names": {
+    "af_sarah": "Sarah",
+    "am_michael": "Michael",
+    "bf_emma": "Emma",
+    "am_onyx": "Onyx",
+    "af_bella": "Bella"
+  },
   "playAria": "Hear {name}",
   "stopAria": "Stop {name}",
   "previewFailed": "Could not play this one",

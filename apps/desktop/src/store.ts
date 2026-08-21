@@ -432,6 +432,12 @@ interface AppState {
    * that never carried a pick, and the audio already rendered for that
    * state is a cache hit again instead of a re-render. */
   setVoice: (nodeId: string, voiceId: string | null) => Promise<string | null>;
+  /** Describe the voice instead of picking one: writes the brief and drops
+   * any picked id, in a single patch. Both move together because the
+   * engine reads the pick first — sent as two patches, the node spends the
+   * gap carrying the new brief under the old pick, and every patch
+   * re-plans. */
+  setVoiceBrief: (nodeId: string, brief: string) => Promise<string | null>;
   approve: (checkpoint: Checkpoint) => Promise<void>;
   refreshBoard: () => Promise<void>;
   /** The Story Graph behind the board, for the flowchart view. Null until
@@ -1912,6 +1918,22 @@ export const useApp = create<AppState>((set, get) => {
       try {
         await client.patch(currentProject.id, [
           { op: "set_params", node_id: nodeId, params: { voice_id: voiceId } },
+        ]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    setVoiceBrief: async (nodeId, brief) => {
+      const { client, currentProject } = get();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.patch(currentProject.id, [
+          // null removes the key, which is what puts the node back on the
+          // hash a brief-only render already used — see setVoice above.
+          { op: "set_params", node_id: nodeId, params: { voice: brief, voice_id: null } },
         ]);
         await get().refreshBoard();
         return null;

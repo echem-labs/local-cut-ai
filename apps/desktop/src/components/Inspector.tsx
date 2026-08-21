@@ -551,6 +551,10 @@ export function Inspector() {
                 <VoicePicker
                   voices={voices}
                   value={voiceId}
+                  // The one surface where the fallback has a name: this is
+                  // a scene in a project, and dropping its pick is how it
+                  // goes back to speaking like the rest of it.
+                  canFollow
                   onPick={(picked) => {
                     setVoiceId(picked);
                     setVoiceOpen(false);

@@ -89,7 +89,13 @@ describe("the picker", () => {
     mountClient();
     const onPick = vi.fn();
     render(
-      <VoicePicker voices={payload()} value={null} onPick={onPick} onClose={() => {}} />,
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        canFollow={false}
+        onPick={onPick}
+        onClose={() => {}}
+      />,
     );
     await userEvent.click(screen.getByText("Emma"));
     // The id, never the name: two voices share a name and only the id is an
@@ -101,12 +107,37 @@ describe("the picker", () => {
     mountClient();
     const onPick = vi.fn();
     render(
-      <VoicePicker voices={payload()} value="bf_emma" onPick={onPick} onClose={() => {}} />,
+      <VoicePicker
+        voices={payload()}
+        value="bf_emma"
+        canFollow
+        onPick={onPick}
+        onClose={() => {}}
+      />,
     );
     await userEvent.click(screen.getByText("Follow the project"));
     // null, not "" — the store clears the key with it, which is what puts
     // the node back on the hash its brief-only render already used.
     expect(onPick).toHaveBeenCalledWith(null);
+  });
+
+  it("offers no such row where there is no project behind the node", () => {
+    mountClient();
+    render(
+      <VoicePicker
+        voices={payload()}
+        value="bf_emma"
+        canFollow={false}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
+    // Home's quick tool and a tool session each speak for one node, and
+    // "the project" there is that node's own session — a fallback the row
+    // would name and the surface does not have. Dropping a pick on those
+    // two is the swatch row's job, which is beside the picker rather than
+    // inside it.
+    expect(screen.queryByText("Follow the project")).toBeNull();
   });
 
   it("auditions a voice from the engine rather than a bundled file", async () => {
@@ -124,7 +155,15 @@ describe("the picker", () => {
         addEventListener = vi.fn();
       },
     );
-    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    render(
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        canFollow={false}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
     await userEvent.click(screen.getByLabelText("Hear Emma"));
     expect(sources).toEqual(["http://engine/voices/bf_emma/preview"]);
   });
@@ -142,7 +181,15 @@ describe("the picker", () => {
         addEventListener = vi.fn();
       },
     );
-    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    render(
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        canFollow={false}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
     await userEvent.click(screen.getByLabelText("Hear Emma"));
     await vi.waitFor(() => expect(screen.getByLabelText("Hear Emma")).toBeTruthy());
     expect(screen.queryByLabelText("Stop Emma")).toBeNull();
@@ -157,6 +204,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload({ voices: [], default: null })}
         value={null}
+        canFollow={false}
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -166,7 +214,15 @@ describe("the picker", () => {
 
   it("searches the id as well as the name", async () => {
     mountClient();
-    render(<VoicePicker voices={payload()} value={null} onPick={vi.fn()} onClose={() => {}} />);
+    render(
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        canFollow={false}
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
     // "bf" is how someone who knows the pack asks for British female; a
     // picker matching only the display name would answer nothing.
     await userEvent.type(screen.getByLabelText(/Search voices/), "bf_");
@@ -180,6 +236,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload({ available: false, voices: [], default: null })}
         value={null}
+        canFollow={false}
         onPick={vi.fn()}
         onClose={() => {}}
       />,

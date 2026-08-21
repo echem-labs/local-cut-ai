@@ -381,6 +381,39 @@ describe("setVoice", () => {
 });
 
 /**
+ * Describing the voice instead of picking one.
+ *
+ * A brief and a picked id are two answers to one question and the engine
+ * reads the pick first, so the two have to move in ONE patch. Sent as two,
+ * the node spends the gap between them carrying a new brief under the old
+ * pick — and every patch re-plans, so that is a real render in the voice
+ * the user just replaced.
+ */
+describe("setVoiceBrief", () => {
+  it("writes the brief and drops the pick in a single patch", async () => {
+    const patch = vi.fn().mockResolvedValue(undefined);
+    const client = fakeClient({
+      patch,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: { scenes: [] } }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(await useApp.getState().setVoiceBrief("voiceover", "deep")).toBeNull();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith("p1", [
+      { op: "set_params", node_id: "voiceover", params: { voice: "deep", voice_id: null } },
+    ]);
+  });
+
+  it("reports a refusal rather than throwing", async () => {
+    const client = fakeClient({ patch: vi.fn().mockRejectedValue(new Error("node is pinned")) });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(await useApp.getState().setVoiceBrief("voiceover", "deep")).toBe("node is pinned");
+  });
+});
+
+/**
  * Clearing the quick-tool history.
  *
  * The loop reuses DELETE /projects/{id} rather than adding a bulk route,
