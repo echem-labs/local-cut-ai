@@ -50,6 +50,12 @@ from third_party_notices import (  # noqa: E402  (needs the path above)
     write_notices,
 )
 
+# Imported for one constant rather than re-typed: what a Windows freeze
+# collects is recorded there, and the sample below has to stay inside that
+# record. `tests/` is not a package, so pytest's prepend import mode is what
+# puts the sibling on the path.
+from test_license_boundaries import _FROZEN_LIBRARIES  # noqa: E402
+
 _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 
 #: What the freeze collects on Windows, in the spelling it collects it under.
@@ -61,10 +67,17 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #: test_license_boundaries is the complete Windows inventory, and duplicating
 #: 56 entries here would be a second record to keep in step. What this needs is
 #: one name of each *shape* the normaliser has to survive — a wheel-private
-#: directory, an arch suffix, a dotted version tail — carrying a library that
-#: is really in that inventory.
+#: directory behind a backslash, an arch suffix, a version tail in two
+#: hyphenated parts, and a stem ending in digits that has to survive whole —
+#: each carrying a library that is really in that inventory. That the sample
+#: stays inside the inventory is asserted rather than trusted, below.
+#:
+#: The backslash is the shape no other fixture in this file carries and the
+#: only reason `bundled_libraries` normalises the separator at all:
+#: `localcut.spec` hands it PyInstaller's TOC destinations, which on Windows
+#: are the paths `os.path.join` built there.
 _WINDOWS_COLLECTED = (
-    "_soundfile_data/libsndfile_x64.dll",
+    "_soundfile_data\\libsndfile_x64.dll",
     "api-ms-win-crt-runtime-l1-1-0.dll",
     "ctranslate2.dll",
     "msvcp140.dll",
@@ -75,6 +88,22 @@ _WINDOWS_COLLECTED = (
 @pytest.fixture(scope="module")
 def document() -> str:
     return build_notices()
+
+
+@pytest.fixture(scope="module")
+def windows_libraries() -> list[str]:
+    return bundled_libraries(_WINDOWS_COLLECTED)
+
+
+@pytest.fixture(scope="module")
+def windows_document(windows_libraries: list[str]) -> str:
+    """The Windows document, built once for the two tests that read it.
+
+    Building one costs a walk of every licence file in the closure — about
+    half a second — and the two get the same string to the byte, so computing
+    it twice buys nothing but the wait.
+    """
+    return build_notices(windows_libraries)
 
 
 def _library_rows(document: str) -> dict[str, str]:
@@ -403,7 +432,31 @@ def test_the_bundled_native_libraries_are_listed(document: str) -> None:
     assert not missing, f"{missing} ship but are not in the notices"
 
 
-def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under() -> None:
+def test_the_windows_sample_names_only_libraries_that_really_ship_there(
+    windows_libraries: list[str],
+) -> None:
+    """`_WINDOWS_COLLECTED` and `_FROZEN_LIBRARIES` are one fact, written twice.
+
+    Nothing reconciles them. This file spells the filenames a Windows freeze
+    hands over; the sibling records the normalised inventory that freeze
+    contains — and a library can leave the installers with only one of the two
+    hearing about it, which is a stand-in asserting that something ships where
+    the record says it does not, both of them green.
+
+    A subset, not an equality: the point of the sample is that it is smaller
+    than the inventory. What it may not do is name something outside it.
+    """
+    stray = sorted(set(windows_libraries) - _FROZEN_LIBRARIES["win32"])
+    assert not stray, (
+        f"{stray} stand in for what a Windows freeze collects and are in no Windows "
+        "freeze. Either the recorded inventory moved and this sample has to follow, "
+        "or the sample is describing an installer that does not exist"
+    )
+
+
+def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
+    windows_libraries: list[str], windows_document: str
+) -> None:
     """The same guard, run against the set a Windows freeze hands over.
 
     Every other assertion in this file runs the site-packages fallback on
@@ -411,19 +464,21 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
     completeness check that only ever sees `lib`-prefixed names cannot fail
     the way the Windows document would.
     """
-    libraries = bundled_libraries(_WINDOWS_COLLECTED)
     # The fixture has to survive the normaliser before it can test anything:
     # a name it mangled would drop out here and leave the check below looking
-    # at a shorter list rather than failing.
-    assert set(libraries) == {
+    # at a shorter list rather than failing. `msvcp140` and `python314` are in
+    # it for the half of that the other shapes cannot show — a stem whose own
+    # last characters are digits, which the version strip must not take.
+    assert set(windows_libraries) == {
         "api-ms-win-crt-runtime-l1",
         "ctranslate2",
         "libsndfile",
         "msvcp140",
         "python314",
-    }, libraries
-    listed = _library_rows(build_notices(libraries))
-    assert not [library for library in libraries if library not in listed]
+    }, windows_libraries
+    listed = _library_rows(windows_document)
+    missing = [library for library in windows_libraries if library not in listed]
+    assert not missing, f"{missing} are collected on Windows and the notices do not name them"
 
 
 def test_the_library_list_can_come_from_what_the_freeze_collected() -> None:
@@ -460,36 +515,38 @@ def test_the_copyleft_libraries_are_named_with_what_they_oblige(document: str) -
         assert rows[library], f"{library} is listed without naming its terms"
 
 
-def test_the_copyleft_terms_survive_the_windows_spelling() -> None:
+def test_the_copyleft_terms_survive_the_windows_spelling(windows_document: str) -> None:
     """The document is generated per platform so each installer describes itself.
 
-    `libsndfile_x64.dll` and `libsndfile.so.1` are one library, and only one of
-    the two spellings is what this box ever sees. If the other does not reach
-    the table, the Windows installer lists it bare — which reads as a claim
-    that it carries no copyleft terms, in the document that exists to say
-    otherwise.
+    `libsndfile_x64.dll` and `libsndfile.so.1` are one library. Only the second
+    is what this box ever sees, so if the first does not reach the table the
+    Windows installer lists it bare — which reads as a claim that it carries no
+    copyleft terms, in the document that exists to say otherwise. Here the
+    architecture suffix is the whole distance between the two spellings.
 
-    libsndfile is the whole assertion because after PyAV left the freeze it is
-    the whole answer: `_FROZEN_COPYLEFT["win32"]` holds one name. The table
-    still knows FFmpeg's and x264's Windows spellings, and
-    `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` covers that
-    — as a fact about the table, not a claim that they ship.
+    libsndfile is the whole assertion because `_FROZEN_COPYLEFT["win32"]` holds
+    one name. Its stem is the same on both platforms, so the other half of the
+    reconciliation — the `lib` prefix a Windows name does not carry — cannot be
+    reached through anything that ships there;
+    `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` pins that
+    instead, as a fact about the table rather than a claim that they ship.
     """
-    libraries = bundled_libraries(_WINDOWS_COLLECTED)
-    rows = _library_rows(build_notices(libraries))
+    rows = _library_rows(windows_document)
     assert rows.get("libsndfile"), "libsndfile ships on Windows with no terms named"
 
 
 def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
     """The lookup has to answer for names no freeze here will ever produce.
 
-    Kept separate from what ships. These libraries are in the installed
-    closure, not in any installer, so asserting them through a collected-file
-    fixture would be asserting a Windows installer contains PyAV's FFmpeg —
-    which is what the exclusion exists to make false. What is still worth
-    pinning is that the table is keyed by `annotation_key` rather than by the
-    POSIX filename, so the day one of them returns to a freeze it is annotated
-    on every platform rather than on one.
+    Kept separate from what ships. None of the three is in a Windows
+    installer, so asserting them through a collected-file fixture would be
+    asserting one contains PyAV's FFmpeg — which is what the exclusion exists
+    to make false. Nor are all three in the closure this box installs: avcodec
+    and x264 ride in PyAV's Linux wheel, but `libiconv` is only in its
+    win_amd64 one, and this is the name that wheel gives it. What is still
+    worth pinning is that the table is keyed by `annotation_key` rather than by
+    the POSIX filename, so the day one of them returns to a freeze it is
+    annotated on every platform rather than on one.
     """
     collected = (
         "av.libs/avcodec-62.dll",
@@ -499,10 +556,19 @@ def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
     # Through the real path, because the normaliser is half of what is being
     # tested: `copyleft_note` is keyed on the stem and gets there from a
     # filename only via `bundled_libraries`.
-    for library in bundled_libraries(collected):
+    libraries = bundled_libraries(collected)
+    # Pinned before the loop for the reason the sibling above pins its own: a
+    # name the normaliser mangled leaves the list rather than failing, and a
+    # loop over a shorter list asserts less without saying so — over an empty
+    # one it asserts nothing at all and still passes.
+    assert libraries == ["avcodec", "libiconv", "x264"], libraries
+    for library in libraries:
         note = copyleft_note(library)
         assert note, f"{library} has no entry under its Windows spelling"
-        assert "GPL" in note, f"{library}'s note no longer names a GPL obligation"
+        # Containment, because these three do not oblige the same thing:
+        # avcodec and x264 are GPL, libiconv is LGPL. What is being pinned is
+        # that a copyleft obligation is still named, not which one.
+        assert "GPL" in note, f"{library}'s note no longer names a copyleft obligation"
 
 
 def test_the_copyleft_table_still_holds_the_terms_the_closure_turns_on() -> None:
@@ -513,25 +579,40 @@ def test_the_copyleft_table_still_holds_the_terms_the_closure_turns_on() -> None
     listing it bare.
 
     The *closure*, not the freeze: `uv sync` installs PyAV and espeakng-loader,
-    so these are loaded in the engine's own process when it runs from a
-    checkout, and `build_notices()` with no arguments describes exactly that.
-    Which of them reach an installer is a narrower question and a different
-    record — `_FROZEN_LIBRARIES` in test_license_boundaries. Naming the wrong
-    one here is how a docstring ends up asserting the repo ships GPL encoders
-    it does not.
+    so four of these five are loaded in the engine's own process when it runs
+    from a checkout, and `build_notices()` with no arguments describes exactly
+    that. `libreadline` is the fifth and is in neither set: no wheel carries
+    it, so the site-packages scan never reaches it, and it enters a document
+    only where PyInstaller resolves it from a build machine that has one. It is
+    in the loop because `FREEZE_EXCLUDES` drops CPython's `readline` module on
+    the strength of the terms recorded here. Which of them reach an installer
+    is a narrower question and a different record — `_FROZEN_LIBRARIES` in
+    test_license_boundaries. Naming the wrong one here is how a docstring ends
+    up asserting the repo ships GPL encoders it does not.
     """
     for library in ("libx264", "libx265", "libavcodec", "libespeak-ng", "libreadline"):
         note = copyleft_note(library)
         assert note, f"{library} carries copyleft terms the table no longer names"
-        assert "GPL" in note, f"{library}'s note no longer names a GPL obligation"
+        # The prefix, not containment: every one of these five is plain GPL,
+        # and `LGPL` contains `GPL`. A row relabelled `LGPL-2.1-or-later`
+        # understates what it obliges while reading as a licence identifier,
+        # which is the one kind of wrong entry a substring cannot see.
+        assert note.startswith("GPL-"), (
+            f"{library} is GPL and its note now reads {note!r} - a note that no longer "
+            "opens with its identifier is naming different terms from the ones it owes"
+        )
 
 
 def test_the_copyleft_table_is_read_in_every_platform_s_spelling() -> None:
     """Windows ships `avcodec-62.dll` where Linux ships `libavcodec.so.62`.
 
-    The document is generated per platform precisely so the Windows installer
-    describes itself — a table only keyed the POSIX way would leave that one
-    installer with FFmpeg, x264 and espeak-ng listed and none of their terms.
+    The document is generated per platform precisely so each installer
+    describes itself, and a table only keyed the POSIX way answers for none of
+    the spellings the other two collect under. About the table's keying, not
+    about what any installer holds: `_FROZEN_LIBRARIES` records that, and none
+    of FFmpeg, x264 or espeak-ng is in the Windows set. The day one of them
+    returns to a freeze it has to be annotated on every platform, and this is
+    what makes a new spelling cost no new row.
     """
     for filename in (
         "avcodec-62.dll",
