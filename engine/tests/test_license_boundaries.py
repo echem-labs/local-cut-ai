@@ -566,9 +566,11 @@ def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
     change to what ships.
 
     Per-platform, because which libraries these are is a per-platform fact:
-    `libespeak-ng` is in the Linux freeze and in neither of the others, and a
-    single POSIX-spelled list asserted everywhere fails on the two platforms
-    that simply do not ship it. Membership is tested on the key `copyleft_note`
+    six of the seven Linux entries — the GCC runtime set and glibc's libmvec,
+    which PyInstaller resolves from the build machine — are in neither of the
+    others, where the toolchain runtime comes from the system instead. A single
+    POSIX-spelled list asserted everywhere fails on the two platforms that
+    simply do not ship them. Membership is tested on the key `copyleft_note`
     looks a name up by rather than on the literal string, so a platform
     spelling its libraries differently is not read as an absence.
     """
