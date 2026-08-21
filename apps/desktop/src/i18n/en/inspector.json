@@ -28,6 +28,7 @@
   "lengthLabel": "Length (seconds)",
   "voiceLabel": "Voice",
   "voiceInfoLabel": "Which narrator speaks",
+  "voiceBriefNote": "Writing the script again rewrites this from the project's style. A picked voice is kept.",
   "voicePlaceholder": "default",
   "useMyPhoto": "Use my photo instead",
   "advanced": "Advanced",

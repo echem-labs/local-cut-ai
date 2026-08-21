@@ -92,7 +92,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={onPick}
         onClose={() => {}}
       />,
@@ -100,7 +100,7 @@ describe("the picker", () => {
     await userEvent.click(screen.getByText("Emma"));
     // The id, never the name: two voices share a name and only the id is an
     // identifier the engine can synthesize.
-    expect(onPick).toHaveBeenCalledWith("bf_emma");
+    expect(onPick).toHaveBeenCalledWith("bf_emma", false);
   });
 
   it("offers going back to the project's voice, and reports that as null", async () => {
@@ -110,7 +110,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value="bf_emma"
-        canFollow
+        scope="project"
         onPick={onPick}
         onClose={() => {}}
       />,
@@ -118,7 +118,7 @@ describe("the picker", () => {
     await userEvent.click(screen.getByText("Follow the project"));
     // null, not "" — the store clears the key with it, which is what puts
     // the node back on the hash its brief-only render already used.
-    expect(onPick).toHaveBeenCalledWith(null);
+    expect(onPick).toHaveBeenCalledWith(null, false);
   });
 
   it("offers no such row where there is no project behind the node", () => {
@@ -127,7 +127,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value="bf_emma"
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -138,6 +138,42 @@ describe("the picker", () => {
     // two is the swatch row's job, which is beside the picker rather than
     // inside it.
     expect(screen.queryByText("Follow the project")).toBeNull();
+  });
+
+  it("offers the pick to every scene, and reports which was asked for", async () => {
+    mountClient();
+    const onPick = vi.fn();
+    render(
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        scope="project"
+        onPick={onPick}
+        onClose={() => {}}
+      />,
+    );
+    // Unasked, a pick is this scene's alone: the project's other scenes
+    // are not something a click on one row should quietly rewrite.
+    await userEvent.click(screen.getByText("Emma"));
+    expect(onPick).toHaveBeenLastCalledWith("bf_emma", false);
+
+    await userEvent.click(screen.getByLabelText("Use this voice for every scene"));
+    await userEvent.click(screen.getByText("Sarah"));
+    expect(onPick).toHaveBeenLastCalledWith("af_sarah", true);
+  });
+
+  it("keeps that offer to itself where there are no other scenes", () => {
+    mountClient();
+    render(
+      <VoicePicker
+        voices={payload()}
+        value={null}
+        scope="node"
+        onPick={vi.fn()}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.queryByLabelText("Use this voice for every scene")).toBeNull();
   });
 
   it("auditions a voice from the engine rather than a bundled file", async () => {
@@ -159,7 +195,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -185,7 +221,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -204,7 +240,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload({ voices: [], default: null })}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -218,7 +254,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload()}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,
@@ -236,7 +272,7 @@ describe("the picker", () => {
       <VoicePicker
         voices={payload({ available: false, voices: [], default: null })}
         value={null}
-        canFollow={false}
+        scope="node"
         onPick={vi.fn()}
         onClose={() => {}}
       />,

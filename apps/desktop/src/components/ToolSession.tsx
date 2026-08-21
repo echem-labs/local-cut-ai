@@ -406,7 +406,21 @@ export function ToolSession() {
     recipe != null && currentProject != null && recipe.trim() === currentProject.title.trim();
   const showRecipeText = recipe != null && !titleIsRecipe && (tool === "script" || !done);
   const details: string[] = [];
-  if (typeof params.voice === "string" && params.voice) details.push(params.voice);
+  // The voice that spoke, not the brief that asked for one: a brief is a
+  // wish the engine maps onto a voice, and "narrator" - the voiceover
+  // tool's own default - matches no keyword and is read by the pack
+  // default. The engine reports the resolution; the name for it comes from
+  // the pack the picker already loaded, and an id stands in until it does.
+  // Off a chain that narrates elsewhere there is nothing to name, and the
+  // brief is all there is to say.
+  const spokenVoice = node.resolved_voice ?? null;
+  if (spokenVoice)
+    details.push(
+      t("voices.current", {
+        name: voices?.voices.find((v) => v.id === spokenVoice)?.name ?? spokenVoice,
+      }),
+    );
+  else if (typeof params.voice === "string" && params.voice) details.push(params.voice);
   if (typeof params.motion === "string" && params.motion) details.push(params.motion);
   if (typeof params.duration_s === "number")
     details.push(t("toolSession.secondsChip", { s: params.duration_s }));
@@ -757,10 +771,11 @@ export function ToolSession() {
               <VoicePicker
                 voices={voices}
                 value={voiceDraft.voiceId}
-                // A session speaks for one node; the project it sits in is
-                // the session itself, so there is nothing to follow. The
-                // swatch row below is what drops a pick here.
-                canFollow={false}
+                // A session speaks for one node; the project it sits in
+                // is the session itself, so there is nothing to follow and
+                // nothing to spread to. The swatch row below is what drops
+                // a pick here.
+                scope="node"
                 onPick={(voiceId) => {
                   setVoiceOpen(false);
                   setVoiceDraft((draft) => ({ ...draft, voiceId }));
