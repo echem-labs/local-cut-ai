@@ -41,7 +41,9 @@ if (!refsDir) {
   process.exit(2);
 }
 
-/** The fixture media live beside the references, in the specs repo. */
+/** The fixture media are expected two levels above the references directory,
+ * in a `tools/` sibling - the same layout the reference captures are held in.
+ * Nothing here is in this repository: `--refs` points at wherever they live. */
 const FIXTURE_WAV = path.join(refsDir, "..", "..", "tools", "session-fixture-voice.wav");
 const FIXTURE_PNG = path.join(refsDir, "..", "..", "tools", "session-fixture-image.png");
 
