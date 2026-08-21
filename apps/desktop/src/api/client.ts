@@ -28,6 +28,7 @@ import type {
   StoryGraph,
   SystemInfo,
   TemplateImport,
+  Voices,
   ToolKind,
   WorkflowReview,
 } from "./types";
@@ -149,6 +150,7 @@ export class EngineClient {
     prompt?: string;
     text?: string;
     voice?: string;
+    voice_id?: string;
     aspect?: string;
     target_duration_s?: number;
     motion?: string;
@@ -168,6 +170,11 @@ export class EngineClient {
   /** Local models the script tool can offer (engine routing answer). */
   llmModels(): Promise<LlmModels> {
     return this.request("/llm/models");
+  }
+
+  /** Narration voices the installed pack holds (engine routing answer). */
+  voices(): Promise<Voices> {
+    return this.request("/voices");
   }
 
   /** Rewrite the script from user feedback — a /patch under the hood, so
@@ -594,6 +601,17 @@ export class EngineClient {
 
   artifactUrl(projectId: string, hash: string): string {
     return `${this.connection.url}/projects/${projectId}/artifacts/${hash}?token=${this.connection.token}`;
+  }
+
+  /** A short line in one voice, for auditioning a pick before rendering.
+   *
+   * A URL rather than a fetch, like `artifactUrl`: this is fed to an
+   * `<audio>` element, which cannot carry an Authorization header, so the
+   * token rides the query string the way every other media URL here does.
+   * The engine renders on first ask and serves from disk after.
+   */
+  voicePreviewUrl(voiceId: string): string {
+    return `${this.connection.url}/voices/${encodeURIComponent(voiceId)}/preview?token=${this.connection.token}`;
   }
 
   /** Pro-NLE handoff downloads (409 while the timeline hasn't rendered). */

@@ -331,14 +331,68 @@ describe("a graph patch from the canvas", () => {
 });
 
 /**
- * Clearing the quick-tool history.
+ * A tool node's params, as the session's composer writes them.
  *
- * The loop reuses DELETE /projects/{id} rather than adding a bulk route,
- * which means it also inherits deleteProject's tab bookkeeping — and that is
- * the part with a sharp edge: closing the ACTIVE tab activates its
- * neighbour, and during a clear-all the neighbour is the next session about
- * to be deleted.
+ * One patch, however many keys moved. Text and voice travel together
+ * because every patch re-plans: sent as two, the node renders once with
+ * the new text in the old voice before the second one lands.
+ *
+ * `voice_id` is part of the node's content address, so both directions
+ * move it — and only one of them can move it BACK. `set_params` reads a
+ * null as "remove the key", so clearing a pick lands on the params a
+ * brief-only render already used and hits its cached audio; storing an
+ * explicit null would be a third state no earlier render can match, which
+ * is the failure the engine's own normalize_params exists to prevent.
  */
+describe("refineTool", () => {
+  it("sends everything that moved in one patch", async () => {
+    const patch = vi.fn().mockResolvedValue(undefined);
+    const client = fakeClient({
+      patch,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: { scenes: [] } }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(
+      await useApp.getState().refineTool("voiceover", { text: "hello", voice_id: "bf_emma" }),
+    ).toBeNull();
+    expect(patch).toHaveBeenCalledTimes(1);
+    expect(patch).toHaveBeenCalledWith("p1", [
+      {
+        op: "set_params",
+        node_id: "voiceover",
+        params: { text: "hello", voice_id: "bf_emma" },
+      },
+    ]);
+  });
+
+  it("clears a pick with null rather than an empty string", async () => {
+    const patch = vi.fn().mockResolvedValue(undefined);
+    const client = fakeClient({
+      patch,
+      getProject: vi.fn().mockResolvedValue({ project: PROJECT("p1"), board: { scenes: [] } }),
+    });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    await useApp.getState().refineTool("voiceover", { voice: "deep", voice_id: null });
+
+    const params = patch.mock.calls[0][1][0].params;
+    expect(params).toEqual({ voice: "deep", voice_id: null });
+    // "" would be stored and would hash differently from absent, so the
+    // audio rendered before the pick could never be a cache hit again.
+    expect(params.voice_id).not.toBe("");
+  });
+
+  it("reports a refusal rather than throwing", async () => {
+    const client = fakeClient({ patch: vi.fn().mockRejectedValue(new Error("node is pinned")) });
+    useApp.setState({ client, currentProject: PROJECT("p1") as never });
+
+    expect(await useApp.getState().refineTool("voiceover", { text: "hello" })).toBe(
+      "node is pinned",
+    );
+  });
+});
+
 describe("deleteToolSessions", () => {
   const session = (id: string) => ({ ...PROJECT(id), mode: "tool:image", approvals: [] });
   const video = (id: string) => ({ ...PROJECT(id), mode: "prompt", approvals: [] });

@@ -5,13 +5,15 @@ import { inspectorTitle } from "../help/terms";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FailureCard } from "./FailureCard";
 import { PhotoThumb } from "./PhotoThumb";
-import { t } from "../i18n";
+import { plural, t } from "../i18n";
 import { useIsDropTarget } from "../lib/dropTarget";
 import { CLIP_MAX_S, CLIP_MIN_S, SPEED_MAX, SPEED_MIN } from "../lib/formats";
+import { useVoices } from "../lib/useVoices";
 import { useWorkspace } from "../lib/workspace";
 import { PanelHelp } from "./Help";
 import { Monitor } from "./Monitor";
 import { StatusPill } from "./StatusRing";
+import { VoicePicker } from "./VoicePicker";
 import { InfoDot, Tip } from "./Tooltip";
 import { useApp } from "../store";
 
@@ -28,6 +30,7 @@ export function Inspector() {
     selectedNode,
     select,
     applyNode,
+    setProjectVoice,
     togglePin,
     regenerate,
     applyTimeline,
@@ -48,6 +51,19 @@ export function Inspector() {
   const [model, setModel] = useState("");
   const [motion, setMotion] = useState("");
   const [voice, setVoice] = useState("");
+  // The explicitly picked voice, or null for "follow the project".
+  // Held like every other field on this panel and written on apply,
+  // so one Apply covers the brief and the pick together rather than
+  // the pick landing a render the rest of the panel has not asked for.
+  const [voiceId, setVoiceId] = useState<string | null>(null);
+  // A project-wide pick waiting on its own answer. It does NOT stage: this
+  // panel's Apply means this scene, and a button cannot quietly grow to
+  // mean nine of them. So the ask happens where the choice was made, and
+  // writes on its own.
+  const [voicePending, setVoicePending] = useState<{ voiceId: string | null } | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const voices = useVoices(tab === "voice");
   const [speed, setSpeed] = useState("");
   const [duration, setDuration] = useState("");
   const [trimIn, setTrimIn] = useState("");
@@ -119,6 +135,38 @@ export function Inspector() {
       ["script", "thumbnail"].includes(activeId)
     : false;
 
+  /** What the row above the picker says this scene sounds like.
+   *
+   * A staged pick names itself. A scene with none names the voice its
+   * brief resolves to — "follows the project" alone points at a value set
+   * in no surface the user can open, and the brief beside it is a wish
+   * rather than a voice ("narrator" is read by Sarah). The engine reports
+   * the resolution because the mapping is the narration backend's own
+   * vocabulary; off a chain with no pack there is nothing to name and the
+   * row says only that the scene follows.
+   */
+  const voiceName = (id: string) => voices?.voices.find((v) => v.id === id)?.name ?? id;
+  // Only while the node itself holds no pick: with one staged over an
+  // applied pick, the resolution still describes the applied one, and
+  // naming it beside the word "follows" would describe neither.
+  const followedVoice =
+    typeof activeNode?.params.voice_id === "string" ? null : (activeNode?.resolved_voice ?? null);
+  const voiceLine = voiceId
+    ? t("voices.current", { name: voiceName(voiceId) })
+    : followedVoice
+      ? t("voices.currentFollowingNamed", { name: voiceName(followedVoice) })
+      : t("voices.currentFollowing");
+  // The scenes a project-wide pick would reach. A scene whose narration
+  // was removed has nothing to speak with and is not one of them.
+  const narratingScenes = (board?.scenes ?? []).filter((scene) => scene.narration).length;
+
+  // The refusal lands on the panel rather than in the dialog, which is
+  // gone by then: a "node is pinned" the user cannot see is a change they
+  // believe happened.
+  const useEverywhere = async (voiceId: string | null) => {
+    setVoiceError(await setProjectVoice(voiceId));
+  };
+
   // Each field re-seeds on active-node change AND when ITS OWN server value
   // moves — never when a sibling field does, so unsaved typing survives
   // board refreshes (the isolation pattern this drawer has always used).
@@ -138,6 +186,11 @@ export function Inspector() {
   useEffect(() => {
     setVoice(String(activeNode?.params.voice ?? ""));
   }, [activeId, activeNode?.params.voice]);
+  useEffect(() => {
+    setVoiceId(
+      typeof activeNode?.params.voice_id === "string" ? activeNode.params.voice_id : null,
+    );
+  }, [activeId, activeNode?.params.voice_id]);
   useEffect(() => {
     setSpeed(activeNode?.params.speed != null ? String(activeNode.params.speed) : "1.0");
   }, [activeId, activeNode?.params.speed]);
@@ -249,6 +302,13 @@ export function Inspector() {
     }
     if (tab === "voice") {
       if (voice !== String(activeNode.params.voice ?? "")) params.voice = voice;
+      const storedVoiceId =
+        typeof activeNode.params.voice_id === "string" ? activeNode.params.voice_id : null;
+      // null travels: `set_params` reads it as "remove the key", which puts
+      // the node back on the hash it had before any pick — so the audio
+      // already rendered for the brief is a cache hit rather than a
+      // re-render. Storing null instead would be a third, novel state.
+      if (voiceId !== storedVoiceId) params.voice_id = voiceId;
       const rate = Number.parseFloat(speed);
       if (Number.isFinite(rate)) {
         const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate));
@@ -500,6 +560,82 @@ export function Inspector() {
                 placeholder={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
+              {/* The field looks like the setting and is a copy of one: a
+                  scene's brief is written from the screenplay's style on
+                  every expansion, so an edit here lasts until the next
+                  script render and no further. A picked voice is carried
+                  across. Nowhere else could a user find that out. */}
+              <div className="hint" role="note">
+                {t("inspector.voiceBriefNote")}
+              </div>
+              {voices?.available && (
+                <div className="voice-pick">
+                  <span className="voice-pick-current">{voiceLine}</span>
+                  <button className="btn-ghost" disabled={pinned} onClick={() => setVoiceOpen(true)}>
+                    {t("voices.change")}
+                  </button>
+                </div>
+              )}
+              {/* A picked voice outranks the brief at render, so a brief
+                  edited under one changes nothing audible. Saying so is the
+                  only place a user can find that out — but only alongside the
+                  row that names the pick and the button that clears it, which
+                  are behind the same guard. Announcing that the brief is
+                  ignored with no way to see or drop the pick is worse than
+                  saying nothing. */}
+              {voices?.available && voiceId && voice.trim() && (
+                <div className="hint" role="note">
+                  {t("voices.overridesBrief")}
+                </div>
+              )}
+              {voiceOpen && voices && (
+                <VoicePicker
+                  voices={voices}
+                  value={voiceId}
+                  // The one surface with a project behind it: the fallback
+                  // has a name here, and there are other scenes to spread
+                  // a pick to.
+                  scope="project"
+                  onPick={(picked, everyScene) => {
+                    setVoiceOpen(false);
+                    setVoiceError(null);
+                    // A project-wide pick asks first and writes itself; a
+                    // scene's own stages, like every other edit here.
+                    if (everyScene) setVoicePending({ voiceId: picked });
+                    else setVoiceId(picked);
+                  }}
+                  onClose={() => setVoiceOpen(false)}
+                />
+              )}
+              {voicePending && (
+                // The repo's confirmation shell, not a private one: it owns
+                // the focus trap, Escape, and pointing focus at Cancel.
+                <ConfirmDialog
+                  title={
+                    voicePending.voiceId
+                      ? plural("voices.confirmTitle", narratingScenes, {
+                          name: voiceName(voicePending.voiceId),
+                        })
+                      : plural("voices.confirmClearTitle", narratingScenes)
+                  }
+                  message={t("voices.confirmBody")}
+                  confirmLabel={
+                    voicePending.voiceId
+                      ? t("voices.confirmAction", { name: voiceName(voicePending.voiceId) })
+                      : t("voices.followProject")
+                  }
+                  onCancel={() => setVoicePending(null)}
+                  onConfirm={() => {
+                    setVoicePending(null);
+                    void useEverywhere(voicePending.voiceId);
+                  }}
+                />
+              )}
+              {voiceError && (
+                <p className="hint error-text" role="alert">
+                  {voiceError}
+                </p>
+              )}
             </div>
           )}
 
