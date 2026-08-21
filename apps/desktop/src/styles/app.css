@@ -8889,3 +8889,20 @@ a.icon-btn-sm {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
+
+/* the picker's footer: which scenes the pick about to be made is for.
+   Pushed left against the footer's own flex-end, so it reads as a
+   qualifier on the choice rather than as an action beside one. */
+.voice-every {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.voice-every input {
+  width: auto;
+  min-height: 0;
+}

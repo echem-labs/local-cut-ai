@@ -459,7 +459,17 @@ interface AppState {
   regenerate: (nodeId: string, seed?: number) => Promise<void>;
   applyNode: (
     nodeId: string,
-    changes: { params?: Record<string, unknown>; seed?: number; model?: string | null },
+    changes: {
+      params?: Record<string, unknown>;
+      seed?: number;
+      model?: string | null;
+      /** Params for OTHER nodes, folded into the same patch — keyed by node
+       * id. For an edit that is one decision across several nodes: setting
+       * a project's narrator touches every scene, and a patch each would
+       * re-plan between them, rendering the project part-way through the
+       * change. */
+      alsoParams?: Record<string, Record<string, unknown>>;
+    },
   ) => Promise<void>;
   togglePin: (nodeId: string, pin: boolean) => Promise<void>;
   /** Compile an edit and report what it WOULD do, committing nothing.
@@ -2136,6 +2146,9 @@ export const useApp = create<AppState>((set, get) => {
       }
       if (changes.model !== undefined) {
         ops.push({ op: "set_model", node_id: nodeId, model: changes.model });
+      }
+      for (const [id, params] of Object.entries(changes.alsoParams ?? {})) {
+        if (Object.keys(params).length > 0) ops.push({ op: "set_params", node_id: id, params });
       }
       if (ops.length === 0) return;
       await client.patch(currentProject.id, ops);

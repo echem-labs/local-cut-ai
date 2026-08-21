@@ -348,8 +348,11 @@ describe("the voiceover session's voice row", () => {
       artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
       voices: vi.fn().mockResolvedValue({
         available: true,
-        voices: [{ id: "bf_emma", name: "Emma", language_code: "en-gb", gender: "female" }],
-        default: "bf_emma",
+        voices: [
+          { id: "af_sarah", name: "Sarah", language_code: "en-us", gender: "female" },
+          { id: "bf_emma", name: "Emma", language_code: "en-gb", gender: "female" },
+        ],
+        default: "af_sarah",
       }),
       voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
     },
@@ -360,8 +363,35 @@ describe("the voiceover session's voice row", () => {
     expect(screen.getByLabelText("Use the Onyx voice")).toBeInTheDocument();
     // The full pack is still one press away — it is the entry point that
     // moved, not the picker.
-    expect(await screen.findByText("All 1 voices…")).toBeInTheDocument();
+    expect(await screen.findByText("All 2 voices…")).toBeInTheDocument();
     expect(screen.queryByText("Change voice")).toBeNull();
+  });
+
+  it("names the voice that spoke, not the brief that asked for one", async () => {
+    mountSession(
+      "voiceover",
+      node("voiceover", {
+        params: { text: "hello", voice: "narrator" },
+        resolved_voice: "af_sarah",
+      }),
+      withPack,
+    );
+    // "narrator" matches no keyword in the engine's table, so it lands on
+    // the pack default and is read by Sarah. The chip used to show the
+    // brief, which named a voice that never spoke.
+    expect(await screen.findByText("Voice: Sarah")).toBeInTheDocument();
+    expect(screen.queryByText("narrator")).toBeNull();
+  });
+
+  it("falls back to the brief where no voice can be named", () => {
+    // Off a chain that narrates elsewhere the engine reports none, and the
+    // brief is still what was asked for - the only thing there is to say.
+    mountSession(
+      "voiceover",
+      node("voiceover", { params: { text: "hello", voice: "deep" }, resolved_voice: null }),
+      withPack,
+    );
+    expect(screen.getByText("deep")).toBeInTheDocument();
   });
 
   it("holds a swatch until the re-render is asked for", async () => {

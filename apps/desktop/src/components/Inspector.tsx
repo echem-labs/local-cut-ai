@@ -55,6 +55,10 @@ export function Inspector() {
   // so one Apply covers the brief and the pick together rather than
   // the pick landing a render the rest of the panel has not asked for.
   const [voiceId, setVoiceId] = useState<string | null>(null);
+  // Whether the staged pick is this scene's or the project's. Staged like
+  // the pick itself rather than applied on the click: it rides out with
+  // Apply, in the same patch, so one decision is one re-plan.
+  const [voiceEveryScene, setVoiceEveryScene] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const voices = useVoices(tab === "voice");
   const [speed, setSpeed] = useState("");
@@ -128,6 +132,32 @@ export function Inspector() {
       ["script", "thumbnail"].includes(activeId)
     : false;
 
+  /** What the row above the picker says this scene sounds like.
+   *
+   * A staged pick names itself. A scene with none names the voice its
+   * brief resolves to — "follows the project" alone points at a value set
+   * in no surface the user can open, and the brief beside it is a wish
+   * rather than a voice ("narrator" is read by Sarah). The engine reports
+   * the resolution because the mapping is the narration backend's own
+   * vocabulary; off a chain with no pack there is nothing to name and the
+   * row says only that the scene follows.
+   */
+  const voiceName = (id: string) => voices?.voices.find((v) => v.id === id)?.name ?? id;
+  // Only while the node itself holds no pick: with one staged over an
+  // applied pick, the resolution still describes the applied one, and
+  // naming it beside the word "follows" would describe neither.
+  const followedVoice =
+    typeof activeNode?.params.voice_id === "string" ? null : (activeNode?.resolved_voice ?? null);
+  const voiceLine = voiceId
+    ? t(voiceEveryScene ? "voices.currentEveryScene" : "voices.current", {
+        name: voiceName(voiceId),
+      })
+    : voiceEveryScene
+      ? t("voices.currentFollowingEveryScene")
+      : followedVoice
+        ? t("voices.currentFollowingNamed", { name: voiceName(followedVoice) })
+        : t("voices.currentFollowing");
+
   // Each field re-seeds on active-node change AND when ITS OWN server value
   // moves — never when a sibling field does, so unsaved typing survives
   // board refreshes (the isolation pattern this drawer has always used).
@@ -148,6 +178,7 @@ export function Inspector() {
     setVoice(String(activeNode?.params.voice ?? ""));
   }, [activeId, activeNode?.params.voice]);
   useEffect(() => {
+    setVoiceEveryScene(false);
     setVoiceId(
       typeof activeNode?.params.voice_id === "string" ? activeNode.params.voice_id : null,
     );
@@ -247,6 +278,7 @@ export function Inspector() {
   const apply = () => {
     if (!activeNode) return;
     const params: Record<string, unknown> = {};
+    const alsoParams: Record<string, Record<string, unknown>> = {};
     if (prompt !== String(activeNode.params[contentKey] ?? "")) params[contentKey] = prompt;
     if (tab === "motion") {
       if (motion !== String(activeNode.params.motion ?? "")) params.motion = motion;
@@ -270,6 +302,18 @@ export function Inspector() {
       // already rendered for the brief is a cache hit rather than a
       // re-render. Storing null instead would be a third, novel state.
       if (voiceId !== storedVoiceId) params.voice_id = voiceId;
+      if (voiceEveryScene) {
+        // Every OTHER scene that still narrates. This node's own voice is
+        // in `params` above, and a scene whose narration was removed has
+        // nothing to speak with.
+        for (const other of board?.scenes ?? []) {
+          const narration = other.narration;
+          if (!narration || narration.node_id === activeNode.node_id) continue;
+          const held =
+            typeof narration.params.voice_id === "string" ? narration.params.voice_id : null;
+          if (held !== voiceId) (alsoParams[narration.node_id] ??= {}).voice_id = voiceId;
+        }
+      }
       const rate = Number.parseFloat(speed);
       if (Number.isFinite(rate)) {
         const clamped = Math.min(SPEED_MAX, Math.max(SPEED_MIN, rate));
@@ -280,6 +324,7 @@ export function Inspector() {
     const modelValue = model.trim() || null;
     void applyNode(activeNode.node_id, {
       params,
+      ...(Object.keys(alsoParams).length > 0 ? { alsoParams } : {}),
       seed: Number.isFinite(seedValue) && seedValue !== activeNode.seed ? seedValue : undefined,
       model: modelEditable && modelValue !== activeNode.model ? modelValue : undefined,
     });
@@ -521,15 +566,17 @@ export function Inspector() {
                 placeholder={t("inspector.voicePlaceholder")}
                 onChange={(event) => setVoice(event.target.value)}
               />
+              {/* The field looks like the setting and is a copy of one: a
+                  scene's brief is written from the screenplay's style on
+                  every expansion, so an edit here lasts until the next
+                  script render and no further. A picked voice is carried
+                  across. Nowhere else could a user find that out. */}
+              <div className="hint" role="note">
+                {t("inspector.voiceBriefNote")}
+              </div>
               {voices?.available && (
                 <div className="voice-pick">
-                  <span className="voice-pick-current">
-                    {voiceId
-                      ? t("voices.current", {
-                          name: voices.voices.find((v) => v.id === voiceId)?.name ?? voiceId,
-                        })
-                      : t("voices.currentFollowing")}
-                  </span>
+                  <span className="voice-pick-current">{voiceLine}</span>
                   <button className="btn-ghost" disabled={pinned} onClick={() => setVoiceOpen(true)}>
                     {t("voices.change")}
                   </button>
@@ -551,12 +598,13 @@ export function Inspector() {
                 <VoicePicker
                   voices={voices}
                   value={voiceId}
-                  // The one surface where the fallback has a name: this is
-                  // a scene in a project, and dropping its pick is how it
-                  // goes back to speaking like the rest of it.
-                  canFollow
-                  onPick={(picked) => {
+                  // The one surface with a project behind it: the fallback
+                  // has a name here, and there are other scenes to spread
+                  // a pick to.
+                  scope="project"
+                  onPick={(picked, everyScene) => {
                     setVoiceId(picked);
+                    setVoiceEveryScene(everyScene);
                     setVoiceOpen(false);
                   }}
                   onClose={() => setVoiceOpen(false)}

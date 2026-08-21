@@ -103,6 +103,13 @@ export interface NodeState {
   pinned: boolean;
   /** Present only once the node has recorded takes. */
   takes?: TakeInfo[];
+  /** The voice this narration node actually speaks in: its picked
+   * `voice_id`, or what its style brief resolves to. `params.voice` is only
+   * the wish — the brief "narrator" is read by Sarah — and the mapping is
+   * the narration backend's own, so the engine answers rather than the
+   * client re-deriving it. Null off a chain that narrates elsewhere;
+   * absent on every other kind, and on engines older than the field. */
+  resolved_voice?: string | null;
 }
 
 /** The Story Graph itself, as GET /projects/{id}/graph returns it.

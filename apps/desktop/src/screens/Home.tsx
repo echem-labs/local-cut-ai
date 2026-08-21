@@ -521,9 +521,10 @@ export function Home() {
               voices={voices}
               value={voiceId}
               // The panel speaks for the voiceover about to be made, not
-              // for a project — there is nothing here to follow. A pick is
-              // dropped by choosing a swatch instead.
-              canFollow={false}
+              // for a project — there is nothing here to follow, and
+              // nothing to spread a pick to. A pick is dropped by choosing
+              // a swatch instead.
+              scope="node"
               onPick={(picked) => {
                 // A pick outranks the brief, so clearing the brief with it
                 // keeps the panel honest: one voice is chosen, one way.

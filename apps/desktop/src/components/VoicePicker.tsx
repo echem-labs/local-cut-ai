@@ -83,30 +83,41 @@ function matches(voice: Voice, query: string): boolean {
  * `value` is the explicitly picked id, or null for "whatever the brief
  * resolves to".
  *
- * `canFollow` says whether that null is offered as a row of its own, and
- * only a scene in a project can say yes: clearing a pick there is how the
- * scene goes back to speaking like the rest of the project, which is a
- * choice with a name a reader recognises. Home's quick tool and a tool
- * session each speak for a single node whose "project" is its own session
- * — the row would name a fallback that does not exist. Those two carry the
- * swatch row instead, and a swatch is what drops a pick. Required rather
- * than defaulted: a surface that gains a picker has to answer this.
+ * `scope` is what the node this picks for is one of, and it decides two
+ * things that have the same precondition: whether null is offered as a row
+ * of its own, and whether the pick can be spread across the project.
+ *
+ * "project" is a scene among a project's scenes. Clearing a pick there is
+ * how the scene goes back to speaking like the rest of the project, which
+ * is a choice with a name a reader recognises — and the other scenes exist
+ * to spread a pick to. "node" is Home's quick tool or a tool session: one
+ * node whose project IS its own session, so the follow row would name a
+ * fallback that does not exist and there is nothing to spread to. Those
+ * two carry the swatch row instead, and a swatch is what drops a pick.
+ *
+ * Required rather than defaulted: a surface that gains a picker has to say
+ * which it is.
  */
 export function VoicePicker({
   voices,
   value,
-  canFollow,
+  scope,
   onPick,
   onClose,
 }: {
   voices: Voices;
   value: string | null;
-  canFollow: boolean;
-  onPick: (voiceId: string | null) => void;
+  scope: "node" | "project";
+  onPick: (voiceId: string | null, everyScene: boolean) => void;
   onClose: () => void;
 }) {
   const client = useApp((state) => state.client);
   const [query, setQuery] = useState("");
+  // Read at the moment a row is clicked, so the answer travels with the
+  // pick rather than as a second thing the caller has to remember to ask
+  // for. Off by default: a click on one row must not quietly rewrite every
+  // other scene in the project.
+  const [everyScene, setEveryScene] = useState(false);
   const [playing, setPlaying] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -168,6 +179,21 @@ export function VoicePicker({
       size="m"
       onClose={onClose}
       initialFocus={searchRef}
+      // A checkbox rather than a second button beside the rows: the choice
+      // is about the pick that is coming, and fifty-four rows cannot each
+      // carry two of them.
+      footer={
+        scope === "project" && voices.available ? (
+          <label className="voice-every">
+            <input
+              type="checkbox"
+              checked={everyScene}
+              onChange={(event) => setEveryScene(event.target.checked)}
+            />
+            {t("voices.everyScene")}
+          </label>
+        ) : undefined
+      }
     >
       {!voices.available ? (
         <div className="note" role="note">
@@ -189,10 +215,10 @@ export function VoicePicker({
           </label>
 
           <div className="voice-list" role="group" aria-label={t("voices.listAria")}>
-            {canFollow && (
+            {scope === "project" && (
               <button
                 className={`voice-row${value === null ? " active" : ""}`}
-                onClick={() => onPick(null)}
+                onClick={() => onPick(null, everyScene)}
               >
                 <span className="voice-row-name">{t("voices.followProject")}</span>
                 <span className="voice-row-meta">{t("voices.followProjectHint")}</span>
@@ -232,7 +258,10 @@ export function VoicePicker({
                         )}
                       </button>
                     </Tip>
-                    <button className="voice-row" onClick={() => onPick(voice.id)}>
+                    <button
+                      className="voice-row"
+                      onClick={() => onPick(voice.id, everyScene)}
+                    >
                       <span className="voice-row-name">
                         {voice.name}
                         {/* Only where the derived name is shared, so the id

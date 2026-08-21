@@ -24,6 +24,7 @@
   "searchPlaceholder": "Search voices",
   "searchAria": "Search voices by name, language or id",
   "listAria": "Installed voices",
+  "everyScene": "Use this voice for every scene",
   "followProject": "Follow the project",
   "followProjectHint": "Speaks like the rest of the project",
   "swatchesAria": "Voice previews",
@@ -45,6 +46,9 @@
   "changeAria": "Change the narration voice",
   "current": "Voice: {name}",
   "currentFollowing": "Voice: follows the project",
+  "currentFollowingNamed": "Voice: follows the project \u00b7 {name}",
+  "currentEveryScene": "Voice: {name} \u00b7 every scene",
+  "currentFollowingEveryScene": "Voice: follows the project \u00b7 every scene",
   "overridesBrief": "This scene uses the picked voice; the description above is not used while one is picked.",
   "more": "All {count} voices\u2026"
 }
