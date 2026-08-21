@@ -901,13 +901,17 @@ async def test_the_agents_file_lists_the_toolset_it_documents(engine):
     from pathlib import Path
 
     agents = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
-    # The fenced block whose first token is a tool name, separated by "·".
+    # Scoped to the fenced block that holds the list, not to every line with a
+    # "·" in it: a single interpunct anywhere else in the prose would otherwise
+    # be harvested as a tool name and fail this with a baffling message about a
+    # tool the server does not have.
+    blocks = agents.split("```")[1::2]
+    listing = [b for b in blocks if "·" in b]
+    assert len(listing) == 1, (
+        f"expected exactly one fenced tool list in AGENTS.md, found {len(listing)}"
+    )
     documented = {
-        word.strip()
-        for line in agents.splitlines()
-        if "·" in line
-        for word in line.split("·")
-        if word.strip() and word.strip().replace("_", "").isalpha()
+        word.strip() for word in listing[0].replace("\n", " · ").split("·") if word.strip()
     }
 
     async with Client(build(engine)) as client:
