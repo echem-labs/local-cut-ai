@@ -886,3 +886,35 @@ def test_mcp_serves_stdio_against_the_resolved_engine(monkeypatch):
         "cert": None,
         "export_dir": None,
     }
+
+
+async def test_the_agents_file_lists_the_toolset_it_documents(engine):
+    """AGENTS.md names the tools, and nothing reconciles that with the code.
+
+    It is the file an agent reads to find out what it can do here, so a tool
+    missing from it is a capability nobody uses and a tool listed that no
+    longer exists is a call that fails on first contact. `cancel_render` was
+    already absent when this test was written. Same rule the repository
+    applies to every other value written on both sides of an unreconciled
+    boundary.
+    """
+    from pathlib import Path
+
+    agents = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
+    # The fenced block whose first token is a tool name, separated by "·".
+    documented = {
+        word.strip()
+        for line in agents.splitlines()
+        if "·" in line
+        for word in line.split("·")
+        if word.strip() and word.strip().replace("_", "").isalpha()
+    }
+
+    async with Client(build(engine)) as client:
+        registered = {tool.name for tool in (await client.list_tools()).tools}
+
+    assert documented, "AGENTS.md no longer carries a tool list - update this test with it"
+    assert documented == registered, (
+        f"AGENTS.md and the server disagree: only in the file "
+        f"{sorted(documented - registered)}, only registered {sorted(registered - documented)}"
+    )
