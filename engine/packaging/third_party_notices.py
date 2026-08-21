@@ -616,11 +616,16 @@ def build_notices(libraries: list[str] | None = None) -> str:
         lines.append(f"  {library}" + (f" — {note}" if note else ""))
     carried = statically_linked(libraries)
     if carried:
+        # Its own heading, and the explanation left unindented like the one
+        # above it. An indented paragraph among indented rows is prose to a
+        # reader and a row to anything parsing the section — and one of these
+        # sentences carries an em-dash, which is the character a row puts
+        # between a library and its terms.
+        lines += ["", "", "COMPILED INTO THE LIBRARIES ABOVE", "-" * 72, ""]
         lines += [
-            "",
-            "  Compiled into one of the above rather than shipped beside it, so",
-            "  they have no file of their own to list — redistributed all the",
-            "  same:",
+            "These have no file of their own to list: they are built into one of",
+            "the libraries above rather than shipped beside it. Redistributed all",
+            "the same, so they are named here with what they oblige.",
             "",
         ]
         for library in carried:
