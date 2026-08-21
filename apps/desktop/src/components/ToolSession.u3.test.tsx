@@ -48,6 +48,10 @@ function mountSession(
     client: {
       artifactUrl: () => "http://engine/a",
       artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
+      // The voiceover window offers the voice picker, which asks the engine
+      // what the pack holds the moment it mounts.
+      voices: vi.fn().mockResolvedValue({ available: false, voices: [], default: null }),
+      voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
     },
     jobs: [],
     allJobs: [],
@@ -155,7 +159,7 @@ describe("the composer", () => {
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     await vi.waitFor(() =>
-      expect(refineTool).toHaveBeenCalledWith("music", "brief", "lofi beat, warmer keys"),
+      expect(refineTool).toHaveBeenCalledWith("music", { brief: "lofi beat, warmer keys" }),
     );
   });
 
@@ -326,6 +330,127 @@ describe("add to project", () => {
     mountSession("script", node("script", { params: { prompt: "octopus hearts" } }));
     expect(screen.queryByText("Add to project…")).toBeNull();
     expect(screen.getByText("Turn into a video")).toBeInTheDocument();
+  });
+});
+
+/**
+ * Choosing the voice from inside the session.
+ *
+ * Re-rendering a voiceover in another voice is the reason to be on this
+ * page at all, so the choice is the same row Home offers — five swatches
+ * with bundled samples and a way into the rest of the pack — rather than a
+ * button whose only job is to open a dialog.
+ */
+describe("the voiceover session's voice row", () => {
+  const withPack = {
+    client: {
+      artifactUrl: () => "http://engine/a",
+      artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
+      voices: vi.fn().mockResolvedValue({
+        available: true,
+        voices: [
+          { id: "af_sarah", name: "Sarah", language_code: "en-us", gender: "female" },
+          { id: "bf_emma", name: "Emma", language_code: "en-gb", gender: "female" },
+        ],
+        default: "af_sarah",
+      }),
+      voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
+    },
+  };
+
+  it("offers the swatches Home offers, in place of a button to a dialog", async () => {
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), withPack);
+    expect(screen.getByLabelText("Use the Onyx voice")).toBeInTheDocument();
+    // The full pack is still one press away — it is the entry point that
+    // moved, not the picker.
+    expect(await screen.findByText("All 2 voices…")).toBeInTheDocument();
+    expect(screen.queryByText("Change voice")).toBeNull();
+  });
+
+  it("names the voice that spoke, not the brief that asked for one", async () => {
+    mountSession(
+      "voiceover",
+      node("voiceover", {
+        params: { text: "hello", voice: "narrator" },
+        resolved_voice: "af_sarah",
+      }),
+      withPack,
+    );
+    // "narrator" matches no keyword in the engine's table, so it lands on
+    // the pack default and is read by Sarah. The chip used to show the
+    // brief, which named a voice that never spoke.
+    expect(await screen.findByText("Voice: Sarah")).toBeInTheDocument();
+    expect(screen.queryByText("narrator")).toBeNull();
+  });
+
+  it("falls back to the brief where no voice can be named", () => {
+    // Off a chain that narrates elsewhere the engine reports none, and the
+    // brief is still what was asked for - the only thing there is to say.
+    mountSession(
+      "voiceover",
+      node("voiceover", { params: { text: "hello", voice: "deep" }, resolved_voice: null }),
+      withPack,
+    );
+    expect(screen.getByText("deep")).toBeInTheDocument();
+  });
+
+  it("holds a swatch until the re-render is asked for", async () => {
+    const refineTool = vi.fn().mockResolvedValue(null);
+    mountSession(
+      "voiceover",
+      node("voiceover", { params: { text: "hello", voice_id: "bf_emma" } }),
+      { ...withPack, refineTool },
+    );
+    const button = screen.getByText("Update & re-render") as HTMLButtonElement;
+    // Nothing has moved yet, so there is nothing to re-render.
+    expect(button.disabled).toBe(true);
+
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    // A voice costs a synthesis, and choosing one is how you compare them:
+    // applying on the click would spend a render per swatch pressed.
+    expect(refineTool).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+
+    fireEvent.click(button);
+    // The brief and the pick in one patch: sent apart, the render between
+    // them speaks in the voice that was just replaced.
+    await vi.waitFor(() =>
+      expect(refineTool).toHaveBeenCalledWith("voiceover", {
+        voice: "deep",
+        voice_id: null,
+      }),
+    );
+  });
+
+  it("sends an edited line and a new voice together", async () => {
+    const refineTool = vi.fn().mockResolvedValue(null);
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
+      ...withPack,
+      refineTool,
+    });
+    fireEvent.change(screen.getByLabelText("Edit this session's prompt"), {
+      target: { value: "hello there" },
+    });
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    fireEvent.click(screen.getByText("Update & re-render"));
+    await vi.waitFor(() =>
+      expect(refineTool).toHaveBeenCalledWith("voiceover", {
+        text: "hello there",
+        voice: "deep",
+        voice_id: null,
+      }),
+    );
+  });
+
+  it("reports a refusal against the composer that sent it", async () => {
+    const refineTool = vi.fn().mockResolvedValue("node is pinned");
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
+      ...withPack,
+      refineTool,
+    });
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    fireEvent.click(screen.getByText("Update & re-render"));
+    expect(await screen.findByText("node is pinned")).toBeInTheDocument();
   });
 });
 

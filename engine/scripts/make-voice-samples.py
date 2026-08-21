@@ -28,16 +28,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "engine" / "src"))
 
 from localcut_engine.api.app import _model_dests  # noqa: E402
-from localcut_engine.backends.base import ExecutionContext  # noqa: E402
 from localcut_engine.backends.kokoro import KokoroBackend  # noqa: E402
 from localcut_engine.config import EngineConfig  # noqa: E402
-from localcut_engine.graph.compiler import JobSpec  # noqa: E402
-from localcut_engine.graph.model import NodeKind  # noqa: E402
-
-# One line for every swatch, so the previews differ only by voice. Long
-# enough to hear a vowel the accents actually disagree on -- "last" and
-# "past" are the ones that separate en-gb from en-us.
-SAMPLE_LINE = "The last of the light passed over the water, and the harbour went quiet."
 
 ASSETS = ROOT / "apps" / "desktop" / "src" / "assets" / "voices"
 SWATCHES = ROOT / "apps" / "desktop" / "src" / "lib" / "tools.ts"
@@ -76,19 +68,9 @@ async def main() -> int:
     for voice in swatch_voices():
         if voice not in installed:
             raise SystemExit(f"the pack has no voice {voice!r}, which a swatch offers")
-        spec = JobSpec(
-            node_id="voiceover",
-            kind=NodeKind.NARRATION,
-            output_hash=voice,
-            params={"text": SAMPLE_LINE, "voice_id": voice},
-            model=None,
-            seed=0,
-            input_hashes={},
-        )
-        # execute() publishes at <output_dir>/<output_hash>.wav, and the app
-        # loads these by voice id -- so the id is passed as the hash and the
-        # file lands under the name the swatch asks for.
-        rendered = await backend.execute(spec, ExecutionContext(output_dir=ASSETS))
+        # Under the bare id, not the engine's versioned preview name: these
+        # five are bundled with the desktop and loaded as `<id>.wav`.
+        rendered = await backend.render_preview(voice, ASSETS, stem=voice)
         print(f"  {rendered.name}")
     return 0
 

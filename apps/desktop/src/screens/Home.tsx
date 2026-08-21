@@ -6,9 +6,7 @@ import {
   Info,
   LayoutTemplate,
   Loader2,
-  Play,
   Sparkles,
-  Square,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +32,6 @@ import {
   TOOL_ENGINE_KINDS,
   TOOL_ICONS,
   TOOL_KINDS,
-  VOICE_SWATCHES,
   isToolSession,
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
@@ -55,16 +52,10 @@ const VIDEO_KINDS = [
   "timeline",
   "export",
 ];
+import { useVoices } from "../lib/useVoices";
+import { VoicePicker } from "../components/VoicePicker";
+import { VoiceSwatches } from "../components/VoiceSwatches";
 import { EMPTY_TOOL_OPTIONS, useApp } from "../store";
-
-/** The bundled 2-second samples the voice swatches play. Resolved at build
- * time by Vite; keyed by the kokoro speaker each swatch's brief picks. */
-const VOICE_SAMPLES: Record<string, string> = Object.fromEntries(
-  VOICE_SWATCHES.map((swatch) => [
-    swatch.voice,
-    new URL(`../assets/voices/${swatch.voice}.wav`, import.meta.url).href,
-  ]),
-);
 
 /* one three-step icon scale (review 4 §S10) */
 const ICON_CONTROL = { size: 15, strokeWidth: 1.8 } as const;
@@ -111,8 +102,18 @@ export function Home() {
   const tiles = useTileLifecycle();
   const { guard, dialog: readinessDialog } = useReadinessGuard("home");
 
-  const { prompt, tool, toolInput, voice, motion, scriptModel, toolAspect, toolDuration, clipSeconds } =
-    homeDraft;
+  const {
+    prompt,
+    tool,
+    toolInput,
+    voice,
+    voiceId,
+    motion,
+    scriptModel,
+    toolAspect,
+    toolDuration,
+    clipSeconds,
+  } = homeDraft;
   // This video's choices, falling back to the saved baseline. `??` and not
   // `||`: a duration of 0 would never reach the engine, but neither should a
   // legitimate falsy override be mistaken for "unset".
@@ -127,31 +128,8 @@ export function Home() {
   // silently uploading the wrong image is worse than re-picking it.
   const [startFrame, setStartFrame] = useState<File | null>(null);
   const startFrameRef = useRef<HTMLInputElement>(null);
-  // The one swatch audio element — starting a second sample stops the
-  // first, so two speakers never talk over each other. `swatchPlaying`
-  // mirrors it into render state so the active swatch shows a stop
-  // affordance instead of a play icon that no longer tells the truth.
-  const swatchAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [swatchPlaying, setSwatchPlaying] = useState<string | null>(null);
-  const playSwatch = (voiceId: string) => {
-    swatchAudioRef.current?.pause();
-    if (swatchPlaying === voiceId) {
-      setSwatchPlaying(null);
-      return;
-    }
-    const audio = new Audio(VOICE_SAMPLES[voiceId]);
-    swatchAudioRef.current = audio;
-    audio.addEventListener("ended", () => setSwatchPlaying(null));
-    setSwatchPlaying(voiceId);
-    // play() returns undefined in environments without media (jsdom).
-    const request = audio.play();
-    if (request)
-      void request.catch(() => {
-        /* autoplay policy or a missing device — the swatch still selects */
-        setSwatchPlaying(null);
-      });
-  };
-  useEffect(() => () => swatchAudioRef.current?.pause(), []);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const voices = useVoices(tool === "voiceover");
 
   // The script tool's model pick — fetched when the panel opens, so the
   // list is what the LLM server has installed *now*. null = no picker
@@ -266,7 +244,14 @@ export function Home() {
         tool,
         {
           ...(tool === "voiceover"
-            ? { text: toolInput.trim(), ...(effectiveVoice ? { voice: effectiveVoice } : {}) }
+            ? {
+                text: toolInput.trim(),
+                ...(effectiveVoice ? { voice: effectiveVoice } : {}),
+                // Only an explicit pick travels: absent leaves the node on
+                // the hash a brief-only render used, where null would be a
+                // third state neither the engine nor the cache knows.
+                ...(voiceId ? { voice_id: voiceId } : {}),
+              }
             : { prompt: toolInput.trim() }),
           ...(tool === "clip" && motion.trim() ? { motion: motion.trim() } : {}),
           ...(tool === "clip" ? { duration_s: seconds, aspect: toolAspect } : {}),
@@ -289,6 +274,7 @@ export function Home() {
         setHomeDraft({
           toolInput: "",
           voice: "",
+          voiceId: null,
           motion: "",
           scriptModel: "",
           toolAspect: EMPTY_TOOL_OPTIONS.toolAspect,
@@ -530,42 +516,35 @@ export function Home() {
               ))}
             </div>
           )}
+          {activeTool.kind === "voiceover" && voiceOpen && voices && (
+            <VoicePicker
+              voices={voices}
+              value={voiceId}
+              // The panel speaks for the voiceover about to be made, not
+              // for a project — there is nothing here to follow, and
+              // nothing to spread a pick to. A pick is dropped by choosing
+              // a swatch instead.
+              scope="node"
+              onPick={(picked) => {
+                // A pick outranks the brief, so clearing the brief with it
+                // keeps the panel honest: one voice is chosen, one way.
+                setHomeDraft(picked ? { voiceId: picked, voice: "" } : { voiceId: null });
+                setVoiceOpen(false);
+              }}
+              onClose={() => setVoiceOpen(false)}
+            />
+          )}
           {activeTool.kind === "voiceover" && (
-            <div className="voice-swatches" role="group" aria-label={t("home.voiceSwatchesAria")}>
-              {VOICE_SWATCHES.map((swatch) => {
-                const name = m().home.voiceNames[swatch.voice];
-                return (
-                  <span
-                    key={swatch.voice}
-                    className={`voice-swatch${voice.trim() === swatch.brief ? " active" : ""}`}
-                  >
-                    <button
-                      className="swatch-play"
-                      onClick={() => playSwatch(swatch.voice)}
-                      aria-label={t(
-                        swatchPlaying === swatch.voice
-                          ? "home.voiceStopAria"
-                          : "home.voicePlayAria",
-                        { name },
-                      )}
-                    >
-                      {swatchPlaying === swatch.voice ? (
-                        <Square size={11} strokeWidth={2} aria-hidden="true" />
-                      ) : (
-                        <Play size={11} strokeWidth={2} aria-hidden="true" />
-                      )}
-                    </button>
-                    <button
-                      className="swatch-name"
-                      onClick={() => setHomeDraft({ voice: swatch.brief })}
-                      aria-label={t("home.voiceSwatchAria", { name })}
-                    >
-                      {name}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
+            <VoiceSwatches
+              voices={voices}
+              brief={voice}
+              voiceId={voiceId}
+              // A brief and a pick are two answers to one question, and a
+              // pick outranks a brief at render — so choosing one drops
+              // the other rather than leaving the panel holding both.
+              onPickBrief={(brief) => setHomeDraft({ voice: brief, voiceId: null })}
+              onOpenPicker={() => setVoiceOpen(true)}
+            />
           )}
           {activeTool.kind === "clip" && (
             <div className="chip-row" role="group" aria-label={t("home.motionPresetsAria")}>

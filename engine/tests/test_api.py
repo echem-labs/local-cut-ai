@@ -1747,3 +1747,95 @@ async def test_voices_needs_the_token(client):
     and an exception would be the one a scanner finds."""
     response = await client.get("/voices", headers={"Authorization": "Bearer wrong"})
     assert response.status_code == 401
+
+
+async def test_voice_preview_renders_once_and_is_served_from_disk_after(client, monkeypatch):
+    """The first audition of a voice pays for a synthesis; every later one is
+    a file read. Without the cache a picker would re-synthesize on every
+    press, and a user comparing two voices presses several times a second."""
+    import wave
+
+    from localcut_engine.backends.kokoro import KokoroBackend, preview_stem
+
+    renders: list[str] = []
+
+    async def fake_render(self, voice_id, out_dir):
+        renders.append(voice_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Named the way the backend names it: the route looks the cache up
+        # by `preview_stem`, so a fake filing it elsewhere would re-render
+        # every time and still pass a weaker assertion.
+        target = out_dir / f"{preview_stem(voice_id)}.wav"
+        with wave.open(str(target), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(24000)
+            wav.writeframes(b"\0\0" * 2400)
+        return target
+
+    monkeypatch.setattr(KokoroBackend, "render_preview", fake_render)
+    _stub_narration(monkeypatch, ("bf_emma",))
+
+    first = await client.get("/voices/bf_emma/preview")
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "audio/wav"
+    assert first.content[:4] == b"RIFF"
+    second = await client.get("/voices/bf_emma/preview")
+    assert second.status_code == 200
+    assert second.content == first.content
+    assert renders == ["bf_emma"], "the second audition re-synthesized"
+    # inline, not attachment: this is fed to an <audio> element, and the
+    # artifact route sets the same for the same reason.
+    assert first.headers["content-disposition"].startswith("inline")
+
+
+async def test_voice_preview_is_a_404_when_the_pack_does_not_hold_it(client, monkeypatch):
+    """The ordinary answer to a client holding a list from before the pack
+    changed - not a 500, and not a rendered substitute voice."""
+    from localcut_engine.backends.base import GenerationError
+    from localcut_engine.backends.kokoro import KokoroBackend
+
+    async def refuse(self, voice_id, out_dir):
+        raise GenerationError(f"no voice {voice_id!r} in the installed pack")
+
+    monkeypatch.setattr(KokoroBackend, "render_preview", refuse)
+    _stub_narration(monkeypatch, ("af_sarah",))
+
+    response = await client.get("/voices/zz_nobody/preview")
+    assert response.status_code == 404
+    assert "zz_nobody" in response.json()["detail"]
+
+
+async def test_voice_preview_is_a_404_when_narration_will_not_use_the_pack(client):
+    """The test chain narrates on mock, so there is no pack to audition."""
+    response = await client.get("/voices/bf_emma/preview")
+    assert response.status_code == 404
+
+
+async def test_voice_preview_refuses_a_path_that_is_not_a_voice_id(client, monkeypatch):
+    """The id reaches a filename, so its shape is bounded at the route. A
+    traversal must not resolve, and must not reach the backend to find out.
+
+    Narration is stubbed on purpose. Without it every request 404s at "no
+    voice pack is serving narration" before the id is looked at, and the
+    test passes just as green with no pattern on the path param at all -
+    which is the one thing it exists to check.
+    """
+    _stub_narration(monkeypatch, ("bf_emma",))
+    # A separator never reaches the route: Starlette's `str` converter does
+    # not match one, so the path finds no route rather than a bounded id.
+    for path in ("..%2F..%2Fetc%2Fpasswd", "..%2F..%2Fbf_emma"):
+        response = await client.get(f"/voices/{path}/preview")
+        assert response.status_code == 404, path
+    # Everything else is refused BY THE PATTERN - 422, not the backend's
+    # 404. `bf_emma\n` is the one worth naming: `$` alone would accept it.
+    for path in ("BF_EMMA", "bf%20emma", "x" * 41, "bf_emma%0A", "bf.emma"):
+        response = await client.get(f"/voices/{path}/preview")
+        assert response.status_code == 422, path
+
+
+async def test_voice_preview_needs_the_token(client):
+    response = await client.get(
+        "/voices/bf_emma/preview", headers={"Authorization": "Bearer wrong"}
+    )
+    assert response.status_code == 401

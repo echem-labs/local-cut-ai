@@ -27,17 +27,6 @@
   "voiceTipLabel": "Which narrator speaks",
   "voiceTipHint": "a style like \"deep male\" or a Kokoro id · empty = default",
   "voiceInfoAria": "About the voice field",
-  "voiceSwatchesAria": "Voice previews",
-  "voiceSwatchAria": "Use the {name} voice",
-  "voicePlayAria": "Play a sample of the {name} voice",
-  "voiceStopAria": "Stop the {name} sample",
-  "voiceNames": {
-    "af_sarah": "Sarah",
-    "am_michael": "Michael",
-    "bf_emma": "Emma",
-    "am_onyx": "Onyx",
-    "af_bella": "Bella"
-  },
   "motionPlaceholder": "Camera motion — e.g. slow push-in, orbit left",
   "motionAria": "Camera motion",
   "motionTipLabel": "How the camera moves",

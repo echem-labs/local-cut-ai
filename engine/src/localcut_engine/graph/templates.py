@@ -95,6 +95,10 @@ def tool_graph(tool: str, params: dict) -> StoryGraph:
                         # hash, so a node minted without it would have its
                         # artifact re-addressed the first time it reloaded.
                         "narration_version": NARRATION_VERSION,
+                        # Only when one was picked: absent and null are the
+                        # same state to the backend, but only absent leaves
+                        # the node on the hash a brief-only render used.
+                        **({"voice_id": str(params["voice_id"])} if params.get("voice_id") else {}),
                     },
                 )
             )

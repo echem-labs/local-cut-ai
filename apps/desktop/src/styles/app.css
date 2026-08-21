@@ -8740,3 +8740,169 @@ a.icon-btn-sm {
 .template-notice .grow {
   flex: 1;
 }
+
+/* voice picker: fifty-four voices, grouped by language and auditionable.
+   The rows are a group of buttons rather than a listbox because each one
+   carries its own play control, and ARIA specifies an option's children as
+   presentational — a play button inside one is unreachable by the assistive
+   tech that needs it most here. */
+.voice-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.voice-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  outline: none;
+}
+
+.voice-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* The list is the scrolling region, not the dialog: the search field has
+     to stay reachable while paging through nine language groups. */
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.voice-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.voice-group .eyebrow {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--space-2) var(--space-1) var(--space-1);
+  /* The dialog's own surface: these scroll over the modal, not the app. */
+  background: var(--surface-2);
+}
+
+.voice-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+}
+
+.voice-row-wrap.active,
+.voice-row.active {
+  border: 1px solid var(--accent);
+  background: var(--accent-muted);
+}
+
+.voice-row {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-s);
+  text-align: left;
+  cursor: pointer;
+}
+
+.voice-row:hover {
+  background: var(--surface-3);
+}
+
+.voice-row-name {
+  flex: 1;
+}
+
+.voice-row-id,
+.voice-row-meta {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.voice-row-error {
+  padding-right: var(--space-2);
+  color: var(--status-failed);
+  font-size: var(--text-xs);
+}
+
+/* The picker reuses this class outside `.voice-swatch`, which is where its
+   looks used to come from — so the shared part lives here and the swatch
+   keeps its divider in the descendant rule above. */
+.swatch-play {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+}
+
+.swatch-play:hover {
+  color: var(--text-primary);
+}
+
+/* the way into the full pack from the five-swatch fast path */
+.swatch-more {
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 3px var(--space-3);
+  cursor: pointer;
+}
+
+.swatch-more:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* inspector: the picked voice, and the way to change it */
+.voice-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.voice-pick-current {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* the picker's footer: which scenes the pick about to be made is for.
+   Pushed left against the footer's own flex-end, so it reads as a
+   qualifier on the choice rather than as an action beside one. */
+.voice-every {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.voice-every input {
+  width: auto;
+  min-height: 0;
+}

@@ -12,7 +12,7 @@ import logging
 import shutil
 import threading
 import time
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -1959,6 +1959,46 @@ class ProjectService:
         with self._lock:
             return self._scene_board(project_id)
 
+    def _voice_resolver(self) -> Callable[[dict], str | None]:
+        """How to name the voice a narration node's params actually speak in.
+
+        A brief is a wish: `pick_voice` maps it onto one of five keywords
+        and a brief matching none of them lands on the pack default, so
+        "narrator" is read by Sarah with nothing in the params saying so. A
+        client that showed `params.voice` would name a voice that may never
+        have spoken.
+
+        Resolved here rather than shipped as a table for the client to
+        re-implement: the mapping is a backend's own vocabulary, and the
+        whole-word matching under it is logic, not a value a contract test
+        could hold in step. Off any other narration tier there is no Kokoro
+        voice to name and this reports none - the same answer, and for the
+        same reason, as `/voices` reporting `available: false` there.
+
+        Resolved once per board rather than per node: `supports()` stats the
+        weights, and a board carries a narration node per scene.
+        """
+        from .backends.kokoro import KokoroBackend, pick_voice
+
+        try:
+            backend = self.backends.resolve(NodeKind.NARRATION) if self.backends else None
+        except GenerationError:
+            # No tier claims narration at all - a machine mid-install, or a
+            # chain with the kind switched off. Nothing spoke, so nothing
+            # is named.
+            backend = None
+        if not isinstance(backend, KokoroBackend):
+            return lambda params: None
+
+        def resolve(params: dict) -> str | None:
+            # The pick outranks the brief in `execute`, so it outranks it
+            # here; naming the brief's voice over a picked one would name
+            # the voice that did not speak.
+            picked = params.get("voice_id")
+            return str(picked) if picked else pick_voice(str(params.get("voice", "")))
+
+        return resolve
+
     def _scene_board(self, project_id: str) -> dict:
         graph = self.store.load_graph(project_id)
         recorded_takes = self.store.load_takes(project_id).takes
@@ -1987,6 +2027,7 @@ class ProjectService:
         # Same contract as `skipped`, different reason: the compiler enqueues
         # neither, so the board must not report either as `queued`.
         blocked = unready_nodes(graph)
+        resolve_voice = self._voice_resolver()
 
         def node_state(node_id: str) -> dict | None:
             node = graph.nodes.get(node_id)
@@ -2053,6 +2094,11 @@ class ProjectService:
                 "model": node.model,
                 "pinned": node.pinned,
             }
+            if node.kind is NodeKind.NARRATION:
+                # What `params.voice` only asks for. Absent on every other
+                # kind rather than null, so a client reading it cannot mean
+                # to ask a keyframe which voice it speaks in.
+                state["resolved_voice"] = resolve_voice(node.params)
             # Alternate takes a regenerate moved past (distinct from a split
             # scene's sequential clip_takes below). The node's live identity
             # is listed too, marked current, so a picker is one flat row.

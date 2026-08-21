@@ -7,6 +7,7 @@ import { spokenSeconds } from "../lib/formats";
 import { newestJob } from "../lib/jobs";
 import { isDone, isSettled } from "../lib/status";
 import { useMenuFit } from "../lib/useMenuFit";
+import { useVoices } from "../lib/useVoices";
 import { shortDuration } from "../lib/time";
 import { isToolSession, toolLabel } from "../lib/tools";
 import { ModelsPopover } from "./ModelsPopover";
@@ -14,6 +15,8 @@ import { ReadinessBanner, useReadinessGuard } from "./Readiness";
 import { StatusRing } from "./StatusRing";
 import { Tip } from "./Tooltip";
 import { PromotedTo } from "./Provenance";
+import { VoicePicker } from "./VoicePicker";
+import { VoiceSwatches } from "./VoiceSwatches";
 import { Waveform } from "./Waveform";
 
 /** True when the page's h1 already says these words — exactly, or as the
@@ -195,6 +198,18 @@ export function ToolSession() {
   const [refineError, setRefineError] = useState<string | null>(null);
   // Menus/dialogs local to this page. `null` string states double as
   // "closed"; a message is the store convention for a refusal.
+  // The voice this voiceover speaks in, changeable without leaving the
+  // window: re-rendering one in another voice is the reason to be here, and
+  // sending the user back to Home to do it would lose the text they refined.
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  // The voice the composer will send, held beside the text rather than
+  // applied on the click that chose it: a voice costs a synthesis, and
+  // comparing four of them would otherwise spend four renders. Both halves
+  // travel out together through "update & re-render".
+  const [voiceDraft, setVoiceDraft] = useState<{ brief: string; voiceId: string | null }>({
+    brief: "",
+    voiceId: null,
+  });
   const [addOpen, setAddOpen] = useState(false);
   const fit = useMenuFit();
   const [addResult, setAddResult] = useState<string | null>(null);
@@ -268,6 +283,7 @@ export function ToolSession() {
   // own params. prompt (visual tools) / text (voiceover) / brief (music) —
   // one of the three is the thing that was asked for. The KEY travels too:
   // it is what the composer's "update & re-render" writes back via /patch.
+  const voices = useVoices(tool === "voiceover");
   const params = node?.params ?? {};
   const recipeKey =
     (["prompt", "text", "brief"] as const).find(
@@ -282,6 +298,16 @@ export function ToolSession() {
     setRefineDraft(recipe ?? "");
     setRefineError(null);
   }, [recipe]);
+
+  // The voice the node actually holds, which the draft follows the way the
+  // composer's text follows the recipe: an update landing (or a take swap)
+  // moves it, and the engine's answer is what the next choice starts from.
+  const pickedVoice = typeof params.voice_id === "string" ? params.voice_id : null;
+  const voiceBrief = typeof params.voice === "string" ? params.voice : "";
+  useEffect(() => {
+    setVoiceDraft({ brief: voiceBrief, voiceId: pickedVoice });
+  }, [voiceBrief, pickedVoice]);
+  const voiceMoved = voiceDraft.brief !== voiceBrief || voiceDraft.voiceId !== pickedVoice;
 
   if (!tool || !node)
     // The dialog rides along: a board poll can drop the aux node while the
@@ -343,12 +369,23 @@ export function ToolSession() {
   };
 
   const sendRefine = async () => {
-    if (!recipeKey || refining) return;
+    if (refining) return;
     const value = refineDraft.trim();
-    if (!value || value === recipe) return;
+    if (!value) return;
+    // Only what moved: an unchanged key would be sent back at the value it
+    // already holds, which patches and re-plans for nothing.
+    const changes: Record<string, unknown> = {};
+    if (recipeKey && value !== recipe) changes[recipeKey] = value;
+    if (voiceMoved) {
+      // Empty brief and cleared pick both go as null — `set_params` removes
+      // the key, which is the state a render before either choice used.
+      changes.voice = voiceDraft.brief.trim() || null;
+      changes.voice_id = voiceDraft.voiceId;
+    }
+    if (Object.keys(changes).length === 0) return;
     setRefining(true);
     try {
-      setRefineError(await refineTool(node.node_id, recipeKey, value));
+      setRefineError(await refineTool(node.node_id, changes));
     } finally {
       setRefining(false);
     }
@@ -369,7 +406,21 @@ export function ToolSession() {
     recipe != null && currentProject != null && recipe.trim() === currentProject.title.trim();
   const showRecipeText = recipe != null && !titleIsRecipe && (tool === "script" || !done);
   const details: string[] = [];
-  if (typeof params.voice === "string" && params.voice) details.push(params.voice);
+  // The voice that spoke, not the brief that asked for one: a brief is a
+  // wish the engine maps onto a voice, and "narrator" - the voiceover
+  // tool's own default - matches no keyword and is read by the pack
+  // default. The engine reports the resolution; the name for it comes from
+  // the pack the picker already loaded, and an id stands in until it does.
+  // Off a chain that narrates elsewhere there is nothing to name, and the
+  // brief is all there is to say.
+  const spokenVoice = node.resolved_voice ?? null;
+  if (spokenVoice)
+    details.push(
+      t("voices.current", {
+        name: voices?.voices.find((v) => v.id === spokenVoice)?.name ?? spokenVoice,
+      }),
+    );
+  else if (typeof params.voice === "string" && params.voice) details.push(params.voice);
   if (typeof params.motion === "string" && params.motion) details.push(params.motion);
   if (typeof params.duration_s === "number")
     details.push(t("toolSession.secondsChip", { s: params.duration_s }));
@@ -716,6 +767,22 @@ export function ToolSession() {
                 {addResult}
               </p>
             )}
+            {voiceOpen && voices && (
+              <VoicePicker
+                voices={voices}
+                value={voiceDraft.voiceId}
+                // A session speaks for one node; the project it sits in
+                // is the session itself, so there is nothing to follow and
+                // nothing to spread to. The swatch row below is what drops
+                // a pick here.
+                scope="node"
+                onPick={(voiceId) => {
+                  setVoiceOpen(false);
+                  setVoiceDraft((draft) => ({ ...draft, voiceId }));
+                }}
+                onClose={() => setVoiceOpen(false)}
+              />
+            )}
             {cloneOpen && tool === "voiceover" && (
               <div className="clone-panel">
                 <b>{t("toolSession.cloneVoiceTitle")}</b>
@@ -783,6 +850,25 @@ export function ToolSession() {
                   }}
                 />
               )}
+              {/* Under the text it speaks, in the same box and the same
+                  order as Home's panel: the two surfaces make the same
+                  choice, so making it should not look like two different
+                  jobs. Unlike Home's, a choice here lands on a node that
+                  already has audio, so it re-renders on the spot — the
+                  reason to change a voice from this window rather than
+                  starting the voiceover again. */}
+              {tool === "voiceover" && (
+                <VoiceSwatches
+                  voices={voices}
+                  brief={voiceDraft.brief}
+                  voiceId={voiceDraft.voiceId}
+                  // A brief and a pick are two answers to one question and
+                  // the pick is read first, so choosing one drops the other
+                  // rather than leaving the draft holding both.
+                  onPickBrief={(brief) => setVoiceDraft({ brief, voiceId: null })}
+                  onOpenPicker={() => setVoiceOpen(true)}
+                />
+              )}
               <div className="row">
                 <div className="spacer" />
                 {/* The same readiness popover Home's box carries — opening
@@ -800,7 +886,11 @@ export function ToolSession() {
                   <button
                     className="btn-primary"
                     onClick={() => void sendRefine()}
-                    disabled={refining || !refineDraft.trim() || refineDraft.trim() === recipe}
+                    disabled={
+                      refining ||
+                      !refineDraft.trim() ||
+                      (refineDraft.trim() === recipe && !voiceMoved)
+                    }
                   >
                     {refining ? t("toolSession.updating") : t("toolSession.updateRerender")}
                   </button>
