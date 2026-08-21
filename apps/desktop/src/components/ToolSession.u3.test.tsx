@@ -159,7 +159,7 @@ describe("the composer", () => {
     expect(button.disabled).toBe(false);
     fireEvent.click(button);
     await vi.waitFor(() =>
-      expect(refineTool).toHaveBeenCalledWith("music", "brief", "lofi beat, warmer keys"),
+      expect(refineTool).toHaveBeenCalledWith("music", { brief: "lofi beat, warmer keys" }),
     );
   });
 
@@ -364,26 +364,62 @@ describe("the voiceover session's voice row", () => {
     expect(screen.queryByText("Change voice")).toBeNull();
   });
 
-  it("re-renders in a swatch's voice and drops the pick that outranked it", () => {
-    const setVoiceBrief = vi.fn().mockResolvedValue(null);
+  it("holds a swatch until the re-render is asked for", async () => {
+    const refineTool = vi.fn().mockResolvedValue(null);
     mountSession(
       "voiceover",
       node("voiceover", { params: { text: "hello", voice_id: "bf_emma" } }),
-      { ...withPack, setVoiceBrief },
+      { ...withPack, refineTool },
     );
+    const button = screen.getByText("Update & re-render") as HTMLButtonElement;
+    // Nothing has moved yet, so there is nothing to re-render.
+    expect(button.disabled).toBe(true);
+
     fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
-    // Both in one call: the brief alone would be read under the old pick,
-    // which is the voice the user just replaced.
-    expect(setVoiceBrief).toHaveBeenCalledWith("voiceover", "deep");
+    // A voice costs a synthesis, and choosing one is how you compare them:
+    // applying on the click would spend a render per swatch pressed.
+    expect(refineTool).not.toHaveBeenCalled();
+    expect(button.disabled).toBe(false);
+
+    fireEvent.click(button);
+    // The brief and the pick in one patch: sent apart, the render between
+    // them speaks in the voice that was just replaced.
+    await vi.waitFor(() =>
+      expect(refineTool).toHaveBeenCalledWith("voiceover", {
+        voice: "deep",
+        voice_id: null,
+      }),
+    );
   });
 
-  it("reports a refusal where the pick's own refusals go", async () => {
-    const setVoiceBrief = vi.fn().mockResolvedValue("node is pinned");
+  it("sends an edited line and a new voice together", async () => {
+    const refineTool = vi.fn().mockResolvedValue(null);
     mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
       ...withPack,
-      setVoiceBrief,
+      refineTool,
+    });
+    fireEvent.change(screen.getByLabelText("Edit this session's prompt"), {
+      target: { value: "hello there" },
     });
     fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    fireEvent.click(screen.getByText("Update & re-render"));
+    await vi.waitFor(() =>
+      expect(refineTool).toHaveBeenCalledWith("voiceover", {
+        text: "hello there",
+        voice: "deep",
+        voice_id: null,
+      }),
+    );
+  });
+
+  it("reports a refusal against the composer that sent it", async () => {
+    const refineTool = vi.fn().mockResolvedValue("node is pinned");
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
+      ...withPack,
+      refineTool,
+    });
+    fireEvent.click(screen.getByLabelText("Use the Onyx voice"));
+    fireEvent.click(screen.getByText("Update & re-render"));
     expect(await screen.findByText("node is pinned")).toBeInTheDocument();
   });
 });
