@@ -68,16 +68,24 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #: 56 entries here would be a second record to keep in step. What this needs is
 #: one name of each *shape* the normaliser has to survive — a wheel-private
 #: directory behind a backslash, an arch suffix, a version tail in two
-#: hyphenated parts, and a stem ending in digits that has to survive whole —
-#: each carrying a library that is really in that inventory. That the sample
-#: stays inside the inventory is asserted rather than trusted, below.
+#: hyphenated parts, a stem ending in digits that has to survive whole, and a
+#: name shouted in upper case — each carrying a library that is really in that
+#: inventory. That the sample stays inside the inventory is asserted rather
+#: than trusted, below.
 #:
-#: The backslash is the shape no other fixture in this file carries and the
-#: only reason `bundled_libraries` normalises the separator at all:
-#: `localcut.spec` hands it PyInstaller's TOC destinations, which on Windows
-#: are the paths `os.path.join` built there.
+#: The backslash is the only reason `bundled_libraries` normalises the
+#: separator at all: `localcut.spec` hands it PyInstaller's TOC destinations,
+#: which on Windows are the paths `os.path.join` built there.
+#:
+#: `MSVCP140_1.DLL` is upper case because a Windows TOC carries whatever case
+#: the filesystem had, and the extension match is what decides whether a
+#: collected file counts as a library in the first place. Spelled only in
+#: lower case, a case-sensitive match drops the file silently: not listed
+#: bare, absent — no row, no terms, nothing to notice. The recorded inventory
+#: holds this one shouted for that reason.
 _WINDOWS_COLLECTED = (
     "_soundfile_data\\libsndfile_x64.dll",
+    "MSVCP140_1.DLL",
     "api-ms-win-crt-runtime-l1-1-0.dll",
     "ctranslate2.dll",
     "msvcp140.dll",
@@ -470,6 +478,7 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
     # it for the half of that the other shapes cannot show — a stem whose own
     # last characters are digits, which the version strip must not take.
     assert set(windows_libraries) == {
+        "MSVCP140_1",
         "api-ms-win-crt-runtime-l1",
         "ctranslate2",
         "libsndfile",
@@ -479,6 +488,26 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
     listed = _library_rows(windows_document)
     missing = [library for library in windows_libraries if library not in listed]
     assert not missing, f"{missing} are collected on Windows and the notices do not name them"
+
+
+def test_the_section_holds_libraries_and_not_the_prose_around_them(
+    windows_libraries: list[str], windows_document: str
+) -> None:
+    """A row is `  name — terms`, and so is an indented sentence.
+
+    The bundled-libraries section is read by splitting on indentation and
+    partitioning on an em-dash, which is a fair description of a row and an
+    equally fair description of a wrapped paragraph that happens to be
+    indented and to contain one. Left to itself that turns explanatory prose
+    into libraries — with a fragment of the sentence as the name and the rest
+    of it as the terms — so a reader of these rows is looking at licence
+    claims that no table made.
+
+    Exact equality, because the failure this guards is a row appearing that
+    nothing put there: a subset check passes on precisely that.
+    """
+    expected = set(windows_libraries) | set(statically_linked(windows_libraries))
+    assert set(_library_rows(windows_document)) == expected
 
 
 def test_the_library_list_can_come_from_what_the_freeze_collected() -> None:
@@ -524,10 +553,15 @@ def test_the_copyleft_terms_survive_the_windows_spelling(windows_document: str) 
     copyleft terms, in the document that exists to say otherwise. Here the
     architecture suffix is the whole distance between the two spellings.
 
-    libsndfile is the whole assertion because `_FROZEN_COPYLEFT["win32"]` holds
-    one name. Its stem is the same on both platforms, so the other half of the
-    reconciliation — the `lib` prefix a Windows name does not carry — cannot be
-    reached through anything that ships there;
+    libsndfile is the whole assertion because it is the only copyleft library
+    on that platform with a *file* to spell: `_FROZEN_COPYLEFT["win32"]` holds
+    one name, and that record keys on files. The document names two more —
+    libmp3lame and libmpg123, built into libsndfile and carried into it by
+    `_LINKED_INTO` — but they arrive under a name this file writes down rather
+    than one a TOC spells, so they say nothing about spelling. Its stem is the
+    same on both platforms, so the other half of the reconciliation — the
+    `lib` prefix a Windows name does not carry — cannot be reached through
+    anything that ships there;
     `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` pins that
     instead, as a fact about the table rather than a claim that they ship.
     """
@@ -549,9 +583,9 @@ def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
     annotated on every platform rather than on one.
     """
     collected = (
-        "av.libs/avcodec-62.dll",
-        "av.libs/x264-165.dll",
-        "av.libs/libiconv-2-6ce5f4ff92ada49d6f23a8e413455502.dll",
+        "av.libs\\avcodec-62.dll",
+        "av.libs\\x264-165.dll",
+        "av.libs\\libiconv-2-6ce5f4ff92ada49d6f23a8e413455502.dll",
     )
     # Through the real path, because the normaliser is half of what is being
     # tested: `copyleft_note` is keyed on the stem and gets there from a
@@ -572,11 +606,13 @@ def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
 
 
 def test_the_copyleft_table_still_holds_the_terms_the_closure_turns_on() -> None:
-    """Deleting a table entry is invisible to the test above.
+    """Deleting a table entry is invisible to the tests that read the document.
 
-    That one loops over the libraries the table still names, so a library
-    dropped from the table simply leaves the loop and the document goes on
-    listing it bare.
+    `test_the_copyleft_libraries_are_named_with_what_they_oblige` loops over
+    the libraries the table still names, so a library dropped from the table
+    simply leaves the loop and the document goes on listing it bare. Named
+    rather than called "the test above", which stops being true the moment
+    anything is inserted between the two.
 
     The *closure*, not the freeze: `uv sync` installs PyAV and espeakng-loader,
     so four of these five are loaded in the engine's own process when it runs
