@@ -9,8 +9,12 @@
  *   masks.json: { "<name>.png": [ {x, y, width, height}, ... ] }
  *
  * References must be re-rendered with the app's bundled Inter injected
- * before they are comparable (see the plan; mock sources live in the
- * specs repo under artifacts/mocks/).
+ * before they are comparable: a reference captured with a different font
+ * differs on almost every text pixel, which no mask can rescue.
+ *
+ * The reference images themselves are not in this repository - they are
+ * design captures held alongside the design sources. `--refs` takes whatever
+ * directory holds them, so any checkout works.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";

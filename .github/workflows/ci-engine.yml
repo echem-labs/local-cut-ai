@@ -27,7 +27,15 @@ name: CI (engine)
 # the desktop's package.json. Those five match no other workflow either -- an
 # edit to the README's License section or a deleted LICENSE runs nothing at
 # all, and package.json alone runs only ci-desktop, which cannot execute
-# pytest.
+# pytest. TRADEMARK.md and AGENTS.md join them for the same reason: the test
+# asserts both exist, that the README links the first, and that the second
+# defers to CLAUDE.md rather than restating it.
+#
+# The rig scripts are here for a different reason. The same test scans EVERY
+# tracked file for references sending a public reader to the private specs
+# repository, so no path list can cover its real input; naming the directory
+# the rule has already caught twice is what makes the guard fire on the change
+# most likely to reintroduce it.
 #
 # (Spelled out twice rather than shared through a YAML anchor: the workflow
 # parser does not expand anchors.)
@@ -50,6 +58,9 @@ on:
       - "NOTICE"
       - "README.md"
       - "CONTRIBUTING.md"
+      - "TRADEMARK.md"
+      - "AGENTS.md"
+      - "apps/desktop/scripts/rig/**"
   pull_request:
     paths:
       - "engine/**"
@@ -67,6 +78,9 @@ on:
       - "NOTICE"
       - "README.md"
       - "CONTRIBUTING.md"
+      - "TRADEMARK.md"
+      - "AGENTS.md"
+      - "apps/desktop/scripts/rig/**"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main

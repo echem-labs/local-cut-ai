@@ -1,0 +1,19 @@
+# Findings assessed and dismissed, one per line, by gitleaks fingerprint
+# (commit:file:rule:line). An entry here is a claim that someone looked, so
+# each one carries why.
+#
+# Nothing may be added to this file to silence a finding that has not been
+# assessed. A credential that is real is rotated and the history dealt with;
+# it does not get a line here.
+
+# A synthetic bearer token inside the test that asserts the log filter
+# REDACTS bearer tokens - the assertion is that it does not survive into the
+# rendered message. It was never issued: the engine mints its token at
+# startup into the data directory, and this value only ever existed as a
+# string literal in a test. The current fixture reads
+# `EXAMPLE-not-a-real-token-000000000` so neither a scanner nor a reader has
+# to make this judgement again; this line covers the commit that still holds
+# the older, realistic-looking one. Not rewritten out of history: it grants
+# nothing, and rewriting 700 commits to remove a test fixture trades a real
+# hazard (every clone and fork diverging) for a cosmetic one.
+e817172821f751b069263a69e23b12b812109a1f:engine/tests/test_api.py:generic-api-key:130

@@ -1,5 +1,12 @@
 # Contributing
 
+Using an AI coding agent? [AGENTS.md](AGENTS.md) is the orientation file for
+one, and [CLAUDE.md](CLAUDE.md) carries the conventions a test will fail you
+on. Everything below applies either way.
+
+The name and logo are not covered by the code licence — see
+[TRADEMARK.md](TRADEMARK.md), which is short and mostly says yes.
+
 ## Licence and sign-off
 
 This project is Apache-2.0. Contributions are accepted under the

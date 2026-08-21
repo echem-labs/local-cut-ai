@@ -156,3 +156,82 @@ def test_the_contributing_guide_names_the_same_license() -> None:
         "GitHub shows on the New PR page, and the DCO sign-off it asks for is an "
         "assertion about the right to submit under this licence"
     )
+
+
+def test_the_trademark_policy_exists_and_the_readme_points_at_it() -> None:
+    """The one thing an Apache-2.0 grant deliberately withholds.
+
+    Section 6 grants no rights in the licensor's trade names or marks, so a
+    permissive licence plus no trademark page leaves a reader to infer the
+    boundary — and the inference they are most likely to draw from "Apache-2.0"
+    is that there isn't one. The name is what connects a reputation to a build;
+    it is the only thing reserved, so it has to be the thing written down.
+    """
+    policy = _ROOT / "TRADEMARK.md"
+    assert policy.exists(), "TRADEMARK.md is missing"
+    text = policy.read_text(encoding="utf-8")
+    for mark in ("LocalCut", "branding/logo.svg"):
+        assert mark in text, f"the policy does not name {mark} as a mark it covers"
+    # It has to say what is allowed, not only what is forbidden: a policy that
+    # reads as a list of prohibitions chills the forking the licence invites.
+    assert "fork" in text.lower(), "the policy never says forking is fine"
+
+    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "TRADEMARK.md" in readme, (
+        "README does not link the trademark policy - the licence section is "
+        "where a reader forms their belief about what they may reuse"
+    )
+
+
+def test_the_agent_orientation_file_defers_rather_than_duplicates() -> None:
+    """AGENTS.md is read by tools that never open CLAUDE.md.
+
+    Both describing the same conventions is the second-copy-that-drifts shape
+    CLAUDE.md itself forbids, and the drift is silent because no build step
+    compares prose. So AGENTS.md must point at CLAUDE.md rather than restate
+    it, and this is what says so.
+    """
+    agents = _ROOT / "AGENTS.md"
+    assert agents.exists(), "AGENTS.md is missing"
+    text = agents.read_text(encoding="utf-8")
+    assert "CLAUDE.md" in text, "AGENTS.md does not defer to CLAUDE.md"
+
+
+def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> None:
+    """A public repository cannot cite a private one as an explanation.
+
+    Two rig scripts pointed at fixture paths "in the specs repo" - a sentence
+    that reads as a missing directory to anyone outside, with no way to tell
+    whether the tooling is broken or the reference is. Opaque provenance is
+    fine ("plan doc 11") and stays: it names a source without promising the
+    reader can open it. Naming the repository promises exactly that.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=_ROOT,
+        capture_output=True,
+        check=True,
+    ).stdout.split(b"\0")
+
+    offenders: list[str] = []
+    for raw in tracked:
+        if not raw:
+            continue
+        name = raw.decode()
+        if name.startswith("engine/tests/test_license_contract.py"):
+            continue  # this file names the phrases in order to forbid them
+        path = _ROOT / name
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # binary or unreadable: not a sentence a reader follows
+        lowered = text.lower()
+        for phrase in ("specs repo", "hm/specs", "specs/hm"):
+            if phrase in lowered:
+                offenders.append(f"{name}: {phrase!r}")
+
+    assert not offenders, (
+        "these point a public reader at a repository they cannot open:\n  " + "\n  ".join(offenders)
+    )

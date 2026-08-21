@@ -131,11 +131,16 @@ def test_log_redaction_scrubs_tokens_from_request_lines():
         __file__,
         0,
         '%s - "WebSocket %s" [accepted]',
-        ("127.0.0.1:43986", "/ws?token=aGn_Ni-2xOCzL3p6_6Sr3CGEnbPfJ9AJ"),
+        # Obviously synthetic on sight. `_TOKEN_IN_TEXT` is
+        # `(token=)[^&\s"']+`, so it consumes any run of non-delimiters and a
+        # realistic-looking value tests nothing extra - while being
+        # indistinguishable from a live one to a secret scanner and to a
+        # reader, in a public repository that runs a secret scanner.
+        ("127.0.0.1:43986", "/ws?token=EXAMPLE-not-a-real-token-000000000"),
         None,
     )
     assert all(f.filter(record) for f in logger.filters)
-    assert "aGn_Ni" not in (record.getMessage())
+    assert "not-a-real-token" not in (record.getMessage())
     assert "token=[redacted]" in record.getMessage()
 
 
