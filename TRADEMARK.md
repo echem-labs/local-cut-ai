@@ -9,10 +9,14 @@ tell your build apart from ours?*
 Apache-2.0 says so itself. Section 6 grants no rights in the licensor's trade
 names or trademarks — except, in the same sentence, as needed to describe the
 origin of the work and to reproduce the NOTICE file. That exception is not a
-loophole, it is an obligation: section 4(d) requires every redistribution to
-carry NOTICE verbatim, and this project's NOTICE names the project. So a fork
-keeps that file exactly as it is, and nothing below asks otherwise. This page
-just makes the rest of the boundary usable rather than leaving you to infer it.
+loophole: section 4(d) requires a derivative work you distribute to carry a
+readable copy of the attribution notices in NOTICE, and this project's NOTICE
+names the project. Read 4(d) itself for what that does and does not ask — you
+may carry those notices in NOTICE, in the source, in the documentation or in
+a display the work generates; you may add your own alongside; and you may
+leave out notices that do not pertain to any part of your derivative work.
+Nothing below asks for more than the licence does. This page just makes the
+rest of the boundary usable rather than leaving you to infer it.
 
 ## What the marks are
 

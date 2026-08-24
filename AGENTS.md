@@ -74,11 +74,15 @@ Desktop (from `apps/desktop/`):
 ```bash
 npm install
 npm run typecheck
-npx vitest run
+npm test                    # the script CI runs - not vitest directly
 npm run build
 npm run icon:check          # committed icons still match branding/logo.svg
 npm run notices:check       # the third-party attribution list still resolves
 ```
+
+CONTRIBUTING.md gives the same two lines as one-liners for a human. Reach for
+a script name rather than the tool it wraps, so a change to what the gate does
+reaches you.
 
 ## Things that will waste your time if you don't know them
 
