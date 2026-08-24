@@ -31,11 +31,11 @@ name: CI (engine)
 # asserts both exist, that the README links the first, and that the second
 # defers to CLAUDE.md rather than restating it.
 #
-# The rig scripts are here for a different reason. The same test scans EVERY
-# tracked file for references sending a public reader to the private specs
-# repository, so no path list can cover its real input; naming the directory
-# the rule has already caught twice is what makes the guard fire on the change
-# most likely to reintroduce it.
+# What is NOT here: the same module's whole-tree guard, which reads every
+# tracked file. A path list cannot cover that input without naming the entire
+# repository, so it runs unfiltered in repo-hygiene.yml instead. The root
+# documents above are still listed here because the assertions about them are
+# specific to those files, and this job is where the rest of the module runs.
 #
 # (Spelled out twice rather than shared through a YAML anchor: the workflow
 # parser does not expand anchors.)
@@ -60,7 +60,6 @@ on:
       - "CONTRIBUTING.md"
       - "TRADEMARK.md"
       - "AGENTS.md"
-      - "apps/desktop/scripts/rig/**"
   pull_request:
     paths:
       - "engine/**"
@@ -80,7 +79,6 @@ on:
       - "CONTRIBUTING.md"
       - "TRADEMARK.md"
       - "AGENTS.md"
-      - "apps/desktop/scripts/rig/**"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main
@@ -130,7 +128,7 @@ jobs:
         # applying at all and there is no reason to test one platform. The
         # cross-platform coverage is the entire point of this matrix — see
         # the note on the job above. Tracked as a launch item alongside the
-        # license decision in specs 07-roadmap-and-risks.md.
+        # license decision, in plan doc 07.
         # ---------------------------------------------------------------
         os: [ubuntu-latest]
         # os: [ubuntu-latest, macos-latest, windows-latest]
@@ -167,9 +165,9 @@ jobs:
       - run: uv sync --all-groups
 
       - name: Verify ffmpeg has the filters the suite needs
-        # Not just "is ffmpeg present". 18 assembly tests SKIP without ffmpeg
-        # rather than failing, so a broken install reads as a green run that
-        # quietly tested no assembly at all — and a build missing libass or
+        # Not just "is ffmpeg present". The assembly tests SKIP without
+        # ffmpeg rather than failing, so a broken install reads as a green run
+        # that quietly tested no assembly at all — and a build missing libass or
         # libfreetype fails three of them with errors that look like product
         # bugs. Assert the capability here, where the message can name it.
         shell: bash

@@ -10,7 +10,7 @@
  *   tier makes easiest to miss.
  * - `blockingGaps` — what an explicit render click is warned about. Excludes
  *   `degraded`: the still-clip tier is a supported mode on a low-VRAM
- *   machine (specs doc 04, tiers S/A), and a dialog in front of the normal
+ *   machine (plan doc 04, tiers S/A), and a dialog in front of the normal
  *   way that machine works would teach people to click through warnings.
  *
  * One home for both because the store gates on one and the components

@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -53,6 +55,21 @@ _README = _ROOT / "README.md"
 _PYPROJECT = _ROOT / "engine" / "pyproject.toml"
 _PACKAGE_JSON = _ROOT / "apps" / "desktop" / "package.json"
 _CONTRIBUTING = _ROOT / "CONTRIBUTING.md"
+
+#: What a reference to the private planning repository looks like, as ERE for
+#: `git grep -E -i`. Wider than prose, because two of the three forms already
+#: in the tree were not prose: a path built from separate quoted segments, and
+#: a citation naming one of its filenames outright. The trailing digit is what
+#: separates a citation ("specs 07", "specs doc 04") from the ordinary noun -
+#: "job specs", "another box's specs" - which is why the permitted opaque form
+#: is "plan doc 07" rather than a bare number.
+_PRIVATE_REPO_PATTERNS = (
+    r"specs[[:space:]]+repo",
+    r"hm/specs",
+    r"specs/hm",
+    r"""[\"'`]specs[\"'`][,[:space:]]+[\"'`]hm[\"'`]""",
+    r"specs[[:space:]]+(doc[[:space:]]+)?[0-9]",
+)
 
 #: The one value every manifest must state, as an SPDX identifier.
 LICENSE_ID = "Apache-2.0"
@@ -200,38 +217,49 @@ def test_the_agent_orientation_file_defers_rather_than_duplicates() -> None:
 def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> None:
     """A public repository cannot cite a private one as an explanation.
 
-    Two rig scripts pointed at fixture paths "in the specs repo" - a sentence
-    that reads as a missing directory to anyone outside, with no way to tell
-    whether the tooling is broken or the reference is. Opaque provenance is
-    fine ("plan doc 11") and stays: it names a source without promising the
-    reader can open it. Naming the repository promises exactly that.
-    """
-    import subprocess
+    Two rig scripts pointed at fixture paths in a repository nobody outside
+    can open - a sentence that reads as a missing directory, with no way to
+    tell whether the tooling is broken or the reference is. Opaque provenance
+    is fine ("plan doc 11") and stays: it names a source without promising the
+    reader can open it. Naming the repository, or one of its filenames,
+    promises exactly that.
 
-    tracked = subprocess.run(
-        ["git", "ls-files", "-z"],
+    The patterns are wider than the sentences that prompted them, because the
+    forms this comes back in are not all prose. A path spelled as separate
+    arguments (`path.join(root, "specs", "hm", ...)`) contains none of the
+    slash-joined spellings, and a citation like "specs 07-roadmap-and-risks.md"
+    names a file more precisely than any of them - both were live in the tree
+    while a substring check for "specs repo" reported it clean.
+
+    `git grep` rather than reading every tracked file: `-I` is the binary skip,
+    the `:(exclude)` pathspec is the self-exclusion this file needs to be able
+    to name the phrases it forbids, and one process replaces a decode loop with
+    four failure modes of its own.
+    """
+    if not shutil.which("git") or not (_ROOT / ".git").exists():
+        pytest.skip("not a git checkout - `git ls-files` cannot enumerate what to read")
+
+    found = subprocess.run(
+        [
+            "git",
+            "grep",
+            "-I",  # skip binaries rather than reading and discarding them
+            "-i",
+            "-n",
+            "-E",
+            *(arg for phrase in _PRIVATE_REPO_PATTERNS for arg in ("-e", phrase)),
+            "--",
+            # This file names the phrases in order to forbid them.
+            ":(exclude)engine/tests/test_license_contract.py",
+        ],
         cwd=_ROOT,
         capture_output=True,
-        check=True,
-    ).stdout.split(b"\0")
-
-    offenders: list[str] = []
-    for raw in tracked:
-        if not raw:
-            continue
-        name = raw.decode()
-        if name.startswith("engine/tests/test_license_contract.py"):
-            continue  # this file names the phrases in order to forbid them
-        path = _ROOT / name
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue  # binary or unreadable: not a sentence a reader follows
-        lowered = text.lower()
-        for phrase in ("specs repo", "hm/specs", "specs/hm"):
-            if phrase in lowered:
-                offenders.append(f"{name}: {phrase!r}")
-
-    assert not offenders, (
-        "these point a public reader at a repository they cannot open:\n  " + "\n  ".join(offenders)
+        text=True,
+        # git grep exits 1 for "no match", which is the passing case.
+        check=False,
+    )
+    assert found.returncode in (0, 1), f"git grep failed: {found.stderr.strip()}"
+    assert not found.stdout, (
+        "these point a public reader at a repository they cannot open:\n  "
+        + "\n  ".join(found.stdout.strip().splitlines())
     )

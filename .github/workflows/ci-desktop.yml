@@ -49,10 +49,9 @@ jobs:
         # and the measurements are in ci-engine.yml.
         #
         # RESTORE THE SECOND LINE THE DAY THE REPO GOES PUBLIC. Windows is
-        # the platform this project ships first (specs 07), and it is the one
-        # that catches the path-separator and line-ending class of bug that
-        # Ubuntu cannot see. Tracked as a launch item in specs
-        # 07-roadmap-and-risks.md.
+        # the platform this project ships first (plan doc 07), and it is
+        # the one that catches the path-separator and line-ending class of
+        # bug that Ubuntu cannot see. Tracked there as a launch item.
         # ---------------------------------------------------------------
         os: [ubuntu-latest]
         # os: [ubuntu-latest, windows-latest]

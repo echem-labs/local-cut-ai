@@ -83,16 +83,16 @@ const refsFlag = argv.indexOf("--refs");
 const refsArg = refsFlag >= 0 ? argv[refsFlag + 1] : null;
 if (refsFlag >= 0) argv.splice(refsFlag, refsArg ? 2 : 1);
 
-/** Where the artifacts repo sits beside this one, per its README. */
-const SIBLING = path.resolve(DESKTOP, "..", "..", "..", "specs", "hm", "local-cut-ai", "artifacts", "reference");
-
+/* No default. The reference frames are not in this repository and there is no
+ * path this script can guess that is right for more than one machine - a guess
+ * that happens to resolve on the author's box is worse than none, because the
+ * run then compares against whatever is at that path and reports a diff rather
+ * than a missing input. Say where they are. */
 const refsRoot = refsArg
   ? path.resolve(refsArg)
   : process.env.LOCALCUT_REFS
     ? path.resolve(process.env.LOCALCUT_REFS)
-    : existsSync(SIBLING)
-      ? SIBLING
-      : null;
+    : null;
 
 if (!refsRoot) {
   console.error(

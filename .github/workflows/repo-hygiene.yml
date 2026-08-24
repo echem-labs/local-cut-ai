@@ -1,0 +1,60 @@
+name: Repo hygiene
+
+# The contract tests whose input is the WHOLE tree, run on every change.
+#
+# They live in the engine suite because that is where pytest is, but their
+# subject is the repository: that the licence is stated the same way in every
+# manifest that states it, that AGENTS.md still matches the toolset the MCP
+# server registers, and that no tracked file sends a public reader to a
+# repository they cannot open.
+#
+# Which is why this workflow has no `paths:` filter, unlike ci-engine.yml.
+# A guard that reads every tracked file cannot be gated on a path list: the
+# list would have to name the whole repository to be honest, and while it does
+# not, the change most likely to break the guard - a sentence added to a React
+# component, or to CLAUDE.md - matches nothing that can run pytest. It merges
+# green, and the failure then lands on whoever next touches engine/ for an
+# unrelated reason, naming a line they did not write.
+#
+# Cheap enough to run unconditionally: no ffmpeg, no matrix, three test files.
+# The full engine suite stays behind its filter in ci-engine.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: repository contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # Pinned exactly, for the reason ci-engine.yml gives: no floating
+        # major tag is published for this action.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - run: uv sync --all-groups
+        working-directory: engine
+
+      - name: Run the whole-tree contracts
+        working-directory: engine
+        # -rs because a skip here is a test that did not run, and these are
+        # the tests whose whole job is to notice something absent.
+        run: |
+          uv run pytest -q -rs \
+            tests/test_license_contract.py \
+            tests/test_cli_name.py \
+            tests/test_mcp.py::test_the_agents_file_lists_the_toolset_it_documents
