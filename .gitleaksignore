@@ -1,10 +1,20 @@
-# Findings assessed and dismissed, one per line, by gitleaks fingerprint
-# (commit:file:rule:line). An entry here is a claim that someone looked, so
-# each one carries why.
+# Findings assessed and dismissed, one per line, by gitleaks fingerprint. An
+# entry here is a claim that someone looked, so each one carries why.
 #
 # Nothing may be added to this file to silence a finding that has not been
 # assessed. A credential that is real is rotated and the history dealt with;
 # it does not get a line here.
+#
+# Two things about the fingerprints themselves, both of which decide how many
+# lines one assessed finding costs:
+#
+# A `commit:file:rule:line` id from the history scan binds the dismissal to
+# one commit, so the same string reached by another commit needs its own line
+# - and any history rewrite invalidates every entry here at once. The working
+# tree scan emits a three-field `file:rule:line` id instead, which carries no
+# commit and therefore suppresses that file and line across all of history;
+# prefer the four-field form unless the finding genuinely is about the
+# checked-out file rather than about a commit.
 
 # A synthetic bearer token inside the test that asserts the log filter
 # REDACTS bearer tokens - the assertion is that it does not survive into the
@@ -12,8 +22,15 @@
 # startup into the data directory, and this value only ever existed as a
 # string literal in a test. The current fixture reads
 # `EXAMPLE-not-a-real-token-000000000` so neither a scanner nor a reader has
-# to make this judgement again; this line covers the commit that still holds
+# to make this judgement again; these lines cover the commits that still hold
 # the older, realistic-looking one. Not rewritten out of history: it grants
-# nothing, and rewriting 700 commits to remove a test fixture trades a real
+# nothing, and rewriting 800 commits to remove a test fixture trades a real
 # hazard (every clone and fork diverging) for a cosmetic one.
+#
+# Two entries for one fixture because the merge that brought it to main
+# reintroduces it as its own diff against the first parent, which is what the
+# history scan's --diff-merges flag exists to read. A merge commit carrying
+# content is exactly the case that flag was added for; that it also surfaces
+# an already-assessed fixture a second time is the cost of seeing it at all.
 e817172821f751b069263a69e23b12b812109a1f:engine/tests/test_api.py:generic-api-key:130
+6986b6341c4db0d248a9e38b75230c7765b07f72:engine/tests/test_api.py:generic-api-key:130
