@@ -17,9 +17,11 @@ one to a model.
 from __future__ import annotations
 
 import asyncio
+import re
 import socket
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from mcp.client import Client
@@ -29,6 +31,7 @@ from conftest import serve_engine
 from localcut_engine import mcp_server
 
 TOKEN = "mcp-token"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -888,36 +891,39 @@ def test_mcp_serves_stdio_against_the_resolved_engine(monkeypatch):
     }
 
 
-async def test_the_agents_file_lists_the_toolset_it_documents(engine):
+async def test_the_agents_file_lists_the_toolset_it_documents():
     """AGENTS.md names the tools, and nothing reconciles that with the code.
 
     It is the file an agent reads to find out what it can do here, so a tool
-    missing from it is a capability nobody uses and a tool listed that no
-    longer exists is a call that fails on first contact. `cancel_render` was
-    already absent when this test was written. Same rule the repository
-    applies to every other value written on both sides of an unreconciled
-    boundary.
-    """
-    from pathlib import Path
+    missing from it is a capability nobody uses, and a tool listed that no
+    longer exists is a call that fails on first contact. Same rule the
+    repository applies to every other value written on both sides of a
+    boundary no build step reconciles.
 
-    agents = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
+    No `engine` fixture: `build_server` builds the toolset from its own
+    decorators and never reaches the URL, so a document check does not need a
+    uvicorn server on a real socket - and should not have one, because then it
+    can fail for a reason that has nothing to do with either side of the
+    contract it pins.
+    """
+    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
     # Scoped to the fenced block that holds the list, not to every line with a
     # "·" in it: a single interpunct anywhere else in the prose would otherwise
     # be harvested as a tool name and fail this with a baffling message about a
     # tool the server does not have.
-    blocks = agents.split("```")[1::2]
+    # Matched rather than split on the fence, so an info string ("```text")
+    # stays out of the body: splitting leaves it on the first line, where it
+    # is indistinguishable from a tool name and fails this with a message
+    # about a tool called "text".
+    blocks = re.findall(r"^```[^\n]*\n(.*?)^```", agents, re.M | re.S)
     listing = [b for b in blocks if "·" in b]
     assert len(listing) == 1, (
         f"expected exactly one fenced tool list in AGENTS.md, found {len(listing)}"
     )
-    documented = {
-        word.strip() for word in listing[0].replace("\n", " · ").split("·") if word.strip()
-    }
+    documented = set(listing[0].split()) - {"·"}
 
-    async with Client(build(engine)) as client:
-        registered = {tool.name for tool in (await client.list_tools()).tools}
+    registered = {tool.name for tool in await build("http://127.0.0.1:1").list_tools()}
 
-    assert documented, "AGENTS.md no longer carries a tool list - update this test with it"
     assert documented == registered, (
         f"AGENTS.md and the server disagree: only in the file "
         f"{sorted(documented - registered)}, only registered {sorted(registered - documented)}"

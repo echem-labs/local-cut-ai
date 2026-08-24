@@ -61,6 +61,21 @@ _AGENTS = _ROOT / "AGENTS.md"
 # content, only that AGENTS.md does not copy it.
 _CLAUDE = _ROOT / "CLAUDE.md"
 
+#: Everything this module reads from outside `engine/`, as repository-relative
+#: paths. Both ci-engine.yml's path filter and the `license-contract` pre-push
+#: hook are describing this list, and neither can be derived from the other, so
+#: the test at the foot of this file reconciles all three - a prose instruction
+#: to keep them in step is not a build step.
+_ROOT_INPUTS = (
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "CONTRIBUTING.md",
+    "TRADEMARK.md",
+    "AGENTS.md",
+    "apps/desktop/package.json",
+)
+
 #: An address written in prose. The domain is a repeated group rather than a
 #: trailing character class, so a sentence-final full stop is not read as part
 #: of it.
@@ -369,3 +384,45 @@ def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> Non
         "these point a public reader at a repository they cannot open:\n  "
         + "\n  ".join(found.stdout.strip().splitlines())
     )
+
+
+def test_ci_and_the_hook_run_this_module_for_the_files_it_reads() -> None:
+    """A contract test that cannot fire is not a contract.
+
+    Every path in `_ROOT_INPUTS` matches no other workflow or hook in the
+    repository: an edit to the README's licence section, a deleted LICENSE, or
+    a TRADEMARK.md that stops naming the mark would otherwise run nothing at
+    all, and package.json alone runs only the desktop suite, which cannot
+    execute pytest.
+
+    Both sides are checked, because they fail at different moments: the hook
+    is what catches it before the push, and the workflow is what catches a PR
+    opened from a machine with no hooks installed. This module gained two
+    inputs once and only the workflow was updated, which is the drift this
+    exists to make loud.
+    """
+    workflow = (_ROOT / ".github" / "workflows" / "ci-engine.yml").read_text(encoding="utf-8")
+    globs = re.findall(r'^\s+- "([^"]+)"$', workflow, re.M)
+    assert globs, "ci-engine.yml no longer lists quoted paths - update this test with it"
+    matchers = [
+        re.compile(re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$")
+        for glob in globs
+    ]
+
+    hook_block = re.search(
+        r"id: license-contract.*?files: \|\n(.*?)\n\s*pass_filenames",
+        (_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
+        re.S,
+    )
+    assert hook_block, "the license-contract hook no longer declares a files: pattern"
+    hook = re.compile("".join(hook_block.group(1).split()))
+
+    for path in _ROOT_INPUTS:
+        assert any(m.match(path) for m in matchers), (
+            f"ci-engine.yml's path filter does not name {path}, which this module reads - "
+            "a change to it would run no suite that can check these assertions"
+        )
+        assert hook.match(path), (
+            f"the license-contract pre-push hook does not name {path}, so a commit "
+            "touching it alone is pushed with nothing run"
+        )
