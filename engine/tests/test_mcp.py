@@ -21,17 +21,15 @@ import re
 import socket
 import sys
 import time
-from pathlib import Path
 
 import pytest
 from mcp.client import Client
 
-from conftest import serve_engine
+from conftest import REPO_ROOT, serve_engine
 
 from localcut_engine import mcp_server
 
 TOKEN = "mcp-token"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -906,7 +904,9 @@ async def test_the_agents_file_lists_the_toolset_it_documents():
     can fail for a reason that has nothing to do with either side of the
     contract it pins.
     """
-    agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    agents_md = REPO_ROOT / "AGENTS.md"
+    assert agents_md.exists(), "AGENTS.md is missing - there is no toolset to reconcile against"
+    agents = agents_md.read_text(encoding="utf-8")
     # Scoped to the fenced block that holds the list, not to every line with a
     # "·" in it: a single interpunct anywhere else in the prose would otherwise
     # be harvested as a tool name and fail this with a baffling message about a

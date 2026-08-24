@@ -46,7 +46,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: engine/uv.lock
 
-      - run: uv sync --all-groups
+      # Not --all-groups: the `build` group is PyInstaller and its five
+      # dependencies, and nothing here freezes anything. `uv sync` already
+      # carries `dev`, which is where pytest lives.
+      - run: uv sync
         working-directory: engine
 
       - name: Run the whole-tree contracts

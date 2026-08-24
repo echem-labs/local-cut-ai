@@ -2,12 +2,77 @@
 
 import asyncio
 import contextlib
+import re
 import socket
+import textwrap
 import threading
 import time
+from pathlib import Path
 
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
+
+#: The checkout, from a file that is always two directories below it.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def ci_engine_paths_by_trigger() -> dict[str, list[str]]:
+    """ci-engine.yml's `paths:` globs, keyed by the trigger that carries them.
+
+    Per trigger rather than pooled. The workflow spells the list out once
+    under `push:` and once under `pull_request:` because the parser does not
+    expand YAML anchors, so a pooled read cannot tell an entry named by both
+    from one named by either — and the hand-duplication is the whole reason
+    the list can fall out of step.
+    """
+    text = (REPO_ROOT / ".github" / "workflows" / "ci-engine.yml").read_text(encoding="utf-8")
+    filters: dict[str, list[str]] = {}
+    trigger: str | None = None
+    entries: list[str] | None = None
+    for line in text.splitlines():
+        # `jobs:` ends the trigger block; a quoted list item under a step is
+        # not a path filter, and harvesting one would satisfy any assertion.
+        if line == "jobs:":
+            break
+        if re.fullmatch(r"  \w+:", line):
+            trigger, entries = line.strip().rstrip(":"), None
+        elif line == "    paths:" and trigger is not None:
+            entries = filters.setdefault(trigger, [])
+        elif entries is not None:
+            item = re.fullmatch(r'      - "([^"]+)"', line)
+            if item:
+                entries.append(item.group(1))
+            else:
+                entries = None
+    return filters
+
+
+def matches_a_path_filter(path: str, globs: list[str]) -> bool:
+    """Whether one of GitHub's `paths:` globs selects `path`.
+
+    `**` spans separators and `*` does not, which is the one way these differ
+    from `fnmatch`. `fullmatch` rather than a `$`-anchored `match`: Python's
+    `$` also matches before a trailing newline, and a path is not a line.
+    """
+    return any(
+        re.fullmatch(re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*"), path)
+        for glob in globs
+    )
+
+
+def hook_files_pattern(hook_id: str) -> re.Pattern[str]:
+    """The compiled `files:` regex one pre-push hook is gated on.
+
+    Dedented rather than whitespace-joined: the block is `(?x)`, where a `#`
+    comment runs to end of line, so stripping the newlines out welds any
+    comment in it to the rest of the pattern and `re.compile` raises.
+    """
+    config = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    block = re.search(
+        rf"id: {re.escape(hook_id)}.*?files: \|\n(.*?)\n\s*pass_filenames", config, re.S
+    )
+    assert block, f"the {hook_id} hook no longer declares a files: pattern"
+    return re.compile(textwrap.dedent(block.group(1)).strip())
 
 
 # The bound both loop tests assert `LoopWatch.stalled` against. It is loose

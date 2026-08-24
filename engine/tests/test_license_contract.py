@@ -28,13 +28,13 @@ are spread the length of the document rather than clustered at the top —
 every one of them sits in the header of a truncated copy, so pinning only
 those passes a LICENSE cut to a third of its length.
 
-`ci-engine.yml` and `.pre-commit-config.yaml` both name this module's five
-out-of-engine inputs in their filters. They have to: LICENSE, NOTICE,
-README.md and CONTRIBUTING.md match no other workflow or hook in the
-repository at all, and `apps/desktop/package.json` matches only the desktop
-suite, which cannot run pytest. Keep the two lists in step with the constants
-below — and `test_cli_name.py`'s docstring, which enumerates these same
-inputs when it explains why ci-engine's filter is the union of three lists.
+`ci-engine.yml` and `.pre-commit-config.yaml` both name this module's
+out-of-engine inputs in their filters. They have to: the root documents match
+no other workflow or hook in the repository at all, and
+`apps/desktop/package.json` matches only the desktop suite, which cannot run
+pytest. `_ROOT_INPUTS` below is the list both are describing, and the test at
+the foot of this file reconciles all three — so the two filters are kept in
+step by that test rather than by this paragraph.
 """
 
 from __future__ import annotations
@@ -48,7 +48,13 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[2]
+from conftest import (
+    REPO_ROOT as _ROOT,
+    ci_engine_paths_by_trigger,
+    hook_files_pattern,
+    matches_a_path_filter,
+)
+
 _LICENSE = _ROOT / "LICENSE"
 _NOTICE = _ROOT / "NOTICE"
 _README = _ROOT / "README.md"
@@ -57,8 +63,6 @@ _PACKAGE_JSON = _ROOT / "apps" / "desktop" / "package.json"
 _CONTRIBUTING = _ROOT / "CONTRIBUTING.md"
 _TRADEMARK = _ROOT / "TRADEMARK.md"
 _AGENTS = _ROOT / "AGENTS.md"
-# Not an input to the filters below: nothing here asserts on CLAUDE.md's
-# content, only that AGENTS.md does not copy it.
 _CLAUDE = _ROOT / "CLAUDE.md"
 
 #: Everything this module reads from outside `engine/`, as repository-relative
@@ -66,6 +70,11 @@ _CLAUDE = _ROOT / "CLAUDE.md"
 #: hook are describing this list, and neither can be derived from the other, so
 #: the test at the foot of this file reconciles all three - a prose instruction
 #: to keep them in step is not a build step.
+#:
+#: CLAUDE.md is one of them: the index test below asserts that every rule it
+#: states is named in AGENTS.md, so renaming or adding a rule there is what
+#: turns this module red, and a filter that omits it lets exactly that commit
+#: through with nothing run.
 _ROOT_INPUTS = (
     "LICENSE",
     "NOTICE",
@@ -73,6 +82,7 @@ _ROOT_INPUTS = (
     "CONTRIBUTING.md",
     "TRADEMARK.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "apps/desktop/package.json",
 )
 
@@ -82,18 +92,31 @@ _ROOT_INPUTS = (
 _EMAIL = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
 
 #: What a reference to the private planning repository looks like, as ERE for
-#: `git grep -E -i`. Wider than prose, because two of the three forms already
-#: in the tree were not prose: a path built from separate quoted segments, and
-#: a citation naming one of its filenames outright. The trailing digit is what
-#: separates a citation ("specs 07", "specs doc 04") from the ordinary noun -
-#: "job specs", "another box's specs" - which is why the permitted opaque form
-#: is "plan doc 07" rather than a bare number.
+#: `git grep -E -i`. Wider than prose, because a reference is not always prose:
+#: it can be a path built from separate quoted segments, or a citation naming
+#: one of the repository's filenames outright.
+#:
+#: Three things the shapes are chosen around:
+#:
+#: A two-digit number is what separates a citation ("specs 07", "specs doc 04")
+#: from the ordinary noun - "job specs", "hardware specs 2 GB" - which is why
+#: the permitted opaque form is "plan doc 07" rather than a bare number.
+#:
+#: The directory forms are anchored to a path-segment boundary, so a tracked
+#: `docs/algorithm/specs/` does not read as `hm/specs`.
+#:
+#: `git grep` matches a line at a time, and comment prose here wraps at 76
+#: columns, so a citation split across two lines carries "specs" on one and its
+#: number on the next and none of the above sees it. The filename shape is what
+#: covers that: the planning documents are `NN-words.md`, no tracked file is
+#: named or cites anything of that shape, and half a wrapped citation still is.
 _PRIVATE_REPO_PATTERNS = (
     r"specs[[:space:]]+repo",
-    r"hm/specs",
-    r"specs/hm",
+    r"(^|[^[:alnum:]_.-])hm/specs",
+    r"(^|[^[:alnum:]_.-])specs/hm",
     r"""[\"'`]specs[\"'`][,[:space:]]+[\"'`]hm[\"'`]""",
-    r"specs[[:space:]]+(doc[[:space:]]+)?[0-9]",
+    r"specs[[:space:]]+(doc[[:space:]]+)?[0-9][0-9]([^0-9]|$)",
+    r"[0-9][0-9]-[a-z][a-z0-9-]*\.md",
 )
 
 #: The one value every manifest must state, as an SPDX identifier.
@@ -263,8 +286,15 @@ def _rule_titles(markdown: str) -> list[str]:
     Normalised because CLAUDE.md wraps at 76 columns and AGENTS.md's index
     does not, so the same title is a different string in the two files and a
     line-for-line comparison would fail on the wrap alone.
+
+    A title may wrap but never spans a blank line, and the bullet has to sit
+    on the same line as the `**`. Both bounds are load-bearing: with `\\s*` and
+    DOTALL, a line-initial `**` that is not a bold delimiter — a `**/*.py`
+    glob in a fenced example — pairs with the NEXT title's opening `**` and
+    swallows the rule between them, and the failure then names an innocent
+    rule as missing.
     """
-    found = re.findall(r"^-?\s*\*\*(.+?)\*\*", markdown, re.M | re.S)
+    found = re.findall(r"^-?[ \t]*\*\*((?:(?!\n[ \t]*\n).)+?)\*\*", markdown, re.M | re.S)
     # Trailing comma stripped: CLAUDE.md bolds a few titles mid-sentence, and
     # an index line should not end on the punctuation that joined it to prose.
     return [" ".join(m.split()).rstrip(",") for m in found]
@@ -281,11 +311,9 @@ def test_the_agent_orientation_file_indexes_claude_md_without_restating_it() -> 
 
     Both describing the same conventions is the second-copy-that-drifts shape
     CLAUDE.md itself forbids, and the drift is silent because no build step
-    compares prose. The first version of this test asserted that the string
-    "CLAUDE.md" appeared somewhere in AGENTS.md, which is true of a file that
-    pastes CLAUDE.md in full - so it could not fail for the thing it was
-    named after, and did not fail while AGENTS.md restated eight rules, one of
-    them already disagreeing with its source.
+    compares prose. Asserting only that the string "CLAUDE.md" appears in
+    AGENTS.md does not check that: it is true of a file that pastes CLAUDE.md
+    in full, so it cannot fail for the thing it would be named after.
 
     What is checkable is the shape the deferral takes. AGENTS.md carries an
     index of rule TITLES, delimited so this test can find it; every title has
@@ -309,20 +337,23 @@ def test_the_agent_orientation_file_indexes_claude_md_without_restating_it() -> 
     )
     assert block, "AGENTS.md has no delimited CLAUDE.md rule index"
 
-    indexed = [
-        " ".join(line.lstrip("- ").split())
+    # `re.sub`, not `lstrip("- ")`: lstrip strips a character SET, so a title
+    # that opens on a dash - `--no-banner is always passed` - loses the dashes
+    # too, and both directions below then fail naming a string in neither file.
+    indexed = {
+        " ".join(re.sub(r"^-[ \t]*", "", line.strip()).split())
         for line in block.group(1).strip().splitlines()
         if line.strip()
-    ]
+    }
     assert indexed, "the rule index is empty"
 
     known = set(_rule_titles(claude))
-    stale = [title for title in indexed if title not in known]
+    stale = sorted(indexed - known)
     assert not stale, "AGENTS.md indexes rules CLAUDE.md no longer states:\n  " + "\n  ".join(stale)
 
     # The other direction: an index that silently stops covering half the
     # conventions sends an agent away believing it has seen them.
-    missing = [title for title in known if title not in set(indexed)]
+    missing = sorted(known - indexed)
     assert not missing, "CLAUDE.md states rules AGENTS.md's index does not name:\n  " + "\n  ".join(
         missing
     )
@@ -345,12 +376,12 @@ def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> Non
     reader can open it. Naming the repository, or one of its filenames,
     promises exactly that.
 
-    The patterns are wider than the sentences that prompted them, because the
-    forms this comes back in are not all prose. A path spelled as separate
-    arguments (`path.join(root, "specs", "hm", ...)`) contains none of the
-    slash-joined spellings, and a citation like "specs 07-roadmap-and-risks.md"
-    names a file more precisely than any of them - both were live in the tree
-    while a substring check for "specs repo" reported it clean.
+    The patterns are wider than prose, because the forms this comes back in
+    are not all prose. A path spelled as separate arguments
+    (`path.join(root, "specs", "hm", ...)`) contains none of the slash-joined
+    spellings, and a citation like "specs 07-roadmap-and-risks.md" names a
+    file more precisely than any of them; a substring check for "specs repo"
+    sees neither.
 
     `git grep` rather than reading every tracked file: `-I` is the binary skip,
     the `:(exclude)` pathspec is the self-exclusion this file needs to be able
@@ -375,7 +406,12 @@ def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> Non
         ],
         cwd=_ROOT,
         capture_output=True,
-        text=True,
+        # Named, not `text=True`: that decodes with the locale encoding, which
+        # on Windows is the ANSI code page, and the tree holds UTF-8 bytes it
+        # cannot decode - so the one run that has a violation to report would
+        # raise out of subprocess instead of printing it.
+        encoding="utf-8",
+        errors="replace",
         # git grep exits 1 for "no match", which is the passing case.
         check=False,
     )
@@ -397,31 +433,29 @@ def test_ci_and_the_hook_run_this_module_for_the_files_it_reads() -> None:
 
     Both sides are checked, because they fail at different moments: the hook
     is what catches it before the push, and the workflow is what catches a PR
-    opened from a machine with no hooks installed. This module gained two
-    inputs once and only the workflow was updated, which is the drift this
-    exists to make loud.
-    """
-    workflow = (_ROOT / ".github" / "workflows" / "ci-engine.yml").read_text(encoding="utf-8")
-    globs = re.findall(r'^\s+- "([^"]+)"$', workflow, re.M)
-    assert globs, "ci-engine.yml no longer lists quoted paths - update this test with it"
-    matchers = [
-        re.compile(re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$")
-        for glob in globs
-    ]
+    opened from a machine with no hooks installed.
 
-    hook_block = re.search(
-        r"id: license-contract.*?files: \|\n(.*?)\n\s*pass_filenames",
-        (_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
-        re.S,
-    )
-    assert hook_block, "the license-contract hook no longer declares a files: pattern"
-    hook = re.compile("".join(hook_block.group(1).split()))
+    And both of the workflow's triggers, separately. ci-engine.yml writes the
+    list once under `push:` and once under `pull_request:` because the parser
+    does not expand YAML anchors, so pooling the two hides the drift this
+    exists to make loud: an input named only under `push:` still lets a PR
+    that edits it merge with no suite run, and one named only under
+    `pull_request:` lets the same edit reach main unchecked.
+    """
+    filters = ci_engine_paths_by_trigger()
+    for trigger in ("push", "pull_request"):
+        assert filters.get(trigger), (
+            f"ci-engine.yml no longer lists quoted paths under {trigger} - update this test with it"
+        )
+
+    hook = hook_files_pattern("license-contract")
 
     for path in _ROOT_INPUTS:
-        assert any(m.match(path) for m in matchers), (
-            f"ci-engine.yml's path filter does not name {path}, which this module reads - "
-            "a change to it would run no suite that can check these assertions"
-        )
+        for trigger, globs in filters.items():
+            assert matches_a_path_filter(path, globs), (
+                f"ci-engine.yml's {trigger} path filter does not name {path}, which this "
+                "module reads - a change to it would run no suite that can check these assertions"
+            )
         assert hook.match(path), (
             f"the license-contract pre-push hook does not name {path}, so a commit "
             "touching it alone is pushed with nothing run"

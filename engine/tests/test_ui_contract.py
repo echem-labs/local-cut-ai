@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import ci_engine_paths_by_trigger, hook_files_pattern, matches_a_path_filter
+
 _DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
 _FORMATS = _DESKTOP / "src" / "lib" / "formats.ts"
 _ENGINE_TS = _DESKTOP / "electron" / "engine.ts"
@@ -560,36 +562,29 @@ def test_ci_runs_this_module_for_the_desktop_files_it_reads():
     pytest. So ci-engine's path filter and the pre-push hook have to name
     them, the way they already name lib/tools.ts. Both are checked: the hook
     is what catches it before the push, and the workflow is what catches a
-    PR opened from a machine without the hook installed.
+    PR opened from a machine without the hook installed — and both of the
+    workflow's triggers, which carry the list separately.
     """
-    root = Path(__file__).resolve().parents[2]
     reads = [
         "apps/desktop/src/lib/tools.ts",
         "apps/desktop/src/i18n/en/voices.json",
         f"apps/desktop/src/assets/voices/{_voice_swatches()[0][1]}.wav",
     ]
 
-    workflow = (root / ".github" / "workflows" / "ci-engine.yml").read_text(encoding="utf-8")
-    globs = re.findall(r'^\s+- "([^"]+)"$', workflow, re.M)
-    assert globs, "ci-engine.yml no longer lists quoted paths — update this test with it"
-    matchers = [
-        re.compile(re.escape(glob).replace(r"\*\*", ".*").replace(r"\*", "[^/]*") + "$")
-        for glob in globs
-    ]
+    filters = ci_engine_paths_by_trigger()
+    for trigger in ("push", "pull_request"):
+        assert filters.get(trigger), (
+            f"ci-engine.yml no longer lists quoted paths under {trigger} — update this test with it"
+        )
 
-    hook_block = re.search(
-        r"id: ui-contract.*?files: \|\n(.*?)\n\s*pass_filenames",
-        (root / ".pre-commit-config.yaml").read_text(encoding="utf-8"),
-        re.S,
-    )
-    assert hook_block, "the ui-contract hook no longer declares a files: pattern"
-    hook = re.compile("".join(hook_block.group(1).split()))
+    hook = hook_files_pattern("ui-contract")
 
     for path in reads:
-        assert any(m.match(path) for m in matchers), (
-            f"ci-engine.yml's path filter does not name {path}, which this module reads — "
-            "a change to it would run no suite that can check this contract"
-        )
+        for trigger, globs in filters.items():
+            assert matches_a_path_filter(path, globs), (
+                f"ci-engine.yml's {trigger} path filter does not name {path}, which this "
+                "module reads — a change to it would run no suite that can check this contract"
+            )
         assert hook.match(path), f"the ui-contract pre-push hook does not name {path}"
 
 
