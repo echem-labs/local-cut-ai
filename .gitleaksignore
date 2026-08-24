@@ -5,6 +5,12 @@
 # assessed. A credential that is real is rotated and the history dealt with;
 # it does not get a line here.
 #
+# That rule is enforced by review, not by the scan: this file is read from the
+# checked-out tree, so a line added in the same diff as the secret it dismisses
+# turns the job green. It is the one suppression lever secret-scan.yml leaves
+# open on purpose, because unlike a `gitleaks:allow` comment it is a diff to a
+# root file whose whole content is claims someone has to sign off on.
+#
 # Two things about the fingerprints themselves, both of which decide how many
 # lines one assessed finding costs:
 #
@@ -24,8 +30,8 @@
 # `EXAMPLE-not-a-real-token-000000000` so neither a scanner nor a reader has
 # to make this judgement again; these lines cover the commits that still hold
 # the older, realistic-looking one. Not rewritten out of history: it grants
-# nothing, and rewriting 800 commits to remove a test fixture trades a real
-# hazard (every clone and fork diverging) for a cosmetic one.
+# nothing, and rewriting the whole history to remove a test fixture trades a
+# real hazard (every clone and fork diverging) for a cosmetic one.
 #
 # Two entries for one fixture because the merge that brought it to main
 # reintroduces it as its own diff against the first parent, which is what the
