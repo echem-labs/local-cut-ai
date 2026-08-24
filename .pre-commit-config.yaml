@@ -103,12 +103,14 @@ repos:
         stages: [pre-push]
 
       # Third reader of files outside engine/, and the only one whose inputs
-      # are at the repository root. LICENSE, NOTICE, README.md,
-      # CONTRIBUTING.md, TRADEMARK.md and AGENTS.md match no other hook here
-      # at all -- a commit touching one of them alone would otherwise run
+      # are at the repository root. The root documents match no other hook
+      # here at all -- a commit touching one of them alone would otherwise run
       # nothing on push; package.json runs the desktop hooks, which cannot
       # read a licence. Same shape as the two above -- one test, in well under
       # a second, rather than the whole engine suite.
+      #
+      # CLAUDE.md is among them because the AGENTS.md index test asserts on
+      # its rule titles, so adding a rule there is what turns that test red.
       #
       # This list and ci-engine.yml's are the same list written twice, which
       # is why test_license_contract.py parses both and reconciles them
@@ -125,6 +127,7 @@ repos:
             |CONTRIBUTING\.md
             |TRADEMARK\.md
             |AGENTS\.md
+            |CLAUDE\.md
             |apps/desktop/package\.json
           )$
         pass_filenames: false
