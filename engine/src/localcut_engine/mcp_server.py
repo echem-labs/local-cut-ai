@@ -22,17 +22,17 @@ What is deliberately NOT reachable here, and must stay that way:
   - enabling ComfyUI node packs: that acknowledges third-party code
     execution (doc 07 risk 9), which is an operator's decision to make, not
     a model's;
-  - spending the user's BYOK provider keys. Note what this does and does
-    not promise: an agent cannot CHOOSE cloud, but it can still cause a
-    node the user ALREADY put on a cloud model to re-render — that is the
-    user's own standing decision, and `final=true` likewise uses whatever
-    finalize model the engine is configured with. The enforcement is
-    server-side: every request carries NO_CLOUD_SPEND, and the engine
-    refuses to queue a billable job for such a caller, at the queue rather
-    than at any route. Three client-side gates leaked before that (a
-    set_model op, then select_take restoring a recorded cloud identity,
-    then undo restoring a snapshot), which is why the rule now names the
-    outcome instead of the routes;
+  - spending the user's BYOK provider keys. The rule is about the spend
+    and not about who chose it: an agent cannot select a cloud model, and
+    it cannot start a render that would bill one either — whoever put that
+    model on the node. The enforcement is server-side: every request
+    carries NO_CLOUD_SPEND, and the engine refuses a billable job for such
+    a caller at the queue rather than at any route. Three client-side
+    gates leaked before that (a set_model op, then select_take restoring a
+    recorded cloud identity, then undo restoring a snapshot), which is why
+    the rule names the outcome instead of the routes. What it does not
+    cover is work with nothing to bill: a cached artifact is in no plan,
+    so restoring one is not a spend and is not refused;
   - model downloads/deletes and project deletion: operator surfaces, served
     by the app and the CLI.
 (test_mcp.py holds the toolset to this.)

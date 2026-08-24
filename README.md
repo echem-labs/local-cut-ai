@@ -246,7 +246,7 @@ them.
 
 The **name and logo** are not covered by it either - Apache-2.0 section 6
 grants no trademark rights beyond describing where the work came from and
-reproducing NOTICE, which section 4(d) obliges you to keep anyway. Fork the
-code freely; give a modified build its own name.
+reproducing NOTICE, whose attribution notices section 4(d) asks a derivative
+work to carry anyway. Fork the code freely; give a modified build its own name.
 [TRADEMARK.md](TRADEMARK.md) says what that means in practice, and what you
 can do without asking.

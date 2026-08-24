@@ -16,16 +16,15 @@
  *   npm run rig:parity -- session      just that one
  *   npm run rig:parity -- home canvas  just those
  *
- * The reference frames live in the design-artifacts repo, not this one (they
- * are large PNG captures of the design mocks). Point at the directory holding
- * the `v*` set directories with either:
+ * The reference frames are not in this repository - they are large PNG
+ * captures of the design mocks, held alongside the design sources. Point at
+ * the directory holding the `v*` set directories with either:
  *
- *   LOCALCUT_REFS=/path/to/artifacts/reference npm run rig:parity
- *   npm run rig:parity -- --refs /path/to/artifacts/reference
+ *   LOCALCUT_REFS=<dir>/reference npm run rig:parity
+ *   npm run rig:parity -- --refs <dir>/reference
  *
- * With neither, the sibling checkout that the artifacts README describes is
- * used when it happens to be there, and the run stops with an explanation
- * when it is not.
+ * There is no default: with neither, the run stops and says so. See the note
+ * on `refsRoot` below for why guessing a path is worse than refusing.
  *
  * Each gate is run under retry.mjs: a gate that finds itself rendering
  * off-scale exits 3 to say the RUN was invalid rather than that the app was
@@ -97,8 +96,9 @@ const refsRoot = refsArg
 if (!refsRoot) {
   console.error(
     "rig:parity: no reference frames.\n" +
-      "  The frames live in the design-artifacts repo. Point at the directory\n" +
-      "  holding the v* set directories:\n" +
+      "  The frames are not in this repository - they are design captures held\n" +
+      "  alongside the design sources. Point at the directory holding the v*\n" +
+      "  set directories:\n" +
       "    LOCALCUT_REFS=<dir> npm run rig:parity\n" +
       "    npm run rig:parity -- --refs <dir>",
   );
