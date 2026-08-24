@@ -55,6 +55,16 @@ _README = _ROOT / "README.md"
 _PYPROJECT = _ROOT / "engine" / "pyproject.toml"
 _PACKAGE_JSON = _ROOT / "apps" / "desktop" / "package.json"
 _CONTRIBUTING = _ROOT / "CONTRIBUTING.md"
+_TRADEMARK = _ROOT / "TRADEMARK.md"
+_AGENTS = _ROOT / "AGENTS.md"
+# Not an input to the filters below: nothing here asserts on CLAUDE.md's
+# content, only that AGENTS.md does not copy it.
+_CLAUDE = _ROOT / "CLAUDE.md"
+
+#: An address written in prose. The domain is a repeated group rather than a
+#: trailing character class, so a sentence-final full stop is not read as part
+#: of it.
+_EMAIL = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
 
 #: What a reference to the private planning repository looks like, as ERE for
 #: `git grep -E -i`. Wider than prose, because two of the three forms already
@@ -184,34 +194,130 @@ def test_the_trademark_policy_exists_and_the_readme_points_at_it() -> None:
     is that there isn't one. The name is what connects a reputation to a build;
     it is the only thing reserved, so it has to be the thing written down.
     """
-    policy = _ROOT / "TRADEMARK.md"
-    assert policy.exists(), "TRADEMARK.md is missing"
-    text = policy.read_text(encoding="utf-8")
+    assert _TRADEMARK.exists(), "TRADEMARK.md is missing"
+    text = _TRADEMARK.read_text(encoding="utf-8")
     for mark in ("LocalCut", "branding/logo.svg"):
         assert mark in text, f"the policy does not name {mark} as a mark it covers"
     # It has to say what is allowed, not only what is forbidden: a policy that
     # reads as a list of prohibitions chills the forking the licence invites.
     assert "fork" in text.lower(), "the policy never says forking is fine"
 
-    readme = (_ROOT / "README.md").read_text(encoding="utf-8")
-    assert "TRADEMARK.md" in readme, (
-        "README does not link the trademark policy - the licence section is "
-        "where a reader forms their belief about what they may reuse"
+    # Bounded to the licence section for the reason `_license_section` exists:
+    # that section is where a reader forms their belief about what they may
+    # reuse, and a link further down the file does not reach them there.
+    assert "TRADEMARK.md" in _license_section(_README), (
+        "README's licence section does not link the trademark policy - that "
+        "section is where a reader forms their belief about what they may reuse"
     )
 
 
-def test_the_agent_orientation_file_defers_rather_than_duplicates() -> None:
+@pytest.mark.skipif(not _PACKAGE_JSON.exists(), reason="desktop app not present beside the engine")
+def test_the_desktop_manifest_publishes_the_contact_the_policy_does() -> None:
+    """The maintainer address, pinned to the one place it is offered to a reader.
+
+    electron-builder.yml sets no `linux.maintainer`, so `package.json`'s
+    `author` is what it stamps into the .deb control file and the AppImage
+    metadata - a published address, read by `dpkg -I` long after the commit
+    that set it. TRADEMARK.md offers an address for the same purpose, and a
+    reader who finds two has no way to tell which one is answered.
+
+    Pinned against the policy's address rather than a literal here: this is a
+    decision to make once, and a third copy living in a test is a third thing
+    to remember on the day it changes.
+    """
+    asking = re.search(
+        r"^## Asking\b[^\n]*\n(.*?)(?=^## |\Z)", _TRADEMARK.read_text(encoding="utf-8"), re.S | re.M
+    )
+    assert asking, "TRADEMARK.md has no Asking section, so there is nothing to reconcile against"
+    published = re.findall(_EMAIL, asking.group(1))
+    assert len(published) == 1, (
+        f"TRADEMARK.md's Asking section offers {len(published)} addresses, expected exactly one"
+    )
+
+    author = json.loads(_PACKAGE_JSON.read_text(encoding="utf-8")).get("author", "")
+    assert re.findall(_EMAIL, author) == published, (
+        f"apps/desktop/package.json ships {author!r}, whose address disagrees with the "
+        f"{published[0]!r} TRADEMARK.md publishes - electron-builder stamps this one into "
+        "the .deb Maintainer field, where it outlives the commit that set it"
+    )
+
+
+def _rule_titles(markdown: str) -> list[str]:
+    """The bolded rule names in a conventions document, whitespace-normalised.
+
+    Normalised because CLAUDE.md wraps at 76 columns and AGENTS.md's index
+    does not, so the same title is a different string in the two files and a
+    line-for-line comparison would fail on the wrap alone.
+    """
+    found = re.findall(r"^-?\s*\*\*(.+?)\*\*", markdown, re.M | re.S)
+    # Trailing comma stripped: CLAUDE.md bolds a few titles mid-sentence, and
+    # an index line should not end on the punctuation that joined it to prose.
+    return [" ".join(m.split()).rstrip(",") for m in found]
+
+
+def _shingles(text: str, width: int) -> set[tuple[str, ...]]:
+    """Every run of `width` consecutive words, as a set."""
+    words = text.split()
+    return {tuple(words[i : i + width]) for i in range(len(words) - width + 1)}
+
+
+def test_the_agent_orientation_file_indexes_claude_md_without_restating_it() -> None:
     """AGENTS.md is read by tools that never open CLAUDE.md.
 
     Both describing the same conventions is the second-copy-that-drifts shape
     CLAUDE.md itself forbids, and the drift is silent because no build step
-    compares prose. So AGENTS.md must point at CLAUDE.md rather than restate
-    it, and this is what says so.
+    compares prose. The first version of this test asserted that the string
+    "CLAUDE.md" appeared somewhere in AGENTS.md, which is true of a file that
+    pastes CLAUDE.md in full - so it could not fail for the thing it was
+    named after, and did not fail while AGENTS.md restated eight rules, one of
+    them already disagreeing with its source.
+
+    What is checkable is the shape the deferral takes. AGENTS.md carries an
+    index of rule TITLES, delimited so this test can find it; every title has
+    to still exist in CLAUDE.md, so deleting or renaming a rule there is what
+    goes red. Outside that index, no fourteen consecutive words of CLAUDE.md
+    may appear - long enough that shared vocabulary and a shared sentence
+    about the same subject do not trip it, short enough that a restated rule
+    does.
     """
-    agents = _ROOT / "AGENTS.md"
-    assert agents.exists(), "AGENTS.md is missing"
-    text = agents.read_text(encoding="utf-8")
-    assert "CLAUDE.md" in text, "AGENTS.md does not defer to CLAUDE.md"
+    assert _AGENTS.exists(), "AGENTS.md is missing"
+    assert _CLAUDE.exists(), "CLAUDE.md is missing - AGENTS.md defers to a file that is not there"
+    agents = _AGENTS.read_text(encoding="utf-8")
+    claude = _CLAUDE.read_text(encoding="utf-8")
+
+    assert "CLAUDE.md" in agents, "AGENTS.md does not defer to CLAUDE.md"
+
+    block = re.search(
+        r"<!-- begin CLAUDE\.md rule index -->(.*?)<!-- end CLAUDE\.md rule index -->",
+        agents,
+        re.S,
+    )
+    assert block, "AGENTS.md has no delimited CLAUDE.md rule index"
+
+    indexed = [
+        " ".join(line.lstrip("- ").split())
+        for line in block.group(1).strip().splitlines()
+        if line.strip()
+    ]
+    assert indexed, "the rule index is empty"
+
+    known = set(_rule_titles(claude))
+    stale = [title for title in indexed if title not in known]
+    assert not stale, "AGENTS.md indexes rules CLAUDE.md no longer states:\n  " + "\n  ".join(stale)
+
+    # The other direction: an index that silently stops covering half the
+    # conventions sends an agent away believing it has seen them.
+    missing = [title for title in known if title not in set(indexed)]
+    assert not missing, "CLAUDE.md states rules AGENTS.md's index does not name:\n  " + "\n  ".join(
+        missing
+    )
+
+    outside = agents.replace(block.group(0), " ")
+    borrowed = _shingles(claude, 14) & _shingles(outside, 14)
+    assert not borrowed, (
+        "AGENTS.md restates CLAUDE.md rather than pointing at it:\n  "
+        + "\n  ".join(" ".join(run) for run in sorted(borrowed)[:5])
+    )
 
 
 def test_no_tracked_file_sends_a_reader_to_the_private_specs_repository() -> None:

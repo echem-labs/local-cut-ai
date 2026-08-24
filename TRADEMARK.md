@@ -7,8 +7,12 @@ mark** — and about the single question it exists to answer for you: *can peopl
 tell your build apart from ours?*
 
 Apache-2.0 says so itself. Section 6 grants no rights in the licensor's trade
-names or trademarks. This page just makes the boundary usable rather than
-leaving you to infer it.
+names or trademarks — except, in the same sentence, as needed to describe the
+origin of the work and to reproduce the NOTICE file. That exception is not a
+loophole, it is an obligation: section 4(d) requires every redistribution to
+carry NOTICE verbatim, and this project's NOTICE names the project. So a fork
+keeps that file exactly as it is, and nothing below asks otherwise. This page
+just makes the rest of the boundary usable rather than leaving you to infer it.
 
 ## What the marks are
 
@@ -29,7 +33,9 @@ leaving you to infer it.
 ## What needs a different name
 
 If you distribute a **modified** build, give it your own name and your own
-icon. Concretely, don't:
+icon. This is about how the build presents itself — its product name, its
+icon, its store listing — and not about the attribution files the licence
+obliges you to keep. Concretely, don't:
 
 - publish a modified build still called "LocalCut" or "LocalCut AI";
 - list an app in any store under a name that a reasonable person would confuse

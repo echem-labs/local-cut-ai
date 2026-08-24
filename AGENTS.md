@@ -8,23 +8,40 @@ Orientation for AI coding agents working in this repository. Humans want
 
 [CLAUDE.md](CLAUDE.md) holds the conventions that are load-bearing here — the
 boundaries that must not be crossed, and the rules a test will fail you on.
-It is not duplicated into this file on purpose: a second copy of a convention
-list is a copy that drifts, which is itself one of the rules in it.
+Read it before you change anything.
 
-The short version, so you know what you are agreeing to read:
+What follows is an index of what is in there, by title only. Not a summary:
+each line is the rule's name, and the reasoning that makes it followable is in
+CLAUDE.md next to it. Restating any of it here would produce a second copy of
+a convention list with nothing reconciling the two — which is itself one of
+the rules in it, and the copy a reader trusts is always the stale one.
 
-- **The desktop talks to the engine only over HTTP/WS.** No filesystem
-  shortcuts. This is what makes a remote engine on a GPU box work identically
-  to a local one.
-- **Every graph edit goes through `/patch`.** The canvas, the inspector, the
-  LLM editor and the MCP server all compile to the same validated ops, so the
-  cycle check, the voice-consent gate and the re-plan apply everywhere.
-- **`graph/patch.py` is the consent chokepoint** for voice cloning. A new
-  route that can write an edge has to re-establish it.
-- **Tests go red without the fix.** Write the failing test first, or at least
-  confirm it fails against the unfixed code.
-- **A value written down twice, across a boundary no build step reconciles,
-  gets a contract test.**
+<!-- begin CLAUDE.md rule index -->
+
+- The desktop talks to the engine only over HTTP/WS.
+- The CLI is a *client* of the engine, not a second way into its data.
+- Every graph edit goes through `/patch`.
+- `graph/patch.py` is the consent chokepoint.
+- CLI strings are ASCII.
+- A value written down twice, on either side of a boundary no build step reconciles, gets a contract test.
+- Every board status needs a UI case and a catalog label.
+- A skip is a test that did not run.
+- Tests go red without the fix.
+- `project/store.py::_write_atomic` is the only writer for state files.
+- Untrusted documents go through `jsondoc.refuse_reason`
+- Regexes shared with a pydantic path param must be checked with `fullmatch`.
+- Exit statuses are the automation contract
+- Version fields are refused when newer, never reduced.
+- No user-facing string is hardcoded in a component.
+- Store actions that report a rejection return `Promise<string | null>`.
+- Global keys are window-level listeners in a `useEffect`
+- Tooltips are `<Tip>`, never the `title` attribute.
+- Modals are `<Modal>`, never a hand-rolled overlay div.
+- ARIA vocabulary is `group` / `img` / `dialog` / `status` / `note` / `menuitem` / `tab`.
+- Layout is derived, never stored.
+- Every app icon is rendered from `branding/logo.svg`.
+
+<!-- end CLAUDE.md rule index -->
 
 ## Layout
 
@@ -47,9 +64,10 @@ uv run ruff format --check .
 
 **ffmpeg must be on `PATH`** or the assembly tests skip rather than fail, and
 the suite reads green while testing no assembly at all. That is why `-rs` is
-not optional. (No count here on purpose: `ci-engine.yml` states one, and a
-second copy of a number nothing reconciles is the drift this repo writes
-contract tests to prevent.)
+not optional: read the skip list, and if it names the assembly module, ffmpeg
+is missing rather than the tests being irrelevant. (No count of them here, or
+anywhere — a number in prose is a number nobody updates, and `-rs` prints the
+real one every run.)
 
 Desktop (from `apps/desktop/`):
 
@@ -64,15 +82,11 @@ npm run notices:check       # the third-party attribution list still resolves
 
 ## Things that will waste your time if you don't know them
 
-- **Do not run Prettier.** There is no config; it reflows the whole repo.
-- **CLI strings are ASCII.** Everything `cli.py` and `automation.py` can print
-  reaches a console, and headless Windows stdout is the ANSI code page. Use
-  `-` and `->`. A test enforces it.
-- **Icons ship from `public/`, never `build/`.** electron-builder treats
-  `build/` as build resources and leaves it out of the package, so a path into
-  it resolves in dev and is missing in the installed app.
-- **Layout is derived, never stored.** Canvas positions are a pure function of
-  the graph, so tie-breaks use code-unit ordering, not `localeCompare`.
+Only what the index above does not already name — everything else is a rule
+with its reasoning in CLAUDE.md, and this is not the place to learn it twice.
+
+- **Do not run Prettier.** There is no config for it here; running it reflows
+  the entire repository, and recovering by hand loses whatever you were doing.
 - Commit messages describe the change, not the process that produced it.
   Sign off with `git commit -s` (DCO — see CONTRIBUTING.md).
 
@@ -102,10 +116,12 @@ The toolset cannot enable ComfyUI node packs (running third-party code is a
 human's acknowledgment), touch provider keys, spend BYOK cloud models,
 download weights, or delete projects. The cloud rule is enforced at the queue
 rather than per route, because three client-side gates leaked in turn before
-it was written that way. The honest guarantee: an agent cannot *choose* cloud,
-but a node the user already put on a cloud model still re-renders. Exports are
-confined to one directory, because `out_path` is a model-authored string and
-unconfined it is an arbitrary file write.
+it was written that way. Enforced there, it is about the spend and not about
+who asked: a render that would bill a provider key is refused whoever put that
+node on a cloud model, so expect a 403 naming the nodes rather than a partial
+render. Cached artifacts are not re-rendered and so do not trip it. Exports
+are confined to one directory, because `out_path` is a model-authored string
+and unconfined it is an arbitrary file write.
 
 If you add an agent-reachable surface, re-establish those boundaries
 explicitly. They are not inherited.
