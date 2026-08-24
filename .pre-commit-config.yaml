@@ -103,11 +103,16 @@ repos:
         stages: [pre-push]
 
       # Third reader of files outside engine/, and the only one whose inputs
-      # are at the repository root. LICENSE, NOTICE, README.md and
-      # CONTRIBUTING.md match no other hook here at all; package.json runs the
-      # desktop hooks, which cannot read a licence. Same shape as the two
-      # above -- one test, in well under a second, rather than the whole
-      # engine suite.
+      # are at the repository root. LICENSE, NOTICE, README.md,
+      # CONTRIBUTING.md, TRADEMARK.md and AGENTS.md match no other hook here
+      # at all -- a commit touching one of them alone would otherwise run
+      # nothing on push; package.json runs the desktop hooks, which cannot
+      # read a licence. Same shape as the two above -- one test, in well under
+      # a second, rather than the whole engine suite.
+      #
+      # This list and ci-engine.yml's are the same list written twice, which
+      # is why test_license_contract.py parses both and reconciles them
+      # against the constant it actually reads from.
       - id: license-contract
         name: licence contract (pytest)
         entry: bash -c 'cd engine && uv run pytest -q tests/test_license_contract.py'
@@ -118,7 +123,26 @@ repos:
             |NOTICE
             |README\.md
             |CONTRIBUTING\.md
+            |TRADEMARK\.md
+            |AGENTS\.md
             |apps/desktop/package\.json
+          )$
+        pass_filenames: false
+        stages: [pre-push]
+
+      # AGENTS.md's tool list against the tools mcp_server.py registers. A
+      # separate hook because the assertion lives in test_mcp.py, not in the
+      # licence module -- adding AGENTS.md to the hook above runs the wrong
+      # file, which is how this contract had no local gate at all. Both of its
+      # inputs are named, so a rename in either half fires it.
+      - id: agents-toolset
+        name: agent toolset contract (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q tests/test_mcp.py::test_the_agents_file_lists_the_toolset_it_documents'
+        language: system
+        files: |
+          (?x)^(
+            AGENTS\.md
+            |engine/src/localcut_engine/mcp_server\.py
           )$
         pass_filenames: false
         stages: [pre-push]

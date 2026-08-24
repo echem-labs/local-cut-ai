@@ -17,7 +17,7 @@
  * Usage: node parity-session.mjs --refs <dir>  (dir holds *.png + masks.json)
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,11 +41,31 @@ if (!refsDir) {
   process.exit(2);
 }
 
-/** The fixture media are expected two levels above the references directory,
- * in a `tools/` sibling - the same layout the reference captures are held in.
- * Nothing here is in this repository: `--refs` points at wherever they live. */
+/* The fixture media, none of which is in this repository.
+ *
+ * `--refs` names ONE reference set (`<root>/reference/<set>`), so `tools/` two
+ * levels up is a sibling of `reference/`, not of the directory passed in. The
+ * whole enclosing layout has to exist, not just the frames:
+ *
+ *   <root>/reference/<set>/*.png   the frames --refs points into
+ *   <root>/tools/session-fixture-{voice.wav,image.png}
+ *
+ * Checked here rather than at first use: these are not read until a good five
+ * hundred lines in, by which point the rig has launched Electron, started an
+ * engine and created five sessions - so a layout that is one directory off
+ * used to surface as a bare ENOENT with all of that already running. */
 const FIXTURE_WAV = path.join(refsDir, "..", "..", "tools", "session-fixture-voice.wav");
 const FIXTURE_PNG = path.join(refsDir, "..", "..", "tools", "session-fixture-image.png");
+const missingFixtures = [FIXTURE_WAV, FIXTURE_PNG].filter((f) => !existsSync(f));
+if (missingFixtures.length) {
+  console.error(
+    "parity-session: missing fixture media:\n" +
+      missingFixtures.map((f) => `  ${f}`).join("\n") +
+      "\n  --refs names a reference set; the fixtures sit in a tools/ directory\n" +
+      "  beside reference/, not beside the set.",
+  );
+  process.exit(2);
+}
 
 const dir = shotsDir("parity-session");
 const check = makeCheck();
