@@ -68,7 +68,7 @@
     "vitest": "^4.1.10",
     "wait-on": "^9.0.10"
   },
-  "author": "Hanzla Mateen <hanzla@lifescope.io>",
+  "author": "Hanzla Mateen <hanzlamateen@live.com>",
   "homepage": "https://github.com/echem-labs/local-cut-ai",
   "desktopName": "localcut-desktop.desktop"
 }
