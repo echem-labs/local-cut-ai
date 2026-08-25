@@ -151,6 +151,25 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # The docs against the code they describe. Its own hook rather than a
+      # widened license-contract, for the reason the agents-toolset comment
+      # gives: that hook runs a different module. Both halves of each claim
+      # are named -- the prose AND the value it restates -- so an edit to
+      # either side fires it.
+      - id: readme-contract
+        name: readme contract (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q tests/test_readme_contract.py'
+        language: system
+        files: |
+          (?x)^(
+            README\.md
+            |docs/.+\.md
+            |apps/desktop/package\.json
+            |engine/src/localcut_engine/config\.py
+          )$
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: desktop-typecheck
         name: desktop typecheck (tsc)
         entry: bash -c 'cd apps/desktop && npm run typecheck'

@@ -65,6 +65,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "docs/**"
   pull_request:
     paths:
       - "engine/**"
@@ -86,6 +87,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "docs/**"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main
