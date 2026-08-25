@@ -1,46 +1,38 @@
 name: Package
 
-# Building an installer is slow and macOS runners bill at a premium, so this
-# does NOT run on every push. It runs on a release tag and on demand.
+# Building an installer is slow, so this does NOT run on every push: it runs
+# on a release tag, on a PR that touches the packaging path, and on demand.
 #
-# It used to also run on any PR touching the packaging path, on the reasoning
-# that that is the only time packaging can break unnoticed. That is still
-# true, but the price was wrong: one run is ~65 billable minutes (150 of them
-# macOS, at the 10x private-repo multiplier), it fired six times in July 2026,
-# and it was ~11% of a 2,000-minute allowance the account then ran out of.
-# `workflow_dispatch` covers the same ground at a moment of your choosing —
-# run it by hand on a packaging PR before merging.
+# The path filter is the interesting one. Packaging is the only part of this
+# repo that no other workflow exercises at all — a spec file, an
+# electron-builder key or a renamed engine binary breaks nothing until
+# somebody builds an installer, and by then the change is on main. That is
+# what the `pull_request` trigger is for; `workflow_dispatch` is for building
+# one deliberately, and a tag is what ships.
 #
-# Once the repo is public, minutes on standard runners are free and the
-# paths-based `pull_request` trigger above is worth restoring; it is kept
-# here, commented, so the path list does not have to be reconstructed.
-#
-# Minutes are not the only meter. A private repo also gets 0.5 GB of Actions
-# ARTIFACT storage, and one run of this workflow produces ~860 MB — the Linux
-# job alone is 485 MB, because the AppImage and the deb each embed their own
-# copy of the frozen engine. Four runs in July 2026 left 3.1 GB sitting at
-# the then-default 14-day retention and put the account at 90% of the storage
-# allowance five days into the next cycle, having run nothing that cycle at
-# all. Retention below is therefore counted in days, and a tag build copies
-# the installers onto the release, whose assets are not metered as Actions
-# storage. Do not raise `retention-days` to keep a build around — cut a tag,
-# or re-run this workflow.
+# One run produces ~860 MB of artifacts — the Linux job alone is 485 MB,
+# because the AppImage and the deb each embed their own copy of the frozen
+# engine. Retention below is therefore counted in days rather than the 14-day
+# default: an installer nobody fetched within two days is one nobody wanted,
+# and a tag build copies its installers onto the release, where they stay put
+# and are not artifacts at all. Do not raise `retention-days` to keep a build
+# around — cut a tag, or re-run this workflow.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
-  # pull_request:
-  #   paths:
-  #     - "apps/desktop/electron-builder.yml"
-  #     - "apps/desktop/package.json"
-  #     - "apps/desktop/scripts/check-engine.mjs"
-  #     - "apps/desktop/scripts/make-icon.mjs"
-  #     - "apps/desktop/build/**"
-  #     - "apps/desktop/public/**"
-  #     - "branding/**"
-  #     - "engine/localcut.spec"
-  #     - "engine/packaging/**"
-  #     - ".github/workflows/package.yml"
+  pull_request:
+    paths:
+      - "apps/desktop/electron-builder.yml"
+      - "apps/desktop/package.json"
+      - "apps/desktop/scripts/check-engine.mjs"
+      - "apps/desktop/scripts/make-icon.mjs"
+      - "apps/desktop/build/**"
+      - "apps/desktop/public/**"
+      - "branding/**"
+      - "engine/localcut.spec"
+      - "engine/packaging/**"
+      - ".github/workflows/package.yml"
 
 # Only a pull_request run is safe to cancel. A tag push is a release build —
 # `github.ref` is refs/tags/v… there, so a "not main" test would treat it as

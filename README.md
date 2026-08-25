@@ -123,8 +123,9 @@ npm test
 npm run icon:check      # committed icons still match branding/logo.svg
 ```
 
-CI is Ubuntu-only while the repo is private, so a green push hook is very
-nearly the verdict CI gives.
+The push hook runs on whichever platform you are on. CI runs the engine
+suite on Linux, macOS and Windows, and the desktop suite on Linux and
+Windows.
 
 ## Contributing
 

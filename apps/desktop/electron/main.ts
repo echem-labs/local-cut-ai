@@ -58,7 +58,10 @@ const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 installLogSink(LOGS_DIR);
 
 /**
- * The release feed, absent until the repo goes public (plan doc 11, U6).
+ * The release feed, opt-in through `LOCALCUT_UPDATE_FEED`. No build sets it:
+ * the installers are unsigned, and an in-app update path that fetches one is
+ * a way to hand somebody a binary with nothing vouching for it. Empty means
+ * the renderer is told updates are not configured and never offers the check.
  *
  * It lives in the main process and never crosses the bridge: the renderer
  * asks *whether* to offer the check and asks for one to run, but never

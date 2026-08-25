@@ -1,9 +1,8 @@
 # Local gates, so CI is not the thing that tells you about a missing newline.
 #
-# Actions minutes are metered while this repo is private (see the matrix note
-# in .github/workflows/ci-engine.yml), and lint is the cheapest possible
-# reason to spend them. These hooks are worth keeping after the repo goes
-# public regardless: the feedback is seconds instead of minutes.
+# The feedback is seconds instead of minutes, and a red CI run over a missing
+# newline is a round trip that told you nothing you could not have been told
+# before the push.
 #
 # Install:  uv run --project engine pre-commit install
 # Bypass:   git commit --no-verify  /  git push --no-verify
@@ -168,6 +167,7 @@ repos:
             README\.md
             |docs/.+\.md
             |apps/desktop/package\.json
+            |\.github/workflows/ci-(engine|desktop)\.yml
           )$
         pass_filenames: false
         stages: [pre-push]

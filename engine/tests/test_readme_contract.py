@@ -36,6 +36,13 @@ from localcut_engine.config import EngineConfig
 _RUNNING = REPO_ROOT / "docs" / "running-real-models.md"
 _README = REPO_ROOT / "README.md"
 _PACKAGE_JSON = REPO_ROOT / "apps" / "desktop" / "package.json"
+_WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+
+#: What a runner label is called in prose. Keyed on the vendor half alone,
+#: because the version half is the part that moves - `ubuntu-latest` becomes
+#: `ubuntu-24.04` the day a pin is wanted, and that is not a change to what
+#: the README should say about it.
+_RUNNER_PLATFORM = {"ubuntu": "Linux", "macos": "macOS", "windows": "Windows"}
 
 #: Everything this module reads from outside `engine/`, as repository-relative
 #: paths. Both ci-engine.yml's path filter and the `readme-contract` pre-push
@@ -50,6 +57,8 @@ _DOCUMENT_INPUTS = (
     "README.md",
     "docs/running-real-models.md",
     "apps/desktop/package.json",
+    ".github/workflows/ci-engine.yml",
+    ".github/workflows/ci-desktop.yml",
 )
 
 #: A markdown inline link's target. `[^)\s]+` rather than `[^)]*`: a target
@@ -163,6 +172,70 @@ def test_the_readme_states_the_node_floor_the_manifest_declares() -> None:
         f"the README says Node {sorted(set(stated))} while apps/desktop/package.json "
         f"declares {declared!r}, which is the one npm reads"
     )
+
+
+def _matrix_platforms(workflow: str) -> list[str]:
+    """The platforms one CI workflow's job matrix runs on, in prose names.
+
+    Read from the live `os:` line rather than from every `os:` in the file: a
+    matrix narrowed for a while tends to leave the wider list behind as a
+    commented line, and a reader of YAML-as-text has to be able to tell those
+    apart. `^[ ]*os:` cannot match a `#`-prefixed one.
+    """
+    text = (_WORKFLOWS / workflow).read_text(encoding="utf-8")
+    lists = re.findall(r"^[ ]*os: \[([^\]]+)\]$", text, re.M)
+    assert len(lists) == 1, (
+        f"{workflow} declares {len(lists)} live matrix `os:` lists; this test reads one"
+    )
+
+    platforms = []
+    for runner in (entry.strip() for entry in lists[0].split(",")):
+        vendor = runner.split("-", 1)[0]
+        assert vendor in _RUNNER_PLATFORM, (
+            f"{workflow} runs on {runner!r}, which this test has no prose name for - add it"
+        )
+        platforms.append(_RUNNER_PLATFORM[vendor])
+    return platforms
+
+
+def test_the_readme_names_the_platforms_ci_actually_runs_on() -> None:
+    """What a contributor is told a push will be checked against.
+
+    The claim in this file with the shortest half-life. A matrix is the one
+    thing here that gets narrowed for reasons unrelated to the code - a slow
+    runner, a flaky leg, a billing ceiling - and the sentence describing it is
+    in another file entirely, so the narrowing and the correction are never
+    the same edit. What is left is a reader trusting a platform is covered.
+
+    Both directions, and per suite. A README naming a platform CI does not run
+    promises coverage that is not there; one omitting a platform CI does run
+    leaves a contributor surprised by a red leg they had no reason to expect.
+    The two suites are checked against their own matrices, because they do not
+    have to agree with each other - only with themselves.
+    """
+    # Newlines collapsed first: this is prose in a hard-wrapped document, so
+    # where its line breaks fall is a function of how long the platform names
+    # happen to be, and a pattern that had to know would go red on a reflow
+    # that changed nothing.
+    prose = " ".join(_README.read_text(encoding="utf-8").split())
+    claim = re.search(
+        r"CI runs the engine suite on ([^.;]+?), and the desktop suite on ([^.;]+?)\.", prose
+    )
+    assert claim, (
+        "the README no longer states which platforms CI runs each suite on - "
+        "update this test with the sentence that replaced it"
+    )
+
+    for suite, stated, workflow in (
+        ("engine", claim.group(1), "ci-engine.yml"),
+        ("desktop", claim.group(2), "ci-desktop.yml"),
+    ):
+        named = sorted(re.findall("|".join(_RUNNER_PLATFORM.values()), stated))
+        runs_on = sorted(_matrix_platforms(workflow))
+        assert named == runs_on, (
+            f"the README says the {suite} suite runs on {named}, but {workflow}'s "
+            f"matrix runs it on {runs_on}"
+        )
 
 
 def test_the_entry_points_hold_links_to_check() -> None:
