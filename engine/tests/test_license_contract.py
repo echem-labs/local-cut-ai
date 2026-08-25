@@ -64,6 +64,7 @@ _CONTRIBUTING = _ROOT / "CONTRIBUTING.md"
 _TRADEMARK = _ROOT / "TRADEMARK.md"
 _AGENTS = _ROOT / "AGENTS.md"
 _CLAUDE = _ROOT / "CLAUDE.md"
+_SECURITY = _ROOT / "SECURITY.md"
 
 #: Everything this module reads from outside `engine/`, as repository-relative
 #: paths. Both ci-engine.yml's path filter and the `license-contract` pre-push
@@ -83,6 +84,7 @@ _ROOT_INPUTS = (
     "TRADEMARK.md",
     "AGENTS.md",
     "CLAUDE.md",
+    "SECURITY.md",
     "apps/desktop/package.json",
 )
 
@@ -250,14 +252,15 @@ def test_the_trademark_policy_exists_and_the_readme_points_at_it() -> None:
 
 
 @pytest.mark.skipif(not _PACKAGE_JSON.exists(), reason="desktop app not present beside the engine")
-def test_the_desktop_manifest_publishes_the_contact_the_policy_does() -> None:
-    """The maintainer address, pinned to the one place it is offered to a reader.
+def test_every_published_contact_is_the_one_the_policy_gives() -> None:
+    """The maintainer address, pinned to the one place it is decided.
 
     electron-builder.yml sets no `linux.maintainer`, so `package.json`'s
     `author` is what it stamps into the .deb control file and the AppImage
     metadata - a published address, read by `dpkg -I` long after the commit
-    that set it. TRADEMARK.md offers an address for the same purpose, and a
-    reader who finds two has no way to tell which one is answered.
+    that set it. TRADEMARK.md offers an address for permission questions and
+    SECURITY.md for vulnerability reports, and a reader who finds three has no
+    way to tell which one is answered.
 
     Pinned against the policy's address rather than a literal here: this is a
     decision to make once, and a third copy living in a test is a third thing
@@ -277,6 +280,45 @@ def test_the_desktop_manifest_publishes_the_contact_the_policy_does() -> None:
         f"apps/desktop/package.json ships {author!r}, whose address disagrees with the "
         f"{published[0]!r} TRADEMARK.md publishes - electron-builder stamps this one into "
         "the .deb Maintainer field, where it outlives the commit that set it"
+    )
+
+    # The third consumer, and the one where a wrong address is worst: a
+    # vulnerability report sent to an unread mailbox is a report nobody
+    # answers, and the reporter's next move is the public issue this file
+    # asks them not to open.
+    assert set(re.findall(_EMAIL, _SECURITY.read_text(encoding="utf-8"))) == set(published), (
+        f"SECURITY.md's reporting address disagrees with the {published[0]!r} "
+        "TRADEMARK.md publishes"
+    )
+
+
+def test_a_private_channel_exists_for_reporting_a_vulnerability() -> None:
+    """The one report a public repository must not receive in public.
+
+    Without SECURITY.md the repository has no Security tab and no "Report a
+    vulnerability" button, so a finder's only obvious move is an issue - which
+    IS the disclosure, to everyone, before there is a fix. The file is what
+    turns that button on, so its absence is not cosmetic.
+
+    Asserted by shape rather than by wording: that it tells a reader not to
+    file publicly, and that it gives them somewhere private to go instead. The
+    address itself is pinned against TRADEMARK.md above, not here.
+    """
+    assert _SECURITY.exists(), (
+        "no SECURITY.md - GitHub shows no 'Report a vulnerability' button without it, "
+        "so the only channel a finder has is the public issue this file exists to prevent"
+    )
+    text = _SECURITY.read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    assert "public issue" in lowered, (
+        "SECURITY.md never tells a reader not to report in public, which is the "
+        "one instruction it exists to carry"
+    )
+    # Somewhere private to go instead. Either channel satisfies it; naming
+    # neither leaves a reader told what not to do and not what to do.
+    assert re.search(_EMAIL, text) or "security/advisories" in lowered, (
+        "SECURITY.md names no private channel - an address or the advisories form"
     )
 
 
