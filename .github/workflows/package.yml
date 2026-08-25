@@ -10,13 +10,15 @@ name: Package
 # what the `pull_request` trigger is for; `workflow_dispatch` is for building
 # one deliberately, and a tag is what ships.
 #
-# One run produces ~860 MB of artifacts — the Linux job alone is 485 MB,
-# because the AppImage and the deb each embed their own copy of the frozen
-# engine. Retention below is therefore counted in days rather than the 14-day
-# default: an installer nobody fetched within two days is one nobody wanted,
-# and a tag build copies its installers onto the release, where they stay put
-# and are not artifacts at all. Do not raise `retention-days` to keep a build
-# around — cut a tag, or re-run this workflow.
+# A run that uploads produces ~860 MB of artifacts — the Linux job alone is
+# 485 MB, because the AppImage and the deb each embed their own copy of the
+# frozen engine. Against a storage allowance shared across every repository
+# on the account, that is worth spending only where somebody reads the files:
+# a pull request builds all three installers and keeps none of them, and a
+# tag or a dispatch keeps them for two days rather than the 14-day default.
+# A tag build then copies its installers onto the release, where they stay
+# put and are not artifacts at all. Do not raise `retention-days` to keep a
+# build around — cut a tag, or re-run this workflow.
 on:
   workflow_dispatch:
   push:
@@ -167,11 +169,48 @@ jobs:
         working-directory: apps/desktop
         run: ls -lh release/ | grep -vE "^total|builder-debug|\.blockmap$" || ls -lh release/
 
-      # Two days, not two weeks. See the storage note at the top of the file:
-      # this is the handoff to whoever dispatched the run, or to the release
-      # job below — not a place installers live. Download it the day you ask
-      # for it.
+      # The check that the upload below USED to be, kept here because the
+      # upload no longer runs on every trigger.
+      #
+      # `if-no-files-found: error` was doing two jobs at once: refusing to
+      # hand back an empty artifact, and proving the installer is still where
+      # the glob says it is. That second one is the whole reason a packaging
+      # PR is worth building — `productName` or an electron-builder
+      # `artifactName` can rename the output with nothing else failing — and
+      # it is exactly the job that would have been lost by making the upload
+      # conditional. So it moves here, where it runs for every trigger.
+      - name: The installers are where the glob says they are
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r pattern; do
+            [ -n "$pattern" ] || continue
+            # Unquoted on purpose: this is the glob being tested.
+            for path in $pattern; do
+              [ -f "$path" ] || continue
+              echo "  $path"
+              found=$((found + 1))
+            done
+          done <<< "${{ matrix.glob }}"
+          if [ "$found" -eq 0 ]; then
+            echo "::error::the build produced no file matching this platform's glob - the installer has been renamed, or it did not build"
+            exit 1
+          fi
+
+      # Not on a pull request. There, the question is whether the installer
+      # BUILDS — which the step above has just answered — and nobody
+      # downloads a PR's installer. Uploading ~860 MB per packaging PR to
+      # delete it two days later spends a shared, account-wide storage
+      # allowance on files with no reader; when that allowance is full, the
+      # upload is also the only step in this workflow that fails, which reads
+      # as "packaging is broken" on a run where all three installers built.
+      #
+      # Two days on the ones that DO upload. This is the handoff to whoever
+      # dispatched the run, or to the release job below — not a place
+      # installers live. Download it the day you ask for it.
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'pull_request'
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.glob }}

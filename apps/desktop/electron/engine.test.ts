@@ -75,9 +75,13 @@ vi.mock("node:child_process", async () => {
   };
 });
 
-const { BIND_REFUSED, EngineConflictError, EngineManager, EnginePortBusyError } = await import(
-  "./engine"
-);
+const {
+  BIND_REFUSED,
+  EngineConflictError,
+  EngineManager,
+  EnginePortBusyError,
+  REBIND_TIMEOUT_MS,
+} = await import("./engine");
 
 /** /health answers, and /projects accepts our token. */
 const healthyEngine = () =>
@@ -873,8 +877,12 @@ describe("waiting out a port the kernel still holds", () => {
     const caught = manager.start().catch((error: unknown) => error);
 
     // The whole budget, because this one is now waited out rather than
-    // reported on the first attempt.
-    await vi.advanceTimersByTimeAsync(95_000);
+    // reported on the first attempt. Read from the constant rather than
+    // written as a number: the budget is half again as long on Windows, where
+    // TcpTimedWaitDelay is, so a literal that clears it here leaves the loop
+    // still retrying there - and a start that never settles fails as vitest's
+    // own timeout, which names the test and not the reason.
+    await vi.advanceTimersByTimeAsync(REBIND_TIMEOUT_MS + 5_000);
 
     const error = await caught;
     expect(String(error)).toMatch(/never said who it is/);
@@ -986,7 +994,20 @@ describe("waiting out a port the kernel still holds", () => {
         return { ok: true, status: input.endsWith("/health") ? 200 : 401 };
       }),
     );
-    spawned.says = (cmd) => (cmd === "lsof" || cmd === "netstat" ? "9999\n" : null);
+    // Each dialect in its own shape, and both kills, for the reason spelled
+    // out on the sibling above: `lsof -t` prints bare pids while `netstat
+    // -ano` prints a table `reclaimPort` filters itself, so one string for
+    // both finds no pid on Windows - and Windows shells out to `taskkill`
+    // and never reaches the `process.kill` this test hangs the orphan's
+    // death on. Either way the reclaim fails, and a test about recovering
+    // silently becomes a test about not recovering.
+    spawned.says = (cmd) => {
+      if (cmd === "taskkill") holder = "gone";
+      if (cmd === "lsof") return "9999\n";
+      return cmd === "netstat"
+        ? "  TCP    127.0.0.1:7830    0.0.0.0:0    LISTENING    9999\n"
+        : null;
+    };
     spawned.answer = (child) => {
       attempt += 1;
       if (attempt > 1) return; // the port is ours now; this one lives

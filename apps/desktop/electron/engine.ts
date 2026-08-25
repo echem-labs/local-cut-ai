@@ -38,7 +38,7 @@ const CRASH_TAIL_LINES = 50;
  * did every relaunch of the whole app for the next minute, which read as the
  * crash having broken something permanent.
  */
-const REBIND_TIMEOUT_MS = process.platform === "win32" ? 150_000 : 90_000;
+export const REBIND_TIMEOUT_MS = process.platform === "win32" ? 150_000 : 90_000;
 /**
  * How long between attempts. Spawning IS the probe: node sets SO_REUSEADDR on
  * every listener it opens (libuv does it unconditionally), so the app cannot

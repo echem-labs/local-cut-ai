@@ -95,64 +95,206 @@ _DECLARED_COPYLEFT = {
 #: not a licence audit: the point is that a library appearing here for the
 #: first time gets looked at, because that is how x264 and libespeak-ng
 #: arrived without anyone deciding to ship them.
-_KNOWN_LIBRARIES = frozenset(
-    {
-        # av (PyAV) — a whole FFmpeg build, and the bulk of this list.
-        "libSvtAv1Enc",
-        "libasound",
-        "libavcodec",
-        "libavdevice",
-        "libavfilter",
-        "libavformat",
-        "libavutil",
-        "libdav1d",
-        "libdrm",
-        "libgmp",
-        "libgnutls",
-        "libhogweed",
-        "libmp3lame",
-        "libnettle",
-        "libopencore-amrnb",
-        "libopencore-amrwb",
-        "libopus",
-        "libsharpyuv",
-        "libswresample",
-        "libswscale",
-        "libunistring",
-        "libvpl",
-        "libvpx",
-        "libwebp",
-        "libwebpmux",
-        "libx264",
-        "libx265",
-        "libXau",
-        "libxcb",
-        "libxcb-shape",
-        "libxcb-shm",
-        "libxcb-xfixes",
-        # espeakng-loader
-        "libespeak-ng",
-        # soundfile
-        "libsndfile",
-        # onnxruntime / ctranslate2 / scipy
-        "libonnxruntime",
-        "libonnxruntime_providers_shared",
-        "libctranslate2",
-        "libscipy_openblas64_",
-        # GCC runtime, carried under the GCC Runtime Library Exception.
-        "libgomp",
-        "libgfortran",
-        "libquadmath",
-    }
-)
+#:
+#: Keyed by platform for the reason `_FROZEN_COPYLEFT` below already gives,
+#: which applies just as much on this side of the boundary: what a wheel
+#: bundles is a per-platform fact. A POSIX-spelled set asserted everywhere
+#: fails three ways at once - on the libraries a platform simply has no wheel
+#: for, on the ones it spells differently (`espeak-ng` and `avcodec` carry no
+#: `lib` prefix on Windows), and on the ones only it has.
+#:
+#: Recorded from a real CI run on each platform, for `_FROZEN_LIBRARIES`'
+#: reason: a set transcribed from a developer machine reports a licence change
+#: on every build. 41 libraries on Linux, 24 on macOS, 39 on Windows.
+#:
+#: Two entries here are worth knowing about before reading the rest:
+#:
+#: `cudnn64_9` is NVIDIA's, arrives in the Windows ctranslate2 wheel, and is
+#: the one name in this file whose licence restricts redistribution rather than
+#: obliging disclosure. It reaches no installer - `_FROZEN_LIBRARIES["win32"]`
+#: does not list it, the same way `av` is in every closure and in no freeze -
+#: so what it needs is a decision recorded before anything starts shipping it,
+#: not a fix. It is listed here because an inventory that omits the awkward
+#: entry is not an inventory.
+#:
+#: `pythoncom314` and `pywintypes314` carry the Python minor version in the
+#: filename, so a bump to 3.15 renames both and fails the drop-out direction
+#: below. That failure is correct and the fix is to re-record, not to loosen
+#: the pattern into something that would also swallow a library genuinely
+#: disappearing.
+_KNOWN_LIBRARIES = {
+    "linux": frozenset(
+        {
+            # av (PyAV) - a whole FFmpeg build, and the bulk of this list.
+            "libSvtAv1Enc",
+            "libasound",
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libdav1d",
+            "libdrm",
+            "libgmp",
+            "libgnutls",
+            "libhogweed",
+            "libmp3lame",
+            "libnettle",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libsharpyuv",
+            "libswresample",
+            "libswscale",
+            "libunistring",
+            "libvpl",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libx264",
+            "libx265",
+            "libXau",
+            "libxcb",
+            "libxcb-shape",
+            "libxcb-shm",
+            "libxcb-xfixes",
+            # espeakng-loader
+            "libespeak-ng",
+            # soundfile
+            "libsndfile",
+            # onnxruntime / ctranslate2 / scipy
+            "libonnxruntime",
+            "libonnxruntime_providers_shared",
+            "libctranslate2",
+            "libscipy_openblas64_",
+            # GCC runtime, carried under the GCC Runtime Library Exception.
+            "libgomp",
+            "libgfortran",
+            "libquadmath",
+        }
+    ),
+    "darwin": frozenset(
+        {
+            # av (PyAV). The X11 and libdrm pieces of the Linux set are absent:
+            # that wheel is built against a display stack macOS does not have.
+            "libSvtAv1Enc",
+            "libavcodec",
+            "libavdevice",
+            "libavfilter",
+            "libavformat",
+            "libavutil",
+            "libdav1d",
+            "libmp3lame",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libsharpyuv",
+            "libswresample",
+            "libswscale",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libx264",
+            "libx265",
+            # espeakng-loader
+            "libespeak-ng",
+            # soundfile
+            "libsndfile",
+            # onnxruntime / ctranslate2. No separate OpenBLAS or GCC runtime:
+            # scipy resolves both to Accelerate and the system libgcc here.
+            "libonnxruntime",
+            "libctranslate2",
+            "onnxruntime_pybind11_state",
+        }
+    ),
+    "win32": frozenset(
+        {
+            # av (PyAV), spelled without the `lib` prefix on this platform.
+            "avcodec",
+            "avdevice",
+            "avfilter",
+            "avformat",
+            "avutil",
+            "libSvtAv1Enc",
+            "libdav1d",
+            "libiconv",
+            "libmp3lame",
+            "libopencore-amrnb",
+            "libopencore-amrwb",
+            "libopus",
+            "libsharpyuv",
+            "libvpl",
+            "libvpx",
+            "libwebp",
+            "libwebpmux",
+            "libx264",
+            "libx265",
+            "swresample",
+            "swscale",
+            "zlib1",
+            # espeakng-loader, likewise unprefixed - which is why
+            # `_MUST_STAY_ANNOTATED` below is keyed by platform too.
+            "espeak-ng",
+            # soundfile
+            "libsndfile",
+            # onnxruntime / ctranslate2 / scipy. `cudnn64_9` is the NVIDIA
+            # library the header above describes; `libiomp5md` is Intel's
+            # OpenMP runtime, which the same wheels pull in.
+            "ctranslate2",
+            "cudnn64_9",
+            "libiomp5md",
+            "libscipy_openblas64_",
+            "onnxruntime",
+            "onnxruntime_providers_shared",
+            # pywin32. Not a dependency of the engine's own code - it arrives
+            # through the closure - and it is the only group here whose names
+            # move with the Python version.
+            "PyISAPI_loader",
+            "perfmondata",
+            "pythoncom314",
+            "pywintypes314",
+            "scintilla",
+            # MinGW and MSVC runtime, alongside the GCC runtime the Linux set
+            # records under the same exception.
+            "libgcc_s_seh",
+            "libstdc++",
+            "libwinpthread",
+            "msvcp140",
+        }
+    ),
+}
+
+
+def _recorded_known_libraries() -> frozenset[str]:
+    """The closure inventory for this platform, or a failure naming what to
+    record.
+
+    One definition for both directions, for `_recorded_frozen_libraries`'
+    reason: written twice, the two halves drift, and the half that catches a
+    library *leaving* is the one that goes quiet.
+    """
+    recorded = _KNOWN_LIBRARIES.get(sys.platform)
+    assert recorded is not None, (
+        f"no closure inventory recorded for {sys.platform!r}. Wheels bundle a "
+        "different set on each platform, so record this one after checking each "
+        f"library's licence: {sorted(_installed_closure())}"
+    )
+    return recorded
+
 
 #: The libraries whose terms are strongest and whose annotation therefore
 #: matters most. Deliberately a short hand-kept list on this side of the
 #: boundary, checked through `copyleft_note()` rather than against the table's
 #: keys: `third_party_notices` keys `COPYLEFT_LIBRARIES` on the unprefixed,
-#: lowercased name so one entry can cover `libx264` and Windows' `x264`, and a
-#: test comparing key sets directly would only be asserting that two spellings
+#: lowercased name so one entry covers both spellings of a library, and a test
+#: comparing key sets directly would only be asserting that two spellings
 #: match. What is worth pinning is the answer the notices generator gives.
+#:
+#: Flat rather than per-platform, unlike the two records around it, because all
+#: three platforms ship all three - and the spelling that differs (`espeak-ng`
+#: carries no `lib` prefix on Windows) is exactly what `annotation_key`
+#: normalises away. Keying this by platform would write the same three names
+#: down three times for the sake of one prefix.
 _MUST_STAY_ANNOTATED = frozenset({"libx264", "libx265", "libespeak-ng"})
 
 
@@ -261,11 +403,12 @@ def test_no_distribution_declares_copyleft_outside_the_recorded_set() -> None:
 
 
 def test_no_unrecorded_native_library_ships_in_the_closure() -> None:
-    unrecorded = _installed_closure() - _KNOWN_LIBRARIES
+    unrecorded = _installed_closure() - _recorded_known_libraries()
     assert not unrecorded, (
         "a wheel started bundling a native library nobody has licensed — this is "
         "how x264 and libespeak-ng arrived. Establish each one's licence, then "
-        "record it in _KNOWN_LIBRARIES here; if it is copyleft it also belongs "
+        "record it in _KNOWN_LIBRARIES here, under this platform; if it is "
+        "copyleft it also belongs "
         "in third_party_notices.COPYLEFT_LIBRARIES, which is the table the "
         f"shipped NOTICE is generated from: {sorted(unrecorded)}"
     )
@@ -277,10 +420,10 @@ def test_no_recorded_native_library_has_left_the_closure() -> None:
     Nothing asserted that a recorded library is still *found*, so a wheel
     renaming a file — or a recogniser that stopped matching it — dropped it
     from the shipped notices with the suite green: the neighbouring count
-    assertion tolerates losing twenty of the forty-one, and subtracting in the
-    addition direction cannot see a disappearance.
+    assertion tolerates losing half of the platform's record, and subtracting
+    in the addition direction cannot see a disappearance.
     """
-    missing = _KNOWN_LIBRARIES - _installed_closure()
+    missing = _recorded_known_libraries() - _installed_closure()
     assert not missing, (
         "a recorded native library is no longer being found. It has been "
         "renamed, dropped by a wheel, or is no longer recognised as a shared "
@@ -301,9 +444,13 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
     copyleft libraries are named with what they oblige, so silence beside a
     name is an affirmative claim that it carries no copyleft terms.
     """
-    closure = _installed_closure()
+    # Compared through `annotation_key`, the way the frozen sibling below does
+    # and for its reason: a bare `in` compares spellings, so this read
+    # `libespeak-ng` as gone from Windows - where the library is present, is
+    # annotated, and ships as `espeak-ng.dll`.
+    closure = {annotation_key(name) for name in _installed_closure()}
     for library in sorted(_MUST_STAY_ANNOTATED):
-        assert library in closure, (
+        assert annotation_key(library) in closure, (
             f"{library} is recorded as shipping and is no longer in the closure. "
             "If the chain was replaced this is the fix landing and the entry "
             "should be pruned here; if it merely moved, the record is now wrong."
