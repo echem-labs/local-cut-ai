@@ -28,6 +28,16 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+# Agent tooling: the per-developer file only. settings.local.json holds a
+# permission allowlist - absolute home paths, local tool config - and sitting
+# untracked beside a tracked settings.json is how it gets committed by a
+# `git add .claude`. A secret scanner does not flag a permission list.
+#
+# Named rather than `.claude/*` with a negation, because the rest of that
+# directory is the project-shared half - agents/, commands/, skills/, hooks/ -
+# which is meant to be committed, and a directory excluded by a wildcard is one
+# git never descends into: `!.claude/agents/x.md` would not bring it back.
+.claude/settings.local.json
 
 # Env / secrets
 .env

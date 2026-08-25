@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", "customManagers:githubActionsVersions"],
   "schedule": ["before 6am on monday"],
   "packageRules": [
     {
@@ -17,6 +17,12 @@
       "matchPackageNames": ["torch", "torchvision", "torchaudio"],
       "enabled": false,
       "description": "ML stack upgrades are gated on the ComfyUI compatibility matrix and handled deliberately via the engine component channel"
+    },
+    {
+      "matchDepNames": ["gitleaks/gitleaks"],
+      "extractVersion": "^v(?<version>.+)$",
+      "groupName": "gitleaks",
+      "description": "gitleaks tags its releases with a v prefix that secret-scan.yml's pin and its download URL both spell bare, so strip it or the bump writes a version no release has. Its own group because GITLEAKS_SHA256 is a second constant no manager moves: a bump carrying a stale checksum must fail on its own branch rather than block every other minor and patch update"
     }
   ],
   "lockFileMaintenance": {

@@ -27,10 +27,21 @@ name: CI (engine)
 # the desktop's package.json. Those five match no other workflow either -- an
 # edit to the README's License section or a deleted LICENSE runs nothing at
 # all, and package.json alone runs only ci-desktop, which cannot execute
-# pytest.
+# pytest. TRADEMARK.md, AGENTS.md and CLAUDE.md join them for the same reason:
+# the test asserts the first two exist, that the README links TRADEMARK.md, and
+# that AGENTS.md indexes CLAUDE.md's rules rather than restating them -- so a
+# rule added to CLAUDE.md alone is a change this suite has to see.
+#
+# What is NOT here: the same module's whole-tree guard, which reads every
+# tracked file. A path list cannot cover that input without naming the entire
+# repository, so it runs unfiltered in repo-hygiene.yml instead. The root
+# documents above are still listed here because the assertions about them are
+# specific to those files, and this job is where the rest of the module runs.
 #
 # (Spelled out twice rather than shared through a YAML anchor: the workflow
-# parser does not expand anchors.)
+# parser does not expand anchors. test_license_contract.py reads the two lists
+# separately for that reason -- pooling them cannot see one falling behind the
+# other, which is the only way hand-duplicated lists go wrong.)
 on:
   push:
     branches: [main]
@@ -50,6 +61,10 @@ on:
       - "NOTICE"
       - "README.md"
       - "CONTRIBUTING.md"
+      - "TRADEMARK.md"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "SECURITY.md"
   pull_request:
     paths:
       - "engine/**"
@@ -67,6 +82,10 @@ on:
       - "NOTICE"
       - "README.md"
       - "CONTRIBUTING.md"
+      - "TRADEMARK.md"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "SECURITY.md"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main
@@ -116,7 +135,7 @@ jobs:
         # applying at all and there is no reason to test one platform. The
         # cross-platform coverage is the entire point of this matrix — see
         # the note on the job above. Tracked as a launch item alongside the
-        # license decision in specs 07-roadmap-and-risks.md.
+        # license decision, in plan doc 07.
         # ---------------------------------------------------------------
         os: [ubuntu-latest]
         # os: [ubuntu-latest, macos-latest, windows-latest]
@@ -153,9 +172,9 @@ jobs:
       - run: uv sync --all-groups
 
       - name: Verify ffmpeg has the filters the suite needs
-        # Not just "is ffmpeg present". 18 assembly tests SKIP without ffmpeg
-        # rather than failing, so a broken install reads as a green run that
-        # quietly tested no assembly at all — and a build missing libass or
+        # Not just "is ffmpeg present". The assembly tests SKIP without
+        # ffmpeg rather than failing, so a broken install reads as a green run
+        # that quietly tested no assembly at all — and a build missing libass or
         # libfreetype fails three of them with errors that look like product
         # bugs. Assert the capability here, where the message can name it.
         shell: bash

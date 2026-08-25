@@ -243,3 +243,10 @@ The licence covers this repository's own source. It does not extend to the
 model weights the app downloads, which carry their own terms (SDXL and
 LTX-Video in particular are gated or non-OSI), nor to media generated with
 them.
+
+The **name and logo** are not covered by it either - Apache-2.0 section 6
+grants no trademark rights beyond describing where the work came from and
+reproducing NOTICE, whose attribution notices section 4(d) asks a derivative
+work to carry anyway. Fork the code freely; give a modified build its own name.
+[TRADEMARK.md](TRADEMARK.md) says what that means in practice, and what you
+can do without asking.

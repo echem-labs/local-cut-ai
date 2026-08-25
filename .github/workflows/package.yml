@@ -219,8 +219,8 @@ jobs:
           set -euo pipefail
           ls -lh installers/
           # Draft, so cutting a tag never publishes a download on its own —
-          # these builds are unsigned until the signing work in specs 02
-          # lands, and that is a decision for a person, not for a push.
+          # these builds are unsigned until the code-signing work lands,
+          # and that is a decision for a person, not for a push.
           # Re-tagging an existing release tops up its assets instead of
           # failing on the create.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
