@@ -13,14 +13,17 @@ none of them is a special case, they are all a URL and a token.
 localcut projects                       # list projects on the engine
 localcut create "a 60s explainer on…"   # create a project from a prompt
 localcut render <project-id>            # render and wait for it to finish
-localcut export <project-id>            # write a finished cut or an NLE handoff
+localcut export <id> --out cut.mp4      # write a finished cut or an NLE handoff
 localcut template export|import         # move a project shape between engines
 localcut workflow import|list|remove    # manage imported ComfyUI workflows
 localcut packs list|enable|disable      # ComfyUI custom-node packs this engine allows
 ```
 
-Each takes `--engine`, `--token` and `--cert`, or the matching environment
-variables.
+Each takes `--engine` (`$LOCALCUT_ENGINE_URL`, default
+`http://127.0.0.1:7830`), `--token` (`$LOCALCUT_TOKEN`) and `--cert`, the PEM
+of a remote engine's self-signed certificate. `--cert` is a flag only — there
+is no environment variable for it. `localcut mcp` takes the same three, so an
+agent reaches a GPU box across the room exactly the way a script does.
 
 Output serves two audiences at once: a human sees lines, `--json` emits the
 raw document.
@@ -50,11 +53,12 @@ for the canvas.
   code will execute, which is an operator's decision, not a model's.
 - **Provider keys.**
 - **BYOK cloud spend.** Patch ops naming a `cloud:*` model are refused, as is
-  restoring a take that was rendered on one. The rule is enforced at the queue
-  rather than per route, and it is about the spend rather than who chose it —
-  so a render that would bill a provider key is refused whoever put that model
-  on the node. Cached artifacts are in no plan, so restoring one is not a
-  spend and is not refused.
+  restoring a take that was rendered on one. The rule sits at the write rather
+  than on a list of routes: a cloud model the agent puts on a node that did
+  not carry one is refused whether or not a render is planned for it. That
+  second half is what covers `select_take` — switching back to a take is a
+  cache hit, so it reaches no queue and would bill nothing today, but it
+  leaves the node on a cloud model for the next render the *user* starts.
 - **Writing outside one directory.** Exports are confined to `--export-dir`
   (`$LOCALCUT_MCP_EXPORT_DIR`, default `~/LocalCut`), because `out_path` is a
   model-authored string and an unconfined one is an arbitrary file write.

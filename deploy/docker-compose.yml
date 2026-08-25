@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     environment:
       LOCALCUT_TOKEN: ${LOCALCUT_TOKEN:?set LOCALCUT_TOKEN to a long random pairing token}
-      LOCALCUT_BACKEND: ${LOCALCUT_BACKEND:-llm,comfy,kokoro,align,ffmpeg,mock}
+      LOCALCUT_BACKEND: ${LOCALCUT_BACKEND:-local,mock}
       LOCALCUT_LLM_URL: http://ollama:11434/v1
       LOCALCUT_LLM_MODEL: ${LOCALCUT_LLM_MODEL:-qwen3:14b}
       LOCALCUT_COMFYUI_URL: ${LOCALCUT_COMFYUI_URL:-http://host.docker.internal:8188}

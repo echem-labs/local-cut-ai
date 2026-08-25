@@ -16,9 +16,9 @@ uv run localcut download sdxl-base-1.0  # resumable, checksummed → ~/.localcut
 uv run localcut serve --backend local,mock
 ```
 
-`local` expands to six backends in this order:
+`local` expands to this chain, in this order:
 
-| | |
+| Backend | Serves |
 | --- | --- |
 | `llm` | any OpenAI-compatible server — Ollama, llama.cpp (`LOCALCUT_LLM_URL`, `LOCALCUT_LLM_MODEL`) |
 | `comfy` | headless ComfyUI on `:8188`, driven by workflow-JSON templates |
@@ -38,7 +38,9 @@ Packaged defaults cover SDXL keyframes and thumbnails, LTX-Video clips, Wan
 `~/.localcut/comfy-templates/`.
 
 Point ComfyUI at the shared weights directory with an `extra_model_paths.yaml`
-whose `base_path` is `~/.localcut/models`.
+whose `base_path` is `~/.localcut/models`. If it is not on `127.0.0.1:8188` —
+another host, another port, a container — `LOCALCUT_COMFYUI_URL` is the whole
+base URL.
 
 `LOCALCUT_COMFY_KINDS` decides which node kinds ComfyUI is allowed to serve.
 It defaults to `auto`, which claims a kind only while an installed manifest
@@ -52,7 +54,11 @@ the static override.
 `quality` parameter. It can also switch the clip model outright:
 
 ```bash
-LOCALCUT_FINAL_CLIP_MODEL=local:wan2.2-i2v-14b-fp8   # 16 GB+ GPUs
+# 16 GB+ GPUs. The engine reads this from the environment, so it goes on the
+# command that starts it — a bare assignment sets a shell variable and nothing
+# more.
+LOCALCUT_FINAL_CLIP_MODEL=local:wan2.2-i2v-14b-fp8 \
+  uv run localcut serve --backend local,mock
 ```
 
 ## Timing, audio and re-cuts
@@ -67,7 +73,8 @@ A few parameters worth knowing:
   default; `false` restores a constant-level bed.
 - **`beat_align`** (timeline) — snaps scene cuts onto the music's detected beat
   grid by flexing only the pad after each line. Speech is never cut.
-- **`speed`** (narration, 0.5–1.5) — per-line pacing.
+- **`speed`** (narration) — per-line pacing. Both narration backends clamp
+  it to 0.5–2.0; a natural-language edit will not write past 1.5.
 - **`order` / `trims` / `transitions`** (timeline) — drive re-cuts without
   re-rendering any scene.
 - **`captions`** (export) — captions burn in by default; `sidecar` keeps the

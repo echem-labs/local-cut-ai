@@ -32,6 +32,13 @@ name: CI (engine)
 # that AGENTS.md indexes CLAUDE.md's rules rather than restating them -- so a
 # rule added to CLAUDE.md alone is a change this suite has to see.
 #
+# docs/** is the third, for test_readme_contract.py: those pages state the
+# backend chain `local` expands to, the ComfyUI kind gate's default and the
+# Node floor, each of which the engine also states somewhere. They match no
+# other workflow at all, so without these lines a page edited into
+# disagreement with the code would merge with nothing run -- and prose drifts
+# in the direction that costs a reader most, by staying plausible.
+#
 # What is NOT here: the same module's whole-tree guard, which reads every
 # tracked file. A path list cannot cover that input without naming the entire
 # repository, so it runs unfiltered in repo-hygiene.yml instead. The root

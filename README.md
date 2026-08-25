@@ -28,13 +28,14 @@ up to Wan 2.2, timeline editing, scene splitting, review checkpoints, BYOK
 cloud providers, in-app model downloads, publish kits, NLE handoff, and
 natural-language editing.
 
-Installers build for Windows (NSIS) and Linux (AppImage/deb). macOS beta is
-still to come.
+Installers build for Windows (NSIS), Linux (AppImage/deb) and macOS (dmg).
+The macOS and Windows builds are unsigned for now.
 
 ## Try it
 
-No GPU, no models and no ComfyUI needed — the mock backend runs the whole
-pipeline with deterministic placeholder artifacts:
+No GPU, no models and no ComfyUI needed. You do need Python ≥3.13 with
+[uv](https://docs.astral.sh/uv/) and Node ≥22.13 — the app spawns the engine
+itself, through `uv`.
 
 ```bash
 cd apps/desktop
@@ -42,8 +43,14 @@ npm install
 npm run dev
 ```
 
-That spawns its own engine with a fresh token. To drive the API directly
-instead:
+That spawns its own engine with a fresh token, on `local,mock`: each real
+backend claims only what it can serve right now, and mock catches the rest —
+so a machine with nothing installed renders the whole pipeline in placeholder
+artifacts, and upgrades itself piece by piece as models land.
+`LOCALCUT_ENGINE_CMD` and `LOCALCUT_BACKEND` override how the shell launches it.
+
+For placeholders and nothing else — deterministic, whatever is installed —
+drive the API directly:
 
 ```bash
 cd engine
@@ -67,7 +74,7 @@ docs/           the guides linked below
 
 ## Documentation
 
-| | |
+| Guide | Covers |
 | --- | --- |
 | [Running with real models](docs/running-real-models.md) | Backends, ComfyUI, the quality ladder, timing and audio |
 | [Narration voices](docs/voices.md) | Choosing a stock voice, and consent-gated cloning |
@@ -78,7 +85,7 @@ docs/           the guides linked below
 
 ## Development
 
-**Requirements:** Python ≥3.13 with [uv](https://docs.astral.sh/uv/), Node ≥22.
+**Requirements:** Python ≥3.13 with [uv](https://docs.astral.sh/uv/), Node ≥22.13.
 
 Install the hooks once, from the repo root:
 
@@ -87,9 +94,10 @@ uv run --project engine pre-commit install
 ```
 
 Commits get `ruff check --fix` and `ruff format`. Pushes additionally get the
-engine suite, the desktop typecheck and the desktop tests — gated on which half
-of the tree you touched, so a desktop-only push does not run pytest.
-`--no-verify` skips them.
+engine suite, the desktop typecheck, the desktop tests, the icon check and the
+handful of contract tests that read a file from the other half of the tree —
+each gated on the files it actually reads, so an ordinary desktop push does not
+pay for the engine suite. `--no-verify` skips them.
 
 **Engine:**
 
@@ -100,10 +108,11 @@ uv run ruff check . && uv run ruff format --check .
 uv run localcut probe                  # hardware profile + tier
 ```
 
-`-rs` is not decoration. Without ffmpeg on `PATH` the assembly tests *skip*
-rather than fail, so the suite reads green having tested no assembly at all.
-If the skip list names the assembly module, install ffmpeg — or point
-`LOCALCUT_FFMPEG_BIN` at one — rather than believing the green.
+`-rs` is not decoration. Without ffmpeg on `PATH` the tests that assemble,
+burn in captions or read waveform peaks *skip* rather than fail, so the suite
+reads green having exercised none of it. If the skip list says `ffmpeg not
+installed`, install ffmpeg — or point `LOCALCUT_FFMPEG_BIN` at one — rather
+than believing the green.
 
 **Desktop:**
 

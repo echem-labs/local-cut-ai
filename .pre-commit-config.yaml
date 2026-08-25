@@ -153,9 +153,12 @@ repos:
 
       # The docs against the code they describe. Its own hook rather than a
       # widened license-contract, for the reason the agents-toolset comment
-      # gives: that hook runs a different module. Both halves of each claim
-      # are named -- the prose AND the value it restates -- so an edit to
-      # either side fires it.
+      # gives: that hook runs a different module.
+      #
+      # Only the documents, like the three hooks above: the engine side of
+      # each claim lives under engine/, which `engine-tests` already carries,
+      # and naming it here would run this module twice on every engine push.
+      # test_readme_contract.py reconciles this list against ci-engine.yml's.
       - id: readme-contract
         name: readme contract (pytest)
         entry: bash -c 'cd engine && uv run pytest -q tests/test_readme_contract.py'
@@ -165,7 +168,6 @@ repos:
             README\.md
             |docs/.+\.md
             |apps/desktop/package\.json
-            |engine/src/localcut_engine/config\.py
           )$
         pass_filenames: false
         stages: [pre-push]
