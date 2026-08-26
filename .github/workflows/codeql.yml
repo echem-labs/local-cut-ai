@@ -1,0 +1,109 @@
+name: CodeQL
+
+# Static analysis for the two languages this repo is written in. It is not a
+# replacement for anything already here - ruff and tsc read one file at a
+# time, and gitleaks reads strings; CodeQL follows a value from where it
+# enters the process to where it is used, which is the only way a taint
+# reaching `subprocess`, a path join, or an HTML sink is visible at all.
+#
+# Deliberately NOT path-filtered, unlike the two CI workflows. Those run tests
+# whose inputs are known, so a filter that names them is precise. This one
+# answers "is there a flaw anywhere in the tree", and a flaw does not have to
+# live in the file that exposed it: a route added under `api/` can make an
+# existing helper reachable from user input without that helper being touched.
+# Filtering by changed path would answer a different, weaker question.
+#
+# The schedule is not redundant with the push trigger. CodeQL's queries are
+# updated continuously, so a weekly run is what finds a flaw that has been in
+# unchanged code since before the query for it existed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Tuesday 04:17 UTC. Off the hour on purpose - scheduled workflows are
+    # queued at the top of the hour across all of GitHub, and a job that waits
+    # in that queue reports last week's tree.
+    - cron: "17 4 * * 2"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Whether the API this workflow uploads to will accept the result at all.
+  #
+  # Code scanning is free on a public repository and, on a private one, needs
+  # GitHub Advanced Security. Without either, `init` and `analyze` run to
+  # completion and only the upload fails - so the workflow burns four minutes
+  # and then reports red for a reason that has nothing to do with the code,
+  # which is the kind of red that teaches people to ignore a check.
+  #
+  # Asked of the API rather than assumed from the repository's visibility,
+  # because Advanced Security on a private repository is the other way to
+  # have it, and `schedule` events do not carry a repository payload to read
+  # visibility off in the first place.
+  eligible:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      scanning: ${{ steps.check.outputs.scanning }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo=$(gh api "repos/${{ github.repository }}")
+          visibility=$(echo "$repo" | jq -r '.visibility')
+          advanced=$(echo "$repo" | jq -r '.security_and_analysis.advanced_security.status // "absent"')
+          if [ "$visibility" = "public" ] || [ "$advanced" = "enabled" ]; then
+            echo "scanning=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scanning=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::code scanning is unavailable on a $visibility repository without Advanced Security ($advanced) - skipping the analysis rather than failing on the upload. This starts running by itself when either changes."
+          fi
+
+  analyze:
+    needs: eligible
+    if: needs.eligible.outputs.scanning == 'true'
+    name: ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Writing the results back IS the point of this workflow; `contents` and
+      # `actions` are what the analysis reads.
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # One per language rather than one job listing both, so a failure in
+        # one analysis still reports the other - `fail-fast: false` only helps
+        # if they are separate jobs.
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v7
+
+      # Whole tree, not `engine/` and `apps/desktop/` scoped per language.
+      # Each analysis already picks up only the files of its own language, and
+      # pointing `source-root` at a subdirectory makes every path in the
+      # result relative to it - so the Security tab links to `src/...` in a
+      # repository whose file is `engine/src/...`, and a finding you cannot
+      # click through to is most of a finding wasted.
+      #
+      # `build-mode: none` for both: neither language is compiled into what
+      # CodeQL reads, so there is nothing to build and autobuild would spend
+      # minutes discovering that.
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
