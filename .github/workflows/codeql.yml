@@ -47,6 +47,7 @@ jobs:
   # have it, and `schedule` events do not carry a repository payload to read
   # visibility off in the first place.
   eligible:
+    name: code scanning is available
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -70,7 +71,10 @@ jobs:
   analyze:
     needs: eligible
     if: needs.eligible.outputs.scanning == 'true'
-    name: ${{ matrix.language }}
+    # Prefixed rather than the bare language, because a skipped job shows its
+    # name unexpanded - and a check reading `matrix.language` says nothing
+    # about what did not run.
+    name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
