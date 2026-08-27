@@ -29,14 +29,14 @@
 # string literal in a test. The current fixture reads
 # `EXAMPLE-not-a-real-token-000000000` so neither a scanner nor a reader has
 # to make this judgement again; these lines cover the commits that still hold
-# the older, realistic-looking one. Not rewritten out of history: it grants
-# nothing, and rewriting the whole history to remove a test fixture trades a
-# real hazard (every clone and fork diverging) for a cosmetic one.
+# the older, realistic-looking one. Those commits keep it, because it grants
+# nothing and rewriting history costs every clone and fork a diverged tree -
+# a real hazard traded for a cosmetic one.
 #
 # Two entries for one fixture because the merge that brought it to main
 # reintroduces it as its own diff against the first parent, which is what the
 # history scan's --diff-merges flag exists to read. A merge commit carrying
 # content is exactly the case that flag was added for; that it also surfaces
 # an already-assessed fixture a second time is the cost of seeing it at all.
-e817172821f751b069263a69e23b12b812109a1f:engine/tests/test_api.py:generic-api-key:130
-6986b6341c4db0d248a9e38b75230c7765b07f72:engine/tests/test_api.py:generic-api-key:130
+fedfd023b5e1cc9fc46b0e462452e4cb7915286a:engine/tests/test_api.py:generic-api-key:130
+25e9d1047a9e39c970da5a04e753f9a7449f6611:engine/tests/test_api.py:generic-api-key:130

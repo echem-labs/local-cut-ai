@@ -129,7 +129,7 @@ class EngineClient:
     def request(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
             response = self._client.request(method, path, **kwargs)
-        except httpx.ConnectError as exc:
+        except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             # A handshake failure arrives WRAPPED: httpx maps ssl.SSLError to
             # httpx.ConnectError, so `except ssl.SSLError` never fires and a
             # rejected certificate reported itself as "no engine here, start
@@ -141,8 +141,29 @@ class EngineClient:
                     "self-signed certificate - pass --cert with the PEM it printed at startup.",
                     unreachable=True,
                 ) from exc
+            # ConnectTimeout belongs here and not in the generic branch below.
+            # It is not a subclass of ConnectError - it descends from
+            # TimeoutException - so it fell through to the errno this message
+            # exists to replace, and an engine that was simply not running
+            # reported itself as "could not reach ...: [Errno 60] Operation
+            # timed out". Refused and dropped are the same fact for the person
+            # reading it: nothing is answering at that address. They differ
+            # only in whether the far end said so, which is a property of the
+            # host, not of the engine - a firewalled remote box drops, and so
+            # does macOS for a port that is bound but not listening.
+            #
+            # The READ timeouts stay below, and must: an engine that accepted
+            # the connection and then went quiet is running, and telling
+            # somebody to start one sends them to fix the wrong thing.
+            dropped = (
+                ". The connection timed out rather than being refused, which is also what "
+                "a firewall in front of a remote engine looks like"
+                if isinstance(exc, httpx.ConnectTimeout)
+                else ""
+            )
             raise EngineError(
-                f"no engine at {self.url} - start one with `localcut serve`, or pass --engine",
+                f"no engine at {self.url} - start one with `localcut serve`, "
+                f"or pass --engine{dropped}",
                 unreachable=True,
             ) from exc
         except ssl.SSLError as exc:

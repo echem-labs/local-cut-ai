@@ -19,6 +19,7 @@ import threading
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 
 from conftest import free_port, serve_engine
@@ -96,6 +97,42 @@ def test_an_unreachable_engine_exits_2_and_says_how_to_start_one(capsys):
     error = capsys.readouterr().err
     assert "no engine at" in error
     assert "localcut serve" in error
+
+
+def test_a_dropped_connection_says_what_a_refused_one_does(monkeypatch, capsys):
+    """The same fact, reported by a host that drops instead of refusing.
+
+    Whether nothing-is-listening comes back as a refusal or as a timeout is a
+    property of the host, not of the engine: a firewalled remote box drops the
+    packet, and so does macOS for a port that is bound but not listening. The
+    person reading the message has the same thing to do either way.
+
+    Forced rather than provoked with a real socket, because the whole point is
+    that which one a platform produces is not under this test's control - the
+    macOS CI leg is where the gap showed up, and a test that can only fail
+    there is a test this repo would run three times a week.
+
+    `httpx.ConnectTimeout` is not a subclass of `httpx.ConnectError`; it
+    descends from `TimeoutException`. That is exactly how it reached the
+    generic branch and printed `[Errno 60] Operation timed out` - the errno
+    this message exists to replace.
+    """
+
+    def drop(*args, **kwargs):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(httpx.Client, "request", drop)
+    dead = f"http://127.0.0.1:{free_port()}"
+
+    assert cli.main(["projects", "--engine", dead, "--token", "x"]) == automation.EXIT_UNREACHABLE
+
+    error = capsys.readouterr().err
+    assert "no engine at" in error
+    assert "localcut serve" in error
+    # The one thing a refusal does not have to say. A dropped packet is the
+    # shape a firewall makes, and on a remote engine that is the likelier
+    # cause than a server nobody started.
+    assert "firewall" in error
 
 
 def test_a_bad_token_says_which_flag_fixes_it(engine, capsys):

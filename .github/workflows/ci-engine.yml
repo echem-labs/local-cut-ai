@@ -32,6 +32,20 @@ name: CI (engine)
 # that AGENTS.md indexes CLAUDE.md's rules rather than restating them -- so a
 # rule added to CLAUDE.md alone is a change this suite has to see.
 #
+# ci-desktop.yml is there for test_readme_contract.py too, and is the one
+# entry here that names a file this workflow does not otherwise care about:
+# the README states which platforms each suite runs on, and that sentence is
+# reconciled against BOTH matrices. Narrowing the desktop matrix is a change
+# to a claim the README makes, and it matches no other workflow that can run
+# pytest.
+#
+# docs/** is the third, for test_readme_contract.py: those pages state the
+# backend chain `local` expands to, the ComfyUI kind gate's default and the
+# Node floor, each of which the engine also states somewhere. They match no
+# other workflow at all, so without these lines a page edited into
+# disagreement with the code would merge with nothing run -- and prose drifts
+# in the direction that costs a reader most, by staying plausible.
+#
 # What is NOT here: the same module's whole-tree guard, which reads every
 # tracked file. A path list cannot cover that input without naming the entire
 # repository, so it runs unfiltered in repo-hygiene.yml instead. The root
@@ -48,6 +62,7 @@ on:
     paths:
       - "engine/**"
       - ".github/workflows/ci-engine.yml"
+      - ".github/workflows/ci-desktop.yml"
       - ".github/workflows/package.yml"
       - "apps/desktop/electron-builder.yml"
       - "apps/desktop/electron/engine.ts"
@@ -65,10 +80,12 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "docs/**"
   pull_request:
     paths:
       - "engine/**"
       - ".github/workflows/ci-engine.yml"
+      - ".github/workflows/ci-desktop.yml"
       - ".github/workflows/package.yml"
       - "apps/desktop/electron-builder.yml"
       - "apps/desktop/electron/engine.ts"
@@ -86,6 +103,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "docs/**"
 
 # A new push to a PR makes the previous run's result irrelevant — cancel it.
 # NOT on main: every commit there needs its own verdict. All pushes to main
@@ -113,32 +131,21 @@ jobs:
     # that reason.
     name: engine (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # The suite runs in ~90s locally; brew/choco installing ffmpeg is the
-    # slow part. Well clear of a normal run, but far below the 6h default —
-    # a wedged render backend would otherwise burn a whole runner-day.
+    # The suite runs in ~90s locally; fetching ffmpeg is the slow part. Well
+    # clear of a normal run, but far below the 6h default — a wedged render
+    # backend would otherwise burn a whole runner-day.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        # ---------------------------------------------------------------
-        # Ubuntu only WHILE THE REPO IS PRIVATE.
+        # All three. A public repository's standard runners are unmetered on
+        # every OS, so the extra legs cost wall-clock and nothing else — and
+        # they run in parallel, so they cost little of that.
         #
-        # GitHub meters a private repo's Actions minutes with a per-OS
-        # multiplier — macOS x10, Windows x2, Linux x1 — against 2,000 free
-        # minutes a month. Measured across July 2026 that put 54% of the
-        # entire monthly allowance into macOS jobs which ran for 99 real
-        # minutes, and the account reached 90% of quota with three days left
-        # in the cycle. A two-minute macOS job bills as twenty-one.
-        #
-        # RESTORE BOTH LINES THE DAY THE REPO GOES PUBLIC. Public repos get
-        # unlimited free minutes on standard runners, so the multiplier stops
-        # applying at all and there is no reason to test one platform. The
-        # cross-platform coverage is the entire point of this matrix — see
-        # the note on the job above. Tracked as a launch item alongside the
-        # license decision, in plan doc 07.
-        # ---------------------------------------------------------------
-        os: [ubuntu-latest]
-        # os: [ubuntu-latest, macos-latest, windows-latest]
+        # README.md states this list in prose, and test_readme_contract.py
+        # holds the two together: a leg dropped here without the sentence
+        # being corrected promises a contributor coverage that is gone.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     defaults:
       run:
         working-directory: engine

@@ -68,6 +68,9 @@
     "vitest": "^4.1.10",
     "wait-on": "^9.0.10"
   },
+  "engines": {
+    "node": ">=22.13"
+  },
   "author": "Hanzla Mateen <hanzlamateen@live.com>",
   "homepage": "https://github.com/echem-labs/local-cut-ai",
   "desktopName": "localcut-desktop.desktop"

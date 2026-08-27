@@ -43,18 +43,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # ---------------------------------------------------------------
-        # Ubuntu only WHILE THE REPO IS PRIVATE — Windows bills at 2x on a
-        # private repo's 2,000-minute monthly allowance. The full rationale
-        # and the measurements are in ci-engine.yml.
-        #
-        # RESTORE THE SECOND LINE THE DAY THE REPO GOES PUBLIC. Windows is
-        # the platform this project ships first (plan doc 07), and it is
-        # the one that catches the path-separator and line-ending class of
-        # bug that Ubuntu cannot see. Tracked there as a launch item.
-        # ---------------------------------------------------------------
-        os: [ubuntu-latest]
-        # os: [ubuntu-latest, windows-latest]
+        # Windows is the platform this ships first, and the only leg that can
+        # see a path separator or a line ending go wrong — both of which the
+        # desktop half writes by hand. Unmetered on a public repository.
+        os: [ubuntu-latest, windows-latest]
     defaults:
       run:
         working-directory: apps/desktop
