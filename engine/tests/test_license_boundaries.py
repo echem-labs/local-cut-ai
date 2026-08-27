@@ -110,12 +110,28 @@ _DECLARED_COPYLEFT = {
 #: Two entries here are worth knowing about before reading the rest:
 #:
 #: `cudnn64_9` is NVIDIA's, arrives in the Windows ctranslate2 wheel, and is
-#: the one name in this file whose licence restricts redistribution rather than
-#: obliging disclosure. It reaches no installer - `_FROZEN_LIBRARIES["win32"]`
-#: does not list it, the same way `av` is in every closure and in no freeze -
-#: so what it needs is a decision recorded before anything starts shipping it,
-#: not a fix. It is listed here because an inventory that omits the awkward
-#: entry is not an inventory.
+#: the one name in this file whose licence restricts REDISTRIBUTION rather than
+#: obliging disclosure - so unlike every copyleft entry around it, naming it in
+#: the NOTICE would not discharge anything.
+#:
+#: What it is, specifically, because the size is the surprising part: 266 KB,
+#: signed by NVIDIA, exporting the cuDNN API and calling `LoadLibrary` on
+#: `cudnn_graph64_9.dll`. It is the dispatch stub, not the compute libraries -
+#: those are not in the wheel, and nothing in this repo would find them if
+#: they were. `align.py` builds its `WhisperModel` with `device="cpu"`, which
+#: is the only place ctranslate2 is used at all, so the stub is never loaded.
+#:
+#: The decision that goes with it: it does not ship. It reaches no installer
+#: today - `_FROZEN_LIBRARIES["win32"]` does not list it, the same way `av` is
+#: in every closure and in no freeze - and the freeze guard below is what
+#: fails if that changes. When it does fail, the answer is NOT to add the name
+#: to that record. GPU transcription, if it is ever wanted, wants CUDA and
+#: cuDNN installed by the person running the app, which is what NVIDIA
+#: licenses them to do and this project does not; it is the arrangement
+#: ComfyUI and the ffmpeg binary already have here.
+#:
+#: Listed in this record all the same, because an inventory that omits the
+#: awkward entry is not an inventory.
 #:
 #: `pythoncom314` and `pywintypes314` carry the Python minor version in the
 #: filename, so a bump to 3.15 renames both and fails the drop-out direction
