@@ -14,6 +14,7 @@ automation contract a script actually depends on.
 
 from __future__ import annotations
 
+import argparse
 import json
 import threading
 import time
@@ -417,6 +418,74 @@ def test_render_enqueues_work_when_the_queue_was_drained(engine, capsys):
         assert run(engine, "render", project_id, "--no-wait", "--json") == 0
 
         assert json_out(capsys)["pending"] > 0
+
+
+class _TriggerStub:
+    """An engine that enqueues, then drains before /jobs is asked.
+
+    The interesting parameter is what /jobs answers AFTER the trigger: a mock
+    backend renders in microseconds, so "the queue is already empty" is a
+    state a real engine reaches on its own between two HTTP calls.
+    """
+
+    def __init__(self, enqueued: int, *, still_active: int = 0) -> None:
+        self.enqueued = enqueued
+        self.still_active = still_active
+        self.posted: list[str] = []
+
+    def post(self, path: str, **kwargs: object) -> dict:
+        self.posted.append(path)
+        return {"enqueued": self.enqueued}
+
+    def get(self, path: str, **kwargs: object) -> list[dict]:
+        assert path == "/jobs"
+        return [{"id": f"j{i}", "status": "queued"} for i in range(self.still_active)]
+
+
+def _no_wait(client, *, final: bool = False) -> None:
+    cli._render_command(
+        argparse.Namespace(project_id="p1", no_wait=True, json=True, final=final, timeout_s=60),
+        client,
+    )
+
+
+def test_no_wait_counts_the_jobs_it_queued_not_the_ones_that_survive_the_poll(capsys):
+    """The count `--no-wait` prints is the answer a script branches on.
+
+    It used to come from a /jobs poll taken after the trigger returned, which
+    the scheduler runs during. With a fast backend the whole queue can drain
+    in that gap, so the command reported "0 job(s) queued" over a render that
+    had just enqueued thirty - and did so precisely when the engine was
+    quickest. A script reading 0 as "nothing to wait for" then exports the
+    previous run's cut.
+    """
+    client = _TriggerStub(enqueued=30, still_active=0)
+
+    _no_wait(client)
+
+    assert json_out(capsys)["pending"] == 30
+
+
+def test_no_wait_still_counts_work_this_render_did_not_enqueue(capsys):
+    """Enqueueing nothing does not mean nothing is outstanding: a second
+    `render --no-wait` over a queue still draining from the first one has a
+    real count to report, and the trigger's own number is 0."""
+    client = _TriggerStub(enqueued=0, still_active=4)
+
+    _no_wait(client)
+
+    assert json_out(capsys)["pending"] == 4
+
+
+def test_no_wait_reports_a_finalize_the_same_way(capsys):
+    """--final routes to /finalize, which returns the same `enqueued` count.
+    Reading it on only one of the two branches is how they drift."""
+    client = _TriggerStub(enqueued=12, still_active=0)
+
+    _no_wait(client, final=True)
+
+    assert client.posted == ["/projects/p1/finalize"]
+    assert json_out(capsys)["pending"] == 12
 
 
 class _JobsStub:

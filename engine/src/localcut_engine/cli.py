@@ -564,18 +564,24 @@ def _render_command(args: argparse.Namespace, client) -> int:
     not_mine = frozenset() if args.no_wait else automation.settled_jobs(client, args.project_id)
 
     if args.final:
-        client.post(f"/projects/{args.project_id}/finalize")
+        trigger = client.post(f"/projects/{args.project_id}/finalize")
     else:
         # NOT an empty patch: `patch` re-plans only when an op dirtied
         # something, so `{"ops": []}` enqueued nothing and this command
         # reported "render finished" over a queue it had never filled.
-        client.post(f"/projects/{args.project_id}/render")
+        trigger = client.post(f"/projects/{args.project_id}/render")
+    enqueued = int((trigger or {}).get("enqueued") or 0)
 
     if args.no_wait:
-        pending = automation.active_jobs(client, args.project_id)
-        automation.emit(
-            {"pending": len(pending)}, as_json=args.json, lines=[f"{len(pending)} job(s) queued"]
-        )
+        # Floored at what the trigger reported it enqueued. Asking /jobs is
+        # a second round trip the scheduler runs during, so a queue that
+        # drains faster than the network answers reports fewer jobs than
+        # were just queued - and reports 0, "nothing to wait for", exactly
+        # when the engine is fastest. The count a script branches on cannot
+        # be one the engine is free to invalidate before it is read.
+        outstanding = automation.active_jobs(client, args.project_id)
+        pending = max(enqueued, len(outstanding))
+        automation.emit({"pending": pending}, as_json=args.json, lines=[f"{pending} job(s) queued"])
         return automation.EXIT_OK
 
     seen: dict[str, int] = {}
