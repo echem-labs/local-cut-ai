@@ -50,6 +50,14 @@ def _value(args: list[str], flag: str, start: int = 0) -> str:
     return args[args.index(flag, start) + 1]
 
 
+async def _join(backend: FFmpegBackend, tmp_path: Path, boundaries: list[str]) -> None:
+    """Join `len(boundaries) + 1` two-second segments with those boundary
+    transitions. The argv lands in the recorder's `calls`."""
+    segments = [{"duration": 2.0, "transition": t} for t in [*boundaries, "cut"]]
+    files = [tmp_path / f"seg{i}.mp4" for i in range(len(segments))]
+    await backend._join_segments(segments, files, tmp_path, "libx264", "4M", None)
+
+
 async def test_a_hard_looped_scene_never_shows_footage_past_the_trim(tmp_path, monkeypatch):
     """The defect: `-stream_loop -1` reads its input to EOF, so an input `-ss`
     /`-t` bounds the whole looped stream rather than each repetition. A 30s
@@ -172,3 +180,20 @@ async def test_a_referenced_narration_that_vanished_fails_loudly(tmp_path, monke
             scene="s1",
             narration=str(tmp_path / "gone.wav"),
         )
+
+
+async def test_a_crossfade_after_a_cut_agrees_on_a_timebase(tmp_path, monkeypatch):
+    """The defect: xfade refuses a pair of inputs whose timebases disagree,
+    and these two reach it from different places - the concat filter emits
+    AVTB where a raw segment carries whatever its encoder chose. A board with
+    a cut on one seam and a crossfade on the next therefore failed the whole
+    export at filter-configure time, which is two clicks from the timeline
+    strip. Stamping both sides makes the pair agree whichever fed them."""
+    backend, calls = _recording_backend(monkeypatch)
+
+    await _join(backend, tmp_path, ["cut", "crossfade"])
+    graph = _value(calls[-1], "-filter_complex")
+
+    assert "concat=n=2" in graph  # the boundary whose output carries AVTB
+    assert graph.count("settb=AVTB") == 2  # both xfade inputs, not just the raw one
+    assert "[xa2][xb2]xfade=" in graph

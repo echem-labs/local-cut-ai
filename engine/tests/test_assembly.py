@@ -232,6 +232,39 @@ async def test_reorder_trim_and_transitions(tmp_path, media):
     assert duration == pytest.approx(1.0 + 3.35 - 0.4, abs=0.2)
 
 
+async def test_a_crossfade_after_a_cut_still_exports(tmp_path, media):
+    """Regression: xfade reads its two inputs from different places depending
+    on what preceded the boundary, and refuses the pair outright when their
+    timebases disagree - so a board carrying a cut on one seam and a
+    crossfade on the next failed the whole export, not just the transition.
+    Only ffmpeg can say a filtergraph is accepted, so this one renders."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16", "transitions": {"s2": "crossfade"}}),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={
+                "s1": media["clip1"],
+                "s1.audio": media["narr2"],
+                "s2": media["clip2"],
+                "s2.audio": media["narr18"],
+                "s3": media["clip1"],
+                "s3.audio": media["narr2"],
+            },
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    assert [seg["transition"] for seg in edl["video"]][:2] == ["cut", "crossfade"]
+
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"resolution": 480}, output_hash="e" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
+
+
 async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media):
     """Three consecutive crossfades chain three amix stages. A mix that
     reaches the encoder unrestamped ends the AAC stream seconds into a

@@ -639,8 +639,17 @@ class FFmpegBackend(ExecutionBackend):
                 and duration_i > CROSSFADE_S * 2
             ):
                 offset = cur_duration - CROSSFADE_S
+                # settb on both sides because xfade refuses a pair of inputs
+                # whose timebases disagree, and these two reach it from
+                # different places: the concat filter emits AVTB (1/1000000)
+                # while a raw segment carries whatever its encoder chose
+                # (1/12288 for 24fps). Without this a crossfade that follows
+                # a cut or a dip fails the entire export at filter-configure
+                # time — a shape the board offers on any seam.
+                steps.append(f"{cur_v}settb=AVTB[xa{i}]")
+                steps.append(f"[{i}:v]settb=AVTB[xb{i}]")
                 steps.append(
-                    f"{cur_v}[{i}:v]xfade=transition=fade:"
+                    f"[xa{i}][xb{i}]xfade=transition=fade:"
                     f"duration={CROSSFADE_S}:offset={offset:.3f}[v{i}]"
                 )
                 # Audio overlaps at full level (delay + mix), NOT acrossfade:
