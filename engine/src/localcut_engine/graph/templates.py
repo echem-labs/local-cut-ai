@@ -210,6 +210,17 @@ def _ensure_node(graph: StoryGraph, node_id: str, kind: NodeKind, params: dict) 
     return node
 
 
+def take_node_id(clip_id: str, take: int) -> str:
+    """The node id of one clip take.
+
+    Take 1 keeps the bare clip id, so a single-take scene carries no suffix
+    and the common case reads `s1.clip`; every later take appends its own
+    number. The trailing digit is therefore the take number itself, which is
+    what the desktop reads back to label it.
+    """
+    return clip_id if take == 1 else f"{clip_id}{take}"
+
+
 def _ensure_edge(graph: StoryGraph, src: str, dst: str, port: str = "default") -> None:
     if not any(e.src == src and e.dst == dst and e.port == port for e in graph.edges):
         graph.connect(src, dst, port=port)
@@ -311,7 +322,7 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
         takes = max(1, math.ceil(scene.duration_s / MAX_CLIP_S))
         take_s = round(scene.duration_s / takes, 3)
         for take in range(1, takes + 1):
-            take_id = clip_id if take == 1 else f"{clip_id}{take}"
+            take_id = take_node_id(clip_id, take)
             params = {
                 "prompt": scene.visual,
                 # Later takes vary the camera direction: same approved

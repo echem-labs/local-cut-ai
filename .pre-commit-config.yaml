@@ -97,6 +97,8 @@ repos:
               lib/(formats|tools|eta|oom)\.ts
               |api/(client|types)\.ts
               |screens/(Home|Settings)\.tsx
+              |components/(NewSceneDialog|TimelineStrip)\.tsx
+              |help/terms\.ts
               |styles/(app|tokens)\.css
               |i18n/en/[a-z]+\.json
               |assets/voices/.+\.wav
