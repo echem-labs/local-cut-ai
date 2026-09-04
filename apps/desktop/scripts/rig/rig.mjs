@@ -41,6 +41,34 @@ export async function evalInApp(body) {
   return payload.result;
 }
 
+/** Clears the readiness gate when it has intercepted a render click.
+ *
+ * Every render entry point routes through `useReadinessGuard`, and a rig runs
+ * against the mock backend with no models installed, so the gate answering
+ * Generate is the expected path rather than an anomaly. A walk that goes
+ * straight to waiting for the surface behind it waits for something the
+ * dialog is holding back, and times out having proved nothing about the
+ * screens it meant to check.
+ *
+ * Interpolated into an `evalInApp` body, where `page` is in scope. The gate's
+ * own footer puts "Render anyway" last, which is the button dialogs.mjs
+ * asserts on.
+ */
+export const DISMISS_READINESS_GATE = `
+    {
+      const gated = await page
+        .waitForSelector('[role="alertdialog"]', { timeout: 3000 })
+        .then(() => true)
+        .catch(() => false);
+      if (gated) {
+        await page.evaluate(() => {
+          const act = [...document.querySelectorAll('[role="alertdialog"] .modal-foot button')].pop();
+          act?.click();
+        });
+      }
+    }
+`;
+
 export async function health() {
   const response = await fetch(BASE, { headers: HEADERS });
   if (response.status === 403) throw new StaleRigError(`another rig owns ${BASE}`);
