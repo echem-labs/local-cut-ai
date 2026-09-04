@@ -22,7 +22,9 @@ export function CheckpointBanner() {
     script?.artifact_hash && client && currentProject
       ? client.artifactUrl(currentProject.id, script.artifact_hash)
       : null;
-  const screenplay = useScreenplay(stage === "script" && showScript ? scriptUrl : null);
+  const { screenplay, error: screenplayError } = useScreenplay(
+    stage === "script" && showScript ? scriptUrl : null,
+  );
 
   if (!stage) return null;
 
@@ -68,7 +70,7 @@ export function CheckpointBanner() {
         (screenplay ? (
           <ScriptTable screenplay={screenplay} />
         ) : (
-          <div className="hint">{t("checkpoint.loadingScript")}</div>
+          <div className="hint">{screenplayError ?? t("checkpoint.loadingScript")}</div>
         ))}
     </div>
   );
