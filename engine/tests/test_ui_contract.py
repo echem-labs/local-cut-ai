@@ -22,8 +22,53 @@ from conftest import ci_engine_paths_by_trigger, hook_files_pattern, matches_a_p
 
 _DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
 _FORMATS = _DESKTOP / "src" / "lib" / "formats.ts"
+_TOOLS_TS = _DESKTOP / "src" / "lib" / "tools.ts"
+_ETA = _DESKTOP / "src" / "lib" / "eta.ts"
+_OOM = _DESKTOP / "src" / "lib" / "oom.ts"
+_CLIENT = _DESKTOP / "src" / "api" / "client.ts"
+_TYPES = _DESKTOP / "src" / "api" / "types.ts"
+_HOME = _DESKTOP / "src" / "screens" / "Home.tsx"
+_SETTINGS = _DESKTOP / "src" / "screens" / "Settings.tsx"
+_APP_CSS = _DESKTOP / "src" / "styles" / "app.css"
+_TOKENS_CSS = _DESKTOP / "src" / "styles" / "tokens.css"
 _ENGINE_TS = _DESKTOP / "electron" / "engine.ts"
 _U7 = _DESKTOP / "scripts" / "rig" / "u7.mjs"
+_I18N = _DESKTOP / "src" / "i18n" / "en"
+_VOICE_ASSETS = _DESKTOP / "src" / "assets" / "voices"
+
+# The desktop label catalogs this module reconciles against engine ids.
+_CATALOGS = (
+    "failure.json",
+    "models.json",
+    "notices.json",
+    "project.json",
+    "readiness.json",
+    "status.json",
+    "tools.json",
+    "voices.json",
+)
+
+# Every desktop file this module reads, in one place, because the guard at the
+# foot of this file derives from it: ci-engine.yml's path filters and the
+# pre-push hook are held to naming all of them, so a read added above extends
+# that check by construction. A second list kept in step by hand is exactly
+# the drift the rest of this module exists to catch, and it is what let this
+# guard fall behind to three of them.
+_DESKTOP_READS: tuple[Path, ...] = (
+    _FORMATS,
+    _TOOLS_TS,
+    _ETA,
+    _OOM,
+    _CLIENT,
+    _TYPES,
+    _HOME,
+    _SETTINGS,
+    _APP_CSS,
+    _TOKENS_CSS,
+    _ENGINE_TS,
+    _U7,
+    *(_I18N / name for name in _CATALOGS),
+)
 
 # Every file this module reads, not just the first one it happened to need: a
 # checkout carrying the app source without the rig scripts raises
@@ -98,7 +143,7 @@ def test_the_ws_token_subprotocol_matches_on_both_sides():
     never receives a progress event again."""
     from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL
 
-    client = _FORMATS.parent.parent / "api" / "client.ts"
+    client = _CLIENT
     match = re.search(r'const WS_TOKEN_SUBPROTOCOL = "([^"]+)"', client.read_text(encoding="utf-8"))
     assert match, "client.ts no longer declares WS_TOKEN_SUBPROTOCOL"
     assert match.group(1) == WS_TOKEN_SUBPROTOCOL
@@ -165,9 +210,7 @@ def test_every_board_status_has_a_ui_case_and_a_label():
         f"only in engine {sorted(set(SCENE_NODE_STATUSES) - declared)}"
     )
 
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "status.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "status.json").read_text(encoding="utf-8"))
     missing = [s for s in SCENE_NODE_STATUSES if s not in catalog]
     assert not missing, f"no label in status.json for: {missing}"
 
@@ -180,7 +223,7 @@ def test_notice_codes_match_the_desktop_catalog():
 
     from localcut_engine.notices import NOTICE_CODES
 
-    catalog_path = _FORMATS.parents[1] / "i18n" / "en" / "notices.json"
+    catalog_path = _I18N / "notices.json"
     assert catalog_path.exists(), "the desktop has no notices.json catalog"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
 
@@ -226,9 +269,7 @@ def test_readiness_vocabulary_matches_the_desktop():
 
     # Every reason needs a sentence, or the row renders as nothing. "ok" is
     # the exception: a ready row is never described to anyone.
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "readiness.json").read_text("utf-8")
-    )
+    catalog = json.loads((_I18N / "readiness.json").read_text("utf-8"))
     described = set(catalog["reasons"])
     assert described == set(READINESS_REASONS) - {"ok"}, (
         f"readiness.json and READINESS_REASONS disagree: "
@@ -342,9 +383,7 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in engine {sorted(set(TOOL_KINDS) - declared)}"
     )
 
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "tools.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "tools.json").read_text(encoding="utf-8"))
     assert set(catalog) == set(TOOL_KINDS), (
         f"tools.json and TOOL_KINDS disagree: "
         f"only in the catalog {sorted(set(catalog) - set(TOOL_KINDS))}, "
@@ -365,7 +404,7 @@ def test_quick_tool_kinds_agree_across_the_boundary():
     # helper). TS proves each entry IS a ToolKind but never that all of them
     # are there, so dropping one would silently leave a shipped tool with no
     # card, no label and no icon -- every existing test still green.
-    lib = (_FORMATS.parent / "tools.ts").read_text(encoding="utf-8")
+    lib = _TOOLS_TS.read_text(encoding="utf-8")
     array = re.search(r"const TOOL_KINDS\s*=\s*\[(.*?)\]", lib, re.S)
     assert array, "lib/tools.ts no longer declares the TOOL_KINDS array"
     listed = set(re.findall(r'"([^"]+)"', array.group(1)))
@@ -385,9 +424,7 @@ def test_history_kinds_have_labels_in_the_desktop_catalog():
 
     from localcut_engine.project.store import SNAPSHOT_KINDS
 
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "project.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "project.json").read_text(encoding="utf-8"))
     labels = set(catalog.get("historyKinds", {}))
     assert labels == set(SNAPSHOT_KINDS), (
         f"historyKinds and SNAPSHOT_KINDS disagree: "
@@ -482,7 +519,7 @@ def test_every_swatch_has_a_preview_the_app_can_play():
     bytes ship."""
     import wave
 
-    assets = _FORMATS.parents[1] / "assets" / "voices"
+    assets = _VOICE_ASSETS
     for _, voice in _voice_swatches():
         sample = assets / f"{voice}.wav"
         assert sample.exists(), f"the {voice} swatch has no preview at {sample}"
@@ -502,7 +539,7 @@ def test_voice_language_codes_match_the_desktop_catalog():
 
     from localcut_engine.backends.kokoro import _GENDERS, _VOICE_LANGUAGES
 
-    catalog_path = _FORMATS.parents[1] / "i18n" / "en" / "voices.json"
+    catalog_path = _I18N / "voices.json"
     assert catalog_path.exists(), "the desktop has no voices.json catalog"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
 
@@ -543,9 +580,7 @@ def test_swatch_voice_names_match_what_the_engine_derives():
 
     from localcut_engine.backends.kokoro import describe_voice
 
-    catalog = json.loads(
-        (_FORMATS.parents[1] / "i18n" / "en" / "voices.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "voices.json").read_text(encoding="utf-8"))
     for voice_id, label in catalog["names"].items():
         assert describe_voice(voice_id)["name"] == label, (
             f"voices.json calls {voice_id} {label!r}, the engine derives "
@@ -556,20 +591,24 @@ def test_swatch_voice_names_match_what_the_engine_derives():
 def test_ci_runs_this_module_for_the_desktop_files_it_reads():
     """A contract test that cannot fire is not a contract.
 
-    The assertions above read the desktop's label catalogs and its committed
-    voice previews, and a PR touching only those matches `apps/desktop/**` —
-    ci-desktop, which runs vitest and tsc, neither of which can execute
-    pytest. So ci-engine's path filter and the pre-push hook have to name
-    them, the way they already name lib/tools.ts. Both are checked: the hook
-    is what catches it before the push, and the workflow is what catches a
-    PR opened from a machine without the hook installed — and both of the
-    workflow's triggers, which carry the list separately.
+    The assertions above read the desktop's source, its label catalogs and
+    its committed voice previews, and a PR touching only those matches
+    `apps/desktop/**` — ci-desktop, which runs vitest and tsc, neither of
+    which can execute pytest. So ci-engine's path filter and the pre-push
+    hook have to name them. Both are checked: the hook is what catches it
+    before the push, and the workflow is what catches a PR opened from a
+    machine without the hook installed — and both of the workflow's
+    triggers, which carry the list separately.
+
+    The list checked is `_DESKTOP_READS` itself, not a copy of it. A guard
+    over a hand-written subset only ever proves the subset, and says nothing
+    about the read added next to it.
     """
-    reads = [
-        "apps/desktop/src/lib/tools.ts",
-        "apps/desktop/src/i18n/en/voices.json",
-        f"apps/desktop/src/assets/voices/{_voice_swatches()[0][1]}.wav",
-    ]
+    root = _DESKTOP.parents[1]
+    reads = [path.relative_to(root).as_posix() for path in _DESKTOP_READS]
+    # The committed previews are read as a directory, so name one concrete
+    # file: a glob proves nothing about whether the filter reaches a .wav.
+    reads.append(f"apps/desktop/src/assets/voices/{_voice_swatches()[0][1]}.wav")
 
     filters = ci_engine_paths_by_trigger()
     for trigger in ("push", "pull_request"):
@@ -601,7 +640,7 @@ def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():
     from localcut_engine.graph.compiler import JobSpec
     from localcut_engine.graph.model import NodeKind
 
-    eta = (_FORMATS.parent / "eta.ts").read_text(encoding="utf-8")
+    eta = _ETA.read_text(encoding="utf-8")
     kinds = set(re.findall(r'engineMedian\("([a-z_]+)",', eta))
     assert kinds, "lib/eta.ts no longer calls engineMedian — update this test with it"
     known = {kind.value for kind in NodeKind}
@@ -628,7 +667,7 @@ def test_the_smaller_model_chip_offers_tasks_the_engine_can_actually_serve():
     from localcut_engine.graph.model import NodeKind
     from localcut_engine.manifest.capability import COMFY_TASKS
 
-    oom = (_FORMATS.parent / "oom.ts").read_text(encoding="utf-8")
+    oom = _OOM.read_text(encoding="utf-8")
     body = re.search(r"export function tasksForNode\(.*?\n}", oom, re.S)
     assert body, "lib/oom.ts no longer declares tasksForNode — update this test with it"
     returns = re.findall(r"if \((.+?)\) return \[(.*?)\];", body.group(0))
@@ -676,9 +715,7 @@ def test_every_oom_suggestion_the_scheduler_sends_has_a_chip_that_acts_on_it():
     codes = set(re.findall(r'"([^"]+)"', match.group(1)))
     assert codes, "the scheduler's suggestion list is empty — update this test with it"
 
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "failure.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "failure.json").read_text(encoding="utf-8"))
     assert codes <= set(catalog["suggestion"]), (
         f"no chip label in failure.json for: {sorted(codes - set(catalog['suggestion']))}"
     )
@@ -723,15 +760,11 @@ def test_the_code_execution_warning_has_no_second_copy_in_the_desktop():
 
 
 def _stylesheet() -> str:
-    return (
-        Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "styles" / "app.css"
-    ).read_text(encoding="utf-8")
+    return _APP_CSS.read_text(encoding="utf-8")
 
 
 def _tokens() -> str:
-    return (
-        Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "styles" / "tokens.css"
-    ).read_text(encoding="utf-8")
+    return _TOKENS_CSS.read_text(encoding="utf-8")
 
 
 def test_every_custom_property_the_stylesheet_reads_is_one_that_exists():
@@ -790,9 +823,7 @@ def test_every_defaultable_task_has_a_label_and_a_hint():
 
     from localcut_engine.manifest.defaults import DEFAULTABLE_TASKS
 
-    catalog = json.loads(
-        (_FORMATS.parent.parent / "i18n" / "en" / "models.json").read_text(encoding="utf-8")
-    )
+    catalog = json.loads((_I18N / "models.json").read_text(encoding="utf-8"))
     tasks = set(DEFAULTABLE_TASKS)
     labels = set(catalog.get("taskLabels", {}))
     hints = set(catalog.get("taskHints", {}))
@@ -820,7 +851,7 @@ def test_the_settings_picker_agrees_on_which_tasks_the_llm_server_serves():
     """
     from localcut_engine.manifest.defaults import _SERVER_TASKS
 
-    settings = (_FORMATS.parent.parent / "screens" / "Settings.tsx").read_text(encoding="utf-8")
+    settings = _SETTINGS.read_text(encoding="utf-8")
     match = re.search(r"const SERVER_TASKS = \[(.*?)\]", settings, re.S)
     assert match, "Settings.tsx no longer declares SERVER_TASKS — update this test with it"
     mirrored = tuple(re.findall(r'"([^"]+)"', match.group(1)))
@@ -844,7 +875,7 @@ def test_the_vision_timeout_matches_the_engines():
     """
     from localcut_engine.config import EngineConfig
 
-    client = (_FORMATS.parent.parent / "api" / "client.ts").read_text(encoding="utf-8")
+    client = _CLIENT.read_text(encoding="utf-8")
     match = re.search(r"VISION_TIMEOUT_MS = ([\d_]+)", client)
     assert match, "client.ts no longer declares VISION_TIMEOUT_MS — update this test with it"
     assert int(match.group(1).replace("_", "")) == EngineConfig().llm_timeout_s * 1000, (
