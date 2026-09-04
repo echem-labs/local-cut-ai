@@ -629,6 +629,7 @@ class FFmpegBackend(ExecutionBackend):
         steps: list[str] = []
         cur_v, cur_a = "[0:v]", "[0:a]"
         cur_duration = float(segments[0]["duration"])
+        mixed_audio = False
         for i in range(1, len(scene_files)):
             duration_i = float(segments[i]["duration"])
             boundary = segments[i - 1].get("transition", "cut")
@@ -652,10 +653,21 @@ class FFmpegBackend(ExecutionBackend):
                     f"dropout_transition=0:normalize=0[a{i}]"
                 )
                 cur_duration += duration_i - CROSSFADE_S
+                mixed_audio = True
             else:
                 steps.append(f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]")
                 cur_duration += duration_i
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
+
+        if mixed_audio:
+            # amix can emit frames carrying AV_NOPTS_VALUE, and chaining one
+            # per crossfade makes it likely: past some point every packet's
+            # DTS advances a single tick instead of a frame, the muxer's
+            # non-monotonic fixup takes over, and the AAC stream ends seconds
+            # into a complete picture. Restamping the mix before the encoder
+            # is what keeps the program audio as long as the program.
+            steps.append(f"{cur_a}aresample=async=1:first_pts=0[aout]")
+            cur_a = "[aout]"
 
         if burn is not None:
             steps.append(f"{cur_v}ass='{_filter_path(burn)}'[vout]")

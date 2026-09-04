@@ -159,6 +159,34 @@ async def test_export_skips_placeholder_music(tmp_path, media):
     assert [notice.code for notice in export_ctx.notices] == [EXPORT_MUSIC_BED_DROPPED]
 
 
+def audio_stream_duration(backend, path) -> float:
+    """The decoded length of the AUDIO stream alone.
+
+    `_probe_duration` reads `format=duration`, which a container reports from
+    its longest stream — the picture. A file whose audio ends early is
+    indistinguishable from a good one there, so anything asserting that the
+    narration survived has to ask the audio stream directly.
+    """
+    probe = subprocess.run(
+        [
+            backend.ffprobe_bin,
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return float(probe.stdout.strip())
+
+
 async def test_reorder_trim_and_transitions(tmp_path, media):
     """Timeline v1 ops: order overrides scene sort, trims pick the clip
     window, crossfades shorten the program by their overlap."""
@@ -202,6 +230,71 @@ async def test_reorder_trim_and_transitions(tmp_path, media):
     duration = await backend._probe_duration(out)
     # s2 (1.0s) + s1 (3.35s) - crossfade overlap (0.4s)
     assert duration == pytest.approx(1.0 + 3.35 - 0.4, abs=0.2)
+
+
+async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media):
+    """Three consecutive crossfades chain three amix stages. A mix that
+    reaches the encoder unrestamped ends the AAC stream seconds into a
+    complete picture — a finished video that plays with most of its
+    narration missing, and one that stays: exports are content-addressed, so
+    a re-plan of the same graph serves the same file back.
+
+    Both assertions earn their place. The audio-stream duration is the
+    property a viewer actually experiences, but the corruption behind it
+    surfaces only when the box is loaded enough to starve the filter chain,
+    so on its own it would pass most runs. The filtergraph assertion is
+    deterministic, and is what holds the invariant.
+    """
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+
+    filtergraphs: list[str] = []
+    inner = backend._run
+
+    async def record(*args, **kwargs):
+        if "-filter_complex" in args:
+            filtergraphs.append(args[args.index("-filter_complex") + 1])
+        return await inner(*args, **kwargs)
+
+    backend._run = record
+
+    timeline_path = await backend.execute(
+        make_spec(
+            NodeKind.TIMELINE,
+            {
+                "aspect": "9:16",
+                "transitions": {"s1": "crossfade", "s2": "crossfade", "s3": "crossfade"},
+            },
+        ),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={
+                "s1": media["clip1"],
+                "s1.audio": media["narr1"],
+                "s2": media["clip2"],
+                "s2.audio": media["narr18"],
+                "s3": media["clip1"],
+                "s3.audio": media["narr2"],
+                "s4": media["clip2"],
+                "s4.audio": media["narr1"],
+            },
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    assert [seg["transition"] for seg in edl["video"]][:3] == ["crossfade"] * 3
+
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="c" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+
+    joined = next(fc for fc in filtergraphs if "amix" in fc)
+    assert joined.count("amix") == 3  # one per crossfade boundary
+    # The mix is restamped before it reaches the encoder.
+    assert "aresample=async=1:first_pts=0[aout]" in joined
+
+    # And the program audio is as long as the program.
+    assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
 
 
 async def test_captions_burn_in(tmp_path, media):
