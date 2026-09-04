@@ -178,3 +178,54 @@ describe("choosing for the whole project", () => {
     expect(await screen.findByText("node is pinned")).toBeInTheDocument();
   });
 });
+
+describe("the voice-cloning control", () => {
+  /** As `mount`, but with the pack's cloning answer under the test's control. */
+  function mountWithCloning(cloning: boolean | undefined) {
+    useApp.setState({
+      board: {
+        scenes: [scene("s1", node("s1.narration", { text: "one", voice: "clear" }))],
+        aux: {},
+      } as unknown as Board,
+      selectedNode: "s1.narration",
+      applyNode: vi.fn().mockResolvedValue(null),
+      setProjectVoice: vi.fn().mockResolvedValue(null),
+      applyClonedVoice: vi.fn().mockResolvedValue(null),
+      client: {
+        voices: vi.fn().mockResolvedValue({ ...PACK, cloning }),
+        voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
+      },
+    } as never);
+    return render(<Inspector />);
+  }
+
+  /** The clone control lives under the collapsed Advanced disclosure. */
+  const openCloneControls = async () => {
+    fireEvent.click(await screen.findByRole("tab", { name: /voice/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /advanced/i }));
+  };
+
+  it("is offered when the engine says cloning can run", async () => {
+    mountWithCloning(true);
+    await openCloneControls();
+    expect(await screen.findByLabelText(/voice sample/i)).toBeInTheDocument();
+  });
+
+  it("is withheld, with a reason, when the runtime is absent", async () => {
+    // Applying a clone rewrites every narration node at once, so offering it
+    // against an engine that cannot run it fails the whole project's
+    // narration and leaves the user editing each node by hand to recover.
+    mountWithCloning(false);
+    await openCloneControls();
+    await waitFor(() => expect(screen.queryByLabelText(/voice sample/i)).toBeNull());
+    expect(screen.getByText(/chatterbox-tts/)).toHaveAttribute("role", "note");
+  });
+
+  it("is withheld against an engine too old to answer", async () => {
+    // `undefined` is not "yes": an older engine has no `cloning` field, and
+    // guessing true there is the same failure with an extra step.
+    mountWithCloning(undefined);
+    await openCloneControls();
+    await waitFor(() => expect(screen.queryByLabelText(/voice sample/i)).toBeNull());
+  });
+});

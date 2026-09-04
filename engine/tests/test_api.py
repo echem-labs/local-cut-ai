@@ -1691,7 +1691,10 @@ async def test_voices_is_unavailable_when_the_pack_is_not_downloaded(tmp_path):
         app.router.lifespan_context(app),
     ):
         body = (await http.get("/voices")).json()
-    assert body == {"available": False, "voices": [], "default": None}
+    # `cloning` rides along in both shapes: it is a different backend and a
+    # different optional runtime, so an unavailable stock pack says nothing
+    # about whether cloning could run.
+    assert body == {"available": False, "voices": [], "default": None, "cloning": False}
 
 
 def _stub_narration(monkeypatch, voice_ids):

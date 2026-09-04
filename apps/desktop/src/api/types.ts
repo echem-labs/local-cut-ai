@@ -613,4 +613,10 @@ export interface Voices {
   available: boolean;
   voices: Voice[];
   default: string | null;
+  /** Whether voice cloning can run at all — the optional chatterbox runtime
+   * is present AND in the backend chain. Independent of `available`, which
+   * is about the stock-voice pack: the two route to different backends.
+   * Absent from an older engine, which is why callers treat undefined as
+   * "do not offer it" rather than as true. */
+  cloning?: boolean;
 }
