@@ -67,6 +67,11 @@ _MAX_LOOPS = 30  # loop-with-crossfade input cap (degenerate short clips)
 # How long a terminated child gets to exit before it is killed outright.
 _KILL_GRACE_S = 2.0
 
+# How far the exported audio may fall short of the program before the export
+# is refused instead of published. Generous on purpose: a healthy render lands
+# within an AAC frame of the EDL, and the failure this catches loses seconds.
+AUDIO_SHORTFALL_S = 0.5
+
 # Export bitrate by quality tier; draft favors speed, final favors fidelity.
 _VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
 
@@ -573,6 +578,19 @@ class FFmpegBackend(ExecutionBackend):
                 # Same container either side — the no-music path is a rename,
                 # not a remux.
                 shutil.move(str(cut), str(partial))
+            # Nothing else in the pipeline can see a mix that lost its
+            # timestamps: ffmpeg exits 0, and `format=duration` reports the
+            # picture's length whichever way the audio went. Publishing it
+            # is what makes the loss permanent — store.py serves any file
+            # present in generated/ as a finished render, so the node is
+            # never re-enqueued. Refuse instead, and the next attempt renders.
+            program = _as_float(timeline.get("duration"), 0.0)
+            heard = await self._probe_audio_duration(partial)
+            if program > 0 and (heard is None or heard < program - AUDIO_SHORTFALL_S):
+                raise GenerationError(
+                    f"export audio ran {heard}s against a {program}s program - "
+                    "discarded rather than cached; run the export again"
+                )
             os.replace(partial, out)  # atomic publish within generated/
         finally:
             if partial is not None:
@@ -613,9 +631,10 @@ class FFmpegBackend(ExecutionBackend):
         audio_kbps: int | None = None,
     ) -> Path:
         """Pairwise transition chain: cut/dip boundaries concat, crossfade
-        boundaries xfade+acrossfade. The concat *filter* (not the demuxer) is
-        deliberate — stream-copy concat of AAC segments accumulates timestamp
-        gaps and drifts total duration; the re-encode is sample-exact."""
+        boundaries xfade for the picture and a delayed amix for the audio.
+        The concat *filter* (not the demuxer) is deliberate — stream-copy
+        concat of AAC segments accumulates timestamp gaps and drifts total
+        duration, where the re-encoded filter path holds its length."""
         cut = work / "cut.mp4"
         inputs: list[str] = []
         for path in scene_files:
@@ -1084,15 +1103,30 @@ class FFmpegBackend(ExecutionBackend):
         return np.frombuffer(stdout, dtype=np.float32)
 
     async def _probe_duration(self, path: Path) -> float | None:
+        return await self._probe_seconds(path, "format=duration")
+
+    async def _probe_audio_duration(self, path: Path) -> float | None:
+        """The decoded length of the audio stream alone, or None where there
+        is no readable one. `format=duration` is the container's longest
+        stream — the picture — so a file whose audio stopped early reads as
+        healthy there; only the stream itself says how much of the program
+        a viewer would actually hear."""
+        return await self._probe_seconds(path, "stream=duration", select="a:0")
+
+    async def _probe_seconds(
+        self, path: Path, entries: str, select: str | None = None
+    ) -> float | None:
         if not path.exists():
             return None
+        selection = ["-select_streams", select] if select is not None else []
         try:
             process = await asyncio.create_subprocess_exec(
                 self.ffprobe_bin,
                 "-v",
                 "error",
+                *selection,
                 "-show_entries",
-                "format=duration",
+                entries,
                 "-of",
                 "csv=p=0",
                 str(path),

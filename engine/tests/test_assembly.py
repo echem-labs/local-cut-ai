@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import make_spec
 
-from localcut_engine.backends.base import ExecutionContext
+from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
@@ -32,6 +32,52 @@ def synth(tmp_path, name: str, args: list[str]):
         check=True,
     )
     return out
+
+
+def ffprobe(backend, path, entries: str, *, fmt: str = "json", select: str | None = None) -> str:
+    """Raw ffprobe output for `entries`. One place, so a binary override or a
+    timeout lands on every probe in the suite rather than the newest one."""
+    selection = ["-select_streams", select] if select is not None else []
+    probe = subprocess.run(
+        [
+            backend.ffprobe_bin,
+            "-v",
+            "error",
+            *selection,
+            "-show_entries",
+            entries,
+            "-of",
+            fmt,
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return probe.stdout
+
+
+def video_stream(backend, path, entries: str = "stream=codec_type,width,height") -> dict:
+    """The file's video stream row."""
+    streams = json.loads(ffprobe(backend, path, entries))["streams"]
+    return next(s for s in streams if s["codec_type"] == "video")
+
+
+def audio_stream_duration(backend, path) -> float:
+    """The decoded length of the AUDIO stream alone.
+
+    `_probe_duration` reads `format=duration`, which a container reports from
+    its longest stream — the picture. A file whose audio ends early is
+    indistinguishable from a good one there, so anything asserting that the
+    narration survived has to ask the audio stream directly.
+    """
+    # ffprobe exits 0 and prints nothing for a file with no audio stream, and
+    # "N/A" where the container carries no per-stream duration. Both are the
+    # worst version of what this helper is here to catch, so say so rather
+    # than raising ValueError out of the measurement.
+    raw = ffprobe(backend, path, "stream=duration", fmt="csv=p=0", select="a:0").strip()
+    assert raw and raw != "N/A", f"{path} carries no readable audio stream (ffprobe: {raw!r})"
+    return float(raw)
 
 
 @pytest.fixture
@@ -104,24 +150,8 @@ async def test_timeline_and_export_narration_drives_timing(tmp_path, media):
     expected = (3 + 1) + 2 * 0.35
     assert duration == pytest.approx(expected, abs=0.15)  # concat must not drift
 
-    probe = subprocess.run(
-        [
-            backend.ffprobe_bin,
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,width,height",
-            "-of",
-            "json",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    streams = json.loads(probe.stdout)["streams"]
-    kinds = {s["codec_type"] for s in streams}
-    assert kinds == {"video", "audio"}
+    streams = json.loads(ffprobe(backend, out, "stream=codec_type,width,height"))["streams"]
+    assert {s["codec_type"] for s in streams} == {"video", "audio"}
     video = next(s for s in streams if s["codec_type"] == "video")
     assert (video["width"], video["height"]) == (1080, 1920)
 
@@ -157,34 +187,6 @@ async def test_export_skips_placeholder_music(tmp_path, media):
     from localcut_engine.notices import EXPORT_MUSIC_BED_DROPPED
 
     assert [notice.code for notice in export_ctx.notices] == [EXPORT_MUSIC_BED_DROPPED]
-
-
-def audio_stream_duration(backend, path) -> float:
-    """The decoded length of the AUDIO stream alone.
-
-    `_probe_duration` reads `format=duration`, which a container reports from
-    its longest stream — the picture. A file whose audio ends early is
-    indistinguishable from a good one there, so anything asserting that the
-    narration survived has to ask the audio stream directly.
-    """
-    probe = subprocess.run(
-        [
-            backend.ffprobe_bin,
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=duration",
-            "-of",
-            "csv=p=0",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return float(probe.stdout.strip())
 
 
 async def test_reorder_trim_and_transitions(tmp_path, media):
@@ -232,10 +234,42 @@ async def test_reorder_trim_and_transitions(tmp_path, media):
     assert duration == pytest.approx(1.0 + 3.35 - 0.4, abs=0.2)
 
 
+async def test_an_export_whose_audio_did_not_survive_is_not_published(tmp_path, media, monkeypatch):
+    """ffmpeg exits 0 on a mix that lost its timestamps, and the container
+    still reports the picture's length, so nothing downstream can tell a
+    truncated export from a good one. Publishing is what makes it permanent:
+    store.py serves any file present in generated/ as a finished render, so
+    the node is never re-enqueued and a re-plan hands the same file back.
+    Refusing leaves something to retry."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"s1": media["clip1"], "s1.audio": media["narr1"]},
+        ),
+    )
+
+    async def truncated(_path):
+        return 0.4  # a 3.35s program that ships 0.4s of narration
+
+    monkeypatch.setattr(backend, "_probe_audio_duration", truncated)
+
+    with pytest.raises(GenerationError, match="discarded rather than cached"):
+        await backend.execute(
+            make_spec(NodeKind.EXPORT, {"resolution": 480}, output_hash="f" * 64),
+            ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+        )
+    assert not (out_dir / f"{'f' * 64}.mp4").exists()  # nothing for the cache to serve
+    assert not list(out_dir.glob(".partial-*"))  # and no temp left to find later
+
+
 async def test_a_crossfade_after_a_cut_still_exports(tmp_path, media):
     """Regression: xfade reads its two inputs from different places depending
     on what preceded the boundary, and refuses the pair outright when their
-    timebases disagree - so a board carrying a cut on one seam and a
+    timebases disagree — so a board carrying a cut on one seam and a
     crossfade on the next failed the whole export, not just the transition.
     Only ffmpeg can say a filtergraph is accepted, so this one renders."""
     backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
@@ -265,18 +299,17 @@ async def test_a_crossfade_after_a_cut_still_exports(tmp_path, media):
     assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
 
 
-async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media):
+async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media, monkeypatch):
     """Three consecutive crossfades chain three amix stages. A mix that
     reaches the encoder unrestamped ends the AAC stream seconds into a
     complete picture — a finished video that plays with most of its
-    narration missing, and one that stays: exports are content-addressed, so
-    a re-plan of the same graph serves the same file back.
+    narration missing.
 
-    Both assertions earn their place. The audio-stream duration is the
-    property a viewer actually experiences, but the corruption behind it
-    surfaces only when the box is loaded enough to starve the filter chain,
-    so on its own it would pass most runs. The filtergraph assertion is
-    deterministic, and is what holds the invariant.
+    This is the end of the pair: it renders, and asks the shipped file what
+    a viewer would hear. The corruption is nondeterministic — roughly half
+    of runs on the unrestamped graph still produce a full-length stream — so
+    the deterministic half of the guard reads the filtergraph instead, and
+    lives in test_segment_timing.py where no ffmpeg is needed to run it.
     """
     backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
     out_dir = tmp_path / "generated"
@@ -289,7 +322,7 @@ async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media):
             filtergraphs.append(args[args.index("-filter_complex") + 1])
         return await inner(*args, **kwargs)
 
-    backend._run = record
+    monkeypatch.setattr(backend, "_run", record)
 
     timeline_path = await backend.execute(
         make_spec(
@@ -317,16 +350,18 @@ async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media):
     assert [seg["transition"] for seg in edl["video"]][:3] == ["crossfade"] * 3
 
     out = await backend.execute(
-        make_spec(NodeKind.EXPORT, {}, output_hash="c" * 64),
+        # Nothing here reads the frame size, and the fixture clips are
+        # 320x568 — encoding four of them onto the native 1080x1920 canvas
+        # is most of this test's runtime and none of its coverage.
+        make_spec(NodeKind.EXPORT, {"resolution": 480}, output_hash="c" * 64),
         ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
     )
 
-    joined = next(fc for fc in filtergraphs if "amix" in fc)
+    joined = next((fc for fc in filtergraphs if "amix" in fc), None)
+    assert joined is not None, "no filtergraph mixed audio - no crossfade boundary was taken"
     assert joined.count("amix") == 3  # one per crossfade boundary
-    # The mix is restamped before it reaches the encoder.
-    assert "aresample=async=1:first_pts=0[aout]" in joined
 
-    # And the program audio is as long as the program.
+    # The program audio is as long as the program.
     assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
 
 
@@ -654,22 +689,12 @@ async def test_ducking_flag_flows_into_the_edl_and_both_mixes_export(tmp_path, m
             make_spec(NodeKind.EXPORT, {}, output_hash=tag * 64),
             ExecutionContext(output_dir=out_dir, input_artifacts={"default": edl}),
         )
-        probe = subprocess.run(
-            [
-                backend.ffprobe_bin,
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=codec_type",
-                "-of",
-                "csv=p=0",
-                str(out),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        assert "audio" in probe.stdout  # both mix graphs are valid end to end
+        # Both mix graphs are valid end to end — and the bed's own amix is
+        # the last thing the program audio passes through, so measure what
+        # came out rather than that something did. A stream that stopped a
+        # second into the picture answers a presence check just as well.
+        expected = json.loads(edl.read_text())["duration"]
+        assert audio_stream_duration(backend, out) == pytest.approx(expected, abs=0.2)
 
 
 async def test_beat_align_with_crossfade_stays_consistent_and_on_beat(tmp_path):
@@ -874,25 +899,6 @@ async def test_export_honors_encode_params(tmp_path, media):
     )
     export_ctx = ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path})
 
-    def video_stream(path):
-        probe = subprocess.run(
-            [
-                backend.ffprobe_bin,
-                "-v",
-                "error",
-                "-show_entries",
-                "stream=codec_type,width,height,r_frame_rate",
-                "-of",
-                "json",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        streams = json.loads(probe.stdout)["streams"]
-        return next(s for s in streams if s["codec_type"] == "video")
-
     tuned = await backend.execute(
         make_spec(
             NodeKind.EXPORT,
@@ -901,7 +907,7 @@ async def test_export_honors_encode_params(tmp_path, media):
         ),
         export_ctx,
     )
-    stream = video_stream(tuned)
+    stream = video_stream(backend, tuned, "stream=codec_type,width,height,r_frame_rate")
     assert (stream["width"], stream["height"]) == (720, 1280)
     assert stream["r_frame_rate"] == "30/1"
 
@@ -913,5 +919,5 @@ async def test_export_honors_encode_params(tmp_path, media):
         ),
         export_ctx,
     )
-    stream = video_stream(untuned)
+    stream = video_stream(backend, untuned, "stream=codec_type,width,height,r_frame_rate")
     assert (stream["width"], stream["height"]) == (1080, 1920)

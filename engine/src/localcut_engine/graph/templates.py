@@ -14,6 +14,7 @@ from ..aspects import EXPORT_USER_PARAMS
 from ..schema import Screenplay
 from .model import (
     EDL_VERSION,
+    EXPORT_VERSION,
     KEYFRAME_PORT,
     NARRATION_VERSION,
     MUSIC_PORT,
@@ -429,6 +430,11 @@ def expand_screenplay(graph: StoryGraph, screenplay: Screenplay) -> StoryGraph:
             "preset": "youtube",
             "aspect": aspect,
             "captions": "burn",
+            # Stamped at creation for the reason edl_version is: _ensure_node
+            # replaces params wholesale, so a stamp only migrate_graph applied
+            # would be dropped here and land the node back on the address of
+            # the artifact it is meant to invalidate.
+            "export_version": EXPORT_VERSION,
             # Every user-set encode choice carried forward, not just the
             # captions mode: _ensure_node replaces params wholesale, so a key
             # missing from this dict is deleted on the next re-expansion.

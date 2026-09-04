@@ -513,7 +513,16 @@ def test_no_op_can_store_a_null_on_a_node():
     cleared, by design.
     """
     reference = StoryGraph()
-    reference.add_node(Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}))
+    apply_patch(
+        reference,
+        [
+            PatchOp(
+                op="add_node",
+                node_id="export",
+                node=Node(id="export", kind=NodeKind.EXPORT, params={"captions": "burn"}),
+            )
+        ],
+    )
     apply_patch(reference, [PatchOp(op="set_params", node_id="export", params={"captions": None})])
     unset = reference.output_hash("export")
 
@@ -528,7 +537,7 @@ def test_no_op_can_store_a_null_on_a_node():
             )
         ],
     )
-    assert added.nodes["export"].params == {}
+    assert "captions" not in added.nodes["export"].params
     assert added.output_hash("export") == unset
     # The read that misfires, spelled out: this is ffmpeg.py's own expression.
     assert added.nodes["export"].params.get("captions", "burn") == "burn"
@@ -541,7 +550,7 @@ def test_no_op_can_store_a_null_on_a_node():
         selected,
         [PatchOp(op="select_take", node_id="export", params={"captions": None}, seed=0)],
     )
-    assert selected.nodes["export"].params == {}
+    assert "captions" not in selected.nodes["export"].params
     assert selected.output_hash("export") == unset
 
 
@@ -635,6 +644,56 @@ def test_a_narration_version_bump_re_addresses_cached_audio():
     # And audio from before the field existed at all is re-addressed too.
     del g.nodes["s1.narration"].params["narration_version"]
     assert g.output_hash("s1.narration") != current
+
+
+def test_an_export_version_bump_re_addresses_a_rendered_video():
+    """How the assembly encodes is decided inside the backend, not stored in
+    params — so a change to the filtergraph produces a different file for an
+    export whose format, preset, aspect and captions are identical, and the
+    existence cache would serve the old mp4 forever. That is not academic: a
+    crossfaded export could ship with its narration truncated, and a re-plan
+    of the same graph handed the same broken file back.
+    """
+    from localcut_engine.graph.model import EXPORT_VERSION
+
+    g = StoryGraph()
+    g.add_node(Node(id="timeline", kind=NodeKind.TIMELINE, params={"aspect": "9:16"}))
+    g.add_node(
+        Node(
+            id="export",
+            kind=NodeKind.EXPORT,
+            params={"format": "mp4", "captions": "burn", "export_version": EXPORT_VERSION},
+        )
+    )
+    g.connect("timeline", "export")
+    current = g.output_hash("export")
+
+    g.nodes["export"].params["export_version"] = EXPORT_VERSION - 1
+    assert g.output_hash("export") != current
+    # And a video from before the field existed at all is re-addressed too.
+    del g.nodes["export"].params["export_version"]
+    assert g.output_hash("export") != current
+
+
+def test_every_export_node_a_template_builds_carries_its_version():
+    """Stamped at creation, not only back-filled on load: `_ensure_node`
+    replaces params wholesale, so a stamp that only migrate_graph applied is
+    dropped on the next re-expansion — landing the node back on the address
+    of the artifact the bump exists to invalidate."""
+    from localcut_engine.graph.model import EXPORT_VERSION
+
+    screenplay = mock_screenplay("octopuses", target_duration_s=30, aspect="16:9", seed=1)
+    graph = expand_screenplay(prompt_template_graph("p"), screenplay)
+    export_nodes = [n for n in graph.nodes.values() if n.kind is NodeKind.EXPORT]
+    assert export_nodes, "no export nodes to check"
+    for node in export_nodes:
+        assert node.params.get("export_version") == EXPORT_VERSION, (
+            f"{node.id} was built without export_version"
+        )
+    # And it survives the re-expansion that drops un-carried params.
+    again = expand_screenplay(graph, screenplay)
+    for node in (n for n in again.nodes.values() if n.kind is NodeKind.EXPORT):
+        assert node.params.get("export_version") == EXPORT_VERSION
 
 
 def test_every_narration_node_a_template_builds_carries_its_version():
