@@ -8,6 +8,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from ..hardware.probe import HardwareProfile
+from .capability import COMFY_TASKS, DOWNLOADED_TASKS
 from .model import ModelEntry, ModelManifest
 
 TASKS = ["text.llm", "image.gen", "video.i2v", "speech.tts", "music.gen", "transcribe"]
@@ -76,10 +77,32 @@ def _why_nothing_fits(models: list[ModelEntry], profile: HardwareProfile) -> str
     return "no local model fits this hardware — cloud recommended"
 
 
+def _installable(model: ModelEntry) -> bool:
+    """Whether this recommendation is one the user can act on.
+
+    For a task whose weights the app downloads, an entry with no `files` is a
+    name rather than something to install: the wizard offers it, downloads
+    nothing, and reports the stage covered over a machine that has no weights
+    for it. A ComfyUI task additionally needs a workflow template — weights
+    with no graph to run them are not a capability. That is the same bar
+    `readiness._download_fix` applies before offering a model as the
+    one-click fix, and its comment already claimed the slate held it.
+
+    text.llm is deliberately exempt: Ollama installs those, so a fileless
+    entry there is still a real recommendation.
+    """
+    if model.task not in DOWNLOADED_TASKS:
+        return True
+    if not model.files:
+        return False
+    comfy_tasks = {task for tasks in COMFY_TASKS.values() for task in tasks}
+    return bool(model.comfy_graph_template) or model.task not in comfy_tasks
+
+
 def recommend_slate(manifest: ModelManifest, profile: HardwareProfile) -> list[Recommendation]:
     slate: list[Recommendation] = []
     for task in TASKS:
-        usable = [m for m in manifest.for_task(task) if m.license.commercial]
+        usable = [m for m in manifest.for_task(task) if m.license.commercial and _installable(m)]
         candidates = [m for m in usable if _fits(m, profile)]
         if not candidates:
             slate.append(

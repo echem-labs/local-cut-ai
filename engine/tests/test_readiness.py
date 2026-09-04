@@ -674,3 +674,50 @@ async def test_captions_names_the_missing_ffmpeg_rather_than_a_model_it_already_
         await readiness_rows(config, _build_backends(config), [(NodeKind.CAPTIONS, None)])
     )
     assert rows["captions"]["verdict"] == "ready", "the binary landed and the row did not follow"
+
+
+# -- weights on disk are not a running server -------------------------------
+
+
+async def test_an_explicit_comfy_kinds_list_still_asks_whether_comfyui_is_up(tmp_path, monkeypatch):
+    """`comfy_kinds=auto` gates the capability on a liveness probe, so a
+    stopped ComfyUI takes the kind out of the chain. An explicit list — the
+    static override docs/running-real-models.md documents — claims the kind
+    unconditionally, so the one screen whose whole job is warning before an
+    expensive render reported `ready` for every ComfyUI kind with nothing
+    listening, and the `comfyui_down` reason was unreachable there."""
+    from starlette.testclient import TestClient
+
+    from localcut_engine import readiness as readiness_module
+
+    monkeypatch.setattr(readiness_module, "_comfy_alive", lambda config: False)
+
+    config = EngineConfig(
+        data_dir=tmp_path,
+        token="t",
+        backend="local,mock",
+        comfy_kinds="keyframe,thumbnail,clip,music",
+    )
+    app = create_app(config)
+    with TestClient(app) as http:
+        rows = http.get("/readiness", headers={"Authorization": "Bearer t"}).json()
+
+    by_kind = {row["kind"]: row for row in rows["rows"]}
+    for kind in ("keyframe", "thumbnail", "clip", "music"):
+        assert by_kind[kind]["verdict"] == "will_fail", f"{kind} claims it is ready"
+        assert by_kind[kind]["reason"] == "comfyui_down"
+
+
+async def test_the_comfy_probe_is_shared_between_rows(tmp_path):
+    """ServiceProbe's first answer is deliberately synchronous, so a fresh
+    instance per row would block the event loop for the connect timeout once
+    per ComfyUI kind on every /readiness."""
+    from localcut_engine.readiness import _comfy_alive
+
+    from localcut_engine.readiness import _COMFY_PROBES
+
+    config = EngineConfig(data_dir=tmp_path, comfyui_url="http://127.0.0.1:59999")
+    _comfy_alive(config)
+    first = _COMFY_PROBES["http://127.0.0.1:59999/queue"]
+    _comfy_alive(config)
+    assert _COMFY_PROBES["http://127.0.0.1:59999/queue"] is first

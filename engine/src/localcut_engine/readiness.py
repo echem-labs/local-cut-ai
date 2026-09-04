@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from .backends.base import BackendRegistry, GenerationError
+from .backends.base import BackendRegistry, GenerationError, ServiceProbe
 from .backends.ffmpeg import ffmpeg_available
 from .config import EngineConfig
 from .graph.model import NodeKind
@@ -431,12 +431,43 @@ def _transcribe_weights_installed(snap: _Snapshot, config: EngineConfig) -> bool
     )
 
 
+# One probe per URL, kept between calls. ServiceProbe is TTL-cached and
+# refreshes on a worker thread, but only an instance that survives can answer
+# from that cache: its FIRST answer is deliberately synchronous, so building a
+# fresh one per row would block the event loop for the connect timeout on
+# every /readiness, once per ComfyUI kind.
+_COMFY_PROBES: dict[str, ServiceProbe] = {}
+
+
+def _comfy_alive(config: EngineConfig) -> bool:
+    url = f"{config.comfyui_url.rstrip('/')}/queue"
+    probe = _COMFY_PROBES.get(url)
+    if probe is None:
+        probe = _COMFY_PROBES.setdefault(url, ServiceProbe(url))
+    return probe.available()
+
+
 def _comfy_row(snap: _Snapshot, config: EngineConfig, kind: NodeKind, model: str | None) -> dict:
     """ComfyUI won the kind. What it will actually load depends on the
     node's model and on `_template_path`'s fallback chain, not on the fact
     that ComfyUI answered."""
     bare = (model or "").removeprefix("local:")
     installed = snap.installed.get(kind) or []
+    # Weights on disk are not a running server. In "auto" mode the capability
+    # closure gates on the probe, so a stopped ComfyUI takes the kind out of
+    # the chain and never reaches here. An explicit LOCALCUT_COMFY_KINDS list
+    # — what docs/running-real-models.md calls the static override — claims
+    # the kind unconditionally, so without asking here the one screen whose
+    # whole job is to warn before an expensive render reported `ready` for
+    # keyframe, thumbnail, clip and music with nothing listening.
+    if not _comfy_alive(config):
+        return _row(
+            kind,
+            verdict="will_fail",
+            reason="comfyui_down",
+            backend="comfyui",
+            model=bare or (installed[0] if installed else None),
+        )
     if not bare:
         if not installed:
             # An explicit (non-"auto") comfy_kinds claims the kind whatever

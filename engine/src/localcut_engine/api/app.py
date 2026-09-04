@@ -799,12 +799,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend.installed_voices()
 
+        # Whether the clone control can work at all. Separate from
+        # `available`, which is about the stock-voice pack: cloning routes to
+        # a different backend and a different optional runtime, so the two are
+        # independently present or absent.
+        cloning = ChatterboxBackend.package_installed() and backends.find("chatterbox") is not None
+
         installed = await asyncio.to_thread(enumerate_pack)
         if installed is None:
-            return {"available": False, "voices": [], "default": None}
+            return {"available": False, "voices": [], "default": None, "cloning": cloning}
         ids = [voice["id"] for voice in installed]
         default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
-        return {"available": True, "voices": installed, "default": default}
+        return {"available": True, "voices": installed, "default": default, "cloning": cloning}
 
     @app.get("/voices/{voice_id}/preview", dependencies=[Authed])
     async def voice_preview(voice_id: VoiceId) -> FileResponse:
