@@ -71,6 +71,8 @@ from .project.store import (
     NodeTakes,
     Project,
     ProjectStore,
+    ProjectTooNew,
+    ProjectUnreadable,
     SavePoint,
     Snapshot,
     TakeRecord,
@@ -1922,13 +1924,23 @@ class ProjectService:
             with self._lock:
                 try:
                     self._refresh_meta_locked(project.id, touch=False)
-                except (OSError, ValueError):
+                    healed = self.store.get(project.id)
+                except (OSError, ValueError, ProjectTooNew, ProjectUnreadable):
                     # One unreadable project must not stop the sweep, exactly
                     # as store.list() refuses to let one damaged meta take
                     # the whole listing down.
+                    #
+                    # The store's own refusals are RuntimeError subclasses,
+                    # not ValueError, so they were not caught here — and this
+                    # sweep runs inside the app's lifespan, where an escaping
+                    # exception is "Application startup failed. Exiting." One
+                    # quick-tool session written by a newer build, or one
+                    # whose text a pre-utf8 build stored in the platform
+                    # encoding, therefore stopped the whole engine from
+                    # starting, with every other project perfectly healthy
+                    # and nothing naming the one at fault.
                     logger.warning("could not backfill tool meta for %s", project.id)
                     continue
-                healed = self.store.get(project.id)
             if healed is not None and healed.tool_artifact_hash:
                 filled += 1
         return filled

@@ -421,7 +421,19 @@ class ProjectStore:
         _write_atomic(self._dir(project_id) / "project.json", graph.model_dump_json(indent=2))
 
     def load_graph(self, project_id: str) -> StoryGraph:
-        raw = json.loads(_read_text_retry(self._dir(project_id) / "project.json"))
+        path = self._dir(project_id) / "project.json"
+        try:
+            raw = json.loads(_read_text_retry(path))
+        except json.JSONDecodeError as exc:
+            # Named, not a bare 500. This class's whole promise is a refusal
+            # that says which project is broken and that the rest of the
+            # library is fine — a JSONDecodeError escaping here reached the
+            # user as a 500 with neither, which is the outcome
+            # ProjectUnreadable exists to replace.
+            raise ProjectUnreadable(
+                f"{path.name} is not valid JSON ({exc.msg} at line {exc.lineno}). "
+                "It has not been modified."
+            ) from exc
         # Refuse a project from the future BEFORE validating it into a model.
         #
         # Every model here uses pydantic's default extra="ignore", so parsing
@@ -457,13 +469,28 @@ class ProjectStore:
             return model_cls()
         try:
             raw = json.loads(_read_text_retry(path))
-        except (json.JSONDecodeError, OSError, ProjectUnreadable):
+        except (json.JSONDecodeError, ProjectUnreadable):
             # Undecodable counts as unreadable, and the sentence above is why
             # it must: refusing history.json takes patching down with it, for
             # a file whose whole content is a convenience record over state
             # that lives in the graph.
+            #
+            # Content, not access: both of these are permanent. Bytes that
+            # are not JSON, or not UTF-8, will not become either on the next
+            # read, so resetting loses nothing that was still there.
             logger.warning("resetting unreadable %s: %s", what, path)
             return model_cls()
+        except OSError as exc:
+            # A file we could not READ is a different thing, and resetting it
+            # is destructive: the next edit persists the empty document over
+            # a file whose contents were probably intact, taking every named
+            # save point and the whole undo stack with it. `_read_text_retry`
+            # has already ridden out the transient Windows case, so this is
+            # a filesystem the user needs told about rather than a state to
+            # silently paper over.
+            raise ProjectUnreadable(
+                f"{path.name} could not be read ({exc.strerror or exc}). It has not been modified."
+            ) from exc
         version = raw.get("version", 1) if isinstance(raw, dict) else 1
         if not isinstance(version, int) or version > max_version:
             raise HistoryTooNew(

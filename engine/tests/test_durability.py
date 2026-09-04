@@ -647,3 +647,87 @@ async def test_killing_an_already_dead_child_does_not_mask_the_cancellation():
         async with _terminating(process) as proc:
             await proc.communicate()
     assert AlreadyGone.signalled == 2  # both terminate and kill were attempted
+
+
+# -- one damaged project must not take the engine down ----------------------
+
+
+def test_a_project_from_a_newer_build_does_not_stop_the_sweep(tmp_path):
+    """`backfill_tool_metas` runs inside the app's lifespan, where an
+    escaping exception is "Application startup failed. Exiting."
+
+    The store's own refusals are RuntimeError subclasses, not ValueError, so
+    the handler that exists to tolerate one damaged project did not catch
+    them: a single quick-tool session written by a newer build stopped the
+    whole engine from starting, with every other project healthy and nothing
+    naming the one at fault.
+    """
+    from localcut_engine.events import EventBus
+    from localcut_engine.jobs.queue import JobQueue
+    from localcut_engine.project.store import ProjectStore
+    from localcut_engine.service import ProjectService
+
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, EventBus())
+
+    healthy = store.create(title="fine", graph=_seed_graph(), mode="tool:script")
+    broken = store.create(title="from the future", graph=_seed_graph(), mode="tool:script")
+
+    # A project.json this build refuses to read, exactly as a downgrade or a
+    # restored backup produces.
+    path = store._dir(broken.id) / "project.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["version"] = 9999
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    # The sweep completes and reports on the projects it could read.
+    service.backfill_tool_metas()
+    assert store.get(healthy.id) is not None
+
+
+def test_an_unreadable_project_json_refuses_by_name(tmp_path):
+    """A bare 500 says neither which project is broken nor that the rest of
+    the library is fine — which is what ProjectUnreadable exists to replace."""
+    from localcut_engine.project.store import ProjectStore, ProjectUnreadable
+
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph(), mode="prompt")
+    (store._dir(project.id) / "project.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(ProjectUnreadable, match="not valid JSON"):
+        store.load_graph(project.id)
+
+
+def test_a_history_that_cannot_be_read_is_not_reset(tmp_path, monkeypatch):
+    """Resetting on a READ failure is destructive: the next edit persists the
+    empty document over a file whose contents were probably intact, taking
+    every named save point and the whole undo stack with it. Content that is
+    permanently invalid still resets — that distinction is the fix."""
+    from localcut_engine.project import store as store_module
+    from localcut_engine.project.store import ProjectStore, ProjectUnreadable
+
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph(), mode="prompt")
+    store.save_history(project.id, store.load_history(project.id))
+
+    def unreadable(path, attempts=6):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(store_module, "_read_text_retry", unreadable)
+    with pytest.raises(ProjectUnreadable, match="could not be read"):
+        store.load_history(project.id)
+
+
+def test_invalid_history_content_still_resets(tmp_path):
+    """The other half of the same rule: bytes that are not JSON will not
+    become JSON on the next read, so refusing forever would take patching
+    down with it for a convenience record over state that lives elsewhere."""
+    from localcut_engine.project.store import ProjectStore
+
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create(title="t", graph=_seed_graph(), mode="prompt")
+    store.save_history(project.id, store.load_history(project.id))
+    (store._dir(project.id) / "history.json").write_text("{not json", encoding="utf-8")
+
+    assert store.load_history(project.id).savepoints == []

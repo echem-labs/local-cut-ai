@@ -154,12 +154,31 @@ def main(argv: list[str] | None = None) -> int:
     # to exit with "address in use" had already resurrected the first
     # engine's in-flight job, and both then rendered it. Binding first turns
     # that into a clean exit that touches nothing.
+    # The data directory is what actually has to be exclusive, and it is
+    # claimed before the port for the same reason the port is claimed before
+    # create_app: nothing with side effects may run until both are ours.
+    try:
+        data_dir_lock = _hold_data_dir(config.data_dir)
+    except DataDirBusy:
+        print(
+            f"another engine is already using {config.data_dir}.\n"
+            "Quit it before starting this one - two engines sharing a data "
+            "directory render the same job twice and write over each other.",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(f"could not open {config.data_dir}: {exc}", file=sys.stderr)
+        return 1
+
     try:
         sockets = [_bind(config.host, config.port)]
     except OSError as exc:
+        data_dir_lock.close()
         print(
             f"{BIND_REFUSED}{config.host}:{config.port}: {exc}\n"
-            "Another engine is probably already running - quit it, or pass a different --port.",
+            "Another engine is probably already running - quit it, or serve a "
+            "different --data-dir on a different --port.",
             file=sys.stderr,
         )
         return 1
@@ -190,7 +209,14 @@ def main(argv: list[str] | None = None) -> int:
     # what covers uvicorn's child loggers.
     install_log_redaction()
     server = uvicorn.Server(uvicorn_config)
-    server.run(sockets=sockets)
+    try:
+        server.run(sockets=sockets)
+    finally:
+        # Explicit, not incidental: the lock lives in the open handle, so a
+        # refactor that stopped holding a reference would release the data
+        # directory the moment the object was collected — with the engine
+        # still running on it.
+        data_dir_lock.close()
     return 0
 
 
@@ -227,6 +253,42 @@ def _bind(host: str, port: int) -> socket.socket:
         sock.close()
         raise
     return sock
+
+
+class DataDirBusy(RuntimeError):
+    """Another engine already holds this data directory."""
+
+
+def _hold_data_dir(data_dir: Path):  # noqa: ANN202 — the handle, kept open for the process
+    """Take an exclusive lock on the data directory, or refuse.
+
+    Binding the port first stops two engines on the same host:port, but that
+    is not the thing that has to be exclusive — the DATA DIRECTORY is. Two
+    engines on different ports share one queue.db and one project tree: the
+    same job renders twice on one GPU, both write the same project.json, and
+    status flips between them with nothing on screen to say so. The bind
+    message even used to send people there, by offering a different --port as
+    the remedy for a clash.
+
+    The handle is returned and must outlive the server: closing it, or the
+    process exiting, releases the lock. Both platforms release on process
+    death, so a hard kill does not strand the directory.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    handle = (data_dir / "engine.lock").open("w", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise DataDirBusy(str(data_dir)) from exc
+    return handle
 
 
 def _lan_address(bind_host: str) -> str:
