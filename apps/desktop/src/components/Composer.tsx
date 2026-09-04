@@ -33,6 +33,7 @@ export function Composer() {
     editBusy,
     regenerate,
     togglePin,
+    reportActionError,
     history,
     undoEdit,
   } = useApp();
@@ -216,19 +217,19 @@ export function Composer() {
         list.push({
           label: t("composer.cmdRegen", { n: sceneNo }),
           hint: t("composer.cmdRegenHint"),
-          run: () => void regenerate(scene.clip.node_id),
+          run: () => void regenerate(scene.clip.node_id).then(reportActionError),
         });
         list.push({
           label: scene.clip.pinned
             ? t("composer.cmdUnpin", { n: sceneNo })
             : t("composer.cmdPin", { n: sceneNo }),
           hint: t("composer.cmdPinHint"),
-          run: () => void togglePin(scene.clip.node_id, !scene.clip.pinned),
+          run: () => void togglePin(scene.clip.node_id, !scene.clip.pinned).then(reportActionError),
         });
       }
     }
     return list;
-  }, [board, currentProject, selectedScene, select, regenerate, togglePin]);
+  }, [board, currentProject, selectedScene, select, regenerate, togglePin, reportActionError]);
 
   const query = text.trim().toLowerCase();
   const matches =

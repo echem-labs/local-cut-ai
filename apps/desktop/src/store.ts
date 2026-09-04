@@ -420,6 +420,13 @@ interface AppState {
   /** Drop a shown action error — e.g. when the surface that earned it
    * (a tool panel) is being swapped for another. */
   dismissActionError: () => void;
+  /** Route a store action's returned message to the board alert.
+   *
+   * The node actions (regenerate, pin, apply, clone a voice) are fired from
+   * surfaces with nowhere of their own to report: a scene card's icon row, a
+   * palette command that closes on run, a key press. `null` means it applied
+   * and clears nothing, so this is safe to hand every result. */
+  reportActionError: (message: string | null) => void;
   /** The session composer's "update & re-render": rewrite the tool node's
    * params — its input field (prompt / text / brief), and for a voiceover
    * the voice beside it. The /patch re-plan marks the node dirty and
@@ -465,7 +472,7 @@ interface AppState {
   addNode: (kind: string) => Promise<string | null>;
   /** Re-render a node. With `seed`, a reroll pinned to that seed (one
    * atomic call — RegenerateBody.seed); without, the engine bumps it. */
-  regenerate: (nodeId: string, seed?: number) => Promise<void>;
+  regenerate: (nodeId: string, seed?: number) => Promise<string | null>;
   applyNode: (
     nodeId: string,
     changes: {
@@ -473,8 +480,8 @@ interface AppState {
       seed?: number;
       model?: string | null;
     },
-  ) => Promise<void>;
-  togglePin: (nodeId: string, pin: boolean) => Promise<void>;
+  ) => Promise<string | null>;
+  togglePin: (nodeId: string, pin: boolean) => Promise<string | null>;
   /** Compile an edit and report what it WOULD do, committing nothing.
    *
    * There is deliberately no one-step "edit and apply" beside this. The
@@ -528,10 +535,10 @@ interface AppState {
     nodeId: string,
     fields: { narration: string; prompt: string },
   ) => Promise<string | null>;
-  applyClonedVoice: (file: File) => Promise<void>;
+  applyClonedVoice: (file: File) => Promise<string | null>;
   applyTimeline: (params: Record<string, unknown>) => void;
   applyExport: (params: Record<string, unknown>) => void;
-  finalize: () => Promise<void>;
+  finalize: () => Promise<string | null>;
   select: (nodeId: string | null) => void;
   refreshModels: () => Promise<void>;
   startDownload: (modelId: string) => Promise<void>;
@@ -1797,7 +1804,13 @@ export const useApp = create<AppState>((set, get) => {
 
     createFromPrompt: async (prompt, duration, aspect, mode, style) => {
       const { client } = get();
-      if (!client) return;
+      // Not a silent return: Home clears its prompt row on the way back from
+      // this call, so a create that never happened would take the typed
+      // prompt and every format choice with it and say nothing.
+      if (!client) {
+        set({ actionError: { scope: "create", message: t("errors.engineUnavailable") } });
+        return;
+      }
       set({ actionError: null });
       try {
         const project = await client.createProject({
@@ -1822,7 +1835,10 @@ export const useApp = create<AppState>((set, get) => {
 
     createTool: async (tool, input, startFrame) => {
       const { client } = get();
-      if (!client) return;
+      if (!client) {
+        set({ actionError: { scope: "tool", message: t("errors.engineUnavailable") } });
+        return;
+      }
       set({ actionError: null });
       try {
         const project = await client.createTool({ tool, ...input });
@@ -1924,6 +1940,10 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     dismissActionError: () => set({ actionError: null }),
+
+    reportActionError: (message) => {
+      if (message) set({ actionError: { scope: "board", message } });
+    },
 
     setProjectVoice: async (voiceId) => {
       const { client, currentProject, board } = get();
@@ -2139,9 +2159,14 @@ export const useApp = create<AppState>((set, get) => {
 
     regenerate: async (nodeId, seed) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
-      await client.regenerate(currentProject.id, nodeId, seed);
-      await get().refreshBoard();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.regenerate(currentProject.id, nodeId, seed);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     rerollWithSeed: async (nodeId, seed) => {
@@ -2163,7 +2188,7 @@ export const useApp = create<AppState>((set, get) => {
 
     applyNode: async (nodeId, changes) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
+      if (!client || !currentProject) return t("errors.engineUnavailable");
       const ops: Parameters<EngineClient["patch"]>[1] = [];
       if (changes.params && Object.keys(changes.params).length > 0) {
         ops.push({ op: "set_params", node_id: nodeId, params: changes.params });
@@ -2174,16 +2199,26 @@ export const useApp = create<AppState>((set, get) => {
       if (changes.model !== undefined) {
         ops.push({ op: "set_model", node_id: nodeId, model: changes.model });
       }
-      if (ops.length === 0) return;
-      await client.patch(currentProject.id, ops);
-      await get().refreshBoard();
+      if (ops.length === 0) return null;
+      try {
+        await client.patch(currentProject.id, ops);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     togglePin: async (nodeId, pin) => {
       const { client, currentProject } = get();
-      if (!client || !currentProject) return;
-      await client.patch(currentProject.id, [{ op: pin ? "pin" : "unpin", node_id: nodeId }]);
-      await get().refreshBoard();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        await client.patch(currentProject.id, [{ op: pin ? "pin" : "unpin", node_id: nodeId }]);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     proposeEdit: async (instruction, scope = "project") => {
@@ -2569,23 +2604,28 @@ export const useApp = create<AppState>((set, get) => {
 
     applyClonedVoice: async (file) => {
       const { client, currentProject, board } = get();
-      if (!client || !currentProject || !board) return;
-      // The consent affirmation was collected in the UI; the engine refuses
-      // the sample without it either way.
-      const asset = await client.uploadAsset(currentProject.id, file, { consent: true });
-      // One speaker across the whole video: every scene's narration clones
-      // from the same sample.
-      const narrations = board.scenes
-        .map((scene) => scene.narration)
-        .filter((node): node is NodeState => node !== null);
-      await client.patch(
-        currentProject.id,
-        narrations.flatMap((node) => [
-          { op: "set_model", node_id: node.node_id, model: "local:chatterbox" },
-          { op: "connect", node_id: node.node_id, src: asset.node_id, port: "voice_ref" },
-        ]),
-      );
-      await get().refreshBoard();
+      if (!client || !currentProject || !board) return t("errors.engineUnavailable");
+      try {
+        // The consent affirmation was collected in the UI; the engine refuses
+        // the sample without it either way.
+        const asset = await client.uploadAsset(currentProject.id, file, { consent: true });
+        // One speaker across the whole video: every scene's narration clones
+        // from the same sample.
+        const narrations = board.scenes
+          .map((scene) => scene.narration)
+          .filter((node): node is NodeState => node !== null);
+        await client.patch(
+          currentProject.id,
+          narrations.flatMap((node) => [
+            { op: "set_model", node_id: node.node_id, model: "local:chatterbox" },
+            { op: "connect", node_id: node.node_id, src: asset.node_id, port: "voice_ref" },
+          ]),
+        );
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     applyTimeline: (params) => applyAuxParams("timeline", params),
@@ -2624,13 +2664,18 @@ export const useApp = create<AppState>((set, get) => {
 
     finalize: async () => {
       const { client, currentProject, defaults } = get();
-      if (!client || !currentProject) return;
-      // The engine must compile with the flushed params, not race them.
-      await flushPatches();
-      // Settings → Defaults' video model rides along (engine config wins
-      // engine-side when this is null).
-      await client.finalize(currentProject.id, defaults.videoModel);
-      await get().refreshBoard();
+      if (!client || !currentProject) return t("errors.engineUnavailable");
+      try {
+        // The engine must compile with the flushed params, not race them.
+        await flushPatches();
+        // Settings → Defaults' video model rides along (engine config wins
+        // engine-side when this is null).
+        await client.finalize(currentProject.id, defaults.videoModel);
+        await get().refreshBoard();
+        return null;
+      } catch (err) {
+        return messageOf(err);
+      }
     },
 
     select: (nodeId) => set({ selectedNode: nodeId }),

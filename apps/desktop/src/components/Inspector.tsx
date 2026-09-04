@@ -317,11 +317,12 @@ export function Inspector() {
     }
     const seedValue = Number.parseInt(seed, 10);
     const modelValue = model.trim() || null;
+    setTakeError(null);
     void applyNode(activeNode.node_id, {
       params,
       seed: Number.isFinite(seedValue) && seedValue !== activeNode.seed ? seedValue : undefined,
       model: modelEditable && modelValue !== activeNode.model ? modelValue : undefined,
-    });
+    }).then(setTakeError);
   };
 
   const statusNode = scene ? scene.clip : auxNode;
@@ -439,7 +440,7 @@ export function Inspector() {
           >
             <button
               className={`icon-btn-sm${pinned ? " active" : ""}`}
-              onClick={() => void togglePin(activeNode.node_id, !pinned)}
+              onClick={() => void togglePin(activeNode.node_id, !pinned).then(setTakeError)}
               aria-label={pinned ? t("inspector.unpin") : t("inspector.pin")}
               aria-pressed={pinned}
             >
@@ -732,9 +733,8 @@ export function Inspector() {
                         const file = event.target.files?.[0];
                         event.target.value = "";
                         if (file) {
-                          void applyClonedVoice(file).catch((err) =>
-                            console.warn("voice cloning failed:", err),
-                          );
+                          setVoiceError(null);
+                          void applyClonedVoice(file).then(setVoiceError);
                         }
                       }}
                     />
@@ -809,7 +809,10 @@ export function Inspector() {
                 justifyContent: "center",
                 gap: 6,
               }}
-              onClick={() => void regenerate(activeNode.node_id)}
+              onClick={() => {
+                setTakeError(null);
+                void regenerate(activeNode.node_id).then(setTakeError);
+              }}
               disabled={pinned}
             >
               <RotateCw size={12} strokeWidth={1.8} />

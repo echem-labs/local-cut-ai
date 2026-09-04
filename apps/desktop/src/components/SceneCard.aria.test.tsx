@@ -45,9 +45,9 @@ function mount(clip: NodeStatus = "draft") {
     client: { artifactUrl: () => "" },
     selectedNode: null,
     select,
-    regenerate: vi.fn(),
-    togglePin: vi.fn(),
-    applyNode: vi.fn(),
+    regenerate: vi.fn().mockResolvedValue(null),
+    togglePin: vi.fn().mockResolvedValue(null),
+    applyNode: vi.fn().mockResolvedValue(null),
     playScene: vi.fn(),
   } as never);
   render(<SceneCard scene={scene(clip)} />);

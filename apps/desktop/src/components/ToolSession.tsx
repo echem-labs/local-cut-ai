@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { messageOf } from "../lib/errors";
 import { Dices, FolderPlus, Mic, Repeat } from "lucide-react";
 import type { Screenplay, TakeInfo } from "../api/types";
 import { m, t } from "../i18n";
@@ -78,25 +79,43 @@ export function playSeam(
   return stop;
 }
 
-export function useScreenplay(url: string | null): Screenplay | null {
+/** The rendered screenplay, or the reason it could not be read.
+ *
+ * Both outcomes have to be distinguishable from "still arriving". Without
+ * the `ok` check the engine's own error body parses as JSON and becomes the
+ * screenplay, and the table then reads fields off it that are not there; and
+ * a failed request left the panel on "Loading script…" for good, because the
+ * effect only re-runs when the URL changes — restarting the engine does not
+ * clear it. */
+export function useScreenplay(url: string | null): {
+  screenplay: Screenplay | null;
+  error: string | null;
+} {
   const [screenplay, setScreenplay] = useState<Screenplay | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setScreenplay(null);
+    setError(null);
     if (!url) return;
     let stale = false;
     fetch(url)
-      .then((response) => response.json())
-      .then((data) => {
-        if (!stale) setScreenplay(data as Screenplay);
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim());
+        return (await response.json()) as Screenplay;
       })
-      .catch((err) => console.warn("script artifact fetch failed:", err));
+      .then((data) => {
+        if (!stale) setScreenplay(data);
+      })
+      .catch((err) => {
+        if (!stale) setError(messageOf(err));
+      });
     return () => {
       stale = true;
     };
   }, [url]);
 
-  return screenplay;
+  return { screenplay, error };
 }
 
 /** The screenplay as portable Markdown — what the Copy button puts on the
@@ -277,7 +296,9 @@ export function ToolSession() {
     node?.artifact_hash && client && currentProject
       ? client.artifactUrl(currentProject.id, node.artifact_hash)
       : null;
-  const screenplay = useScreenplay(tool === "script" && done ? artifactUrl : null);
+  const { screenplay, error: screenplayError } = useScreenplay(
+    tool === "script" && done ? artifactUrl : null,
+  );
 
   // The artifact's recipe: what was asked for, straight off the tool node's
   // own params. prompt (visual tools) / text (voiceover) / brief (music) —
@@ -579,7 +600,9 @@ export function ToolSession() {
                 }
               />
             ) : (
-              <div className="banner">{t("toolSession.loadingScript")}</div>
+              <div className={screenplayError ? "banner error" : "banner"} role="status">
+                {screenplayError ?? t("toolSession.loadingScript")}
+              </div>
             ))}
           {takes.length > 0 && (
             <div className="takes-strip" role="group" aria-label={t("toolSession.takesAria")}>
@@ -661,7 +684,12 @@ export function ToolSession() {
               >
                 <button
                   className="btn-ghost"
-                  onClick={() => void readinessGuard(() => void regenerate(node.node_id))}
+                  onClick={() =>
+                    void readinessGuard(() => {
+                      setTakeError(null);
+                      void regenerate(node.node_id).then(setTakeError);
+                    })
+                  }
                 >
                   {t("toolSession.regenerate")}
                 </button>
@@ -673,7 +701,9 @@ export function ToolSession() {
                     onClick={() =>
                       void readinessGuard(() =>
                         // A fresh seed, pinned in the same call — RegenerateBody.seed.
-                        void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31)),
+                        void regenerate(node.node_id, Math.floor(Math.random() * 2 ** 31)).then(
+                          setTakeError,
+                        ),
                       )
                     }
                   >
