@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .. import __version__, jsondoc
 from ..aspects import EXPORT_RESOLUTIONS
+from ..schema import Screenplay
 from .model import (
     GRAPH_VERSION,
     VOICE_REF_PORT,
@@ -56,7 +57,13 @@ from .patch import TRANSIENT_PARAMS, stored_params
 # extra="ignore" — for a template that would mean importing a graph missing
 # whatever the newer build added, which renders as something other than what
 # the author published.
-TEMPLATE_VERSION = 1
+# 2 carries the screenplay. A v1 document has none, so its script node
+# arrives uncached and re-renders — which rebuilds the scene structure from
+# whatever the importer's model writes, discarding the author's edits. That
+# is the bug this version exists to end, and it is why the bump matters: a
+# build that cannot read the screenplay must refuse a v2 template rather
+# than import it as the graph it is not.
+TEMPLATE_VERSION = 2
 
 # Caps. A template is untrusted input that becomes a project directory, so
 # every unbounded dimension gets a ceiling: a document with 100k nodes would
@@ -100,6 +107,14 @@ class GraphTemplate(BaseModel):
     duration_s: float | None = None
     nodes: dict[str, Node] = Field(default_factory=dict)
     edges: list[Edge] = Field(default_factory=list)
+    # The screenplay the author's scenes were expanded from, when the project
+    # had one rendered. Carried so the imported script node arrives cached and
+    # does not re-render: re-rendering rebuilds the scene structure from the
+    # importer's own model, so scenes the author deleted came back, scenes
+    # they added vanished, and every prompt and narration line reverted.
+    # Absent in a v1 document, and absent from a project whose script has not
+    # rendered — both fall back to the old behaviour.
+    screenplay: Screenplay | None = None
     # How many asset nodes were left behind on export. Zero for a template
     # that never had any; non-zero is a note for whoever imports it.
     dropped_assets: int = 0
@@ -129,6 +144,7 @@ def to_template(
     mode: str = "prompt",
     aspect: str | None = None,
     duration_s: float | None = None,
+    screenplay: Screenplay | None = None,
 ) -> GraphTemplate:
     """A project's graph as a reusable template.
 
@@ -158,6 +174,7 @@ def to_template(
         duration_s=duration_s,
         nodes=nodes,
         edges=edges,
+        screenplay=screenplay,
         dropped_assets=len(dropped),
     )
 
