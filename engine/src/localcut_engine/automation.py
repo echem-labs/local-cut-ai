@@ -340,11 +340,32 @@ def active_jobs(client: EngineClient, project_id: str) -> list[dict]:
 
 
 def outstanding_jobs(jobs: list[dict]) -> list[dict]:
-    """Jobs not in a terminal state. One definition, so the --no-wait count,
-    the waiting loop and the MCP render_status can never disagree about what
-    is outstanding. Public because mcp_server builds on it: an in-module
-    rename here has an external caller to break."""
+    """Jobs not in a terminal state. One definition, so the waiting loop and
+    the MCP render_status can never disagree about what is outstanding; the
+    --no-wait count takes this and floors it at what the trigger enqueued,
+    which the scheduler is free to finish before this can be read. Public
+    because mcp_server builds on it: an in-module rename here has an external
+    caller to break."""
     return [job for job in jobs if str(job.get("status")) not in _TERMINAL]
+
+
+def enqueued_count(trigger: Any) -> int:
+    """How many jobs a /render or /finalize trigger says it enqueued.
+
+    Anything that is not a mapping carrying a whole, non-negative number
+    answers 0. `request` hands back raw bytes for a 200 whose body is not
+    JSON, which a proxy in front of a remote engine is entirely capable of
+    returning, and an operator who has just triggered a render is better
+    served by a conservative count than by a traceback. Public, and shared
+    with the MCP server, for outstanding_jobs' reason: two readings of one
+    field are two things to keep in step.
+    """
+    if not isinstance(trigger, dict):
+        return 0
+    count = trigger.get("enqueued")
+    if isinstance(count, bool) or not isinstance(count, int):
+        return 0
+    return max(count, 0)
 
 
 def failed_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> list[dict]:

@@ -14,6 +14,7 @@ automation contract a script actually depends on.
 
 from __future__ import annotations
 
+import argparse
 import json
 import threading
 import time
@@ -417,6 +418,133 @@ def test_render_enqueues_work_when_the_queue_was_drained(engine, capsys):
         assert run(engine, "render", project_id, "--no-wait", "--json") == 0
 
         assert json_out(capsys)["pending"] > 0
+
+
+class _TriggerStub:
+    """An engine that enqueues, then drains before /jobs is asked.
+
+    The interesting parameter is what /jobs answers AFTER the trigger: a mock
+    backend renders in microseconds, so "the queue is already empty" is a
+    state a real engine reaches on its own between two HTTP calls.
+    """
+
+    def __init__(self, enqueued: int, *, still_active: int = 0) -> None:
+        self.enqueued = enqueued
+        self.still_active = still_active
+        self.posted: list[str] = []
+        # Overridable, because what a proxy puts in a 200 is not a dict.
+        self.body: object = {"enqueued": enqueued}
+
+    def post(self, path: str, **kwargs: object) -> object:
+        self.posted.append(path)
+        return self.body
+
+    def get(self, path: str, **kwargs: object) -> list[dict]:
+        assert path == "/jobs"
+        return [{"id": f"j{i}", "status": "queued"} for i in range(self.still_active)]
+
+
+def _no_wait(client, *, final: bool = False) -> None:
+    cli._render_command(
+        argparse.Namespace(project_id="p1", no_wait=True, json=True, final=final, timeout_s=60),
+        client,
+    )
+
+
+def test_no_wait_counts_the_jobs_it_queued_not_the_ones_that_survive_the_poll(capsys):
+    """The count `--no-wait` prints is the answer a script branches on.
+
+    It used to come from a /jobs poll taken after the trigger returned, which
+    the scheduler runs during. With a fast backend the whole queue can drain
+    in that gap, so the command reported "0 job(s) queued" over a render that
+    had just enqueued thirty - and did so precisely when the engine was
+    quickest. A script reading 0 as "nothing to wait for" then exports the
+    previous run's cut.
+    """
+    client = _TriggerStub(enqueued=30, still_active=0)
+
+    _no_wait(client)
+
+    assert json_out(capsys)["pending"] == 30
+
+
+def test_no_wait_still_counts_work_this_render_did_not_enqueue(capsys):
+    """Enqueueing nothing does not mean nothing is outstanding: a second
+    `render --no-wait` over a queue still draining from the first one has a
+    real count to report, and the trigger's own number is 0."""
+    client = _TriggerStub(enqueued=0, still_active=4)
+
+    _no_wait(client)
+
+    assert json_out(capsys)["pending"] == 4
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"<html>maintenance</html>", id="html-page"),
+        pytest.param([{"id": "j1"}], id="a-list"),
+        pytest.param("ok", id="a-string"),
+        pytest.param(None, id="empty-body"),
+        pytest.param({"enqueued": "lots"}, id="not-a-number"),
+        pytest.param({"ok": True}, id="no-such-field"),
+    ],
+)
+def test_no_wait_survives_a_trigger_body_it_cannot_read(capsys, body):
+    """A count is worth less than the operator's ability to read the screen.
+
+    `EngineClient.request` returns raw bytes for a 200 whose body is not JSON
+    - a proxy in front of a remote engine answering with its own page is the
+    way that arrives - and every non-mapping shape reaches this the same way.
+    The render has already been triggered by the time the body is read, so
+    refusing to count is right and crashing over it is not: this file's
+    contract is a sentence and an exit status, never a traceback.
+    """
+    client = _TriggerStub(enqueued=0, still_active=2)
+    client.body = body
+
+    _no_wait(client)
+
+    assert json_out(capsys)["pending"] == 2
+
+
+def test_a_waiting_render_never_reads_the_trigger_body(capsys):
+    """The waiting path reaches its own report over a body it cannot read.
+
+    Driven with `no_wait=False` on purpose: the waiting branch emits no
+    `pending` key at all, so a test that asserts one here is reporting on
+    the branch it meant to exclude. What this pins is the reading of the
+    trigger body, not where that read sits - `enqueued_count` answers for
+    every shape, so moving the call across the branch is unobservable and
+    no test can hold it in place.
+    """
+    client = _TriggerStub(enqueued=0)
+    client.body = b"<html>maintenance</html>"
+
+    assert (
+        cli._render_command(
+            argparse.Namespace(
+                project_id="p1", no_wait=False, json=True, final=False, timeout_s=60
+            ),
+            client,
+        )
+        == automation.EXIT_OK
+    )
+
+    # The waiting path reports failures, not a count - and got that far
+    # without reading a body it has no use for.
+    assert json_out(capsys)["failed"] == []
+
+
+def test_no_wait_reports_a_finalize_the_same_way(capsys):
+    """--final routes to /finalize, which returns the same `enqueued` count.
+    Reading it on only one of the two branches is how they drift."""
+    client = _TriggerStub(enqueued=12, still_active=0)
+
+    _no_wait(client, final=True)
+
+    assert client.posted == ["/projects/p1/finalize"]
+    assert json_out(capsys)["pending"] == 12
 
 
 class _JobsStub:
