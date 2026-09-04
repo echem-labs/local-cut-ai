@@ -509,16 +509,31 @@ def test_no_wait_survives_a_trigger_body_it_cannot_read(capsys, body):
 
 
 def test_a_waiting_render_never_reads_the_trigger_body(capsys):
-    """Only `--no-wait` reports a count, so only `--no-wait` parses one."""
+    """The waiting path reaches its own report over a body it cannot read.
+
+    Driven with `no_wait=False` on purpose: the waiting branch emits no
+    `pending` key at all, so a test that asserts one here is reporting on
+    the branch it meant to exclude. What this pins is the reading of the
+    trigger body, not where that read sits - `enqueued_count` answers for
+    every shape, so moving the call across the branch is unobservable and
+    no test can hold it in place.
+    """
     client = _TriggerStub(enqueued=0)
     client.body = b"<html>maintenance</html>"
 
-    cli._render_command(
-        argparse.Namespace(project_id="p1", no_wait=True, json=True, final=False, timeout_s=60),
-        client,
+    assert (
+        cli._render_command(
+            argparse.Namespace(
+                project_id="p1", no_wait=False, json=True, final=False, timeout_s=60
+            ),
+            client,
+        )
+        == automation.EXIT_OK
     )
 
-    assert json_out(capsys)["pending"] == 0
+    # The waiting path reports failures, not a count - and got that far
+    # without reading a body it has no use for.
+    assert json_out(capsys)["failed"] == []
 
 
 def test_no_wait_reports_a_finalize_the_same_way(capsys):
