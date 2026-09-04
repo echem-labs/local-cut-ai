@@ -8,6 +8,7 @@ Rules enforced here, not by convention:
 """
 
 import asyncio
+import base64
 import functools
 import json
 import logging
@@ -113,6 +114,12 @@ logger = logging.getLogger(__name__)
 # /ws route and install_log_redaction). The client offers two protocols —
 # this marker and then the token — and the server echoes the marker back.
 WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1"
+# Marks a subprotocol-carried token as base64url. A subprotocol value is an
+# RFC 7230 token, which excludes "/", "+", "=" and space — the characters
+# base64 is made of, and the docs tell operators to generate the token with
+# `openssl rand -base64 32`. Clients encode; a value without this prefix is
+# read as-is, so a client that sends the token plain still authenticates.
+WS_TOKEN_B64_PREFIX = "b64u."
 
 # Any `token=…` in a log record, whatever the surrounding text. Applied to
 # uvicorn's loggers, where the WebSocket handshake line lands.
@@ -167,6 +174,25 @@ class _RedactTokens(logging.Filter):
         record.msg = _TOKEN_IN_TEXT.sub(r"\1[redacted]", rendered)
         record.args = ()
         return True
+
+
+def _decode_ws_token(value: str) -> str:
+    """The token a client offered through the WebSocket subprotocol.
+
+    Encoded values carry WS_TOKEN_B64_PREFIX; anything else is returned
+    unchanged, so a client that puts the token in plain still authenticates
+    when its characters happen to be legal in a subprotocol.
+    """
+    if not value.startswith(WS_TOKEN_B64_PREFIX):
+        return value
+    raw = value[len(WS_TOKEN_B64_PREFIX) :]
+    try:
+        # Padding is stripped on the wire: a subprotocol value cannot carry "=".
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        # Not decodable is not authenticated — fall through to the 4401 below
+        # rather than raising out of the handshake.
+        return ""
 
 
 def install_log_redaction() -> None:
@@ -2072,7 +2098,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         ]
         subprotocol: str | None = None
         if len(offered) == 2 and offered[0] == WS_TOKEN_SUBPROTOCOL:
-            presented, subprotocol = offered[1], WS_TOKEN_SUBPROTOCOL
+            presented, subprotocol = _decode_ws_token(offered[1]), WS_TOKEN_SUBPROTOCOL
         else:
             authorization = websocket.headers.get("authorization", "")
             if authorization.startswith("Bearer "):

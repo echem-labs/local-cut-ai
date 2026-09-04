@@ -3,7 +3,8 @@
 # code from `docker compose logs engine`, and paste it into the desktop
 # app's Settings → Remote engine.
 #
-#   LOCALCUT_TOKEN="$(openssl rand -base64 32)" docker compose up -d
+#   LOCALCUT_TOKEN="$(openssl rand -base64 32)" \
+#     LOCALCUT_ADVERTISE=gpu-box.local docker compose up -d
 #
 # ComfyUI (keyframes/clips/music) is intentionally not declared here: GPU
 # ComfyUI setups are personal (custom nodes, model paths, quant choices).
@@ -21,6 +22,12 @@ services:
       LOCALCUT_LLM_URL: http://ollama:11434/v1
       LOCALCUT_LLM_MODEL: ${LOCALCUT_LLM_MODEL:-qwen3:14b}
       LOCALCUT_COMFYUI_URL: ${LOCALCUT_COMFYUI_URL:-http://host.docker.internal:8188}
+      # What the pairing code tells the laptop to dial. Without it the engine
+      # advertises its own outbound address, which inside a container is the
+      # bridge network (172.x) and reaches nothing — and the pairing code is
+      # opaque base64, so there is no correcting it by hand. Set this to the
+      # GPU box's LAN address, tailnet name, or proxy host:port.
+      LOCALCUT_ADVERTISE: ${LOCALCUT_ADVERTISE:?set LOCALCUT_ADVERTISE to the address your laptop dials this box on}
     volumes:
       - localcut-data:/data
     ports:
@@ -31,7 +38,9 @@ services:
       - ollama
 
   ollama:
-    image: ollama/ollama
+    # Pinned for the same reason the engine's FFmpeg is: this box is
+    # network-exposed, and a floating tag is unverified code on every pull.
+    image: ollama/ollama:0.33.3
     restart: unless-stopped
     volumes:
       - ollama:/root/.ollama
