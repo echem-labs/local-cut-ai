@@ -570,9 +570,9 @@ def _render_command(args: argparse.Namespace, client) -> int:
         # something, so `{"ops": []}` enqueued nothing and this command
         # reported "render finished" over a queue it had never filled.
         trigger = client.post(f"/projects/{args.project_id}/render")
-    enqueued = int((trigger or {}).get("enqueued") or 0)
 
     if args.no_wait:
+        enqueued = automation.enqueued_count(trigger)
         # Floored at what the trigger reported it enqueued. Asking /jobs is
         # a second round trip the scheduler runs during, so a queue that
         # drains faster than the network answers reports fewer jobs than

@@ -421,7 +421,7 @@ def build_server(
         return {
             # The POST's own answer — not a third round trip that would
             # re-download the whole /jobs history for a count already sent.
-            "enqueued": int(result.get("enqueued") or 0),
+            "enqueued": automation.enqueued_count(result),
             # Failed ids only: they are all render_status ever consults, and
             # the agent re-sends this list on every poll — done/cancelled
             # ids would be unbounded dead weight in its context.
