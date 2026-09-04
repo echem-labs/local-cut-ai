@@ -286,6 +286,23 @@ class ProjectService:
             if project is None:
                 raise KeyError(project_id)
             graph = self.store.load_graph(project_id)
+            # Carried so the import does not re-render the script and rebuild
+            # the scenes from the importer's own model. Trusted cache only: a
+            # placeholder screenplay written while the LLM was down would
+            # otherwise be published as the template's structure.
+            screenplay: Screenplay | None = None
+            if "script" in graph.nodes:
+                history = self.queue.list(project_id, 1000)
+                script_hash = graph.output_hash("script")
+                if script_hash in self._trusted_cache(project_id, history):
+                    artifact = self.store.resolve_artifact(project_id, script_hash)
+                    if artifact is not None:
+                        try:
+                            screenplay = Screenplay.model_validate_json(
+                                artifact.read_text(encoding="utf-8")
+                            )
+                        except (OSError, ValueError):
+                            screenplay = None  # unreadable: export without it
         template = to_template(
             graph,
             name=name or project.title,
@@ -293,6 +310,7 @@ class ProjectService:
             mode=project.mode,
             aspect=project.aspect,
             duration_s=project.duration_s,
+            screenplay=screenplay,
         )
         return template.model_dump(mode="json")
 
@@ -305,11 +323,24 @@ class ProjectService:
         """
         graph = build_graph(template)
         with self._lock:
+            # The script node arrives cached when the template carries the
+            # screenplay its scenes were expanded from — the same seeding
+            # `promote_tool` does, and for the same reason. Without it the
+            # script re-renders on import and `expand_screenplay` rebuilds
+            # the scene structure from whatever the importer's model writes:
+            # scenes the author deleted come back, scenes they added vanish,
+            # and every prompt and narration line reverts.
+            seeded: set[str] = set()
+            script_hash: str | None = None
+            if template.screenplay is not None and "script" in graph.nodes:
+                script_hash = graph.output_hash("script")
+                seeded.add(script_hash)
             # A template is legitimately allowed to carry cloud models (see
             # `cloud_models` in template_io), which makes importing one a
             # choice to spend on the author's providers - refused before the
             # project exists, or the 403 leaves it in the user's list anyway.
-            self._refuse_new_graph_spend(graph)
+            # A seeded script is not a spend: nothing will run it.
+            self._refuse_new_graph_spend(graph, seeded)
             project = self.store.create(
                 title=title or template.name,
                 graph=graph,
@@ -317,6 +348,15 @@ class ProjectService:
                 aspect=template.aspect,
                 duration_s=template.duration_s,
             )
+            if script_hash is not None and template.screenplay is not None:
+                dest = self.store.generated_dir(project.id)
+                dest.mkdir(parents=True, exist_ok=True)
+                # Written the way promote_tool seeds its copy: an artifact,
+                # not a state file, so it does not go through the store's
+                # atomic state writer.
+                (dest / f"{script_hash}.screenplay.json").write_text(
+                    template.screenplay.model_dump_json(indent=2), encoding="utf-8"
+                )
             self._enqueue_dirty(project.id, graph)
         return project
 
@@ -336,8 +376,19 @@ class ProjectService:
             # after a regenerate (seed bump) the older screenplay must not be
             # promoted as if it were the new seed's output.
             current_hash = graph.output_hash("script")
+            # And only a TRUSTED artifact. `_trusted_cache`'s own contract is
+            # that every consumer goes through it, not just the enqueue path,
+            # and this is a consumer: a screenplay produced by the mock
+            # backend while the LLM was unreachable is a placeholder, and the
+            # session's own board already says so. Promoting it anyway
+            # produced a project whose every keyframe, clip, narration and
+            # export was generated from placeholder text, with the script
+            # node reading a healthy `draft` so nothing ever re-rendered it.
+            history = self.queue.list(project_id, 1000)
+            if current_hash not in self._trusted_cache(project_id, history):
+                raise ValueError("the script has not finished generating yet")
             artifact: Path | None = None
-            for candidate in self.queue.list(project_id, 1000):
+            for candidate in history:
                 if (
                     candidate.spec.node_id == "script"
                     and candidate.spec.output_hash == current_hash
@@ -833,8 +884,26 @@ class ProjectService:
             params["voice_consent"] = True
         with self._lock:
             graph = self.store.load_graph(project_id)
-            if node_id not in graph.nodes:
+            existing = graph.nodes.get(node_id)
+            if existing is None:
                 graph.add_node(Node(id=node_id, kind=NodeKind.ASSET, params=params))
+                self.store.save_graph(project_id, graph)
+            elif (
+                voice
+                and existing.kind is NodeKind.ASSET
+                and not existing.params.get("voice_consent")
+            ):
+                # The same bytes, uploaded again with the affirmation. The id
+                # is the content hash, so a file first dropped in as a plain
+                # asset already has a node — and without this the consent was
+                # collected, answered 200, and changed nothing: the node
+                # stayed unstamped, the voice_ref chokepoint went on refusing
+                # it, and there was no way to fix that from the UI.
+                #
+                # Consent is part of the node's identity (params feed the
+                # content address), so this re-addresses the asset and the
+                # bytes are written again under the new hash below.
+                existing.params["voice_consent"] = True
                 self.store.save_graph(project_id, graph)
             out_hash = graph.output_hash(node_id)
             dest = self.store.generated_dir(project_id)

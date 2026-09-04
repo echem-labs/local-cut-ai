@@ -487,3 +487,94 @@ def test_an_imported_narration_node_carries_this_builds_version():
 
     assert built.nodes["s1.narration"].params["narration_version"] == NARRATION_VERSION
     assert built.output_hash("s1.narration") != graph.output_hash("s1.narration")
+
+
+# -- a template has to import as the graph it describes ----------------------
+
+
+def _service(tmp_path):
+    from localcut_engine.events import EventBus
+    from localcut_engine.jobs.queue import JobQueue
+    from localcut_engine.project.store import ProjectStore
+    from localcut_engine.service import ProjectService
+
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    return ProjectStore(tmp_path / "projects"), queue, ProjectService(store, queue, EventBus())
+
+
+def test_a_template_round_trips_the_authors_edits(tmp_path):
+    """Export then import has to reproduce the project, not re-derive it.
+
+    The script node is what re-derived it: with no artifact it re-rendered on
+    import, and `expand_screenplay` rebuilt the scene structure from whatever
+    the importer's own model wrote — so a scene the author deleted came back,
+    a narration line they rewrote reverted, and nothing said so.
+    """
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.graph.template_io import from_template
+    from localcut_engine.schema import Scene, Screenplay
+
+    store, _queue, service = _service(tmp_path)
+
+    screenplay = Screenplay(
+        title="Template fidelity probe",
+        hook="",
+        scenes=[
+            Scene(id=f"s{n}", narration=f"line {n}", visual=f"shot {n}", duration_s=5.0)
+            for n in (1, 2, 3)
+        ],
+    )
+    graph = prompt_template_graph("a hummingbird", target_duration_s=30)
+    expand_screenplay(graph, screenplay)
+    project = store.create(title="source", graph=graph, mode="prompt")
+
+    # The author's two edits: a scene removed, and a narration line rewritten.
+    graph = store.load_graph(project.id)
+    for node_id in [n for n in graph.nodes if n.startswith("s2.")]:
+        graph.nodes.pop(node_id)
+    graph.edges = [
+        e for e in graph.edges if not (e.src.startswith("s2.") or e.dst.startswith("s2."))
+    ]
+    graph.nodes["s1.narration"].params["text"] = "CUSTOM NARRATION MARKER"
+    store.save_graph(project.id, graph)
+
+    # Seed the script artifact so the export can carry it, the way a rendered
+    # project would.
+    script_hash = graph.output_hash("script")
+    generated = store.generated_dir(project.id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{script_hash}.screenplay.json").write_text(
+        screenplay.model_dump_json(), encoding="utf-8"
+    )
+
+    document = service.export_template(project.id, name="probe")
+    assert document["screenplay"] is not None, "the template did not carry the screenplay"
+
+    imported = service.create_from_template(from_template(document), title="copy")
+    copied = store.load_graph(imported.id)
+
+    assert "s2.clip" not in copied.nodes, "a deleted scene came back"
+    assert copied.nodes["s1.narration"].params["text"] == "CUSTOM NARRATION MARKER"
+    # And the script node is cached, so nothing will re-render it and undo
+    # any of the above.
+    assert store.resolve_artifact(imported.id, copied.output_hash("script")) is not None
+
+
+def test_a_template_without_a_screenplay_still_imports(tmp_path):
+    """A v1 document, or a project whose script never rendered. The scenes
+    still arrive; the script simply has to render on first use."""
+    from localcut_engine.graph.templates import prompt_template_graph
+    from localcut_engine.graph.template_io import from_template
+
+    store, _queue, service = _service(tmp_path)
+    project = store.create(
+        title="source",
+        graph=prompt_template_graph("a hummingbird", target_duration_s=30),
+        mode="prompt",
+    )
+    document = service.export_template(project.id, name="probe")
+    assert document["screenplay"] is None
+
+    imported = service.create_from_template(from_template(document), title="copy")
+    assert "script" in store.load_graph(imported.id).nodes
