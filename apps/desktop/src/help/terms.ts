@@ -23,7 +23,9 @@ export function nodeLabel(nodeId: string): string {
   if (match) {
     const [, scene, kind, take] = match;
     const base = t("terms.nodeSceneKind", { scene, kind: kindLabels()[kind] ?? kind });
-    return take ? base + t("terms.nodeTake", { take: Number(take) + 1 }) : base;
+    // The engine names take 1 `s1.clip` and take N `s1.clipN`, so the
+    // trailing digit is the take number rather than an index.
+    return take ? base + t("terms.nodeTake", { take: Number(take) }) : base;
   }
   return nodeId;
 }

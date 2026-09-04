@@ -13,11 +13,15 @@ engine-only deployment is a supported layout).
 
 from __future__ import annotations
 
+import ast
+import json
 import re
+import typing
 from pathlib import Path
 
 import pytest
 
+import localcut_engine
 from conftest import ci_engine_paths_by_trigger, hook_files_pattern, matches_a_path_filter
 
 _DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
@@ -33,17 +37,22 @@ _APP_CSS = _DESKTOP / "src" / "styles" / "app.css"
 _TOKENS_CSS = _DESKTOP / "src" / "styles" / "tokens.css"
 _ENGINE_TS = _DESKTOP / "electron" / "engine.ts"
 _U7 = _DESKTOP / "scripts" / "rig" / "u7.mjs"
+_TERMS_TS = _DESKTOP / "src" / "help" / "terms.ts"
+_NEW_SCENE = _DESKTOP / "src" / "components" / "NewSceneDialog.tsx"
+_TIMELINE_STRIP = _DESKTOP / "src" / "components" / "TimelineStrip.tsx"
 _I18N = _DESKTOP / "src" / "i18n" / "en"
 _VOICE_ASSETS = _DESKTOP / "src" / "assets" / "voices"
 
 # The desktop label catalogs this module reconciles against engine ids.
 _CATALOGS = (
+    "canvas.json",
     "failure.json",
     "models.json",
     "notices.json",
     "project.json",
     "readiness.json",
     "status.json",
+    "timeline.json",
     "tools.json",
     "voices.json",
 )
@@ -65,6 +74,9 @@ _DESKTOP_READS: tuple[Path, ...] = (
     _SETTINGS,
     _APP_CSS,
     _TOKENS_CSS,
+    _TERMS_TS,
+    _NEW_SCENE,
+    _TIMELINE_STRIP,
     _ENGINE_TS,
     _U7,
     *(_I18N / name for name in _CATALOGS),
@@ -194,8 +206,6 @@ def test_every_board_status_has_a_ui_case_and_a_label():
     label — the tile silently loses its meaning rather than failing. Three
     places have to agree: the engine's set, the `NodeStatus` union, and the
     status catalog the pill reads its word from."""
-    import json
-
     from localcut_engine.service import SCENE_NODE_STATUSES
 
     text = _ts_source("api", "types.ts")
@@ -586,6 +596,199 @@ def test_swatch_voice_names_match_what_the_engine_derives():
             f"voices.json calls {voice_id} {label!r}, the engine derives "
             f"{describe_voice(voice_id)['name']!r}"
         )
+
+
+def _ts_union(text: str, declaration: str) -> set[str]:
+    """The string literals of a TypeScript union, given the text that opens it.
+
+    Unions here are hand-mirrored from an engine enum, so the interesting
+    failure is one side gaining a member. Reading the literals back is the
+    only way this side can see that happen.
+    """
+    start = text.index(declaration) + len(declaration)
+    end = text.index(";", start)
+    return set(re.findall(r'"([a-z0-9_.-]+)"', text[start:end]))
+
+
+def test_job_statuses_match_the_desktop_union():
+    """`Job.status` is the engine's JobStatus retyped by hand. A status the
+    desktop does not know is not a type error there — it falls through every
+    branch, so the queue row renders as neither running nor finished."""
+    from localcut_engine.jobs.models import JobStatus
+
+    text = _TYPES.read_text(encoding="utf-8")
+    interface = text[text.index("export interface Job {") :]
+    union = _ts_union(interface, "  status:")
+    assert union == {status.value for status in JobStatus}
+
+
+def test_license_verdicts_match_the_desktop_union():
+    """The verdict drives what the model library tells a user they may do
+    with a model's output. `ModelLibrary` falls back to "conditions" for an
+    unknown verdict, so a new engine verdict does not fail loudly here — it
+    silently reports the wrong licence."""
+    from localcut_engine.manifest.model import Verdict
+
+    union = _ts_union(_TYPES.read_text(encoding="utf-8"), "export type LicenseVerdict =")
+    assert union == set(typing.get_args(Verdict))
+
+
+def test_every_event_the_engine_publishes_is_in_the_desktop_union():
+    """The WS stream is how the board learns anything changed. An event the
+    desktop's union does not carry is dropped by the dispatcher's exhaustive
+    switch, and the surface it should have refreshed simply goes stale —
+    with nothing on screen and nothing in the log to say so.
+
+    The engine side is read from the syntax tree rather than by grep: these
+    calls pass the name positionally and their keyword arguments span lines,
+    which a regex over the source reads wrongly."""
+    published = set()
+    for path in (Path(localcut_engine.__file__).parent).rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "publish"
+            ):
+                assert node.args, f"{path.name}:{node.lineno} publishes without a literal name"
+                name = node.args[0]
+                assert isinstance(name, ast.Constant) and isinstance(name.value, str), (
+                    f"{path.name}:{node.lineno} publishes a computed event name — "
+                    "this test can only see literals"
+                )
+                published.add(name.value)
+
+    assert published, "no publish() calls found — update this test with the engine"
+    declared = set(re.findall(r'type: "([a-z0-9_.]+)"', _TYPES.read_text(encoding="utf-8")))
+    assert published <= declared, (
+        f"the engine publishes {sorted(published - declared)}, which the desktop's "
+        "EngineEvent union does not carry"
+    )
+
+
+def test_the_aspect_picker_offers_the_engines_aspects():
+    """Home's prompt row and Settings → Defaults share one aspect list. An
+    aspect the engine has no resolution for compiles to a graph the render
+    then fails on, and one it has that the UI omits is simply unreachable."""
+    from localcut_engine.aspects import (
+        EXPORT_RESOLUTIONS,
+        IMAGE_RESOLUTIONS,
+        VIDEO_RESOLUTIONS,
+    )
+
+    block = re.search(r"export const ASPECTS = \[(.*?)\] as const;", _source(), re.S)
+    assert block, "formats.ts no longer declares ASPECTS — update this test with it"
+    offered = set(re.findall(r'value: "([0-9:]+)"', block.group(1)))
+
+    for stage, table in (
+        ("image", IMAGE_RESOLUTIONS),
+        ("video", VIDEO_RESOLUTIONS),
+        ("export", EXPORT_RESOLUTIONS),
+    ):
+        assert offered == set(table), (
+            f"the picker offers {sorted(offered)} but the engine's {stage} table "
+            f"covers {sorted(table)}"
+        )
+
+
+def test_transition_vocabulary_agrees_across_the_boundary():
+    """Four copies: the NL-edit whitelist, the assembly branches, the
+    timeline's popover and the label catalog. A transition the UI offers
+    that the whitelist refuses is a rejected patch; one the assembly does
+    not branch on renders as a plain cut, which looks like nothing
+    happened."""
+    from localcut_engine.graph.editor import _TRANSITIONS
+
+    offered = set(re.findall(r'\{ id: "([a-z]+)" \}', _TIMELINE_STRIP.read_text(encoding="utf-8")))
+    assert offered == _TRANSITIONS, (
+        f"the timeline offers {sorted(offered)}, the engine accepts {sorted(_TRANSITIONS)}"
+    )
+
+    catalog = json.loads((_I18N / "timeline.json").read_text(encoding="utf-8"))
+    labelled = set(catalog.get("transitions", {}))
+    assert _TRANSITIONS <= labelled, (
+        f"timeline.json has no label for {sorted(_TRANSITIONS - labelled)} — "
+        "the popover would show the raw wire id"
+    )
+
+
+def test_the_canvas_catalog_names_every_node_kind_and_port():
+    """The flowchart draws engine ids, and its catalog is the only thing
+    standing between a user and a raw `voice_ref`. A kind or port added to
+    the engine renders untranslated until this catalog carries it."""
+    from localcut_engine.graph import model as graph_model
+    from localcut_engine.graph.model import NodeKind
+
+    catalog = json.loads((_I18N / "canvas.json").read_text(encoding="utf-8"))
+
+    kinds = set(catalog["kinds"])
+    assert kinds == {kind.value for kind in NodeKind}, (
+        f"canvas.json labels {sorted(kinds)}, the engine has "
+        f"{sorted(kind.value for kind in NodeKind)}"
+    )
+
+    ports = {
+        value
+        for name, value in vars(graph_model).items()
+        if name.endswith("_PORT") and isinstance(value, str)
+    }
+    assert ports <= set(catalog["ports"]), (
+        f"canvas.json has no label for port {sorted(ports - set(catalog['ports']))}"
+    )
+
+
+def test_take_numbers_match_the_engines_naming():
+    """`expand_screenplay` names the first take `s1.clip` and the rest
+    `s1.clip<n>`, so the trailing digit IS the take number. Adding one to it
+    numbers every take one too high, and the queue, the inspector and the
+    canvas all read this label."""
+    from localcut_engine.graph.templates import take_node_id
+
+    source = _TERMS_TS.read_text(encoding="utf-8")
+    match = re.search(r'terms\.nodeTake", \{ take: ([^}]+) \}', source)
+    assert match, "terms.ts no longer builds a take number — update this test with it"
+    expression = match.group(1).strip()
+    assert expression == "Number(take)", (
+        f"terms.ts derives its take number as `{expression}`; the engine names "
+        f"take 2 `{take_node_id('s1.clip', 2)}`, so the trailing digit is the take"
+    )
+
+
+def test_the_new_scene_dialog_reads_the_shared_speech_rate():
+    """A third copy of the words-per-second rate, inline in a runtime
+    readout, gives one engine rule two answers on two surfaces. The dialog
+    must import the constant the rest of the app shares."""
+    source = _NEW_SCENE.read_text(encoding="utf-8")
+    assert "SPEECH_WORDS_PER_S" in source, (
+        "NewSceneDialog computes a runtime without the shared speech rate"
+    )
+    assert not re.search(r"words \* [\d.]+", source), (
+        "NewSceneDialog still multiplies a word count by an inline rate"
+    )
+
+
+def test_the_custom_model_id_pattern_matches_the_route():
+    """A custom model's id becomes a path parameter. If the two patterns
+    disagree, `add_custom_model` mints an id every route for it then 404s —
+    and the id is only checked with `match`, which stops at the first
+    newline and would accept one the route refuses."""
+    from localcut_engine.manifest.custom import _ID_OK
+
+    route = re.search(
+        r'ModelId = Annotated\[str, PathParam\(pattern=r"([^"]+)"\)\]',
+        (Path(localcut_engine.__file__).parent / "api" / "app.py").read_text(encoding="utf-8"),
+    )
+    assert route, "app.py no longer declares ModelId — update this test with it"
+    assert _ID_OK.pattern == route.group(1)
+    # `$` also matches before a trailing newline, so the shared pattern only
+    # agrees with the route when the id is checked whole. Asserting the call
+    # site, not just the trap: `match` here would mint an id the route 404s.
+    assert _ID_OK.match("ok\n") is not None
+    assert _ID_OK.fullmatch("ok\n") is None
+    source = (Path(localcut_engine.__file__).parent / "manifest" / "custom.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_ID_OK.match(" not in source, "the custom-model id is checked with match, not fullmatch"
 
 
 def test_ci_runs_this_module_for_the_desktop_files_it_reads():
