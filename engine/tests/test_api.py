@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import threading
 import wave
@@ -111,6 +112,46 @@ async def test_ws_token_rides_a_subprotocol_not_the_query_string(tmp_path):
         # filter is what keeps it out of the logs.
         with http.websocket_connect("/ws?token=test-token"):
             pass
+
+
+async def test_a_base64_token_survives_the_subprotocol(tmp_path):
+    """The docs tell an operator to generate the token with
+    `openssl rand -base64 32`. That always ends in "=" and contains "/" about
+    half the time, and a subprotocol value is an RFC 7230 token, which allows
+    neither — so the browser refused to construct the socket at all and the
+    app came up connected over HTTP with no event stream and no error.
+    """
+    import base64 as _b64
+
+    from starlette.testclient import TestClient
+
+    from localcut_engine.api.app import WS_TOKEN_B64_PREFIX, WS_TOKEN_SUBPROTOCOL
+
+    token = _b64.b64encode(b"\x00" * 32).decode()  # ends "=", contains "/"
+    assert {"/", "="} & set(token)
+
+    config = EngineConfig(data_dir=tmp_path, token=token, backend="mock")
+    app = create_app(config)
+    encoded = WS_TOKEN_B64_PREFIX + _b64.urlsafe_b64encode(token.encode()).decode().rstrip("=")
+    # Every character now legal in a subprotocol value.
+    assert re.fullmatch(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+", encoded)
+
+    with TestClient(app) as http:
+        with http.websocket_connect("/ws", subprotocols=[WS_TOKEN_SUBPROTOCOL, encoded]) as ws:
+            assert ws.accepted_subprotocol == WS_TOKEN_SUBPROTOCOL
+
+        wrong = WS_TOKEN_B64_PREFIX + _b64.urlsafe_b64encode(b"nope").decode().rstrip("=")
+        with pytest.raises(Exception):
+            with http.websocket_connect("/ws", subprotocols=[WS_TOKEN_SUBPROTOCOL, wrong]):
+                pass
+
+        # Undecodable is not authenticated, and must not raise out of the
+        # handshake either.
+        with pytest.raises(Exception):
+            with http.websocket_connect(
+                "/ws", subprotocols=[WS_TOKEN_SUBPROTOCOL, WS_TOKEN_B64_PREFIX + "!!!!"]
+            ):
+                pass
 
 
 def test_log_redaction_scrubs_tokens_from_request_lines():

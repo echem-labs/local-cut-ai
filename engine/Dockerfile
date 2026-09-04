@@ -11,10 +11,22 @@
 FROM python:3.14.1-slim
 
 # LGPL-only FFmpeg static build — the licensing policy excludes GPL x264/
-# x265, which distro ffmpeg packages compile in. Pinned to a dated release
-# and checksum-verified before it is installed.
-ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-01-01-12-55/ffmpeg-n7.1-latest-linux64-lgpl-7.1.tar.xz
-ADD ${FFMPEG_URL} /tmp/ffmpeg.tar.xz
+# x265, which distro ffmpeg packages compile in.
+#
+# Two things have to be true of this pin, and only one of them used to be.
+# It has to be immutable, which rules out the `latest` release tag: its
+# assets keep their names and are rebuilt daily, so the same URL fetches
+# different code over time. And it has to be verified, which needs the
+# checksum below — `ADD` on its own downloads whatever answers, and this
+# container is network-exposed and processes untrusted media.
+#
+# BtbN's autobuild-* releases are immutable but are eventually deleted, so
+# this pin has a shelf life: when it 404s the build fails loudly here rather
+# than silently installing something else. Bump the tag, the filename and the
+# checksum together — `curl -sL <url> | sha256sum` prints the third.
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-03-13-17/ffmpeg-n8.1.2-50-g1a748fe2cd-linux64-lgpl-8.1.tar.xz
+ARG FFMPEG_SHA256=303cd5a6f714d4409cf5c80a17589eed1b202b53567b26754f9e1a321cc6b40a
+ADD --checksum=sha256:${FFMPEG_SHA256} ${FFMPEG_URL} /tmp/ffmpeg.tar.xz
 RUN apt-get update \
     && apt-get install -y --no-install-recommends xz-utils \
     && rm -rf /var/lib/apt/lists/* \
