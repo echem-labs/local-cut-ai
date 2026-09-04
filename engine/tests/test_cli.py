@@ -302,3 +302,38 @@ def test_a_tls_pairing_block_does_not_carry_the_warning(capsys):
     printed = capsys.readouterr().out
     assert "REFUSE" not in printed
     assert "fingerprint:" in printed
+
+
+def test_a_second_engine_cannot_share_a_data_directory(tmp_path):
+    """The port is not what has to be exclusive — the DATA DIRECTORY is.
+
+    Binding first stops two engines on one host:port, but two on different
+    ports shared one queue.db and one project tree: the same job rendered
+    twice on one GPU, both wrote the same project.json, and status flipped
+    between them with nothing on screen to say so. The bind message even
+    sent people there, by offering a different --port as the remedy.
+    """
+    from localcut_engine.cli import DataDirBusy, _hold_data_dir
+
+    held = _hold_data_dir(tmp_path)
+    try:
+        with pytest.raises(DataDirBusy):
+            _hold_data_dir(tmp_path)
+    finally:
+        held.close()
+
+    # Released with the handle, so quitting the first engine frees it.
+    again = _hold_data_dir(tmp_path)
+    again.close()
+
+
+def test_the_bind_clash_message_does_not_send_you_to_a_shared_data_dir():
+    """ "Pass a different --port" was advice that walked the user straight
+    into the unprotected case."""
+    from pathlib import Path
+
+    from localcut_engine import cli
+
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert "quit it, or pass a different --port" not in source
+    assert "different --data-dir" in source
