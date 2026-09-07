@@ -93,3 +93,57 @@ def test_an_engine_with_no_registry_names_no_voice(tmp_path):
     # rather than raise.
     state, _ = _service(tmp_path, None, {"text": "hi", "voice": "british"})
     assert state["resolved_voice"] is None
+
+
+def test_a_consented_re_upload_stamps_the_existing_asset(tmp_path):
+    """The node id is the content hash, so a file first dropped in as a plain
+    asset already has a node. The affirmation then answered 200 and changed
+    nothing: the node stayed unstamped, the voice_ref chokepoint went on
+    refusing it, and there was no way to fix that from the UI."""
+    from localcut_engine.events import EventBus
+    from localcut_engine.graph.model import VOICE_REF_PORT
+    from localcut_engine.graph.patch import PatchOp, apply_patch
+    from localcut_engine.graph.templates import prompt_template_graph
+    from localcut_engine.jobs.queue import JobQueue
+    from localcut_engine.project.store import ProjectStore
+    from localcut_engine.service import ProjectService
+
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, EventBus())
+    project = store.create(
+        title="t",
+        graph=prompt_template_graph("a hummingbird", target_duration_s=30),
+        mode="prompt",
+    )
+
+    data = b"RIFF....WAVEfmt "
+    plain = service.add_asset(project.id, "sample.wav", data)
+    graph = store.load_graph(project.id)
+    assert "voice_consent" not in graph.nodes[plain["node_id"]].params
+
+    # The same bytes again, this time with the affirmation.
+    consented = service.add_asset(project.id, "sample.wav", data, voice=True)
+    assert consented["node_id"] == plain["node_id"], "the id is the content hash"
+
+    graph = store.load_graph(project.id)
+    assert graph.nodes[consented["node_id"]].params.get("voice_consent") is True
+
+    # And the chokepoint now accepts it, which is the whole point.
+    graph.add_node(Node(id="n1", kind=NodeKind.NARRATION, params={"text": "hello"}))
+    apply_patch(
+        graph,
+        [
+            PatchOp(
+                op="connect",
+                node_id="n1",
+                src=consented["node_id"],
+                port=VOICE_REF_PORT,
+            )
+        ],
+    )
+    assert any(e.dst == "n1" and e.port == VOICE_REF_PORT for e in graph.edges)
+
+    # The stamped bytes are readable at the node's new address: consent is
+    # part of its identity, so the asset re-addresses.
+    assert store.resolve_artifact(project.id, consented["hash"]) is not None

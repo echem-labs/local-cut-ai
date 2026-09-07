@@ -222,8 +222,24 @@ def take_node_id(clip_id: str, take: int) -> str:
 
 
 def _ensure_edge(graph: StoryGraph, src: str, dst: str, port: str = "default") -> None:
-    if not any(e.src == src and e.dst == dst and e.port == port for e in graph.edges):
-        graph.connect(src, dst, port=port)
+    """Put `src` on `dst`'s `port`, replacing whatever held it.
+
+    An input port takes one edge. Testing the whole (src, dst, port) triple
+    tested the wrong thing: after the user rewires a shared port through
+    /patch — timeline.music, a scene's timeline slot, script -> keyframe or
+    narration, timeline -> captions or export — the next script render found
+    no edge matching its OWN triple and appended a second one onto a port
+    that was already held. Which of the two the backend then received was
+    decided by list order, so the rendered cut changed under the user with
+    nothing on screen to say so.
+
+    Same replace semantics as graph/patch.py's `connect`, for the same
+    reason: that is what a port means.
+    """
+    if any(e.src == src and e.dst == dst and e.port == port for e in graph.edges):
+        return
+    graph.edges = [e for e in graph.edges if not (e.dst == dst and e.port == port)]
+    graph.connect(src, dst, port=port)
 
 
 def _remove_scene(graph: StoryGraph, scene_id: str) -> None:

@@ -675,3 +675,41 @@ def test_a_picked_voice_survives_a_re_expansion():
     assert again.nodes[narr_id].params["voice_id"] == "bm_george"
     assert again.nodes[narr_id].params["speed"] == 1.2
     assert again.nodes[narr_id].params["narration_version"] == NARRATION_VERSION
+
+
+def test_a_re_expansion_does_not_double_up_a_rewired_port():
+    """An input port takes one edge.
+
+    `_ensure_edge` tested the whole (src, dst, port) triple, so after the user
+    rewired a shared port through /patch the next script render found no edge
+    matching its OWN triple and appended a second one onto a port that was
+    already held. Which of the two the backend received was then decided by
+    list order, so the rendered cut changed under the user with nothing on
+    screen to say so.
+    """
+    from localcut_engine.graph.model import MUSIC_PORT
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.schema import Scene, Screenplay
+
+    screenplay = Screenplay(
+        title="t",
+        hook="",
+        scenes=[
+            Scene(id="s1", narration="one", visual="a", duration_s=4.0),
+            Scene(id="s2", narration="two", visual="b", duration_s=4.0),
+        ],
+    )
+    graph = prompt_template_graph("a hummingbird", target_duration_s=20)
+    expand_screenplay(graph, screenplay)
+
+    def holders(dst: str, port: str) -> list[str]:
+        return [e.src for e in graph.edges if e.dst == dst and e.port == port]
+
+    assert len(holders("timeline", MUSIC_PORT)) == 1
+    # The user rewires the timeline's music port, as /patch's connect does.
+    graph.edges = [e for e in graph.edges if not (e.dst == "timeline" and e.port == MUSIC_PORT)]
+    graph.connect("s1.narration", "timeline", port=MUSIC_PORT)
+
+    # Re-expanding (an edited script prompt) must not add a second edge.
+    expand_screenplay(graph, screenplay)
+    assert len(holders("timeline", MUSIC_PORT)) == 1, "the port carries two edges"
