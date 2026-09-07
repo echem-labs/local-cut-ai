@@ -332,7 +332,20 @@ class ProjectService:
             # and every prompt and narration line reverts.
             seeded: set[str] = set()
             script_hash: str | None = None
-            if template.screenplay is not None and "script" in graph.nodes:
+            script = graph.nodes.get("script")
+            # `kind is SCRIPT`, not merely `"script" in graph.nodes`: the
+            # template is an untrusted document (see graph.template_io), and
+            # the seed writes a file at that node's content address. A node
+            # named "script" of any other kind would take the screenplay
+            # artifact for its own hash, so a music or clip node would then
+            # read as cached and hand a screenplay to the renderer as its
+            # output. promote_tool and package guard the same seeding the
+            # same way.
+            if (
+                template.screenplay is not None
+                and script is not None
+                and script.kind is NodeKind.SCRIPT
+            ):
                 script_hash = graph.output_hash("script")
                 seeded.add(script_hash)
             # A template is legitimately allowed to carry cloud models (see

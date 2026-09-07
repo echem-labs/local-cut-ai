@@ -561,6 +561,33 @@ def test_a_template_round_trips_the_authors_edits(tmp_path):
     assert store.resolve_artifact(imported.id, copied.output_hash("script")) is not None
 
 
+def test_a_screenplay_is_only_seeded_onto_a_real_script_node(tmp_path):
+    """A template is an untrusted document, and the seed writes a file at a
+    node's content address. A node named "script" of another kind would take
+    the screenplay artifact for its OWN hash, so it would read as cached and
+    hand a screenplay to the renderer as its output. The seed must key on the
+    node's KIND, not on the name "script" being present.
+    """
+    from localcut_engine.graph.template_io import from_template
+
+    store, _queue, service = _service(tmp_path)
+
+    # A hostile document: a music node wearing the name "script", carrying a
+    # screenplay it wants written at that node's address.
+    document = _document()
+    document["nodes"] = {"script": {"id": "script", "kind": "music", "params": {"prompt": "a bed"}}}
+    document["edges"] = []
+    document["screenplay"] = {"title": "planted", "hook": "", "scenes": []}
+
+    project = service.create_from_template(from_template(document), title="hostile")
+    graph = store.load_graph(project.id)
+
+    assert graph.nodes["script"].kind is NodeKind.MUSIC
+    # Nothing was planted at the music node's address.
+    assert store.resolve_artifact(project.id, graph.output_hash("script")) is None
+    assert list(store.generated_dir(project.id).glob("*.screenplay.json")) == []
+
+
 def test_a_template_without_a_screenplay_still_imports(tmp_path):
     """A v1 document, or a project whose script never rendered. The scenes
     still arrive; the script simply has to render on first use."""
