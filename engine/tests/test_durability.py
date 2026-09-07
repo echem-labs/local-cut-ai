@@ -731,3 +731,45 @@ def test_invalid_history_content_still_resets(tmp_path):
     (store._dir(project.id) / "history.json").write_text("{not json", encoding="utf-8")
 
     assert store.load_history(project.id).savepoints == []
+
+
+def test_an_edit_applies_even_when_its_history_cannot_be_read(tmp_path, monkeypatch):
+    """A read failure raised from `_record_history` runs AFTER save_graph, so
+    the edit is already on disk. It must not surface as "not modified", and it
+    must not reset the history it could not read - the save points are the one
+    thing that cannot be rebuilt from the graph. The edit stands, unrecorded.
+
+    A patch()-level test, not a `load_history` one: the refusal reaching a
+    caller that has already written is the whole defect, and it lives in the
+    reach from the route to the store, not in the store alone.
+    """
+    from localcut_engine.graph.patch import PatchOp
+    from localcut_engine.project.store import ProjectStore, ProjectUnreadable
+    from localcut_engine.service import ProjectService
+
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, EventBus())
+    project = store.create(title="t", graph=_seed_graph(), mode="prompt")
+
+    # A history file standing in for one carrying real save points. Its bytes,
+    # not its schema, are the subject: the fix must leave them untouched.
+    history_path = store._dir(project.id) / "history.json"
+    history_path.write_text('{"the": "user\'s save points"}', encoding="utf-8")
+    before_bytes = history_path.read_bytes()
+
+    def unreadable(project_id):
+        raise ProjectUnreadable("history.json could not be read (I/O). It has not been modified.")
+
+    monkeypatch.setattr(store, "load_history", unreadable)
+
+    dirty = service.patch(
+        project.id, [PatchOp(op="set_params", node_id="script", params={"prompt": "changed"})]
+    )
+
+    # The edit reported success and reached disk...
+    assert dirty == {"script"}
+    assert store.load_graph(project.id).nodes["script"].params["prompt"] == "changed"
+    # ...and the history it could not read was left exactly as it was, not
+    # reset to empty and not half-written.
+    assert history_path.read_bytes() == before_bytes

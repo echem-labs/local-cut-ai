@@ -480,6 +480,11 @@ class ProjectStore:
             # read, so resetting loses nothing that was still there.
             logger.warning("resetting unreadable %s: %s", what, path)
             return model_cls()
+        except (FileNotFoundError, NotADirectoryError):
+            # Gone, or its parent renamed out from under the read by a delete
+            # in flight - the same "missing document" the exists() check at
+            # the top answers, just lost to a race. Empty, not a refusal.
+            return model_cls()
         except OSError as exc:
             # A file we could not READ is a different thing, and resetting it
             # is destructive: the next edit persists the empty document over
