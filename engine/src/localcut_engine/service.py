@@ -71,6 +71,8 @@ from .project.store import (
     NodeTakes,
     Project,
     ProjectStore,
+    ProjectTooNew,
+    ProjectUnreadable,
     SavePoint,
     Snapshot,
     TakeRecord,
@@ -781,7 +783,17 @@ class ProjectService:
         no-op patch does not burn an undo step on nothing."""
         if graph.model_dump(mode="json") == before:
             return
-        history = self.store.load_history(project_id)
+        try:
+            history = self.store.load_history(project_id)
+        except (ProjectUnreadable, ProjectTooNew) as exc:
+            # The mutation has already been written; recording undo for it
+            # must not now fail it. A history we cannot read (an I/O error) or
+            # must not touch (a newer build's format) means this one edit goes
+            # unrecorded - logged here - not that the caller is told the graph
+            # was not modified when it was, and not that the file is reset and
+            # its save points destroyed. The next readable load records again.
+            logger.warning("edit applied but not recorded in history for %s: %s", project_id, exc)
+            return
         history.push(
             Snapshot(kind=kind, at=time.time(), summary=summary, node_id=node_id, graph=before)
         )
@@ -1764,8 +1776,11 @@ class ProjectService:
         re-render it. Drop those artifacts and recompile."""
         try:
             graph = self.store.load_graph(job.project_id)
-        except (OSError, ValueError):
-            return  # project deleted between completion and this handler
+        except (OSError, ValueError, ProjectUnreadable, ProjectTooNew):
+            # Deleted between completion and this handler, or its project.json
+            # is unreadable - either way there is nothing here to heal, and
+            # this runs in the completion hook, where a raise stops the loop.
+            return
         if job.spec.node_id not in graph.nodes:
             return
         optional_dsts = [
@@ -1813,7 +1828,7 @@ class ProjectService:
         if graph is None:
             try:
                 graph = self.store.load_graph(project_id)
-            except (OSError, ValueError):
+            except (OSError, ValueError, ProjectUnreadable, ProjectTooNew):
                 graph = None
         if touch:
             project.updated_at = time.time()
@@ -1922,13 +1937,23 @@ class ProjectService:
             with self._lock:
                 try:
                     self._refresh_meta_locked(project.id, touch=False)
-                except (OSError, ValueError):
+                    healed = self.store.get(project.id)
+                except (OSError, ValueError, ProjectTooNew, ProjectUnreadable):
                     # One unreadable project must not stop the sweep, exactly
                     # as store.list() refuses to let one damaged meta take
                     # the whole listing down.
+                    #
+                    # The store's own refusals are RuntimeError subclasses,
+                    # not ValueError, so they were not caught here — and this
+                    # sweep runs inside the app's lifespan, where an escaping
+                    # exception is "Application startup failed. Exiting." One
+                    # quick-tool session written by a newer build, or one
+                    # whose text a pre-utf8 build stored in the platform
+                    # encoding, therefore stopped the whole engine from
+                    # starting, with every other project perfectly healthy
+                    # and nothing naming the one at fault.
                     logger.warning("could not backfill tool meta for %s", project.id)
                     continue
-                healed = self.store.get(project.id)
             if healed is not None and healed.tool_artifact_hash:
                 filled += 1
         return filled

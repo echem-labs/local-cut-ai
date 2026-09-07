@@ -430,7 +430,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # exited mid-sweep, or a backend held a file open). Nothing can be
         # writing into them now, and they are invisible to the project list,
         # so they would otherwise be disk the user can never see or reclaim.
-        reclaimed = await asyncio.to_thread(service.sweep_deleted)
+        # Neither housekeeping step may stop the engine from starting. Both
+        # walk every project on disk, so one damaged file would otherwise be
+        # "Application startup failed. Exiting." for a library that is
+        # otherwise entirely healthy — and the message names neither the
+        # project nor the cause. Each already tolerates a single bad project
+        # internally; this is the backstop for the kind of failure that
+        # tolerance did not anticipate.
+        try:
+            reclaimed = await asyncio.to_thread(service.sweep_deleted)
+        except Exception:  # noqa: BLE001 — startup outranks housekeeping
+            logger.exception("could not reclaim partially-deleted projects; continuing")
+            reclaimed = 0
         if reclaimed:
             logger.info("reclaimed %d partially-deleted project(s)", reclaimed)
         # A quick tool session that finished under an older build carries
@@ -438,7 +449,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # write it: a refresh only happens on a write, and a finished session
         # is never written again. Off the event loop -- one graph load per
         # session that still lacks the field.
-        backfilled = await asyncio.to_thread(service.backfill_tool_metas)
+        try:
+            backfilled = await asyncio.to_thread(service.backfill_tool_metas)
+        except Exception:  # noqa: BLE001 — startup outranks housekeeping
+            logger.exception("could not backfill quick tool metas; continuing")
+            backfilled = 0
         if backfilled:
             logger.info("backfilled meta for %d quick tool session(s)", backfilled)
         scheduler.start()
