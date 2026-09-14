@@ -634,10 +634,12 @@ def test_license_verdicts_match_the_desktop_union():
 
 
 def test_every_event_the_engine_publishes_is_in_the_desktop_union():
-    """The WS stream is how the board learns anything changed. An event the
-    desktop's union does not carry is dropped by the dispatcher's exhaustive
-    switch, and the surface it should have refreshed simply goes stale —
-    with nothing on screen and nothing in the log to say so.
+    """The WS stream is how the board learns anything changed. The union is
+    what the dispatcher's branches are written against, so an event missing
+    from it has no branch to reach: the surface it should have refreshed goes
+    stale, with nothing on screen and nothing in the log to say so. Nothing
+    in TypeScript forces a union member to be handled, so this checks only
+    that the name is carried — a member with no branch is a separate gap.
 
     The engine side is read from the syntax tree rather than by grep: these
     calls pass the name positionally and their keyword arguments span lines,
@@ -659,7 +661,9 @@ def test_every_event_the_engine_publishes_is_in_the_desktop_union():
                 published.add(name.value)
 
     assert published, "no publish() calls found — update this test with the engine"
-    declared = set(re.findall(r'type: "([a-z0-9_.]+)"', _TYPES.read_text(encoding="utf-8")))
+    # Comment-stripped: a member commented out is a member the dispatcher
+    # cannot reach, and reading the raw source counts it as declared.
+    declared = set(re.findall(r'type: "([a-z0-9_.]+)"', _ts_source("api", "types.ts")))
     assert published <= declared, (
         f"the engine publishes {sorted(published - declared)}, which the desktop's "
         "EngineEvent union does not carry"
@@ -711,6 +715,21 @@ def test_transition_vocabulary_agrees_across_the_boundary():
         "the popover would show the raw wire id"
     )
 
+    # The assembly is the fourth copy, and the one this test's own failure
+    # describes: a transition nothing branches on renders as a plain cut.
+    # Read from the source, because the branches are literals inside a
+    # filtergraph builder rather than a table anything can import.
+    assembly = (Path(localcut_engine.__file__).parent / "backends" / "ffmpeg.py").read_text(
+        encoding="utf-8"
+    )
+    fallback = re.search(r'\.get\("transition", "([a-z]+)"\)', assembly)
+    assert fallback, "ffmpeg.py no longer defaults a seam's transition — update this test with it"
+    for name in sorted(_TRANSITIONS - {fallback.group(1)}):
+        assert f'"{name}"' in assembly, (
+            f"the assembly never branches on {name!r}, so a seam set to it renders as a "
+            f"plain {fallback.group(1)} — which looks like the edit did nothing"
+        )
+
 
 def test_the_canvas_catalog_names_every_node_kind_and_port():
     """The flowchart draws engine ids, and its catalog is the only thing
@@ -752,18 +771,28 @@ def test_take_numbers_match_the_engines_naming():
         f"terms.ts derives its take number as `{expression}`; the engine names "
         f"take 2 `{take_node_id('s1.clip', 2)}`, so the trailing digit is the take"
     )
+    # Asserted, not merely quoted in the message above: `Number(take)` is only
+    # right while the engine puts the take number in that trailing digit, so
+    # the naming this reads back has to be checked rather than described.
+    assert take_node_id("s1.clip", 1) == "s1.clip", "take 1 no longer keeps the bare clip id"
+    assert take_node_id("s1.clip", 2) == "s1.clip2", "the trailing digit is no longer the take"
 
 
 def test_the_new_scene_dialog_reads_the_shared_speech_rate():
-    """A third copy of the words-per-second rate, inline in a runtime
-    readout, gives one engine rule two answers on two surfaces. The dialog
-    must import the constant the rest of the app shares."""
+    """A second derivation of the spoken runtime, inline in a readout, gives
+    one engine rule two answers on two surfaces. The dialog must call the
+    shared helper, not re-derive from the constants it is built from.
+
+    Naming the constants is not enough to check: a readout that divides by
+    `SPEECH_WORDS_PER_S - 0.5`, or pads by something else, mentions them
+    both and still disagrees with the cut."""
     source = _NEW_SCENE.read_text(encoding="utf-8")
-    assert "SPEECH_WORDS_PER_S" in source, (
-        "NewSceneDialog computes a runtime without the shared speech rate"
+    assert "spokenSeconds(" in source, (
+        "NewSceneDialog derives a runtime without the shared spokenSeconds helper"
     )
-    assert not re.search(r"words \* [\d.]+", source), (
-        "NewSceneDialog still multiplies a word count by an inline rate"
+    assert not re.search(r"SPEECH_WORDS_PER_S|NARRATION_PAD_S", source), (
+        "NewSceneDialog still reaches for the rate constants rather than the helper "
+        "that combines them"
     )
 
 
