@@ -220,3 +220,50 @@ async def test_a_cancel_that_lost_the_race_does_not_pin_the_card(tmp_path):
     clip = states["s1.clip"]
     assert clip["status"] == "draft", "a cancelled job with a landed artifact must read from it"
     assert clip["artifact_hash"] == out_hash
+
+
+async def test_the_cancel_route_stops_the_render_not_just_the_row(tmp_path, monkeypatch):
+    """The row and the render are two different things, and the route is the
+    only place they are joined.
+
+    Every other test here calls `scheduler.cancel_running` directly, which
+    exercises the mechanism and not the one line that makes it reachable -
+    delete that line and they all still pass while a cancelled clip keeps the
+    GPU. So this drives the real route over HTTP, against a backend that
+    reports whether it was actually interrupted.
+    """
+    import httpx
+
+    from localcut_engine.api import app as app_module
+    from localcut_engine.config import EngineConfig
+
+    blocking = BlockingBackend()
+    registry = BackendRegistry()
+    registry.register(blocking)
+    # The whole chain, so the project's first job lands on a backend that
+    # blocks until something stops it.
+    monkeypatch.setattr(app_module, "_build_backends", lambda config: registry)
+
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")
+    app = app_module.create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+        app.router.lifespan_context(app),  # starts the scheduler
+    ):
+        created = await http.post("/projects", json={"prompt": "x"})
+        project_id = created.json()["id"]
+        await wait_for(blocking.started.is_set)
+
+        jobs = (await http.get("/jobs", params={"project_id": project_id})).json()
+        running = next(job for job in jobs if job["status"] == JobStatus.RENDERING.value)
+
+        assert (await http.post(f"/jobs/{running['id']}/cancel")).status_code == 200
+
+        # The GPU stopped, not just the bookkeeping.
+        await wait_for(lambda: blocking.interrupted == 1)
