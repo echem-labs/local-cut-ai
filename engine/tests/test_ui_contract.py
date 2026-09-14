@@ -25,21 +25,38 @@ import localcut_engine
 from conftest import ci_engine_paths_by_trigger, hook_files_pattern, matches_a_path_filter
 
 _DESKTOP = Path(__file__).resolve().parents[2] / "apps" / "desktop"
-_FORMATS = _DESKTOP / "src" / "lib" / "formats.ts"
-_TOOLS_TS = _DESKTOP / "src" / "lib" / "tools.ts"
-_ETA = _DESKTOP / "src" / "lib" / "eta.ts"
-_OOM = _DESKTOP / "src" / "lib" / "oom.ts"
-_CLIENT = _DESKTOP / "src" / "api" / "client.ts"
-_TYPES = _DESKTOP / "src" / "api" / "types.ts"
-_HOME = _DESKTOP / "src" / "screens" / "Home.tsx"
-_SETTINGS = _DESKTOP / "src" / "screens" / "Settings.tsx"
-_APP_CSS = _DESKTOP / "src" / "styles" / "app.css"
-_TOKENS_CSS = _DESKTOP / "src" / "styles" / "tokens.css"
-_ENGINE_TS = _DESKTOP / "electron" / "engine.ts"
-_U7 = _DESKTOP / "scripts" / "rig" / "u7.mjs"
-_TERMS_TS = _DESKTOP / "src" / "help" / "terms.ts"
-_NEW_SCENE = _DESKTOP / "src" / "components" / "NewSceneDialog.tsx"
-_TIMELINE_STRIP = _DESKTOP / "src" / "components" / "TimelineStrip.tsx"
+# Every desktop file this module reads is named through here, and recorded as
+# it is named. That is what lets the guard at the foot of this file hold
+# ci-engine.yml's path filters and the pre-push hook to covering all of them:
+# a read added above joins that check by construction, rather than by someone
+# remembering to extend a second list beside it.
+_DESKTOP_FILES: list[Path] = []
+
+
+def _desktop(*parts: str) -> Path:
+    path = _DESKTOP.joinpath(*parts)
+    _DESKTOP_FILES.append(path)
+    return path
+
+
+_FORMATS = _desktop("src", "lib", "formats.ts")
+_TOOLS_TS = _desktop("src", "lib", "tools.ts")
+_ETA = _desktop("src", "lib", "eta.ts")
+_OOM = _desktop("src", "lib", "oom.ts")
+_CLIENT = _desktop("src", "api", "client.ts")
+_TYPES = _desktop("src", "api", "types.ts")
+_HOME = _desktop("src", "screens", "Home.tsx")
+_SETTINGS = _desktop("src", "screens", "Settings.tsx")
+_APP_CSS = _desktop("src", "styles", "app.css")
+_TOKENS_CSS = _desktop("src", "styles", "tokens.css")
+_ENGINE_TS = _desktop("electron", "engine.ts")
+_U7 = _desktop("scripts", "rig", "u7.mjs")
+_TERMS_TS = _desktop("src", "help", "terms.ts")
+_NEW_SCENE = _desktop("src", "components", "NewSceneDialog.tsx")
+_TIMELINE_STRIP = _desktop("src", "components", "TimelineStrip.tsx")
+# Read by directory rather than file by file, so they are not entries in their
+# own right: the catalogs are expanded into the list below, and the previews
+# are named there as one concrete file.
 _I18N = _DESKTOP / "src" / "i18n" / "en"
 _VOICE_ASSETS = _DESKTOP / "src" / "assets" / "voices"
 
@@ -57,28 +74,12 @@ _CATALOGS = (
     "voices.json",
 )
 
-# Every desktop file this module reads, in one place, because the guard at the
-# foot of this file derives from it: ci-engine.yml's path filters and the
-# pre-push hook are held to naming all of them, so a read added above extends
-# that check by construction. A second list kept in step by hand is exactly
-# the drift the rest of this module exists to catch, and it is what let this
-# guard fall behind to three of them.
+# Derived rather than restated: `_desktop` recorded each file as it was named
+# above, and the catalogs are the one set read by directory. A second list
+# kept in step by hand is exactly the drift the rest of this module exists to
+# catch.
 _DESKTOP_READS: tuple[Path, ...] = (
-    _FORMATS,
-    _TOOLS_TS,
-    _ETA,
-    _OOM,
-    _CLIENT,
-    _TYPES,
-    _HOME,
-    _SETTINGS,
-    _APP_CSS,
-    _TOKENS_CSS,
-    _TERMS_TS,
-    _NEW_SCENE,
-    _TIMELINE_STRIP,
-    _ENGINE_TS,
-    _U7,
+    *_DESKTOP_FILES,
     *(_I18N / name for name in _CATALOGS),
 )
 
@@ -87,7 +88,7 @@ _DESKTOP_READS: tuple[Path, ...] = (
 # FileNotFoundError out of a contract test, which says nothing about the
 # contract. The promise here is to stand aside when the desktop is not present.
 pytestmark = pytest.mark.skipif(
-    not all(path.exists() for path in (_FORMATS, _ENGINE_TS, _U7)),
+    not all(path.exists() for path in _DESKTOP_READS),
     reason="desktop app not present beside the engine",
 )
 
@@ -96,15 +97,19 @@ def _source() -> str:
     return _FORMATS.read_text(encoding="utf-8")
 
 
-def _ts_source(*parts: str) -> str:
+def _ts_source(path: Path) -> str:
     """A TypeScript file with BOTH comment styles stripped.
+
+    Takes one of the constants above rather than path parts, so that reading
+    a file here is the same act as declaring it: a read cannot reach a file
+    the guard at the foot of this module has never heard of.
 
     Every union check below reads to the first `;`, and a semicolon inside
     a comment ends that match early — leaving the test comparing against a
     partial member list and passing for the wrong reason. Line comments
     were already stripped for exactly this; a doc comment does it too.
     """
-    source = _FORMATS.parent.parent.joinpath(*parts).read_text(encoding="utf-8")
+    source = path.read_text(encoding="utf-8")
     return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", source, flags=re.S))
 
 
@@ -208,7 +213,7 @@ def test_every_board_status_has_a_ui_case_and_a_label():
     status catalog the pill reads its word from."""
     from localcut_engine.service import SCENE_NODE_STATUSES
 
-    text = _ts_source("api", "types.ts")
+    text = _ts_source(_TYPES)
     union = re.search(r"export type NodeStatus =(.*?);", text, re.S)
     assert union, "types.ts no longer declares NodeStatus"
     # Not `[a-z]+`: a status carrying a digit, dash or capital would be
@@ -260,7 +265,7 @@ def test_readiness_vocabulary_matches_the_desktop():
         READINESS_VERDICTS,
     )
 
-    text = _ts_source("api", "types.ts")
+    text = _ts_source(_TYPES)
 
     def union(name: str) -> set[str]:
         match = re.search(rf"export type {name} =(.*?);", text, re.S)
@@ -304,7 +309,7 @@ def test_the_video_kinds_home_warns_about_match_the_pipeline():
     pipeline grows a stage, the warning has to grow with it."""
     from localcut_engine.readiness import PIPELINE_KINDS
 
-    text = _ts_source("screens", "Home.tsx")
+    text = _ts_source(_HOME)
     match = re.search(r"const VIDEO_KINDS = \[(.*?)\];", text, re.S)
     assert match, "Home.tsx no longer declares VIDEO_KINDS"
     declared = set(re.findall(r'"([^"]+)"', match.group(1)))
@@ -319,7 +324,7 @@ def test_each_quick_tools_engine_kinds_match_its_graph():
 
     from localcut_engine.graph.templates import tool_graph
 
-    text = _ts_source("lib", "tools.ts")
+    text = _ts_source(_TOOLS_TS)
     match = re.search(r"TOOL_ENGINE_KINDS: Record<ToolKind, string\[\]> = \{(.*?)\n\};", text, re.S)
     assert match, "tools.ts no longer declares TOOL_ENGINE_KINDS"
     declared = {
@@ -383,7 +388,7 @@ def test_quick_tool_kinds_agree_across_the_boundary():
         f"only in TOOL_KINDS {sorted(set(TOOL_KINDS) - accepted)}"
     )
 
-    text = _ts_source("api", "types.ts")
+    text = _ts_source(_TYPES)
     union = re.search(r"export type ToolKind =(.*?);", text, re.S)
     assert union, "types.ts no longer declares ToolKind"
     declared = set(re.findall(r'"([^"]+)"', union.group(1)))
@@ -487,7 +492,7 @@ def _voice_swatches() -> list[tuple[str, str]]:
     failing.
     """
     block = re.search(
-        r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", _ts_source("lib", "tools.ts"), re.S
+        r"const VOICE_SWATCHES\s*=\s*\[(.*?)\]\s*as const", _ts_source(_TOOLS_TS), re.S
     )
     assert block, "lib/tools.ts no longer declares VOICE_SWATCHES — update this test with it"
     swatches = re.findall(r'\{\s*brief:\s*"([^"]+)",\s*voice:\s*"([^"]+)"', block.group(1))
@@ -663,7 +668,7 @@ def test_every_event_the_engine_publishes_is_in_the_desktop_union():
     assert published, "no publish() calls found — update this test with the engine"
     # Comment-stripped: a member commented out is a member the dispatcher
     # cannot reach, and reading the raw source counts it as declared.
-    declared = set(re.findall(r'type: "([a-z0-9_.]+)"', _ts_source("api", "types.ts")))
+    declared = set(re.findall(r'type: "([a-z0-9_.]+)"', _ts_source(_TYPES)))
     assert published <= declared, (
         f"the engine publishes {sorted(published - declared)}, which the desktop's "
         "EngineEvent union does not carry"
