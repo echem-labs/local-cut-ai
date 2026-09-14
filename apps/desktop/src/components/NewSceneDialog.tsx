@@ -14,7 +14,7 @@
  * button at all.
  */
 import { Cloud, Laptop, Loader2, Sparkles, Square, Timer } from "lucide-react";
-import { NARRATION_PAD_S, SPEECH_WORDS_PER_S } from "../lib/formats";
+import { spokenSeconds } from "../lib/formats";
 import { useEffect, useRef, useState } from "react";
 
 import { t } from "../i18n";
@@ -410,7 +410,7 @@ export function NewSceneDialog({
             ? t("drop.sceneRuntimeRate")
             : t("drop.sceneRuntimeCount", {
                 words,
-                seconds: Math.max(1, Math.round(words / SPEECH_WORDS_PER_S + NARRATION_PAD_S)),
+                seconds: Math.max(1, Math.round(spokenSeconds(narration))),
               })}
         </span>
       </div>
