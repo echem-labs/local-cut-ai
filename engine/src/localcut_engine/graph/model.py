@@ -51,6 +51,14 @@ EDL_VERSION = 5
 # and without this the existence cache would serve the earlier wav forever).
 NARRATION_VERSION = 2
 
+# Part of every export node's hash, for the reason EDL_VERSION is part of the
+# timeline's: what the assembly encodes changed while format/preset/aspect/
+# captions did not (v2: the crossfade audio mix is restamped before the
+# encoder, and a crossfade that follows a cut normalizes its timebases —
+# without this the existence cache serves the earlier mp4 forever and the fix
+# never reaches a project that already rendered one).
+EXPORT_VERSION = 2
+
 # The project.json wire format. Distinct from EDL_VERSION (which only
 # invalidates a cached artifact hash) and from the app version in
 # manifest.json (which is written and never read).
@@ -244,6 +252,7 @@ class StoryGraph(BaseModel):
 _PARAM_VERSIONS: dict[NodeKind, tuple[str, int]] = {
     NodeKind.TIMELINE: ("edl_version", EDL_VERSION),
     NodeKind.NARRATION: ("narration_version", NARRATION_VERSION),
+    NodeKind.EXPORT: ("export_version", EXPORT_VERSION),
 }
 
 
