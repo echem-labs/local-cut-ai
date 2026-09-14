@@ -441,6 +441,12 @@ class _TriggerStub:
 
     def get(self, path: str, **kwargs: object) -> list[dict]:
         assert path == "/jobs"
+        # /jobs takes an OPTIONAL project_id, so dropping the filter is not an
+        # error the engine reports - it just answers for every project on the
+        # box. Asserted here because that difference is invisible otherwise.
+        assert kwargs.get("params") == {"project_id": "p1"}, (
+            f"/jobs was asked without this project's filter: {kwargs!r}"
+        )
         return [{"id": f"j{i}", "status": "queued"} for i in range(self.still_active)]
 
 
@@ -477,6 +483,25 @@ def test_no_wait_still_counts_work_this_render_did_not_enqueue(capsys):
     _no_wait(client)
 
     assert json_out(capsys)["pending"] == 4
+
+
+@pytest.mark.parametrize(
+    ("enqueued", "still_active", "expected"),
+    [
+        pytest.param(30, 5, 30, id="the-trigger-knows-more"),
+        pytest.param(12, 40, 40, id="the-queue-knows-more"),
+    ],
+)
+def test_no_wait_reports_whichever_count_is_larger(capsys, enqueued, still_active, expected):
+    """Both halves non-zero, in both directions, because that is the only
+    shape that says which composition this is. A sum would answer 35 and 52,
+    double-counting the jobs the poll can still see; taking the first truthy
+    one would answer 30 and 12, under-reporting a queue that outlives this
+    render. Neither is a number a script should size its wait on.
+    """
+    _no_wait(_TriggerStub(enqueued=enqueued, still_active=still_active))
+
+    assert json_out(capsys)["pending"] == expected
 
 
 @pytest.mark.parametrize(
@@ -534,6 +559,29 @@ def test_a_waiting_render_never_reads_the_trigger_body(capsys):
     # The waiting path reports failures, not a count - and got that far
     # without reading a body it has no use for.
     assert json_out(capsys)["failed"] == []
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param({"enqueued": 30}, 30, id="a-count"),
+        pytest.param({"enqueued": 0}, 0, id="nothing-enqueued"),
+        pytest.param({"enqueued": -3}, 0, id="never-negative"),
+        pytest.param({"enqueued": True}, 0, id="a-bool-is-not-a-count"),
+        pytest.param({"enqueued": 2.9}, 0, id="a-float-is-not-a-count"),
+        pytest.param({"enqueued": "30"}, 0, id="a-string-is-not-a-count"),
+        pytest.param({}, 0, id="no-such-field"),
+        pytest.param(None, 0, id="empty-body"),
+        pytest.param(b"<html>maintenance</html>", 0, id="not-json"),
+        pytest.param([{"enqueued": 30}], 0, id="a-list"),
+    ],
+)
+def test_the_count_a_trigger_reports_it_enqueued(body, expected):
+    """The CLI and the MCP server both read this field through here, so what
+    it answers for a strange body is a shared contract rather than one
+    command's local caution. A bool is an int in Python and a count that
+    arrived as text is a count nobody checked, so neither is accepted."""
+    assert automation.enqueued_count(body) == expected
 
 
 def test_no_wait_reports_a_finalize_the_same_way(capsys):
