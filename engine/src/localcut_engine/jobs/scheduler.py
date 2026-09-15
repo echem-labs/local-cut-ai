@@ -85,6 +85,15 @@ class Scheduler:
         self._task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stopping = False
+        # The job the loop is rendering right now, and the task running it.
+        # A cancel that only writes the DB row leaves the backend running to
+        # completion: it holds the GPU, and nothing else can start behind it
+        # because this queue is serial. Interrupting needs a handle.
+        self._running: tuple[str, asyncio.Task] | None = None
+        self._running_project: str | None = None
+        # Set by cancel_job just before it cancels the task above, so the
+        # loop can tell a cancel aimed at one job from one aimed at itself.
+        self._cancelled_job: str | None = None
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -123,6 +132,52 @@ class Scheduler:
         except asyncio.CancelledError:
             task.cancel()
             raise
+
+    def cancel_running(self, job_id: str) -> bool:
+        """Interrupt the render if `job_id` is the one in flight.
+
+        The DB row is the caller's job — this only stops the work. Returns
+        whether there was anything to stop, so a cancel of a queued job (the
+        common case) stays a pure row write.
+
+        Safe from a worker thread: the cancel is marshalled onto the loop the
+        scheduler runs on, because `Task.cancel` is not thread-safe.
+        """
+        running = self._running
+        if running is None or running[0] != job_id:
+            return False
+        job_id, task = running
+
+        def interrupt() -> None:
+            # Re-checked on the loop: the job may have finished between the
+            # thread reading `_running` and this callback landing.
+            current = self._running
+            if current is not None and current[0] == job_id and not current[1].done():
+                self._cancelled_job = job_id
+                current[1].cancel()
+
+        loop = self._loop
+        if loop is None:
+            return False
+        try:
+            if asyncio.get_running_loop() is loop:
+                interrupt()
+                return True
+        except RuntimeError:
+            pass
+        loop.call_soon_threadsafe(interrupt)
+        return True
+
+    def cancel_running_for_project(self, project_id: str) -> bool:
+        """The same, for every job of one project — used when a project is
+        deleted out from under a render."""
+        running = self._running
+        if running is None:
+            return False
+        job_id = running[0]
+        if self._running_project != project_id:
+            return False
+        return self.cancel_running(job_id)
 
     def notify(self) -> None:
         """Call after enqueueing work — safe from worker threads."""
@@ -163,13 +218,32 @@ class Scheduler:
                 except TimeoutError:
                     pass
                 continue
+            # Its own task, so one job can be interrupted without taking the
+            # loop down with it: `_execute` awaited inline could only be
+            # cancelled by cancelling this whole coroutine.
+            render = asyncio.create_task(self._execute(job), name=f"job-{job.id}")
+            self._running = (job.id, render)
+            self._running_project = job.project_id
             try:
-                await self._execute(job)
+                await render
             except asyncio.CancelledError:
-                # Shutdown (or a stuck-job cancel) landed mid-render. Put the
-                # job back so the next boot re-renders it, rather than leaving
-                # a RENDERING row that only _recover_interrupted will ever
-                # notice — and re-raise, because a cancelled task must die.
+                outer = asyncio.current_task()
+                # `cancelling()` counts cancellations aimed at THIS task. Zero
+                # means the CancelledError came out of the child, i.e. someone
+                # cancelled that job — the row is already CANCELLED, so take
+                # the next one rather than unwinding the scheduler.
+                if (
+                    self._cancelled_job == job.id
+                    and not self._stopping
+                    and (outer is None or not outer.cancelling())
+                ):
+                    logger.info("job %s cancelled; moving on", job.id)
+                    self._cancelled_job = None
+                    continue
+                # Shutdown landed mid-render. Put the job back so the next
+                # boot re-renders it, rather than leaving a RENDERING row that
+                # only _recover_interrupted will ever notice — and re-raise,
+                # because a cancelled task must die.
                 logger.info("scheduler cancelled while running job %s; requeueing", job.id)
                 await asyncio.shield(asyncio.to_thread(self._requeue_quietly, job))
                 raise
@@ -183,6 +257,9 @@ class Scheduler:
                     # Couldn't even persist the failure — back off so we don't
                     # hot-loop the same still-QUEUED row against a locked db.
                     await asyncio.sleep(1.0)
+            finally:
+                self._running = None
+                self._running_project = None
 
     async def _execute(self, job: Job) -> None:
         # claim_next already persisted RENDERING/started_at; this only adds

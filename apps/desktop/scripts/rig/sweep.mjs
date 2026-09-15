@@ -42,6 +42,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  DISMISS_READINESS_GATE,
   evalInApp,
   health,
   makeCheck,
@@ -396,6 +397,7 @@ const STOPS = [
       await page.type(".tool-panel textarea", "How the sweep found its screens");
       const buttons = await page.$$(".tool-panel .row button");
       await buttons[buttons.length - 1].click();
+      ${DISMISS_READINESS_GATE}
       await page.waitForSelector(".tool-shell", { timeout: 30000 });
       return page
         .waitForSelector(".script-table", { timeout: 60000 })

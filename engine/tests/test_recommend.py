@@ -146,3 +146,39 @@ def test_no_recommendation_is_ever_a_non_commercial_model():
         for rec in recommend_slate(manifest, profile):
             if rec.model is not None:
                 assert rec.model.license.commercial, rec.model.id
+
+
+# -- the slate has to name something the user can actually install -----------
+
+
+def test_the_slate_never_recommends_a_model_with_no_files():
+    """The first run wizard installs what this returns. An entry with no
+    `files` downloads nothing, so the wizard reported every stage covered
+    over a machine that ended up with no TTS and no ASR weights at all — and
+    the workspace readiness banner then named two different models."""
+    from localcut_engine.manifest.capability import DOWNLOADED_TASKS
+
+    for entry in recommend_slate(_manifest(), _profile(vram=8.0)):
+        if entry.model is None or entry.task not in DOWNLOADED_TASKS:
+            continue
+        assert entry.model.files, (
+            f"{entry.task} recommends {entry.model.id}, which has no files to install"
+        )
+
+
+def test_a_model_served_by_an_external_runtime_may_carry_no_files():
+    """text.llm is Ollama's to install, so a fileless entry there is still a
+    real recommendation — the installability bar must not swallow it."""
+    slate = {entry.task: entry for entry in recommend_slate(_manifest(), _profile(vram=8.0))}
+    assert slate["text.llm"].model is not None, "the LLM recommendation was dropped"
+    assert not slate["text.llm"].model.files
+
+
+def test_the_download_task_set_matches_what_readiness_offers_to_download():
+    """Two names for one idea: readiness maps node kinds onto the tasks it
+    can offer a download for, and the slate needs the flat set of them."""
+    from localcut_engine.manifest.capability import DOWNLOADED_TASKS
+    from localcut_engine.readiness import _DOWNLOAD_TASKS
+
+    flattened = {task for tasks in _DOWNLOAD_TASKS.values() for task in tasks}
+    assert flattened == set(DOWNLOADED_TASKS)

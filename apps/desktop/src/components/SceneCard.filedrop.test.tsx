@@ -43,8 +43,8 @@ function mount() {
     currentProject: { id: "p1", title: "t", approvals: [] },
     client: { artifactUrl: () => "" },
     selectedNode: null,
-    select: vi.fn(), regenerate: vi.fn(), togglePin: vi.fn(),
-    applyNode: vi.fn(), playScene: vi.fn(),
+    select: vi.fn(), regenerate: vi.fn().mockResolvedValue(null), togglePin: vi.fn().mockResolvedValue(null),
+    applyNode: vi.fn().mockResolvedValue(null), playScene: vi.fn(),
   } as never);
 }
 

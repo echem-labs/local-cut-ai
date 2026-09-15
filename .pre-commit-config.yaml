@@ -92,11 +92,17 @@ repos:
         entry: bash -c 'cd engine && uv run pytest -q tests/test_ui_contract.py'
         language: system
         files: |
-          (?x)^apps/desktop/src/(
-            lib/(formats|tools)\.ts
-            |api/(client|types)\.ts
-            |i18n/en/[a-z]+\.json
-            |assets/voices/.+\.wav
+          (?x)^apps/desktop/(
+            src/(
+              lib/(formats|tools|eta|oom)\.ts
+              |api/(client|types)\.ts
+              |screens/(Home|Settings)\.tsx
+              |styles/(app|tokens)\.css
+              |i18n/en/[a-z]+\.json
+              |assets/voices/.+\.wav
+            )
+            |electron/engine\.ts
+            |scripts/rig/u7\.mjs
           )$
         pass_filenames: false
         stages: [pre-push]

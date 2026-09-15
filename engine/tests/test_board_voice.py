@@ -93,3 +93,49 @@ def test_an_engine_with_no_registry_names_no_voice(tmp_path):
     # rather than raise.
     state, _ = _service(tmp_path, None, {"text": "hi", "voice": "british"})
     assert state["resolved_voice"] is None
+
+
+def test_the_voices_route_says_whether_cloning_can_run(tmp_path):
+    """The clone control commits the whole project in one move: consenting
+    and picking a sample rewrites EVERY narration node to the clone model, so
+    an engine without the optional runtime fails all of them together and
+    clearing it means editing each node by hand in the advanced inspector.
+    A client can only decline that trade if it can ask first.
+
+    chatterbox-tts is not a dependency of this engine — it is optional by
+    design, resolved lazily like ComfyUI or Ollama — so on a stock install
+    this answers false and the desktop hides the control.
+    """
+    from starlette.testclient import TestClient
+
+    from localcut_engine.api.app import create_app
+    from localcut_engine.backends.chatterbox import ChatterboxBackend
+    from localcut_engine.config import EngineConfig
+
+    config = EngineConfig(data_dir=tmp_path, token="t", backend="local,mock")
+    with TestClient(create_app(config)) as http:
+        body = http.get("/voices", headers={"Authorization": "Bearer t"}).json()
+
+    assert "cloning" in body, "the route no longer reports whether cloning can run"
+    # It is the runtime's presence, not a guess: whatever this machine has,
+    # the route has to agree with it.
+    assert body["cloning"] == ChatterboxBackend.package_installed()
+
+
+def test_cloning_availability_is_not_the_stock_voice_pack(tmp_path):
+    """`available` is about Kokoro's pack and `cloning` is about a different
+    backend and a different optional runtime — collapsing them would hide the
+    clone control on every machine with no stock voices installed, and offer
+    it on every machine that has them."""
+    from starlette.testclient import TestClient
+
+    from localcut_engine.api.app import create_app
+    from localcut_engine.config import EngineConfig
+
+    config = EngineConfig(data_dir=tmp_path, token="t", backend="mock")
+    with TestClient(create_app(config)) as http:
+        body = http.get("/voices", headers={"Authorization": "Bearer t"}).json()
+
+    # A mock-only chain serves neither, and must still answer both keys.
+    assert body["available"] is False
+    assert body["cloning"] is False
