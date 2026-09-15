@@ -998,3 +998,49 @@ async def test_duplicating_a_project_does_not_inherit_provenance(rig):
     # The originals keep theirs, and the session never learns of the copies.
     assert store.get(tool.id).promoted_to == [video.id]
     assert store.get(video.id).promoted_from == tool.id
+
+
+async def test_a_placeholder_screenplay_is_not_promotable(rig):
+    """A script rendered by the mock while the LLM was unreachable is a
+    placeholder, and the session's own board already says it must re-render.
+
+    Promoting it anyway produced a full project whose every keyframe, clip,
+    narration and export was generated from placeholder text — with the
+    promoted script node reading a healthy `draft`, so nothing ever
+    re-rendered it. `_trusted_cache`'s contract is that every consumer of the
+    artifact cache goes through it, and this is a consumer.
+    """
+    store, queue, service = rig
+    tool = service.create_tool("script", {"prompt": "octopus hearts", "aspect": "9:16"})
+    await wait_for(
+        lambda: any(
+            j.spec.node_id == "script" and j.status is JobStatus.DONE
+            for j in queue.list(tool.id, 10)
+        )
+    )
+
+    # The rig leaves `service.backends` unset, and `_distrusted_hashes`
+    # trusts everything without it — wire the same registry the scheduler
+    # runs on so the rule below can actually apply.
+    registry = BackendRegistry()
+    registry.register(MockBackend())
+    service.backends = registry
+
+    # The rule is "the recorded producer is not the backend that would run
+    # this node now". In production that is a mock artifact on a chain that
+    # has since gained an LLM; this rig has only the mock, so the same
+    # inequality is written the other way round.
+    script_job = next(
+        j
+        for j in queue.list(tool.id, 10)
+        if j.spec.node_id == "script" and j.status is JobStatus.DONE
+    )
+    script_job.backend = "llm"
+    queue._write(script_job)
+    graph = store.load_graph(tool.id)
+    assert graph.output_hash("script") not in service._trusted_cache(
+        tool.id, queue.list(tool.id, 1000)
+    )
+
+    with pytest.raises(ValueError, match="has not finished generating"):
+        service.promote_tool(tool.id)
