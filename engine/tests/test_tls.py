@@ -95,3 +95,54 @@ def test_private_key_is_never_world_readable(tmp_path, monkeypatch):
     _cert_path, key_path, _fingerprint = ensure_certificate(tmp_path, ["127.0.0.1"])
     mode = stat.S_IMODE(key_path.stat().st_mode)
     assert mode & 0o077 == 0, f"key was created group/world accessible: {oct(mode)}"
+
+
+# -- the pairing code has to name an address the laptop can reach ------------
+
+
+def test_an_advertised_host_overrides_the_derived_one():
+    """Inside a container the outbound probe answers with the bridge address,
+    which is correct for the container and unreachable from the laptop
+    reading the pairing code out of `docker compose logs`."""
+    from localcut_engine.cli import _lan_address
+
+    assert _lan_address("0.0.0.0", "gpu-box.local") == "gpu-box.local"
+    assert _lan_address("0.0.0.0", "") != ""  # derived, whatever this box is
+    assert _lan_address("10.0.0.4") == "10.0.0.4"
+
+
+def test_the_pairing_code_carries_the_advertised_url(capsys):
+    """The code is opaque base64, so a wrong address in it cannot be corrected
+    by hand — it has to be right when it is printed."""
+    import base64
+    import json as _json
+
+    from localcut_engine.cli import _print_pairing
+
+    _print_pairing("https", "0.0.0.0", 7830, "tok", "ab" * 32, "gpu-box.local")
+    printed = capsys.readouterr().out
+    code = next(
+        line.split("pairing code:")[1].strip()
+        for line in printed.splitlines()
+        if "pairing code:" in line
+    )
+    payload = _json.loads(base64.urlsafe_b64decode(code + "=" * (-len(code) % 4)))
+    assert payload["url"] == "https://gpu-box.local:7830"
+
+
+def test_an_advertised_host_may_carry_its_own_port(capsys):
+    """A reverse proxy answers on 443, not on the port the engine bound."""
+    import base64
+    import json as _json
+
+    from localcut_engine.cli import _print_pairing
+
+    _print_pairing("https", "0.0.0.0", 7830, "tok", "ab" * 32, "engine.example.com:443")
+    printed = capsys.readouterr().out
+    code = next(
+        line.split("pairing code:")[1].strip()
+        for line in printed.splitlines()
+        if "pairing code:" in line
+    )
+    payload = _json.loads(base64.urlsafe_b64decode(code + "=" * (-len(code) % 4)))
+    assert payload["url"] == "https://engine.example.com:443"
