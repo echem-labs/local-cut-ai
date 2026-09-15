@@ -118,6 +118,7 @@ describe("the recipe card", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
+        ok: true,
         json: () =>
           Promise.resolve({
             title: "A strong hook, clear sections",

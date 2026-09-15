@@ -51,7 +51,7 @@ let setProjectVoice: ReturnType<typeof vi.fn>;
  * have something to clear.
  */
 function mount(over: Partial<NodeState> = {}, held: string | null = null) {
-  applyNode = vi.fn();
+  applyNode = vi.fn().mockResolvedValue(null);
   setProjectVoice = vi.fn().mockResolvedValue(null);
   const picked = held ? { voice_id: held } : {};
   const board: Board = {

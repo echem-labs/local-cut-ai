@@ -19,12 +19,14 @@ const scene: SceneCardModel = {
 
 describe("the card's shortcut keys", () => {
   it("do not fire from a control inside the card", async () => {
-    const regenerate = vi.fn(), togglePin = vi.fn(), select = vi.fn();
+    const regenerate = vi.fn().mockResolvedValue(null);
+    const togglePin = vi.fn().mockResolvedValue(null);
+    const select = vi.fn();
     useApp.setState({
       board: { scenes: [scene], aux: {}, assembled_durations: { s1: 4 } },
       currentProject: { id: "p1", title: "t", approvals: [] },
       client: { artifactUrl: () => "" }, selectedNode: null,
-      select, regenerate, togglePin, applyNode: vi.fn(), playScene: vi.fn(),
+      select, regenerate, togglePin, applyNode: vi.fn().mockResolvedValue(null), playScene: vi.fn(),
     } as never);
     render(<SceneCard scene={scene} />);
 
@@ -42,12 +44,14 @@ describe("the card's shortcut keys", () => {
 
 describe("the card's own shortcut keys", () => {
   it("still fire when the card itself has focus", async () => {
-    const regenerate = vi.fn(), togglePin = vi.fn(), select = vi.fn();
+    const regenerate = vi.fn().mockResolvedValue(null);
+    const togglePin = vi.fn().mockResolvedValue(null);
+    const select = vi.fn();
     useApp.setState({
       board: { scenes: [scene], aux: {}, assembled_durations: { s1: 4 } },
       currentProject: { id: "p1", title: "t", approvals: [] },
       client: { artifactUrl: () => "" }, selectedNode: null,
-      select, regenerate, togglePin, applyNode: vi.fn(), playScene: vi.fn(),
+      select, regenerate, togglePin, applyNode: vi.fn().mockResolvedValue(null), playScene: vi.fn(),
     } as never);
     const { container } = render(<SceneCard scene={scene} />);
 
