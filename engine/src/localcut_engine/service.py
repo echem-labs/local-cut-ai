@@ -1222,6 +1222,10 @@ class ProjectService:
                 return False
             doomed = self.store.reserve_for_deletion(project_id)
             self.queue.cancel_project(project_id)
+            # And stop the one that is actually rendering: its project is
+            # about to stop existing, so its output has nowhere to land.
+            if self.scheduler is not None:
+                self.scheduler.cancel_running_for_project(project_id)
         # Outside the lock: the sweep can take a moment on a large project,
         # and nothing else needs to wait for it.
         self.store.purge(doomed)
@@ -1601,19 +1605,28 @@ class ProjectService:
             if billed:
                 raise self._refusal(billed, "nothing was queued")
 
-        # Supersede stale queued work: a re-plan that changed a node's hash
-        # (seed bump, param edit) makes any still-queued job for that node
-        # garbage — cancel it instead of letting it render into an artifact
+        # Supersede stale queued work. Two ways a queued job becomes garbage:
+        # its node's hash moved (a seed bump, a param edit), or the node left
+        # the graph entirely. The second is the scene the user just deleted —
+        # rendering it spends minutes of GPU on footage nothing can reference,
+        # while the timeline and export wait behind it in the FIFO. Either
+        # way, cancel it rather than letting it render into an artifact
         # nothing references, or fail against inputs that no longer exist.
-        # Rendering jobs are left to finish; their output is merely unused.
+        # A job already RENDERING is interrupted by the cancel route instead;
+        # here it is left alone, and its output merely goes unused.
         active_jobs = self.queue.active(project_id)
         planned = {spec.node_id: spec.output_hash for spec in plan.jobs}
         superseded = {
             job.id
             for job in active_jobs
             if job.status is JobStatus.QUEUED
-            and job.spec.node_id in planned
-            and job.spec.output_hash != planned[job.spec.node_id]
+            and (
+                job.spec.node_id not in graph.nodes
+                or (
+                    job.spec.node_id in planned
+                    and job.spec.output_hash != planned[job.spec.node_id]
+                )
+            )
         }
         for job_id in superseded:
             self.queue.cancel(job_id)
@@ -2051,7 +2064,13 @@ class ProjectService:
                 # a failed *final* reads as a completed 'final'. The draft stays
                 # viewable via artifact_hash below.
                 status = "failed"
-            elif job and job.status is JobStatus.CANCELLED:
+            elif job and job.status is JobStatus.CANCELLED and out_hash not in cached:
+                # Only while the cancel actually cost the artifact. A cancel
+                # that raced a render to the finish line leaves a complete,
+                # trusted file at this hash — reporting that as `cancelled`
+                # pins the card there for good, because a re-plan sees a
+                # node that is not dirty and enqueues nothing, and the only
+                # way out is Regenerate, which throws the good render away.
                 status = "cancelled"
             elif node_id in skipped:
                 # Deliberately not rendered — a scene conditioned on an

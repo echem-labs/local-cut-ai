@@ -1976,8 +1976,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/jobs/{job_id}/cancel", dependencies=[Authed])
     async def cancel_job(job_id: JobId) -> dict:
-        if not queue.cancel(job_id):
+        # Off the loop like every other queue call: this is a read-modify-write
+        # under the same mutex the worker threads hold.
+        if not await asyncio.to_thread(queue.cancel, job_id):
             raise HTTPException(status_code=409, detail="job is not cancellable")
+        # The row is only half of it. Without this the backend renders the
+        # cancelled job to completion, holding the GPU, and nothing queued
+        # behind it can start — the tray reads idle while the card is still
+        # being made.
+        scheduler.cancel_running(job_id)
         return {"ok": True}
 
     # -- artifacts (playback via HTTP range requests) -------------------
