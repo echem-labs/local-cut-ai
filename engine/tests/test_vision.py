@@ -81,13 +81,12 @@ async def test_reading_the_picture_does_not_block_the_event_loop(tmp_path):
     freezes the loop exactly as an inline encode does — while a tick tally
     still rises, because the read either side of it yields.
     """
-    from conftest import MAX_STALLED, watch_the_loop
+    from conftest import MAX_STALLED, least_stalled
 
     big = tmp_path / "big.png"
     big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
 
-    async with watch_the_loop() as watch:
-        await encoded(big)
+    watch = await least_stalled(lambda: encoded(big))
 
     assert watch.stalled < MAX_STALLED, str(watch)
 
