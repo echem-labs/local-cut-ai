@@ -12,8 +12,18 @@ localcut serve --host 0.0.0.0 --token "$(openssl rand -base64 32)"
 Or with Docker — engine plus Ollama, see `deploy/docker-compose.yml`:
 
 ```bash
-LOCALCUT_TOKEN="$(openssl rand -base64 32)" docker compose -f deploy/docker-compose.yml up -d
+LOCALCUT_TOKEN="$(openssl rand -base64 32)" \
+  LOCALCUT_ADVERTISE=gpu-box.local \
+  docker compose -f deploy/docker-compose.yml up -d
 ```
+
+`LOCALCUT_ADVERTISE` (or `serve --advertise`) is the address the pairing code
+tells the laptop to dial. Set it wherever that is not the address the engine
+binds: in a container the engine's own outbound address is the Docker bridge
+network, which reaches nothing from outside. It also covers a reverse proxy or
+a tailnet name, and may carry its own port (`engine.example.com:443`). Left
+unset outside a container, the engine works it out from the machine's outbound
+interface.
 
 A network bind serves HTTPS with a self-signed certificate and prints a
 pairing block: URL, certificate fingerprint, and a one-line pairing code.

@@ -36,6 +36,23 @@ import type {
 /** Marker subprotocol that tells the engine the next offered protocol is the
  * bearer token. Must match WS_TOKEN_SUBPROTOCOL in the engine's api/app.py. */
 const WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1";
+/** Marks a token carried through the subprotocol as base64url. Must match
+ * WS_TOKEN_B64_PREFIX in the engine's api/app.py. */
+const WS_TOKEN_B64_PREFIX = "b64u.";
+
+/** The token, encoded to survive being a WebSocket subprotocol.
+ *
+ * Subprotocol values are RFC 7230 tokens: no "/", "+", "=" or space. Those
+ * are exactly the characters base64 uses, and the docs tell an operator to
+ * generate the token with `openssl rand -base64 32` — 32 random bytes always
+ * end in "=" and contain "/" about half the time. Sent raw, `new WebSocket()`
+ * throws a SyntaxError, so the app connects over HTTP and never opens the
+ * event stream: no render progress, no job.done, and no error either. */
+const wsTokenProtocol = (token: string): string => {
+  const bytes = new TextEncoder().encode(token);
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return WS_TOKEN_B64_PREFIX + base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
 
 /**
  * How long a route that waits on a local LLM may take.
@@ -599,8 +616,15 @@ export class EngineClient {
     return this.request("/providers");
   }
 
+  /** A URL an <video>/<audio>/download can carry the token on.
+   *
+   * encodeURIComponent, not interpolation: Starlette parses the query with
+   * parse_qsl, which decodes "+" as a space — so a token containing one (about
+   * half of `openssl rand -base64 32`) compares unequal and 401s every player
+   * and every export download, while the header-authed rest of the app keeps
+   * working. That reads as "the renders are broken", not "auth is broken". */
   artifactUrl(projectId: string, hash: string): string {
-    return `${this.connection.url}/projects/${projectId}/artifacts/${hash}?token=${this.connection.token}`;
+    return `${this.connection.url}/projects/${projectId}/artifacts/${hash}?token=${encodeURIComponent(this.connection.token)}`;
   }
 
   /** A short line in one voice, for auditioning a pick before rendering.
@@ -611,12 +635,12 @@ export class EngineClient {
    * The engine renders on first ask and serves from disk after.
    */
   voicePreviewUrl(voiceId: string): string {
-    return `${this.connection.url}/voices/${encodeURIComponent(voiceId)}/preview?token=${this.connection.token}`;
+    return `${this.connection.url}/voices/${encodeURIComponent(voiceId)}/preview?token=${encodeURIComponent(this.connection.token)}`;
   }
 
   /** Pro-NLE handoff downloads (409 while the timeline hasn't rendered). */
   exportUrl(projectId: string, kind: "otio" | "fcpxml"): string {
-    return `${this.connection.url}/projects/${projectId}/export/${kind}?token=${this.connection.token}`;
+    return `${this.connection.url}/projects/${projectId}/export/${kind}?token=${encodeURIComponent(this.connection.token)}`;
   }
 
   /** Subscribe to engine events; returns an unsubscribe function. */
@@ -628,7 +652,10 @@ export class EngineClient {
     // a user attaches to a bug report. Browsers can't set headers on a
     // WebSocket, so the subprotocol list is the only header-ish channel.
     // The engine echoes WS_TOKEN_SUBPROTOCOL back to complete the handshake.
-    const socket = new WebSocket(`${wsUrl}/ws`, [WS_TOKEN_SUBPROTOCOL, this.connection.token]);
+    const socket = new WebSocket(`${wsUrl}/ws`, [
+      WS_TOKEN_SUBPROTOCOL,
+      wsTokenProtocol(this.connection.token),
+    ]);
     socket.onmessage = (message) => {
       // A non-JSON frame (a proxy keepalive, a truncated message) must not
       // throw an uncaught SyntaxError out of the event handler.

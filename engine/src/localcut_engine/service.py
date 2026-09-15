@@ -71,6 +71,8 @@ from .project.store import (
     NodeTakes,
     Project,
     ProjectStore,
+    ProjectTooNew,
+    ProjectUnreadable,
     SavePoint,
     Snapshot,
     TakeRecord,
@@ -845,7 +847,17 @@ class ProjectService:
         no-op patch does not burn an undo step on nothing."""
         if graph.model_dump(mode="json") == before:
             return
-        history = self.store.load_history(project_id)
+        try:
+            history = self.store.load_history(project_id)
+        except (ProjectUnreadable, ProjectTooNew) as exc:
+            # The mutation has already been written; recording undo for it
+            # must not now fail it. A history we cannot read (an I/O error) or
+            # must not touch (a newer build's format) means this one edit goes
+            # unrecorded - logged here - not that the caller is told the graph
+            # was not modified when it was, and not that the file is reset and
+            # its save points destroyed. The next readable load records again.
+            logger.warning("edit applied but not recorded in history for %s: %s", project_id, exc)
+            return
         history.push(
             Snapshot(kind=kind, at=time.time(), summary=summary, node_id=node_id, graph=before)
         )
@@ -1304,6 +1316,10 @@ class ProjectService:
                 return False
             doomed = self.store.reserve_for_deletion(project_id)
             self.queue.cancel_project(project_id)
+            # And stop the one that is actually rendering: its project is
+            # about to stop existing, so its output has nowhere to land.
+            if self.scheduler is not None:
+                self.scheduler.cancel_running_for_project(project_id)
         # Outside the lock: the sweep can take a moment on a large project,
         # and nothing else needs to wait for it.
         self.store.purge(doomed)
@@ -1683,19 +1699,28 @@ class ProjectService:
             if billed:
                 raise self._refusal(billed, "nothing was queued")
 
-        # Supersede stale queued work: a re-plan that changed a node's hash
-        # (seed bump, param edit) makes any still-queued job for that node
-        # garbage — cancel it instead of letting it render into an artifact
+        # Supersede stale queued work. Two ways a queued job becomes garbage:
+        # its node's hash moved (a seed bump, a param edit), or the node left
+        # the graph entirely. The second is the scene the user just deleted —
+        # rendering it spends minutes of GPU on footage nothing can reference,
+        # while the timeline and export wait behind it in the FIFO. Either
+        # way, cancel it rather than letting it render into an artifact
         # nothing references, or fail against inputs that no longer exist.
-        # Rendering jobs are left to finish; their output is merely unused.
+        # A job already RENDERING is interrupted by the cancel route instead;
+        # here it is left alone, and its output merely goes unused.
         active_jobs = self.queue.active(project_id)
         planned = {spec.node_id: spec.output_hash for spec in plan.jobs}
         superseded = {
             job.id
             for job in active_jobs
             if job.status is JobStatus.QUEUED
-            and job.spec.node_id in planned
-            and job.spec.output_hash != planned[job.spec.node_id]
+            and (
+                job.spec.node_id not in graph.nodes
+                or (
+                    job.spec.node_id in planned
+                    and job.spec.output_hash != planned[job.spec.node_id]
+                )
+            )
         }
         for job_id in superseded:
             self.queue.cancel(job_id)
@@ -1846,8 +1871,11 @@ class ProjectService:
         re-render it. Drop those artifacts and recompile."""
         try:
             graph = self.store.load_graph(job.project_id)
-        except (OSError, ValueError):
-            return  # project deleted between completion and this handler
+        except (OSError, ValueError, ProjectUnreadable, ProjectTooNew):
+            # Deleted between completion and this handler, or its project.json
+            # is unreadable - either way there is nothing here to heal, and
+            # this runs in the completion hook, where a raise stops the loop.
+            return
         if job.spec.node_id not in graph.nodes:
             return
         optional_dsts = [
@@ -1895,7 +1923,7 @@ class ProjectService:
         if graph is None:
             try:
                 graph = self.store.load_graph(project_id)
-            except (OSError, ValueError):
+            except (OSError, ValueError, ProjectUnreadable, ProjectTooNew):
                 graph = None
         if touch:
             project.updated_at = time.time()
@@ -2004,13 +2032,23 @@ class ProjectService:
             with self._lock:
                 try:
                     self._refresh_meta_locked(project.id, touch=False)
-                except (OSError, ValueError):
+                    healed = self.store.get(project.id)
+                except (OSError, ValueError, ProjectTooNew, ProjectUnreadable):
                     # One unreadable project must not stop the sweep, exactly
                     # as store.list() refuses to let one damaged meta take
                     # the whole listing down.
+                    #
+                    # The store's own refusals are RuntimeError subclasses,
+                    # not ValueError, so they were not caught here — and this
+                    # sweep runs inside the app's lifespan, where an escaping
+                    # exception is "Application startup failed. Exiting." One
+                    # quick-tool session written by a newer build, or one
+                    # whose text a pre-utf8 build stored in the platform
+                    # encoding, therefore stopped the whole engine from
+                    # starting, with every other project perfectly healthy
+                    # and nothing naming the one at fault.
                     logger.warning("could not backfill tool meta for %s", project.id)
                     continue
-                healed = self.store.get(project.id)
             if healed is not None and healed.tool_artifact_hash:
                 filled += 1
         return filled
@@ -2133,7 +2171,13 @@ class ProjectService:
                 # a failed *final* reads as a completed 'final'. The draft stays
                 # viewable via artifact_hash below.
                 status = "failed"
-            elif job and job.status is JobStatus.CANCELLED:
+            elif job and job.status is JobStatus.CANCELLED and out_hash not in cached:
+                # Only while the cancel actually cost the artifact. A cancel
+                # that raced a render to the finish line leaves a complete,
+                # trusted file at this hash — reporting that as `cancelled`
+                # pins the card there for good, because a re-plan sees a
+                # node that is not dirty and enqueues nothing, and the only
+                # way out is Regenerate, which throws the good render away.
                 status = "cancelled"
             elif node_id in skipped:
                 # Deliberately not rendered — a scene conditioned on an

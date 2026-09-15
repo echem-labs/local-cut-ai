@@ -54,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
         help="write the connection info JSON to fd 3 (used by the desktop shell)",
     )
     serve.add_argument(
+        "--advertise",
+        default=None,
+        help="host or host:port to put in the pairing code (default: this "
+        "machine's outbound address). Set it wherever the address the engine "
+        "binds is not the one a laptop can dial - in a container, behind a "
+        "reverse proxy, or on a tailnet name",
+    )
+    serve.add_argument(
         "--no-tls",
         action="store_true",
         help="serve plain HTTP on a network bind (only sensible inside a "
@@ -114,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             "token": args.token,
             "data_dir": args.data_dir,
             "backend": args.backend,
+            "advertise": args.advertise,
         }.items()
         if value is not None
     }
@@ -154,12 +163,31 @@ def main(argv: list[str] | None = None) -> int:
     # to exit with "address in use" had already resurrected the first
     # engine's in-flight job, and both then rendered it. Binding first turns
     # that into a clean exit that touches nothing.
+    # The data directory is what actually has to be exclusive, and it is
+    # claimed before the port for the same reason the port is claimed before
+    # create_app: nothing with side effects may run until both are ours.
+    try:
+        data_dir_lock = _hold_data_dir(config.data_dir)
+    except DataDirBusy:
+        print(
+            f"another engine is already using {config.data_dir}.\n"
+            "Quit it before starting this one - two engines sharing a data "
+            "directory render the same job twice and write over each other.",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as exc:
+        print(f"could not open {config.data_dir}: {exc}", file=sys.stderr)
+        return 1
+
     try:
         sockets = [_bind(config.host, config.port)]
     except OSError as exc:
+        data_dir_lock.close()
         print(
             f"{BIND_REFUSED}{config.host}:{config.port}: {exc}\n"
-            "Another engine is probably already running - quit it, or pass a different --port.",
+            "Another engine is probably already running - quit it, or serve a "
+            "different --data-dir on a different --port.",
             file=sys.stderr,
         )
         return 1
@@ -173,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"LOCALCUT_ENGINE {connection_info}", flush=True)
     if network_bind:
-        _print_pairing(scheme, config.host, config.port, config.token, fingerprint)
+        _print_pairing(
+            scheme, config.host, config.port, config.token, fingerprint, config.advertise
+        )
 
     from .api.app import create_app, install_log_redaction
 
@@ -190,7 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     # what covers uvicorn's child loggers.
     install_log_redaction()
     server = uvicorn.Server(uvicorn_config)
-    server.run(sockets=sockets)
+    try:
+        server.run(sockets=sockets)
+    finally:
+        # Explicit, not incidental: the lock lives in the open handle, so a
+        # refactor that stopped holding a reference would release the data
+        # directory the moment the object was collected — with the engine
+        # still running on it.
+        data_dir_lock.close()
     return 0
 
 
@@ -229,9 +266,55 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
-def _lan_address(bind_host: str) -> str:
-    """The address a laptop should dial: a bind-all host advertises the
-    machine's primary outbound interface, best-effort."""
+class DataDirBusy(RuntimeError):
+    """Another engine already holds this data directory."""
+
+
+def _hold_data_dir(data_dir: Path):  # noqa: ANN202 — the handle, kept open for the process
+    """Take an exclusive lock on the data directory, or refuse.
+
+    Binding the port first stops two engines on the same host:port, but that
+    is not the thing that has to be exclusive — the DATA DIRECTORY is. Two
+    engines on different ports share one queue.db and one project tree: the
+    same job renders twice on one GPU, both write the same project.json, and
+    status flips between them with nothing on screen to say so. The bind
+    message even used to send people there, by offering a different --port as
+    the remedy for a clash.
+
+    The handle is returned and must outlive the server: closing it, or the
+    process exiting, releases the lock. Both platforms release on process
+    death, so a hard kill does not strand the directory.
+    """
+    data_dir.mkdir(parents=True, exist_ok=True)
+    handle = (data_dir / "engine.lock").open("w", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise DataDirBusy(str(data_dir)) from exc
+    return handle
+
+
+def _lan_address(bind_host: str, advertise: str | None = None) -> str:
+    """The address a laptop should dial.
+
+    An explicit `advertise` wins over anything derived, because the address
+    the engine binds is not always one anything else can reach. Inside a
+    container the outbound probe below answers with the bridge address
+    (172.x), which is correct for the container and useless to the laptop
+    reading the pairing code off `docker compose logs` — and the code is
+    opaque base64, so there is no correcting it by hand afterwards. The same
+    goes for a reverse proxy or a tailnet name.
+    """
+    if advertise:
+        return advertise
     if bind_host not in ("0.0.0.0", "::"):
         return bind_host
     try:
@@ -242,7 +325,14 @@ def _lan_address(bind_host: str) -> str:
         return "127.0.0.1"
 
 
-def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: str | None) -> None:
+def _print_pairing(
+    scheme: str,
+    host: str,
+    port: int,
+    token: str,
+    fingerprint: str | None,
+    advertise: str | None = None,
+) -> None:
     """The block a user copies to the frontend: human-readable connection
     facts plus a single base64url pairing code carrying all of them.
 
@@ -256,7 +346,15 @@ def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: s
     """
     import base64
 
-    url = f"{scheme}://{_lan_address(host)}:{port}"
+    # An advertised host may carry its own port (a proxy on 443, a published
+    # container port that is not the bound one), in which case it stands as
+    # written rather than having this port appended to it.
+    dialled = _lan_address(host, advertise)
+    url = (
+        f"{scheme}://{dialled}"
+        if ":" in dialled.rsplit("]", 1)[-1]
+        else f"{scheme}://{dialled}:{port}"
+    )
     payload: dict = {"url": url, "token": token}
     if fingerprint:
         payload["fingerprint"] = fingerprint
@@ -564,18 +662,24 @@ def _render_command(args: argparse.Namespace, client) -> int:
     not_mine = frozenset() if args.no_wait else automation.settled_jobs(client, args.project_id)
 
     if args.final:
-        client.post(f"/projects/{args.project_id}/finalize")
+        trigger = client.post(f"/projects/{args.project_id}/finalize")
     else:
         # NOT an empty patch: `patch` re-plans only when an op dirtied
         # something, so `{"ops": []}` enqueued nothing and this command
         # reported "render finished" over a queue it had never filled.
-        client.post(f"/projects/{args.project_id}/render")
+        trigger = client.post(f"/projects/{args.project_id}/render")
 
     if args.no_wait:
-        pending = automation.active_jobs(client, args.project_id)
-        automation.emit(
-            {"pending": len(pending)}, as_json=args.json, lines=[f"{len(pending)} job(s) queued"]
-        )
+        enqueued = automation.enqueued_count(trigger)
+        # Floored at what the trigger reported it enqueued. Asking /jobs is
+        # a second round trip the scheduler runs during, so a queue that
+        # drains faster than the network answers reports fewer jobs than
+        # were just queued - and reports 0, "nothing to wait for", exactly
+        # when the engine is fastest. The count a script branches on cannot
+        # be one the engine is free to invalidate before it is read.
+        outstanding = automation.active_jobs(client, args.project_id)
+        pending = max(enqueued, len(outstanding))
+        automation.emit({"pending": pending}, as_json=args.json, lines=[f"{pending} job(s) queued"])
         return automation.EXIT_OK
 
     seen: dict[str, int] = {}

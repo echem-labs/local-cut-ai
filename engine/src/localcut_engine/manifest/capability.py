@@ -26,6 +26,19 @@ COMFY_TASKS: dict[NodeKind, tuple[str, ...]] = {
     NodeKind.MUSIC: ("music.gen",),
 }
 
+# The tasks whose weights this app downloads itself. Everything else is
+# served by a runtime the user installs separately — text.llm is Ollama's —
+# so a manifest entry there carries no `files` and is still a real
+# recommendation. For these, an entry with no files is a name and not
+# something anyone can install, which is the difference between a first-run
+# wizard that sets a machine up and one that reports six stages covered over
+# a machine with weights for none of them.
+# readiness._DOWNLOAD_TASKS maps node kinds onto exactly this set; a test
+# holds the two together.
+DOWNLOADED_TASKS: frozenset[str] = frozenset(
+    task for tasks in COMFY_TASKS.values() for task in tasks
+) | {"speech.tts", "transcribe"}
+
 
 def installed_by_task(config: EngineConfig) -> dict[str, list[str]]:
     """Manifest task -> ids of fully-downloaded models able to serve it, in
