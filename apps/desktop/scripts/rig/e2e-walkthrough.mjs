@@ -20,7 +20,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { evalInApp, health, makeCheck, pinnedBackend, shotsDir, startRig, stopRig } from "./rig.mjs";
+import {
+  DISMISS_READINESS_GATE,
+  evalInApp,
+  health,
+  makeCheck,
+  pinnedBackend,
+  shotsDir,
+  startRig,
+  stopRig,
+} from "./rig.mjs";
 
 const dir = shotsDir("e2e");
 const check = makeCheck();
@@ -205,6 +214,7 @@ try {
     );
     const buttons = await page.$$(".tool-panel .row button");
     await buttons[buttons.length - 1].click(); // Generate script
+    ${DISMISS_READINESS_GATE}
     await page.waitForSelector(".tool-shell", { timeout: 30000 });
     const table = await page
       .waitForSelector(".script-table", { timeout: 30000 })
