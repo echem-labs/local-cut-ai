@@ -209,12 +209,25 @@ async def test_a_chained_crossfade_mix_is_restamped_before_the_encoder(tmp_path,
 
 async def test_an_all_cut_join_leaves_the_audio_chain_untouched(tmp_path, monkeypatch):
     """The restamp answers a defect in the mix, so a timeline that never
-    mixes keeps the graph it had."""
+    mixes keeps the graph it had.
+
+    Asserted as the whole chain, not as two absent names. Absence is not a
+    property this rule creates - a join with no mix in it has no `amix` to
+    restamp whichever way the rule goes - so naming what is missing cannot
+    fail for the thing it describes. The shape can: a filter added to this
+    path, or a restamp applied unconditionally, moves it.
+    """
     backend, calls = _recording_backend(monkeypatch)
 
     await _join(backend, tmp_path, ["cut", "cut"])
-    graph = _value(calls[-1], "-filter_complex")
+    args = calls[-1]
+    graph = _value(args, "-filter_complex")
 
+    assert graph.split(";") == [
+        "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v1][a1]",
+        "[v1][a1][2:v][2:a]concat=n=2:v=1:a=1[v2][a2]",
+    ]
+    assert _maps(args) == ["[v2]", "[a2]"]
     assert "amix" not in graph
     assert "aresample" not in graph
 

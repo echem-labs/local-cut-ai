@@ -8,6 +8,7 @@ Rules enforced here, not by convention:
 """
 
 import asyncio
+import base64
 import functools
 import json
 import logging
@@ -113,6 +114,12 @@ logger = logging.getLogger(__name__)
 # /ws route and install_log_redaction). The client offers two protocols —
 # this marker and then the token — and the server echoes the marker back.
 WS_TOKEN_SUBPROTOCOL = "localcut.bearer.v1"
+# Marks a subprotocol-carried token as base64url. A subprotocol value is an
+# RFC 7230 token, which excludes "/", "+", "=" and space — the characters
+# base64 is made of, and the docs tell operators to generate the token with
+# `openssl rand -base64 32`. Clients encode; a value without this prefix is
+# read as-is, so a client that sends the token plain still authenticates.
+WS_TOKEN_B64_PREFIX = "b64u."
 
 # Any `token=…` in a log record, whatever the surrounding text. Applied to
 # uvicorn's loggers, where the WebSocket handshake line lands.
@@ -167,6 +174,25 @@ class _RedactTokens(logging.Filter):
         record.msg = _TOKEN_IN_TEXT.sub(r"\1[redacted]", rendered)
         record.args = ()
         return True
+
+
+def _decode_ws_token(value: str) -> str:
+    """The token a client offered through the WebSocket subprotocol.
+
+    Encoded values carry WS_TOKEN_B64_PREFIX; anything else is returned
+    unchanged, so a client that puts the token in plain still authenticates
+    when its characters happen to be legal in a subprotocol.
+    """
+    if not value.startswith(WS_TOKEN_B64_PREFIX):
+        return value
+    raw = value[len(WS_TOKEN_B64_PREFIX) :]
+    try:
+        # Padding is stripped on the wire: a subprotocol value cannot carry "=".
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        # Not decodable is not authenticated — fall through to the 4401 below
+        # rather than raising out of the handshake.
+        return ""
 
 
 def install_log_redaction() -> None:
@@ -799,12 +825,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend.installed_voices()
 
+        # Whether the clone control can work at all. Separate from
+        # `available`, which is about the stock-voice pack: cloning routes to
+        # a different backend and a different optional runtime, so the two are
+        # independently present or absent.
+        cloning = ChatterboxBackend.package_installed() and backends.find("chatterbox") is not None
+
         installed = await asyncio.to_thread(enumerate_pack)
         if installed is None:
-            return {"available": False, "voices": [], "default": None}
+            return {"available": False, "voices": [], "default": None, "cloning": cloning}
         ids = [voice["id"] for voice in installed]
         default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
-        return {"available": True, "voices": installed, "default": default}
+        return {"available": True, "voices": installed, "default": default, "cloning": cloning}
 
     @app.get("/voices/{voice_id}/preview", dependencies=[Authed])
     async def voice_preview(voice_id: VoiceId) -> FileResponse:
@@ -1976,8 +2008,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @app.post("/jobs/{job_id}/cancel", dependencies=[Authed])
     async def cancel_job(job_id: JobId) -> dict:
-        if not queue.cancel(job_id):
+        # Off the loop like every other queue call: this is a read-modify-write
+        # under the same mutex the worker threads hold.
+        if not await asyncio.to_thread(queue.cancel, job_id):
             raise HTTPException(status_code=409, detail="job is not cancellable")
+        # The row is only half of it. Without this the backend renders the
+        # cancelled job to completion, holding the GPU, and nothing queued
+        # behind it can start — the tray reads idle while the card is still
+        # being made.
+        scheduler.cancel_running(job_id)
         return {"ok": True}
 
     # -- artifacts (playback via HTTP range requests) -------------------
@@ -2072,7 +2111,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         ]
         subprotocol: str | None = None
         if len(offered) == 2 and offered[0] == WS_TOKEN_SUBPROTOCOL:
-            presented, subprotocol = offered[1], WS_TOKEN_SUBPROTOCOL
+            presented, subprotocol = _decode_ws_token(offered[1]), WS_TOKEN_SUBPROTOCOL
         else:
             authorization = websocket.headers.get("authorization", "")
             if authorization.startswith("Bearer "):

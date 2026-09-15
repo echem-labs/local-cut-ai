@@ -543,6 +543,7 @@ export function Project() {
     refreshBoard,
     finalize,
     regenerate,
+    reportActionError,
     client,
     actionError,
     dismissActionError,
@@ -553,6 +554,7 @@ export function Project() {
   const density = useWorkspace((state) => state.density);
   const setDensity = useWorkspace((state) => state.setDensity);
   const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
   // The keyboard path has no control to look at, so a refused undo (409
   // "nothing to undo" after a concurrent CLI edit, 422 for a snapshot that
   // fails the restore gate, or no engine at all) would otherwise be
@@ -802,8 +804,13 @@ export function Project() {
     // the drawtext banner below, for the same most-expensive moment.
     await readinessGuard(async () => {
       setFinalizing(true);
+      setFinalizeError(null);
       try {
-        await finalize();
+        // The screen's most expensive action, and the one with the most ways
+        // to be refused: a cloud model the spend gate stops, a graph that no
+        // longer compiles, an engine that died between the board load and
+        // the click. Every one of them has to arrive somewhere visible.
+        setFinalizeError(await finalize());
       } finally {
         setFinalizing(false);
       }
@@ -991,6 +998,9 @@ export function Project() {
           {historyKeyError}
         </div>
       )}
+      {finalizeError && (
+        <Alert message={finalizeError} onDismiss={() => setFinalizeError(null)} />
+      )}
       {/* A project-level action fired from the command palette, which closes
           on run and so has nowhere to report a refusal. "Prepare to publish"
           before the script has rendered is the one that happens: the engine
@@ -1008,7 +1018,12 @@ export function Project() {
                 it carries the retry itself. */}
             <button
               className="btn-outline"
-              onClick={() => void readinessGuard(() => void regenerate("script"), ["script"])}
+              onClick={() =>
+                void readinessGuard(
+                  () => void regenerate("script").then(reportActionError),
+                  ["script"],
+                )
+              }
             >
               {t("project.retryScript")}
             </button>
@@ -1016,7 +1031,12 @@ export function Project() {
         ) : (
           <ScriptWait
             node={script}
-            onRetry={() => void readinessGuard(() => void regenerate("script"), ["script"])}
+            onRetry={() =>
+              void readinessGuard(
+                () => void regenerate("script").then(reportActionError),
+                ["script"],
+              )
+            }
           />
         )
       ) : (

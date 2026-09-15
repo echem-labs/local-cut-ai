@@ -28,6 +28,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
  * engineRequest refusing to send the token over an unpinned channel — is
  * tested, and that is the half that leaks a secret when it breaks.
  */
+/** Wall-clock, not work: the slowest test here deliberately sleeps 4.2 s to
+ * watch a wait the UI makes, which leaves ~15% of vitest's 5 s default. That
+ * is not margin — a loaded CI runner turns it, and whatever else is sharing
+ * the box, red with a bare "Test timed out in 5000ms" that says nothing about
+ * the code. Generous on purpose: this bound exists to catch a hang, and a
+ * test that genuinely hangs still fails, ten seconds later. */
+const TEST_TIMEOUT_MS = 15_000;
+
 export default defineConfig({
   test: {
     projects: [
@@ -38,6 +46,7 @@ export default defineConfig({
             name: "renderer",
             environment: "jsdom",
             globals: true,
+            testTimeout: TEST_TIMEOUT_MS,
             setupFiles: ["./src/test/setup.ts"],
             include: ["src/**/*.test.{ts,tsx}"],
             restoreMocks: true,
@@ -59,6 +68,7 @@ export default defineConfig({
           name: "main",
           environment: "node",
           globals: true,
+          testTimeout: TEST_TIMEOUT_MS,
           include: ["electron/**/*.test.ts"],
           restoreMocks: true,
         },

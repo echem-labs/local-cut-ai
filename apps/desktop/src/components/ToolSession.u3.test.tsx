@@ -50,7 +50,12 @@ function mountSession(
       artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
       // The voiceover window offers the voice picker, which asks the engine
       // what the pack holds the moment it mounts.
-      voices: vi.fn().mockResolvedValue({ available: false, voices: [], default: null }),
+      // `cloning: true` by default: the clone control is offered only where
+      // the engine says the runtime is there, so a session that means to
+      // exercise the picker has to say so.
+      voices: vi
+        .fn()
+        .mockResolvedValue({ available: false, voices: [], default: null, cloning: true }),
       voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
     },
     jobs: [],
@@ -118,6 +123,7 @@ describe("the recipe card", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
+        ok: true,
         json: () =>
           Promise.resolve({
             title: "A strong hook, clear sections",
@@ -207,8 +213,11 @@ describe("the action row", () => {
     expect(hovering("Turn into a video")).toContain("project");
   });
 
-  it("explains the voiceover clone action", () => {
+  it("explains the voiceover clone action", async () => {
     mountSession("voiceover", node("voiceover", { params: { text: "hello" } }));
+    // The button is offered only once the engine has answered that cloning
+    // can run, so the hover cannot be read before it is there.
+    await screen.findByText("Clone a voice…");
     expect(hovering("Clone a voice…")).toContain("permission");
   });
 });
@@ -455,13 +464,36 @@ describe("the voiceover session's voice row", () => {
 });
 
 describe("the clone picker", () => {
-  it("keeps the sample chooser behind the consent affirmation", () => {
+  it("keeps the sample chooser behind the consent affirmation", async () => {
     mountSession("voiceover", node("voiceover", { params: { text: "hello" } }));
-    fireEvent.click(screen.getByText("Clone a voice…"));
+    fireEvent.click(await screen.findByText("Clone a voice…"));
     const choose = screen.getByText("Choose a sample…");
     expect(choose).toBeDisabled();
     fireEvent.click(screen.getByRole("checkbox"));
     expect(choose).not.toBeDisabled();
+  });
+
+  it("is not offered at all where the engine cannot run cloning", async () => {
+    // The voiceover tool is where cloning is discovered, so gating only the
+    // inspector leaves the commoner path free to commit a session to a model
+    // that cannot load - every narration take then fails together, and
+    // clearing it means editing the node by hand.
+    const voices = vi
+      .fn()
+      .mockResolvedValue({ available: false, voices: [], default: null, cloning: false });
+    mountSession("voiceover", node("voiceover", { params: { text: "hello" } }), {
+      client: {
+        artifactUrl: () => "http://engine/a",
+        artifactPeaks: vi.fn().mockRejectedValue(new Error("no peaks in tests")),
+        voices,
+        voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
+      },
+    });
+
+    // Asserted after the engine has actually answered, so this is the
+    // answer's doing rather than the frame before it.
+    await vi.waitFor(() => expect(voices).toHaveBeenCalled());
+    expect(screen.queryByText("Clone a voice…")).toBeNull();
   });
 });
 

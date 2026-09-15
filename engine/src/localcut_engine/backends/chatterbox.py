@@ -59,6 +59,28 @@ class ChatterboxBackend(ExecutionBackend):
     def serves_model(self, model: str | None) -> bool:
         return model == CLONE_MODEL
 
+    @staticmethod
+    def package_installed() -> bool:
+        """Whether the optional runtime is importable.
+
+        The clone control is the one place a user commits to this before any
+        job runs: ticking consent and picking a sample rewrites EVERY
+        narration node to `local:chatterbox`, so an absent package fails all
+        of them at once, and clearing it means editing each node by hand in
+        the advanced inspector. A client that can ask this first can decline
+        the trade instead of discovering it afterwards.
+
+        `find_spec`, not an import: importing chatterbox pulls PyTorch into
+        the engine process, which is seconds and hundreds of MB for a
+        question asked on a route that just lists voices.
+        """
+        from importlib.util import find_spec
+
+        try:
+            return find_spec("chatterbox") is not None
+        except (ImportError, ValueError):
+            return False
+
     def _load(self):
         try:
             import torch

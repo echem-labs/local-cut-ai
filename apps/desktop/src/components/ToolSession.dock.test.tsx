@@ -109,6 +109,7 @@ describe("the session dock", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
+        ok: true,
         json: () => Promise.resolve({ title: "T", hook: "", scenes: [] }),
       }),
     );

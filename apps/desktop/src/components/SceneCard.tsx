@@ -67,7 +67,16 @@ export function SceneCard({
   teachDraft?: boolean;
   onTeachDismiss?: () => void;
 }) {
-  const { client, currentProject, selectedNode, select, regenerate, togglePin, applyNode } =
+  const {
+    client,
+    currentProject,
+    selectedNode,
+    select,
+    regenerate,
+    togglePin,
+    applyNode,
+    reportActionError,
+  } =
     useApp();
   const playScene = usePlayback((state) => state.play);
   // A picture is in the air over THIS card. The card says so itself rather
@@ -134,7 +143,7 @@ export function SceneCard({
     setEditingWords(false);
     const next = wordsDraft.trim();
     if (commit && scene.narration && next && next !== narrationText) {
-      void applyNode(scene.narration.node_id, { params: { text: next } });
+      void applyNode(scene.narration.node_id, { params: { text: next } }).then(reportActionError);
     }
   };
 
@@ -174,8 +183,10 @@ export function SceneCard({
         // making every one of them remember.
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter") select(primary.node_id);
-        if (event.key.toLowerCase() === "r" && !clip.pinned) void regenerate(clip.node_id);
-        if (event.key.toLowerCase() === "p") void togglePin(clip.node_id, !clip.pinned);
+        if (event.key.toLowerCase() === "r" && !clip.pinned)
+          void regenerate(clip.node_id).then(reportActionError);
+        if (event.key.toLowerCase() === "p")
+          void togglePin(clip.node_id, !clip.pinned).then(reportActionError);
       }}
       draggable={Boolean(onDragStart)}
       onDragStart={(event) => {
@@ -298,7 +309,7 @@ export function SceneCard({
             <button
               onClick={(event) => {
                 event.stopPropagation();
-                void regenerate(clip.node_id);
+                void regenerate(clip.node_id).then(reportActionError);
               }}
             >
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -349,7 +360,7 @@ export function SceneCard({
                 disabled={clip.pinned}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void regenerate(clip.node_id);
+                  void regenerate(clip.node_id).then(reportActionError);
                 }}
               >
                 <RotateCw size={12} strokeWidth={2} />
@@ -366,7 +377,7 @@ export function SceneCard({
                 className={clip.pinned ? "on" : ""}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void togglePin(clip.node_id, !clip.pinned);
+                  void togglePin(clip.node_id, !clip.pinned).then(reportActionError);
                 }}
               >
                 <Pin size={11} strokeWidth={2} />

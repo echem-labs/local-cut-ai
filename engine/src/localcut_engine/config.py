@@ -46,6 +46,11 @@ class EngineConfig(BaseModel):
     # without an answer the preflight-exempt WebSocket connects while every
     # fetch dies, which reads as "engine up, all lists broken".
     allow_origin: str = ""
+    # Host (or host:port) to put in the pairing code when it is not the one
+    # the engine binds. A container's outbound address is its bridge IP,
+    # which the laptop reading the pairing code cannot reach; a reverse proxy
+    # or a tailnet name has the same shape. Empty = derive it.
+    advertise: str = ""
     ffmpeg_bin: str = "ffmpeg"
     # "Finalize" swaps unpinned clips to this model (e.g.
     # "local:wan2.2-i2v-14b-fp8" on 16 GB+ tiers). None = same model,

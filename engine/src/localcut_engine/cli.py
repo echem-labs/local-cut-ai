@@ -54,6 +54,14 @@ def main(argv: list[str] | None = None) -> int:
         help="write the connection info JSON to fd 3 (used by the desktop shell)",
     )
     serve.add_argument(
+        "--advertise",
+        default=None,
+        help="host or host:port to put in the pairing code (default: this "
+        "machine's outbound address). Set it wherever the address the engine "
+        "binds is not the one a laptop can dial - in a container, behind a "
+        "reverse proxy, or on a tailnet name",
+    )
+    serve.add_argument(
         "--no-tls",
         action="store_true",
         help="serve plain HTTP on a network bind (only sensible inside a "
@@ -114,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             "token": args.token,
             "data_dir": args.data_dir,
             "backend": args.backend,
+            "advertise": args.advertise,
         }.items()
         if value is not None
     }
@@ -173,7 +182,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"LOCALCUT_ENGINE {connection_info}", flush=True)
     if network_bind:
-        _print_pairing(scheme, config.host, config.port, config.token, fingerprint)
+        _print_pairing(
+            scheme, config.host, config.port, config.token, fingerprint, config.advertise
+        )
 
     from .api.app import create_app, install_log_redaction
 
@@ -229,9 +240,19 @@ def _bind(host: str, port: int) -> socket.socket:
     return sock
 
 
-def _lan_address(bind_host: str) -> str:
-    """The address a laptop should dial: a bind-all host advertises the
-    machine's primary outbound interface, best-effort."""
+def _lan_address(bind_host: str, advertise: str | None = None) -> str:
+    """The address a laptop should dial.
+
+    An explicit `advertise` wins over anything derived, because the address
+    the engine binds is not always one anything else can reach. Inside a
+    container the outbound probe below answers with the bridge address
+    (172.x), which is correct for the container and useless to the laptop
+    reading the pairing code off `docker compose logs` — and the code is
+    opaque base64, so there is no correcting it by hand afterwards. The same
+    goes for a reverse proxy or a tailnet name.
+    """
+    if advertise:
+        return advertise
     if bind_host not in ("0.0.0.0", "::"):
         return bind_host
     try:
@@ -242,7 +263,14 @@ def _lan_address(bind_host: str) -> str:
         return "127.0.0.1"
 
 
-def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: str | None) -> None:
+def _print_pairing(
+    scheme: str,
+    host: str,
+    port: int,
+    token: str,
+    fingerprint: str | None,
+    advertise: str | None = None,
+) -> None:
     """The block a user copies to the frontend: human-readable connection
     facts plus a single base64url pairing code carrying all of them.
 
@@ -256,7 +284,15 @@ def _print_pairing(scheme: str, host: str, port: int, token: str, fingerprint: s
     """
     import base64
 
-    url = f"{scheme}://{_lan_address(host)}:{port}"
+    # An advertised host may carry its own port (a proxy on 443, a published
+    # container port that is not the bound one), in which case it stands as
+    # written rather than having this port appended to it.
+    dialled = _lan_address(host, advertise)
+    url = (
+        f"{scheme}://{dialled}"
+        if ":" in dialled.rsplit("]", 1)[-1]
+        else f"{scheme}://{dialled}:{port}"
+    )
     payload: dict = {"url": url, "token": token}
     if fingerprint:
         payload["fingerprint"] = fingerprint
@@ -564,18 +600,24 @@ def _render_command(args: argparse.Namespace, client) -> int:
     not_mine = frozenset() if args.no_wait else automation.settled_jobs(client, args.project_id)
 
     if args.final:
-        client.post(f"/projects/{args.project_id}/finalize")
+        trigger = client.post(f"/projects/{args.project_id}/finalize")
     else:
         # NOT an empty patch: `patch` re-plans only when an op dirtied
         # something, so `{"ops": []}` enqueued nothing and this command
         # reported "render finished" over a queue it had never filled.
-        client.post(f"/projects/{args.project_id}/render")
+        trigger = client.post(f"/projects/{args.project_id}/render")
 
     if args.no_wait:
-        pending = automation.active_jobs(client, args.project_id)
-        automation.emit(
-            {"pending": len(pending)}, as_json=args.json, lines=[f"{len(pending)} job(s) queued"]
-        )
+        enqueued = automation.enqueued_count(trigger)
+        # Floored at what the trigger reported it enqueued. Asking /jobs is
+        # a second round trip the scheduler runs during, so a queue that
+        # drains faster than the network answers reports fewer jobs than
+        # were just queued - and reports 0, "nothing to wait for", exactly
+        # when the engine is fastest. The count a script branches on cannot
+        # be one the engine is free to invalidate before it is read.
+        outstanding = automation.active_jobs(client, args.project_id)
+        pending = max(enqueued, len(outstanding))
+        automation.emit({"pending": pending}, as_json=args.json, lines=[f"{pending} job(s) queued"])
         return automation.EXIT_OK
 
     seen: dict[str, int] = {}
