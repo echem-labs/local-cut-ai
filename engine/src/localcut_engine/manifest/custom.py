@@ -58,7 +58,9 @@ def _save_custom(config: EngineConfig, manifest: ModelManifest) -> None:
 
 def _slug(name: str, taken: set[str]) -> str:
     base = _SLUG_STRIP.sub("-", name.strip().lower()).strip("-._") or "custom-model"
-    if not _ID_OK.match(base):
+    # fullmatch, not match: `$` also matches before a trailing newline, and
+    # this id becomes a path parameter whose route pattern reads end-of-text.
+    if not _ID_OK.fullmatch(base):
         base = f"custom-{base}"[:64].strip("-._") or "custom-model"
     slug, n = base, 2
     while slug in taken:
