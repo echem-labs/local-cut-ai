@@ -305,6 +305,12 @@ export function ToolSession() {
   // one of the three is the thing that was asked for. The KEY travels too:
   // it is what the composer's "update & re-render" writes back via /patch.
   const voices = useVoices(tool === "voiceover");
+  // Same gate as the inspector's copy of this control, and for the same
+  // reason: applying a clone rewrites this session's narration to the clone
+  // model, so offering it against an engine with no runtime fails the render
+  // and leaves the user undoing it by hand. `undefined` is an engine too old
+  // to answer, which is not a yes.
+  const voicesCloning = voices?.cloning === true;
   const params = node?.params ?? {};
   const recipeKey =
     (["prompt", "text", "brief"] as const).find(
@@ -724,7 +730,7 @@ export function ToolSession() {
                   </button>
                 </Tip>
               )}
-              {tool === "voiceover" && (
+              {tool === "voiceover" && voicesCloning && (
                 <Tip
                   label={t("toolSession.cloneVoiceTitle")}
                   hint={t("toolSession.cloneVoiceTipHint")}
@@ -813,7 +819,7 @@ export function ToolSession() {
                 onClose={() => setVoiceOpen(false)}
               />
             )}
-            {cloneOpen && tool === "voiceover" && (
+            {cloneOpen && tool === "voiceover" && voicesCloning && (
               <div className="clone-panel">
                 <b>{t("toolSession.cloneVoiceTitle")}</b>
                 <span className="hint">{t("toolSession.cloneVoiceHint")}</span>

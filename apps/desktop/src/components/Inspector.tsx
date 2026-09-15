@@ -64,6 +64,9 @@ export function Inspector() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const voices = useVoices(tab === "voice");
+  // undefined while the answer is in flight, and on an engine too old to
+  // report it — both are "do not offer the control".
+  const voicesCloning = voices?.cloning === true;
   const [speed, setSpeed] = useState("");
   const [duration, setDuration] = useState("");
   const [trimIn, setTrimIn] = useState("");
@@ -713,32 +716,46 @@ export function Inspector() {
                 {tab === "voice" && (
                   <div>
                     <label>{t("inspector.voiceCloning")}</label>
-                    <label
-                      className="hint"
-                      style={{ display: "flex", gap: "6px", alignItems: "center" }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={cloneConsent}
-                        onChange={(event) => setCloneConsent(event.target.checked)}
-                      />
-                      {t("inspector.cloneConsent")}
-                    </label>
-                    <input
-                      type="file"
-                      accept=".wav,.mp3,.flac,.m4a"
-                      disabled={!cloneConsent}
-                      aria-label={t("inspector.voiceSampleAria")}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        if (file) {
-                          setVoiceError(null);
-                          void applyClonedVoice(file).then(setVoiceError);
-                        }
-                      }}
-                    />
-                    <div className="hint">{t("inspector.cloneHint")}</div>
+                    {/* Offered only where it can work. Applying a clone
+                        rewrites EVERY narration node to the clone model at
+                        once, so an engine without the runtime fails all of
+                        them together and clearing it means editing each node
+                        by hand. `undefined` is an older engine that cannot
+                        answer, and is treated as "do not offer". */}
+                    {voicesCloning ? (
+                      <>
+                        <label
+                          className="hint"
+                          style={{ display: "flex", gap: "6px", alignItems: "center" }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={cloneConsent}
+                            onChange={(event) => setCloneConsent(event.target.checked)}
+                          />
+                          {t("inspector.cloneConsent")}
+                        </label>
+                        <input
+                          type="file"
+                          accept=".wav,.mp3,.flac,.m4a"
+                          disabled={!cloneConsent}
+                          aria-label={t("inspector.voiceSampleAria")}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0];
+                            event.target.value = "";
+                            if (file) {
+                              setVoiceError(null);
+                              void applyClonedVoice(file).then(setVoiceError);
+                            }
+                          }}
+                        />
+                        <div className="hint">{t("inspector.cloneHint")}</div>
+                      </>
+                    ) : (
+                      <div role="note" className="hint">
+                        {t("inspector.cloneUnavailable")}
+                      </div>
+                    )}
                   </div>
                 )}
                 {sceneId && (

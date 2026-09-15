@@ -44,6 +44,7 @@
   "voiceCloning": "Voice cloning",
   "cloneConsent": "I have this speaker's permission to clone their voice",
   "cloneHint": "Uses this voice for every scene's narration. Runs entirely on your machine.",
+  "cloneUnavailable": "Voice cloning needs the chatterbox-tts package in the engine environment. This engine does not have it, so the control is hidden rather than failing every scene's narration.",
   "voiceSampleAria": "Voice sample",
   "trimLabel": "Trim",
   "trimInfoLabel": "Shorten this clip",
