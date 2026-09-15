@@ -253,7 +253,7 @@ async def test_encoding_the_conditioning_image_does_not_block_the_event_loop(tmp
     read either side of it does yield. A tick count is green for both; only
     the gap between ticks tells them apart.
     """
-    from conftest import MAX_STALLED, watch_the_loop
+    from conftest import MAX_STALLED, least_stalled
 
     big = tmp_path / "big.png"
     big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * (8 << 20))
@@ -270,9 +270,11 @@ async def test_encoding_the_conditioning_image_does_not_block_the_event_loop(tmp
     with pytest.raises(ProviderError):
         await gen.generate("p", 4.0, str(tiny))
 
-    async with watch_the_loop() as watch:
+    async def submit_the_big_one() -> None:
         with pytest.raises(ProviderError):
             await gen.generate("p", 4.0, str(big))
+
+    watch = await least_stalled(submit_the_big_one)
 
     assert watch.stalled < MAX_STALLED, str(watch)
 

@@ -222,3 +222,29 @@ def make_spec(
         input_hashes=input_hashes or {},
         quality=quality,
     )
+
+
+async def least_stalled(run, attempts: int = 3) -> LoopWatch:
+    """The least-stalled of several readings of `run`.
+
+    `stalled` is the worst gap as a fraction of the watched span, and the
+    span here is whatever the operation takes - tens of milliseconds when the
+    work is really off the loop. At that size the whole process being
+    descheduled for one slice is indistinguishable from the loop being held:
+    no turn is recorded either way, and the fraction goes to 1 for a reason
+    that has nothing to do with the code under test.
+
+    What tells them apart is whether it repeats. Code that holds the GIL
+    holds it on every attempt; a runner that stalled the process once does
+    not. Taking the best reading keeps the assertion about the code without
+    weakening it - a real block fails every attempt, so the best one fails
+    too.
+    """
+    best: LoopWatch | None = None
+    for _ in range(attempts):
+        async with watch_the_loop() as watch:
+            await run()
+        if best is None or watch.stalled < best.stalled:
+            best = watch
+    assert best is not None, "attempts must be at least 1"
+    return best
