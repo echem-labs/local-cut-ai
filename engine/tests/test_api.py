@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import math
@@ -16,6 +17,7 @@ import pytest
 
 from localcut_engine.api.app import create_app
 from localcut_engine.backends.base import GenerationError
+from localcut_engine.backends.chatterbox import ChatterboxBackend
 from localcut_engine.config import EngineConfig
 
 # resolved_ffmpeg_bin discovers <data_dir>/bin/ffmpeg[.exe]; the managed copy
@@ -23,9 +25,8 @@ from localcut_engine.config import EngineConfig
 _FFMPEG_EXE = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
 
 
-@pytest.fixture
-async def client(tmp_path):
-    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")
+@contextlib.asynccontextmanager
+async def _engine(config: EngineConfig):
     app = create_app(config)
     transport = httpx.ASGITransport(app=app)
     async with (
@@ -38,6 +39,25 @@ async def client(tmp_path):
     ):
         async with app.router.lifespan_context(app):
             yield http
+
+
+@pytest.fixture
+async def client(tmp_path):
+    async with _engine(EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")) as http:
+        yield http
+
+
+@pytest.fixture
+async def cloning_client(tmp_path, monkeypatch):
+    """An engine that can clone a voice: the optional runtime importable and
+    the backend that needs it in the chain. Registered behind mock, so every
+    kind still renders on the mock backend - what differs from `client` is
+    the capability, not what runs."""
+    monkeypatch.setattr(ChatterboxBackend, "package_installed", staticmethod(lambda: True))
+    async with _engine(
+        EngineConfig(data_dir=tmp_path, token="test-token", backend="mock,chatterbox")
+    ) as http:
+        yield http
 
 
 async def test_health_is_open_and_versioned(client):
@@ -890,29 +910,31 @@ async def test_asset_upload_and_i2v_conditioning(client):
     ).status_code == 422
 
 
-async def test_voice_cloning_is_consent_gated_but_plain_audio_is_not(client):
+async def test_voice_cloning_is_consent_gated_but_plain_audio_is_not(cloning_client):
     """The consent affirmation gates the voice_consent STAMP, not the door:
     audio uploaded without it lands as a plain audio asset (a music bed, a
     session output added to another project) that the voice_ref chokepoint
     then refuses to wire. Only a consented upload can ever reach cloning."""
-    created = await client.post("/projects", json={"prompt": "voice test"})
+    created = await cloning_client.post("/projects", json={"prompt": "voice test"})
     pid = created.json()["id"]
 
     # Without the affirmation: accepted, but NOT a voice sample.
-    plain = await client.post(f"/projects/{pid}/assets?filename=bed.wav", content=b"RIFFbed")
+    plain = await cloning_client.post(
+        f"/projects/{pid}/assets?filename=bed.wav", content=b"RIFFbed"
+    )
     assert plain.status_code == 200
     plain_id = plain.json()["node_id"]
-    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    graph = (await cloning_client.get(f"/projects/{pid}/graph")).json()
     assert "voice_consent" not in graph["nodes"][plain_id]["params"]
 
     # The chokepoint holds: the unstamped asset cannot feed voice_ref.
     async def scenes() -> list:
-        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+        return (await cloning_client.get(f"/projects/{pid}")).json()["board"]["scenes"]
 
     async with asyncio.timeout(15):
         while not await scenes():
             await asyncio.sleep(0.05)
-    refused = await client.post(
+    refused = await cloning_client.post(
         f"/projects/{pid}/patch",
         json={
             "ops": [
@@ -924,14 +946,15 @@ async def test_voice_cloning_is_consent_gated_but_plain_audio_is_not(client):
     assert "consent" in refused.json()["detail"]
 
     # With the affirmation: stamped, and the same wire is accepted.
-    allowed = await client.post(
+    assert (await cloning_client.get("/voices")).json()["cloning"] is True
+    allowed = await cloning_client.post(
         f"/projects/{pid}/assets?filename=me.wav&consent=true", content=b"RIFFdata"
     )
     assert allowed.status_code == 200
     node_id = allowed.json()["node_id"]
-    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    graph = (await cloning_client.get(f"/projects/{pid}/graph")).json()
     assert graph["nodes"][node_id]["params"]["voice_consent"] is True
-    wired = await client.post(
+    wired = await cloning_client.post(
         f"/projects/{pid}/patch",
         json={
             "ops": [
@@ -941,9 +964,40 @@ async def test_voice_cloning_is_consent_gated_but_plain_audio_is_not(client):
     )
     assert wired.status_code == 200
     # Images never carry the flag (and never need consent).
-    image = await client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
-    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    image = await cloning_client.post(f"/projects/{pid}/assets?filename=pic.png", content=b"png")
+    graph = (await cloning_client.get(f"/projects/{pid}/graph")).json()
     assert "voice_consent" not in graph["nodes"][image.json()["node_id"]]["params"]
+
+
+async def test_a_voice_sample_is_refused_where_nothing_can_clone(client):
+    """The defect: the clone controls read the capability to decide whether
+    to offer themselves, and a window-wide file drop has no control to hide.
+    Dropping an audio file on an engine without the cloning runtime stored
+    the sample, pointed every narration node at a model that cannot load,
+    and left the user to clear each one by hand in the advanced inspector.
+
+    Refused where the consent stamp is minted, which is the one door all of
+    them go through - the drop, the inspector, the tool panel, the CLI, and
+    a client too old to ask. A capability a client reads is advisory; this
+    is the answer that holds.
+    """
+    created = await client.post("/projects", json={"prompt": "voice test"})
+    pid = created.json()["id"]
+    assert (await client.get("/voices")).json()["cloning"] is False
+
+    refused = await client.post(
+        f"/projects/{pid}/assets?filename=me.wav&consent=true", content=b"RIFFdata"
+    )
+    assert refused.status_code == 409
+    assert "chatterbox-tts" in refused.json()["detail"]
+
+    # Nothing was stored, so there is no consented asset to wire afterwards.
+    graph = (await client.get(f"/projects/{pid}/graph")).json()
+    assert not [n for n in graph["nodes"].values() if n["params"].get("voice_consent")]
+
+    # Audio that is not a voice sample is not the capability's business.
+    bed = await client.post(f"/projects/{pid}/assets?filename=bed.wav", content=b"RIFFbed")
+    assert bed.status_code == 200
 
 
 async def test_video_assets_are_accepted(client):

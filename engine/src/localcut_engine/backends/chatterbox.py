@@ -31,7 +31,7 @@ from .base import ExecutionBackend, ExecutionContext, GenerationError
 CLONE_MODEL = "local:chatterbox"
 _SPEED_MIN, _SPEED_MAX = 0.5, 2.0  # atempo's single-pass range
 
-_INSTALL_HINT = (
+INSTALL_HINT = (
     "voice cloning requires the chatterbox-tts package (PyTorch) in the engine "
     "environment — install it with `uv pip install chatterbox-tts`. If it fails to "
     "build on this Python version, cloning lights up automatically once upstream "
@@ -86,7 +86,7 @@ class ChatterboxBackend(ExecutionBackend):
             import torch
             from chatterbox.tts import ChatterboxTTS
         except ImportError as exc:
-            raise GenerationError(_INSTALL_HINT) from exc
+            raise GenerationError(INSTALL_HINT) from exc
         if self._engine is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if (self.model_dir / "ve.safetensors").exists():
