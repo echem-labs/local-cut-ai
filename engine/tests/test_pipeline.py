@@ -170,6 +170,78 @@ async def test_rebuilding_a_delivered_final_keeps_it_final(tmp_path):
     assert [(j.spec.node_id, j.spec.quality) for j in rebuilt] == [("script", "final")]
 
 
+def _export_graph(export_version: int):
+    """A timeline and the export that reads it, stamped with a given build's
+    idea of how an export is produced."""
+    from localcut_engine.graph.model import Node, NodeKind, StoryGraph
+
+    graph = StoryGraph()
+    graph.add_node(Node(id="timeline", kind=NodeKind.TIMELINE, params={"aspect": "9:16"}))
+    graph.add_node(
+        Node(
+            id="export",
+            kind=NodeKind.EXPORT,
+            params={"format": "mp4", "captions": "burn", "export_version": export_version},
+        )
+    )
+    graph.connect("timeline", "export")
+    return graph
+
+
+def _delivered_final(tmp_path, graph):
+    """A project whose whole graph ran to completion at final quality."""
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, EventBus())  # no scheduler: jobs stay queued
+    project = service.create_from_prompt("tide pools", target_duration_s=24)
+    for job in queue.list(project.id, 100):
+        queue.cancel(job.id)
+
+    store.save_graph(project.id, graph)
+    service._enqueue_dirty(project.id, graph, quality="final")
+    for job in queue.active(project.id):
+        job.status = JobStatus.DONE
+        queue.update(job)
+    return store, queue, service, project
+
+
+async def test_a_version_bump_does_not_demote_a_delivered_final(tmp_path):
+    """A behaviour version exists to re-address a kind whose production
+    changed while its params did not — which is exactly a change the user did
+    not make. Recognising a delivered final by its address therefore cannot
+    survive one: upgrading the engine re-plans the export as a draft, the
+    header offers "Create final video" for a video already delivered, and the
+    mp4 at the old address answers to nothing that will ever ask for it."""
+    from localcut_engine.graph.model import EXPORT_VERSION
+
+    store, queue, service, project = _delivered_final(tmp_path, _export_graph(EXPORT_VERSION - 1))
+
+    current = _export_graph(EXPORT_VERSION)
+    store.save_graph(project.id, current)
+    assert service._enqueue_dirty(project.id, current)
+
+    replanned = {job.spec.node_id: job.spec.quality for job in queue.active(project.id)}
+    assert replanned["export"] == "final"
+
+
+async def test_an_edited_export_after_a_delivered_final_is_a_draft_again(tmp_path):
+    """The other side of the same rule, and the reason it is not keyed on the
+    node. Turning captions off asks for a different video, and the cheap pass
+    the user can look at before spending on a final is the whole of the
+    draft/final flow. Only a version the build moved by itself is exempt."""
+    from localcut_engine.graph.model import EXPORT_VERSION
+
+    store, queue, service, project = _delivered_final(tmp_path, _export_graph(EXPORT_VERSION))
+
+    edited = _export_graph(EXPORT_VERSION)
+    edited.nodes["export"].params["captions"] = "off"
+    store.save_graph(project.id, edited)
+    assert service._enqueue_dirty(project.id, edited)
+
+    replanned = {job.spec.node_id: job.spec.quality for job in queue.active(project.id)}
+    assert replanned["export"] == "draft"
+
+
 async def test_cancel_project_stops_inflight_jobs(tmp_path):
     events = EventBus()
     store = ProjectStore(tmp_path / "projects")
