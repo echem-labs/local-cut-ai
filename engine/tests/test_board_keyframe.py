@@ -77,6 +77,33 @@ def test_a_conditioned_scene_reports_the_users_image_as_its_still(service_and_pr
     assert scene["keyframe"]["status"] == "skipped"
 
 
+def test_a_second_name_for_the_same_bytes_leaves_one_file_at_one_address(service_and_project):
+    """The defect: an asset's node id is its content hash alone, so the same
+    bytes arriving under a second filename land on the node that already
+    exists - and the file was written under the new upload's extension, at
+    the address that node already occupied. `resolve_artifact` prefix-matches
+    on the hash, so the picture a scene is built from resolved to whichever
+    copy the directory happened to list first, which could be the one named
+    `.wav`.
+
+    Asserted as what is at the address, not as what the second call returned:
+    returning the existing node is correct - the bytes are that asset - and
+    the whole of the damage is the second file beside it.
+    """
+    service, project_id = service_and_project
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 32
+
+    asset = service.add_asset(project_id, "shot.png", png)
+    again = service.add_asset(project_id, "shot.wav", png)
+    assert again["node_id"] == asset["node_id"], "the id is the content hash"
+
+    generated = service.store.generated_dir(project_id)
+    assert sorted(
+        path.name for path in generated.iterdir() if path.name.startswith(f"{asset['hash']}.")
+    ) == [f"{asset['hash']}.png"]
+    assert service.store.resolve_artifact(project_id, asset["hash"]).suffix == ".png"
+
+
 def test_an_uploaded_image_is_final_rather_than_a_draft(service_and_project):
     # "Draft" means a cheap first pass that a final render will replace. A
     # picture the user supplied is neither: it is the finished article and
