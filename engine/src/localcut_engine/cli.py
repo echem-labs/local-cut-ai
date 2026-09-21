@@ -128,6 +128,17 @@ def main(argv: list[str] | None = None) -> int:
     }
     config = EngineConfig(**{**EngineConfig.from_env().model_dump(), **overrides})
 
+    # Checked on the resolved value rather than on the flag: the documented
+    # container path sets LOCALCUT_ADVERTISE (deploy/docker-compose.yml
+    # requires it), which is the deployment --advertise exists for.
+    if config.advertise:
+        try:
+            config = config.model_copy(
+                update={"advertise": _normalized_advertise(config.advertise)}
+            )
+        except ValueError as exc:
+            parser.error(f"{exc}; set it with --advertise or LOCALCUT_ADVERTISE")
+
     network_bind = config.host not in ("127.0.0.1", "localhost", "::1")
     # bool(), not `is not None`: an empty --token/LOCALCUT_TOKEN must count as
     # unconfigured, otherwise `--token ""` binds to the LAN with an empty
@@ -300,6 +311,41 @@ def _hold_data_dir(data_dir: Path):  # noqa: ANN202 — the handle, kept open fo
         handle.close()
         raise DataDirBusy(str(data_dir)) from exc
     return handle
+
+
+def _normalized_advertise(value: str) -> str:
+    """The advertised address in the form a URL can carry, or ValueError why.
+
+    This value goes into the pairing code, which is opaque base64 — so a
+    laptop that receives an address nothing can dial has no way to correct
+    it by hand, and the operator's only clue is that pairing does not work.
+    Whatever is wrong with it has to be said here, while they are still
+    looking at the terminal they typed it into.
+
+    A bare IPv6 literal is bracketed rather than refused. The brackets are a
+    URL rule, not a choice the operator made: `--advertise ::1` means one
+    thing only, and `https://::1:8765` is not it. Anything that is not a
+    host — a scheme, a path, credentials — is refused instead, because
+    repairing it would mean guessing which part was meant.
+    """
+    host = value.strip()
+    if not host:
+        raise ValueError("the advertised address is blank - give a host, or leave it unset")
+    if "//" in host or "/" in host or "@" in host or " " in host:
+        raise ValueError(
+            f"advertised address {value!r} is not a host - give a bare host or "
+            "host:port, with no scheme, path or credentials"
+        )
+    # Two or more colons and no brackets is an IPv6 literal: a host:port has
+    # exactly one, and a bracketed literal has already been written for a URL.
+    if host.count(":") > 1 and not host.startswith("["):
+        host = f"[{host}]"
+    trailing = host.rsplit("]", 1)[-1]
+    if ":" in trailing:
+        port = trailing.rsplit(":", 1)[-1]
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise ValueError(f"advertised port {port!r} is not a port number")
+    return host
 
 
 def _lan_address(bind_host: str, advertise: str | None = None) -> str:
