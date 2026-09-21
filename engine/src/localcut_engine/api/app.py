@@ -29,7 +29,6 @@ from fastapi import (
     Query,
     Request,
     WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi import Path as PathParam
 from fastapi.middleware.cors import CORSMiddleware
@@ -2138,12 +2137,38 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # the browser fail the handshake, so echo it back when it was used.
         await websocket.accept(subprotocol=subprotocol)
         subscription = events.subscribe()
-        try:
+
+        async def relay() -> None:
             while True:
-                event = await subscription.get()
-                await websocket.send_json(event)
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+                await websocket.send_json(await subscription.get())
+
+        async def until_the_client_goes() -> None:
+            """Wait for the peer to leave.
+
+            Nothing is expected *on* this socket — it only publishes. But a
+            disconnect is delivered as a receive, so a handler that never
+            receives never learns the peer left: it waits on the next event
+            forever. The send would have raised, but only if there were
+            something to send, and an idle engine publishes nothing. Each
+            departed client then costs a live task and a subscription for
+            the life of the process, and uvicorn's graceful shutdown waits
+            on every one of them — so the engine stops answering SIGTERM.
+            """
+            while True:
+                if (await websocket.receive())["type"] == "websocket.disconnect":
+                    return
+
+        relaying = asyncio.create_task(relay())
+        leaving = asyncio.create_task(until_the_client_goes())
+        try:
+            _, pending = await asyncio.wait(
+                (relaying, leaving), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+            # Whichever finished first says why, and a peer that went is not
+            # an error: it is the ordinary end of a subscription.
+            await asyncio.gather(relaying, leaving, return_exceptions=True)
         finally:
             events.unsubscribe(subscription)
 
