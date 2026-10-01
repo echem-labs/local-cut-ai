@@ -925,7 +925,6 @@ class ProjectService:
         plain asset, unstamped, which the voice_ref chokepoint refuses."""
         import hashlib
 
-        suffix = Path(filename).suffix.lower()
         sha = hashlib.sha256(data).hexdigest()
         node_id = f"asset-{sha[:12]}"
         params: dict = {"name": filename, "sha256": sha}
@@ -957,7 +956,16 @@ class ProjectService:
             out_hash = graph.output_hash(node_id)
             dest = self.store.generated_dir(project_id)
             dest.mkdir(parents=True, exist_ok=True)
-            path = dest / f"{out_hash}{suffix}"
+            # The extension comes off the node, not off this upload. The id
+            # is the content hash alone, so the same bytes arriving under a
+            # second filename land on a node - and an address - that already
+            # holds a file. Writing this upload's suffix beside it puts two
+            # files at one address, and `resolve_artifact` prefix-matches on
+            # the hash: it then serves whichever the directory happens to
+            # list first, which for an image imported as a still can be the
+            # copy named `.wav`.
+            stored_name = str(graph.nodes[node_id].params.get("name", filename))
+            path = dest / f"{out_hash}{Path(stored_name).suffix.lower()}"
             if not path.exists():
                 path.write_bytes(data)
             self._refresh_meta_locked(project_id, graph)
