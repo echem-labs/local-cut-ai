@@ -256,6 +256,66 @@ def test_log_redaction_leaves_dict_style_args_alone():
     assert record.getMessage() == "engine ready"
 
 
+async def test_a_departed_ws_client_does_not_outlive_its_connection(tmp_path):
+    """The defect: the events socket only publishes, so the handler never
+    receives — and a disconnect is delivered as a receive. A client that goes
+    away therefore leaves the handler waiting on the next event forever. The
+    send would have raised, but only with something to send, and an idle
+    engine publishes nothing.
+
+    What it costs is not one leaked task: uvicorn's graceful shutdown waits
+    on every connection it is still serving, so the engine stops answering
+    SIGTERM. Measured against a real uvicorn with one closed client: still
+    running after ten seconds, against 0.16s once the handler notices.
+
+    Driven as raw ASGI rather than through a test client, because the whole
+    question is what the handler does with the `websocket.disconnect`
+    message, and a client that tidies up for it cannot ask.
+    """
+    app = create_app(EngineConfig(data_dir=tmp_path, token="test-token", backend="mock"))
+    async with app.router.lifespan_context(app):
+        incoming: asyncio.Queue = asyncio.Queue()
+        accepted = asyncio.Event()
+        await incoming.put({"type": "websocket.connect"})
+
+        async def receive() -> dict:
+            return await incoming.get()
+
+        async def send(message: dict) -> None:
+            if message["type"] == "websocket.accept":
+                accepted.set()
+
+        handler = asyncio.create_task(
+            app(
+                {
+                    "type": "websocket",
+                    "asgi": {"version": "3.0", "spec_version": "2.3"},
+                    "http_version": "1.1",
+                    "scheme": "ws",
+                    "path": "/ws",
+                    "raw_path": b"/ws",
+                    "query_string": b"",
+                    "root_path": "",
+                    "headers": [(b"authorization", b"Bearer test-token"), (b"host", b"engine")],
+                    "client": ("127.0.0.1", 50000),
+                    "server": ("127.0.0.1", 8765),
+                    "subprotocols": [],
+                    "state": {},
+                },
+                receive,
+                send,
+            )
+        )
+        try:
+            async with asyncio.timeout(5):
+                await accepted.wait()
+            await incoming.put({"type": "websocket.disconnect", "code": 1006})
+            async with asyncio.timeout(5):
+                await handler
+        finally:
+            handler.cancel()
+
+
 def test_log_redaction_keeps_lazy_formatting_for_records_without_a_token():
     """The common case must stay untouched — pre-rendering every record would
     defeat lazy formatting and break structured handlers that read `args`."""

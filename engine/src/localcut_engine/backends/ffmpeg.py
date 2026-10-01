@@ -648,7 +648,6 @@ class FFmpegBackend(ExecutionBackend):
         steps: list[str] = []
         cur_v, cur_a = "[0:v]", "[0:a]"
         cur_duration = float(segments[0]["duration"])
-        mixed_audio = False
         for i in range(1, len(scene_files)):
             duration_i = float(segments[i]["duration"])
             boundary = segments[i - 1].get("transition", "cut")
@@ -676,26 +675,28 @@ class FFmpegBackend(ExecutionBackend):
                 # narration, which starts flush with its segment.
                 delay_ms = round(offset * 1000)
                 steps.append(f"[{i}:a]adelay={delay_ms}:all=1[ad{i}]")
+                # Stamped on the mix, not on the graph's last audio label.
+                # Past the point where its first input ends, amix can stop
+                # stamping altogether: `ashowinfo` reads pts:NOPTS for every
+                # frame from there on, and it is a race - same inputs, same
+                # command, a quarter of runs. Whichever consumer reads those
+                # frames inherits the damage. A concat compiled by a later
+                # cut folds the last of them into the offset it applies to
+                # the rest of the program, and ffmpeg abandons the export;
+                # the encoder instead advances the DTS a tick at a time
+                # until the muxer's non-monotonic fixup ends the AAC stream
+                # seconds into a complete picture. Deriving each pts from
+                # the running sample count leaves neither one anything to
+                # inherit.
                 steps.append(
                     f"{cur_a}[ad{i}]amix=inputs=2:duration=longest:"
-                    f"dropout_transition=0:normalize=0[a{i}]"
+                    f"dropout_transition=0:normalize=0,asetpts=N/SR/TB[a{i}]"
                 )
                 cur_duration += duration_i - CROSSFADE_S
-                mixed_audio = True
             else:
                 steps.append(f"{cur_v}{cur_a}[{i}:v][{i}:a]concat=n=2:v=1:a=1[v{i}][a{i}]")
                 cur_duration += duration_i
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
-
-        if mixed_audio:
-            # amix can emit frames carrying AV_NOPTS_VALUE, and chaining one
-            # per crossfade makes it likely: past some point every packet's
-            # DTS advances a single tick instead of a frame, the muxer's
-            # non-monotonic fixup takes over, and the AAC stream ends seconds
-            # into a complete picture. Restamping the mix before the encoder
-            # is what keeps the program audio as long as the program.
-            steps.append(f"{cur_a}aresample=async=1:first_pts=0[aout]")
-            cur_a = "[aout]"
 
         if burn is not None:
             steps.append(f"{cur_v}ass='{_filter_path(burn)}'[vout]")

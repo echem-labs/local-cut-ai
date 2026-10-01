@@ -365,6 +365,48 @@ async def test_chained_crossfades_keep_the_whole_narration(tmp_path, media, monk
     assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
 
 
+async def test_a_cut_after_chained_crossfades_still_exports(tmp_path, media):
+    """Regression: a mix feeds the `concat` that the next cut compiles to,
+    and `concat` carries each segment's final pts into the offset it applies
+    to the following one. An AV_NOPTS_VALUE frame out of the mix therefore
+    does not merely mistime a seam, it abandons the export.
+
+    Only ffmpeg can say whether a filtergraph survives its own timestamps,
+    so this one renders. It is the nondeterministic half - the race takes
+    roughly a quarter of runs on an unstamped mix - and the shape it stands
+    on is pinned in test_segment_timing.py, which needs no ffmpeg."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+
+    timeline_path = await backend.execute(
+        make_spec(
+            NodeKind.TIMELINE,
+            {"aspect": "9:16", "transitions": {"s1": "crossfade", "s2": "crossfade"}},
+        ),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={
+                "s1": media["clip1"],
+                "s1.audio": media["narr1"],
+                "s2": media["clip2"],
+                "s2.audio": media["narr18"],
+                "s3": media["clip1"],
+                "s3.audio": media["narr2"],
+                "s4": media["clip2"],
+                "s4.audio": media["narr1"],
+            },
+        ),
+    )
+    edl = json.loads(timeline_path.read_text())
+    assert [seg["transition"] for seg in edl["video"]][:3] == ["crossfade", "crossfade", "cut"]
+
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"resolution": 480}, output_hash="b" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    assert audio_stream_duration(backend, out) == pytest.approx(edl["duration"], abs=0.2)
+
+
 async def test_captions_burn_in(tmp_path, media):
     backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
     out_dir = tmp_path / "generated"

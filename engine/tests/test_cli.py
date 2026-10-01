@@ -304,6 +304,97 @@ def test_a_tls_pairing_block_does_not_carry_the_warning(capsys):
     assert "fingerprint:" in printed
 
 
+def _paired_url(printed: str) -> str:
+    """The url inside the pairing code, which is what the laptop dials —
+    not the human-readable line above it."""
+    import base64
+    import json
+
+    code = next(
+        line.split("pairing code:")[1].strip()
+        for line in printed.splitlines()
+        if "pairing code:" in line
+    )
+    payload = base64.urlsafe_b64decode(code + "=" * (-len(code) % 4))
+    return json.loads(payload)["url"]
+
+
+def test_a_bare_ipv6_advertise_reaches_the_laptop_as_a_url(capsys):
+    """The defect: `--advertise` went into the pairing code exactly as typed,
+    and a bare IPv6 literal is not something a URL can carry — the operator
+    got `https://2001:db8::5:7830`, which nothing can dial. The code is
+    opaque base64, so their only signal was that pairing did not work and
+    there was nothing in it to correct.
+
+    Bracketing is a URL rule rather than a choice they made, so it is applied
+    rather than refused."""
+    cli._print_pairing(
+        "https", "0.0.0.0", 7830, "tok", "a" * 64, cli._normalized_advertise("2001:db8::5")
+    )
+
+    assert _paired_url(capsys.readouterr().out) == "https://[2001:db8::5]:7830"
+
+
+def test_an_advertised_port_still_stands_as_written(capsys):
+    """A proxy on 443 or a published container port is the reason
+    `--advertise` takes a port at all: normalizing must not append the bound
+    one behind it."""
+    cli._print_pairing(
+        "https", "0.0.0.0", 7830, "tok", "a" * 64, cli._normalized_advertise("engine.example:443")
+    )
+
+    assert _paired_url(capsys.readouterr().out) == "https://engine.example:443"
+
+
+@pytest.mark.parametrize(
+    "advertise",
+    ["https://engine.example", "engine.example/api", "user@engine.example", "engine.example:http"],
+)
+def test_an_advertised_value_that_is_not_a_host_is_refused(advertise):
+    """Refused rather than repaired: which part was meant is a guess, and the
+    cost of guessing wrong is a pairing code that fails silently."""
+    with pytest.raises(ValueError):
+        cli._normalized_advertise(advertise)
+
+
+def test_serve_refuses_a_malformed_advertise_from_the_environment(
+    tmp_path, spy_create_app, monkeypatch
+):
+    """Checked on the resolved value, not the flag. The deployment this
+    option exists for is the container, and the container sets
+    LOCALCUT_ADVERTISE - deploy/docker-compose.yml refuses to start without
+    it - so a check that only reads argv reads the wrong one."""
+    monkeypatch.setenv("LOCALCUT_ADVERTISE", "https://engine.example")
+
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["serve", "--host", "0.0.0.0", "--token", "secret", "--data-dir", str(tmp_path)])
+
+    assert exit_info.value.code != 0
+    assert spy_create_app == [], "nothing may be built before the options are read"
+
+
+def test_serve_refuses_a_malformed_advertise_before_it_binds(tmp_path, spy_create_app):
+    """And it is refused at the terminal the operator typed it into, rather
+    than at the laptop reading the code off a log."""
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(
+            [
+                "serve",
+                "--host",
+                "0.0.0.0",
+                "--token",
+                "secret",
+                "--advertise",
+                "https://engine.example",
+                "--data-dir",
+                str(tmp_path),
+            ]
+        )
+
+    assert exit_info.value.code != 0
+    assert spy_create_app == [], "nothing may be built before the options are read"
+
+
 def test_a_second_engine_cannot_share_a_data_directory(tmp_path):
     """The port is not what has to be exclusive — the DATA DIRECTORY is.
 
