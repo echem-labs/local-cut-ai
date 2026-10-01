@@ -39,7 +39,7 @@ from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
 from ..backends.base import BackendRegistry, GenerationError, ServiceProbe
-from ..backends.chatterbox import ChatterboxBackend
+from ..backends.chatterbox import INSTALL_HINT, ChatterboxBackend
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -788,6 +788,17 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             }
         return {"etas": etas}
 
+    def can_clone() -> bool:
+        """Whether the clone control can work at all.
+
+        Separate from `available`, which is about the stock-voice pack:
+        cloning routes to a different backend and a different optional
+        runtime, so the two are independently present or absent. One reader,
+        because the answer the client is shown and the answer the engine
+        enforces have to be the same answer.
+        """
+        return ChatterboxBackend.package_installed() and backends.find("chatterbox") is not None
+
     @app.get("/voices", dependencies=[Authed])
     async def voices() -> dict:
         """Every narration voice the installed pack actually holds.
@@ -839,11 +850,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend.installed_voices()
 
-        # Whether the clone control can work at all. Separate from
-        # `available`, which is about the stock-voice pack: cloning routes to
-        # a different backend and a different optional runtime, so the two are
-        # independently present or absent.
-        cloning = ChatterboxBackend.package_installed() and backends.find("chatterbox") is not None
+        cloning = can_clone()
 
         installed = await asyncio.to_thread(enumerate_pack)
         if installed is None:
@@ -1516,6 +1523,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         data = bytes(buffer)
         if not data:
             raise HTTPException(status_code=422, detail="asset body is empty")
+        # Refused at the mint rather than at the render. Consent is what
+        # turns a sound file into a voice sample, and a sample is only ever
+        # wanted for cloning — so on an engine that cannot clone, accepting
+        # one commits the project to a model that fails every narration node
+        # at once, leaving the user to clear each by hand in the advanced
+        # inspector. The surfaces that offer the control read the same
+        # capability to decide whether to show it, but that is advisory:
+        # this is the answer that also holds for the CLI, for a window-wide
+        # drop, and for a client too old to ask.
+        if suffix in _AUDIO_EXTENSIONS and consent and not can_clone():
+            raise HTTPException(
+                status_code=409, detail=f"no voice sample was stored: {INSTALL_HINT}"
+            )
         # voice=True only for audio WITH the affirmation — the one place
         # `voice_consent` can be minted.
         return await asyncio.to_thread(
