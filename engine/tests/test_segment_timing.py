@@ -186,6 +186,11 @@ async def test_a_referenced_narration_that_vanished_fails_loudly(tmp_path, monke
         )
 
 
+def _audio_chains(graph: str) -> list[str]:
+    """The filter chains carrying audio, in graph order."""
+    return [chain for chain in graph.split(";") if "[a" in chain or ":a]" in chain]
+
+
 async def test_a_chained_crossfade_mix_is_restamped_before_the_encoder(tmp_path, monkeypatch):
     """The defect: every crossfade boundary chains another `amix`, and a mix
     that reaches the AAC encoder unrestamped can carry timestamps the muxer
@@ -194,7 +199,7 @@ async def test_a_chained_crossfade_mix_is_restamped_before_the_encoder(tmp_path,
 
     The rendering half of this lives in test_assembly.py and asks the shipped
     file what a viewer hears. It cannot be the only half: the corruption is
-    nondeterministic, and roughly half of runs on the unrestamped graph still
+    nondeterministic - two runs in three on the unrestamped graph still
     produce a full-length stream. The graph is the same every time."""
     backend, calls = _recording_backend(monkeypatch)
 
@@ -202,9 +207,46 @@ async def test_a_chained_crossfade_mix_is_restamped_before_the_encoder(tmp_path,
     args = calls[-1]
     graph = _value(args, "-filter_complex")
 
-    assert graph.count("amix") == 3  # one per crossfade boundary
-    assert graph.endswith("aresample=async=1:first_pts=0[aout]")
-    assert _maps(args)[-1] == "[aout]", "the encoder must read the restamped mix, not the raw one"
+    mixes = [chain for chain in graph.split(";") if "amix" in chain]
+    assert len(mixes) == 3  # one per crossfade boundary
+    assert [chain.split(",")[-1] for chain in mixes] == [
+        "asetpts=N/SR/TB[a1]",
+        "asetpts=N/SR/TB[a2]",
+        "asetpts=N/SR/TB[a3]",
+    ]
+    assert _maps(args)[-1] == "[a3]", "the encoder reads a mix that is already stamped"
+
+
+async def test_a_mix_is_restamped_at_the_mix_not_at_the_end_of_the_graph(tmp_path, monkeypatch):
+    """The defect: a mix restamped only on the graph's last audio label is
+    unstamped everywhere in between, and a board that crossfades and then
+    cuts puts a `concat` in between. Past the end of its first input, amix
+    can emit every remaining frame with no timestamp at all; `concat` folds
+    the last of them into the offset it applies to the rest of the program,
+    and ffmpeg abandons the export with `Invalid data found when processing
+    input`. It is a seam the board offers on any two adjacent scenes, and it
+    took roughly a quarter of runs.
+
+    Pinned as the whole audio chain rather than as `asetpts in graph`: the
+    rule is about *where* the stamp sits, and a stamp anywhere in the graph
+    satisfies a presence check while leaving the `concat` reading the same
+    unstamped mix.
+    """
+    backend, calls = _recording_backend(monkeypatch)
+
+    await _join(backend, tmp_path, ["crossfade", "crossfade", "cut"])
+    args = calls[-1]
+    graph = _value(args, "-filter_complex")
+
+    mix = "amix=inputs=2:duration=longest:dropout_transition=0:normalize=0"
+    assert _audio_chains(graph) == [
+        "[1:a]adelay=1600:all=1[ad1]",
+        f"[0:a][ad1]{mix},asetpts=N/SR/TB[a1]",
+        "[2:a]adelay=3200:all=1[ad2]",
+        f"[a1][ad2]{mix},asetpts=N/SR/TB[a2]",
+        "[v2][a2][3:v][3:a]concat=n=2:v=1:a=1[v3][a3]",
+    ]
+    assert _maps(args) == ["[v3]", "[a3]"]
 
 
 async def test_an_all_cut_join_leaves_the_audio_chain_untouched(tmp_path, monkeypatch):
@@ -229,7 +271,7 @@ async def test_an_all_cut_join_leaves_the_audio_chain_untouched(tmp_path, monkey
     ]
     assert _maps(args) == ["[v2]", "[a2]"]
     assert "amix" not in graph
-    assert "aresample" not in graph
+    assert "asetpts" not in graph
 
 
 async def test_a_crossfade_after_a_cut_agrees_on_a_timebase(tmp_path, monkeypatch):
