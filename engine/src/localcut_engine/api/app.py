@@ -29,7 +29,6 @@ from fastapi import (
     Query,
     Request,
     WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi import Path as PathParam
 from fastapi.middleware.cors import CORSMiddleware
@@ -2138,13 +2137,38 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # the browser fail the handshake, so echo it back when it was used.
         await websocket.accept(subprotocol=subprotocol)
         subscription = events.subscribe()
-        try:
+        # Ended with a sentinel rather than a cancellation. The relay is
+        # parked on the queue almost all of the time, and putting something
+        # in it is enough to finish it; cancelling a task parked in the ASGI
+        # transport instead is a teardown whose behaviour differs by platform
+        # and by server.
+        closed: dict = {}
+
+        async def relay() -> None:
             while True:
                 event = await subscription.get()
+                if event is closed:
+                    return
                 await websocket.send_json(event)
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+
+        relaying = asyncio.create_task(relay())
+        try:
+            # Nothing is expected *on* this socket — it only publishes. But a
+            # disconnect is delivered as a receive, so a handler that never
+            # receives never learns the peer left: it waits on the next event
+            # forever. The send would have raised, but only if there were
+            # something to send, and an idle engine publishes nothing. Each
+            # departed client then costs a live task and a subscription for
+            # the life of the process, and uvicorn's graceful shutdown waits
+            # on every one of them — so the engine stops answering SIGTERM.
+            while (await websocket.receive())["type"] != "websocket.disconnect":
+                pass
         finally:
-            events.unsubscribe(subscription)
+            events.unsubscribe(subscription)  # nothing new can arrive now
+            try:
+                subscription.put_nowait(closed)
+            except asyncio.QueueFull:
+                relaying.cancel()  # jammed on a socket that is already gone
+            await asyncio.gather(relaying, return_exceptions=True)
 
     return app
