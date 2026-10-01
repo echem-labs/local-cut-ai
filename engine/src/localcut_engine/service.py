@@ -22,6 +22,7 @@ from .fcpxml import edl_to_fcpxml
 from .graph.compiler import (
     QUALITY_SENSITIVE_KINDS,
     CompiledPlan,
+    JobSpec,
     compile_graph,
     orphaned_nodes,
     unready_nodes,
@@ -44,6 +45,7 @@ from .graph.model import (
     StoryGraph,
     migrate_graph,
     scene_sort_key,
+    version_free_params,
 )
 from .graph.patch import (
     TRANSIENT_PARAMS,
@@ -138,6 +140,28 @@ class CloudSpendRefused(RuntimeError):
 # `automation.py`, so it is ASCII-constrained too - and a sentence duplicated
 # across two modules is a sentence that gets reworded in one of them.
 _REFUSAL_TAIL = "Choosing cloud models is a decision made in the app."
+
+
+def _delivery_key(spec: JobSpec) -> str:
+    """What a job asked for, as distinct from where its output was filed.
+
+    Everything in the content address but the behaviour version, which is
+    this build's answer to how the kind is produced rather than anything the
+    user chose. Two specs sharing a key were the same request; a build that
+    renders it differently moves the address and leaves the key alone.
+    """
+    return json.dumps(
+        {
+            "node": spec.node_id,
+            "kind": spec.kind.value,
+            "params": version_free_params(spec.kind, spec.params),
+            "model": spec.model,
+            "seed": spec.seed,
+            "inputs": sorted(spec.input_hashes.items()),
+        },
+        sort_keys=True,
+        default=str,
+    )
 
 
 def cloud_text_refusal(model: str) -> CloudSpendRefused:
@@ -1750,8 +1774,14 @@ class ProjectService:
             for job in active_jobs
             if job.id not in superseded and job.spec.quality == "final"
         }
+        # Keyed on the request rather than the address, because a behaviour
+        # version bump moves the address of every node of that kind without
+        # the user touching anything. Keyed on the address, an upgrade reads
+        # as an edit: the export re-plans as a draft, the header offers
+        # "Create final video" for a video already delivered, and the mp4 at
+        # the old address answers to nothing.
         finals_delivered = {
-            job.spec.output_hash
+            _delivery_key(job.spec)
             for job in history
             if job.spec.quality == "final" and job.status is JobStatus.DONE
         }
@@ -1763,7 +1793,7 @@ class ProjectService:
             if spec.quality != "final":
                 if spec.output_hash in finals_in_flight:
                     continue
-                if spec.output_hash in finals_delivered:
+                if _delivery_key(spec) in finals_delivered:
                     spec = spec.model_copy(update={"quality": "final"})
                     if (spec.output_hash, "final") in active:
                         continue

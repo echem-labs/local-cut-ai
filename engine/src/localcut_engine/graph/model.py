@@ -256,6 +256,20 @@ _PARAM_VERSIONS: dict[NodeKind, tuple[str, int]] = {
 }
 
 
+def version_free_params(kind: NodeKind, params: dict[str, Any]) -> dict[str, Any]:
+    """`params` with this kind's behaviour version left out.
+
+    A content address must separate two builds that produce the same request
+    differently — that is the whole of what the version is for. A record of
+    what the user has already been given must not, or upgrading the engine
+    reads as an edit they never made.
+    """
+    versioned = _PARAM_VERSIONS.get(kind)
+    if versioned is None:
+        return dict(params)
+    return {key: value for key, value in params.items() if key != versioned[0]}
+
+
 def migrate_params(kind: NodeKind, params: dict[str, Any]) -> dict[str, Any]:
     """`params` with this build's behaviour version stamped on, in place."""
     versioned = _PARAM_VERSIONS.get(kind)
