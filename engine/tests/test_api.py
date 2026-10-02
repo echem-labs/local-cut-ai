@@ -1779,8 +1779,9 @@ async def test_a_caller_that_may_not_spend_cannot_buy_a_cloud_edit(client):
 async def test_the_board_says_whether_the_cut_burns_any_titles(client):
     """The desktop cannot otherwise know: overlays live on the timeline
     node's params, and the board sends node STATUS, not params. Without
-    this, a machine whose ffmpeg lacks drawtext gets no warning until the
-    export dies - after the whole ladder has re-rendered at final quality."""
+    this, a machine whose ffmpeg cannot draw text gets no warning until the
+    export is refused - after the whole ladder has re-rendered at final
+    quality."""
     pid = (await client.post("/projects", json={"prompt": "a tour"})).json()["id"]
 
     async def board() -> dict:

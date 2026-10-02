@@ -73,8 +73,8 @@ cd ../apps/desktop && npm run typecheck && npm test && npm run icon:check && npm
 icons are generated from `branding/logo.svg` and it is the committed binaries
 that ship, so a mark edited without re-running `npm run icon` fails there.
 
-The engine suite needs `ffmpeg` on `PATH` with the `drawtext`, `ass` and
-`subtitles` filters, or the assembly tests skip rather than fail.
+The engine suite needs `ffmpeg` on `PATH` with the `ass` and `subtitles`
+filters, or the assembly tests skip rather than fail.
 
 ## Dependencies
 

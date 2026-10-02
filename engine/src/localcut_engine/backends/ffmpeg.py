@@ -37,7 +37,7 @@ from ..aspects import (
     resolution_for,
 )
 from ..audio import ANALYSIS_RATE, estimate_beats, nearest_beat, waveform_peaks
-from ..captions import srt_to_ass
+from ..captions import srt_to_ass, title_to_ass
 from ..graph.compiler import JobSpec
 from ..graph.model import (
     CAPTIONS_PORT,
@@ -615,12 +615,14 @@ class FFmpegBackend(ExecutionBackend):
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
         partial: Path | None = None  # set once the final artifact path is known
         try:
-            # Asked before the first scene renders. Captions this ffmpeg
-            # cannot draw otherwise fail the last encode, or burn in blank,
-            # after every scene has already been paid for.
+            # Asked before the first scene renders. Text this ffmpeg cannot
+            # draw otherwise fails a scene or the last encode, or burns in
+            # blank, after the scenes before it have already been paid for.
             burn = self._burnable_captions(spec, ctx, work, width, height)
-            if burn is not None:
-                await self._require_burned_captions()
+            await self._require_text(
+                titles=any(segment.get("onscreen_text") for segment in segments),
+                captions=burn is not None,
+            )
             scene_files: list[Path] = []
             total = len(segments)
             for index, segment in enumerate(segments):
@@ -836,7 +838,7 @@ class FFmpegBackend(ExecutionBackend):
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
 
         if burn is not None:
-            steps.append(f"{cur_v}{self._captions_filter(burn)}[vout]")
+            steps.append(f"{cur_v}{self._text_filter(burn)}[vout]")
             cur_v = "[vout]"
         if not steps:
             # Single segment, nothing to burn: re-encode to the target rate.
@@ -993,15 +995,12 @@ class FFmpegBackend(ExecutionBackend):
             vf = f"setpts={retime:.4f}*(PTS-STARTPTS),{vf}"
         text = segment.get("onscreen_text")
         if text:
-            # Probe before building the graph: a harfbuzz-less static build
-            # would otherwise die mid-export on "No such filter: 'drawtext'".
-            await self._require_drawtext()
-            # textfile= sidesteps drawtext's escaping rules for user text.
-            # encoding="utf-8": drawtext reads the file as UTF-8; the Windows
-            # platform default (cp1252) would mangle or reject CJK titles.
-            textfile = workdir / f"{out.stem}.txt"
-            textfile.write_text(str(text), encoding="utf-8")
-            vf += "," + self._title_filter(textfile, height)
+            # One ASS event over the whole scene, burned like the captions.
+            # encoding="utf-8": libass reads the document as UTF-8, and the
+            # Windows default (cp1252) would mangle or reject a CJK title.
+            title = workdir / f"{out.stem}.title.ass"
+            title.write_text(title_to_ass(str(text), width, height, target), encoding="utf-8")
+            vf += "," + self._text_filter(title)
         if fade_in:
             vf += f",fade=t=in:st=0:d={DIP_S}"
         if segment.get("transition") == "dip":
@@ -1125,32 +1124,17 @@ class FFmpegBackend(ExecutionBackend):
 
     # -- helpers ------------------------------------------------------------------
 
-    # Text reaches a frame through these two builders and nothing else, so the
-    # probe below draws exactly what an export draws.
+    # Text reaches a frame through this builder and nothing else. Titles and
+    # burned captions are both ASS documents (captions.py), so the probe
+    # below draws exactly what an export draws.
 
-    def _title_filter(self, textfile: Path, height: int) -> str:
-        """drawtext for an on-screen title read from `textfile`, sized for a
-        frame `height` pixels tall."""
-        return (
-            # expansion=none: titles are user/LLM text, and drawtext's
-            # default expansion evaluates %{...} — "SAVE 100%{TODAY}"
-            # fails the whole export, and "%{pts}" silently burns a
-            # running timestamp in place of the words the user typed.
-            # fontfile=: the bundled face, opened directly. A family name
-            # would go through fontconfig, which on a machine with no fonts
-            # finds nothing and stops the filter from starting.
-            f"drawtext=expansion=none:textfile={_filter_path(textfile)}"
-            f":fontfile={_filter_path(self.fonts_dir / fonts.REGULAR)}"
-            f":fontsize={height // 14}"
-            f":fontcolor=white:borderw={max(2, height // 270)}"
-            ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
-        )
-
-    def _captions_filter(self, ass: Path) -> str:
-        """libass burn-in of the styled captions in `ass`. fontsdir= is where
-        the family the style names (captions.py) is found. Without it libass
-        asks the system, and on a machine with no fonts the captions burn in
-        blank while ffmpeg reports success."""
+    def _text_filter(self, ass: Path) -> str:
+        """libass burn-in of the ASS document in `ass`, a title or the
+        captions. fontsdir= is where the family its style names (captions.py)
+        is found. Without it libass asks the system, and on a machine with no
+        fonts the text burns in blank while ffmpeg reports success. A
+        character the bundled faces lack still goes to the system's fonts,
+        which is how a CJK title draws."""
         return f"ass=filename={_filter_path(ass)}:fontsdir={_filter_path(self.fonts_dir)}"
 
     async def _lit_pixels(self, vf: str) -> int | None:
@@ -1187,14 +1171,15 @@ class FFmpegBackend(ExecutionBackend):
 
     async def _draws_text(self) -> tuple[bool | None, bool | None]:
         """(titles, captions): whether each one draws. One black frame apiece,
-        through the filters an export uses, counts only if something on it
-        lit up.
+        a title and a caption burned the way an export burns them, counts
+        only if something on it lit up.
 
         Drawn rather than looked up, because a listed filter says nothing
-        about fonts. On a machine without any, drawtext and ass are both
-        listed; then drawtext refuses to start, and libass draws nothing while
-        ffmpeg exits 0. A static FFmpeg 7+ build without libharfbuzz has no
-        drawtext at all, and fails here the same way.
+        about fonts. A build without libass has no ass filter, and one whose
+        libass finds no font draws nothing while ffmpeg exits 0. The two
+        halves share a filter and a fonts directory, so a real build answers
+        them alike; each is drawn because each stands for its half of an
+        export.
 
         (None, None) when the binary could not be run, which fails louder on
         its own at use. That answer is never kept, because the download that
@@ -1206,13 +1191,13 @@ class FFmpegBackend(ExecutionBackend):
             return self._text[key]
         width, height = _PROBE_FRAME
         with tempfile.TemporaryDirectory(prefix="localcut-text-probe-") as tmp:
-            textfile = Path(tmp) / "title.txt"
-            textfile.write_text(_PROBE_TEXT, encoding="utf-8")
+            title = Path(tmp) / "title.ass"
+            title.write_text(title_to_ass(_PROBE_TEXT, width, height, 5.0), encoding="utf-8")
             ass = Path(tmp) / "captions.ass"
             cue = f"1\n00:00:00,000 --> 00:00:05,000\n{_PROBE_TEXT}\n"
             ass.write_text(srt_to_ass(cue, width, height), encoding="utf-8")
-            titles = await self._lit_pixels(self._title_filter(textfile, height))
-            captions = await self._lit_pixels(self._captions_filter(ass))
+            titles = await self._lit_pixels(self._text_filter(title))
+            captions = await self._lit_pixels(self._text_filter(ass))
         if titles is None or captions is None:
             return None, None
         self._text[key] = (titles > 0, captions > 0)
@@ -1229,36 +1214,34 @@ class FFmpegBackend(ExecutionBackend):
             return None
         return titles and captions
 
-    async def draws_captions(self) -> bool | None:
-        """Whether this ffmpeg burns captions in: the caption half of the
-        probe, which the readiness report asks so that it says what
-        `_require_burned_captions` will do. None = the binary is missing or
-        could not be run."""
-        _, captions = await self._draws_text()
-        return captions
-
-    async def _require_burned_captions(self) -> None:
-        # The caption half only, as the title guard reads the title half.
-        _, captions = await self._draws_text()
-        if captions is False:
-            raise GenerationError(
-                "burned-in captions need ffmpeg's ass filter, and this build drew "
-                "nothing with it (it needs libass compiled in; some builds omit it) - "
-                "point LOCALCUT_FFMPEG_BIN at a full build, or switch Captions to "
-                '"Separate file (.srt)"'
+    async def _require_text(self, *, titles: bool, captions: bool) -> None:
+        """Refuse an export that needs text this ffmpeg cannot draw: `titles`
+        when a scene carries on-screen text, `captions` when they burn in.
+        Each is held to its own half of the probe, and the message names the
+        way out of each that failed. An unknown probe refuses nothing: the
+        render's own failure to start ffmpeg is the clearer error."""
+        if not (titles or captions):
+            return
+        drawn_titles, drawn_captions = await self._draws_text()
+        failed = [
+            (what, way_out)
+            for what, way_out, wanted, drawn in (
+                ("on-screen titles", "clear the scenes' on-screen text", titles, drawn_titles),
+                (
+                    "burned-in captions",
+                    'switch Captions to "Separate file (.srt)"',
+                    captions,
+                    drawn_captions,
+                ),
             )
-
-    async def _require_drawtext(self) -> None:
-        # The title half only. A build that cannot burn captions may still
-        # draw titles, and refusing them for it would fail an export that
-        # works.
-        titles, _ = await self._draws_text()
-        if titles is False:
+            if wanted and drawn is False
+        ]
+        if failed:
             raise GenerationError(
-                "on-screen titles need ffmpeg's drawtext filter, and this build drew "
-                "nothing with it (FFmpeg 7+ needs libfreetype and libharfbuzz compiled "
-                "in; some static builds omit them) - point LOCALCUT_FFMPEG_BIN at a "
-                "full build, or clear the scene's on-screen text"
+                f"{' and '.join(what for what, _ in failed)} need ffmpeg's ass filter, and "
+                "this build drew nothing with it (it needs libass compiled in; some builds "
+                "omit it) - point LOCALCUT_FFMPEG_BIN at a full build, or "
+                + " and ".join(way_out for _, way_out in failed)
             )
 
     async def _run(self, *args: str) -> None:

@@ -95,6 +95,7 @@ from ..readiness import (
     PIPELINE_ORDER,
     auto_defaults,
     export_burns_captions,
+    export_draws_titles,
     project_pairs,
     readiness_rows,
 )
@@ -1015,7 +1016,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         return {"ok": True, "freed_bytes": freed}
 
     async def _readiness(
-        pairs: list[tuple[NodeKind, str | None]], *, burns_captions: bool = True
+        pairs: list[tuple[NodeKind, str | None]],
+        *,
+        burns_captions: bool = True,
+        draws_titles: bool = False,
     ) -> dict:
         """Both readiness routes' tail: the manifest failures map the way
         every sibling route maps them rather than degrading into a row that
@@ -1026,7 +1030,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # run, but must not pay for a probe of its own to do it.
             profile = getattr(app.state, "hardware_profile", None)
             rows = await readiness_rows(
-                config, backends, pairs, profile, burns_captions=burns_captions
+                config,
+                backends,
+                pairs,
+                profile,
+                burns_captions=burns_captions,
+                draws_titles=draws_titles,
             )
             return {"rows": rows}
         except DefaultsTooNew as exc:
@@ -1069,7 +1078,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         project = await _get_project(project_id)
         graph = await asyncio.to_thread(store.load_graph, project_id)
         pairs = project_pairs(graph, is_tool_session=project.mode.startswith("tool:"))
-        return await _readiness(pairs, burns_captions=export_burns_captions(graph))
+        return await _readiness(
+            pairs,
+            burns_captions=export_burns_captions(graph),
+            draws_titles=export_draws_titles(graph),
+        )
 
     class CustomModelBody(BaseModel):
         """Review 4's "Add custom model": registers a user model outside the

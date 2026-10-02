@@ -14,13 +14,16 @@ from localcut_engine.aspects import EXPORT_RESOLUTIONS
 from localcut_engine.backends.align import AlignBackend
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
+from localcut_engine import fonts
 from localcut_engine.captions import (
     Cue,
     Word,
     anchor_words_to_text,
+    ass_text,
     cues_to_srt,
     parse_srt,
     srt_to_ass,
+    title_to_ass,
     words_to_cues,
 )
 from localcut_engine.config import EngineConfig
@@ -219,7 +222,50 @@ def test_srt_to_ass_styles_and_escapes():
     srt = cues_to_srt([Cue(start=0.5, end=2.0, text="brace {test}")])
     ass = srt_to_ass(srt, *EXPORT_RESOLUTIONS["9:16"])
     assert "[V4+ Styles]" in ass and "Dialogue: 0,0:00:00.50,0:00:02.00" in ass
-    assert "{" not in ass.split("[Events]")[1].split("Text\n")[1]  # override tags neutralized
+    assert ass.endswith(",Default,brace \\{test\\}\n")  # drawn as braces, not read as tags
+
+
+def test_ass_text_leaves_libass_nothing_to_read_as_markup():
+    """libass reads `{...}` as override tags and a backslash before N, n,
+    h, `{` or `}` as an escape. Braces take libass's own escapes; a
+    backslash is followed by a zero-width no-break space (U+FEFF), so the
+    letter after it is only a letter. A newline is the one thing that still
+    breaks the line."""
+    assert ass_text("{\\b1}bold") == "\\{\\\ufeffb1\\}bold"
+    assert ass_text("a\\Nb \\n \\h") == "a\\\ufeffNb \\\ufeffn \\\ufeffh"
+    assert ass_text("\\{") == "\\\ufeff\\{"
+    assert ass_text("one\ntwo\r\nthree") == "one\\Ntwo\\Nthree"
+
+
+def test_a_title_is_one_event_over_its_scene():
+    ass = title_to_ass("THREE HEARTS", 1080, 1920, 3.35)
+    (event,) = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert event == "Dialogue: 0,0:00:00.00,0:00:03.35,Default,THREE HEARTS"
+
+
+@pytest.mark.parametrize("aspect", sorted(EXPORT_RESOLUTIONS))
+def test_a_title_style_holds_the_title_look(aspect):
+    """An em of a fourteenth of the frame height, given to libass as a font
+    size, which libass takes as the font's Windows ascent plus descent. The
+    capitals' top at 14% of the height, white, a black outline at 0.85
+    opacity, the regular face, centred at the top between the captions'
+    side margins, on a canvas that is the frame."""
+    width, height = EXPORT_RESOLUTIONS[aspect]
+    fields = _ass_header_fields(title_to_ass("hi", width, height, 1.0))
+    em = height // 14
+    assert (int(fields["PlayResX"]), int(fields["PlayResY"])) == (width, height)
+    size = float(fields["Fontsize"])
+    assert size * fonts.UNITS_PER_EM / (fonts.WIN_ASCENT + fonts.WIN_DESCENT) == pytest.approx(
+        em, abs=0.01
+    )
+    ascent = em * fonts.WIN_ASCENT / fonts.UNITS_PER_EM
+    capitals_top = int(fields["MarginV"]) + ascent - em * fonts.CAP_HEIGHT / fonts.UNITS_PER_EM
+    assert capitals_top == pytest.approx(height * 0.14, abs=0.5)
+    assert fields["Fontname"] == fonts.FAMILY and fields["Bold"] == "0"
+    assert (fields["PrimaryColour"], fields["OutlineColour"]) == ("&H00FFFFFF", "&H26000000")
+    assert int(fields["Outline"]) == max(2, height // 270) and fields["Shadow"] == "0"
+    assert fields["Alignment"] == "8"
+    assert int(fields["MarginL"]) == int(fields["MarginR"]) == round(width * 60 / 1080)
 
 
 def _ass_header_fields(ass: str) -> dict[str, str]:

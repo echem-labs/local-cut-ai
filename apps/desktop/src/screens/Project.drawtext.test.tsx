@@ -1,15 +1,15 @@
 /**
- * The pre-finalize drawtext warning.
+ * The pre-finalize warning for titles this ffmpeg cannot draw.
  *
- * An FFmpeg 7 static build without libharfbuzz has no `drawtext` filter, so
- * a cut that burns a title on any scene dies at the very last step — after
- * every scene has re-rendered at final quality. That is the most expensive
- * moment in the whole product to discover a missing filter, and nothing on
- * screen said a word about it beforehand.
+ * An FFmpeg build without libass cannot burn text in, so a cut that burns a
+ * title on any scene is refused at the very last step, after every scene
+ * has re-rendered at final quality. That is the most expensive moment in
+ * the whole product to discover a missing library.
  *
  * Both halves have to be true. The reason this is tested rather than just
- * written is the halves: warning every machine without drawtext, including
- * the projects with no titles at all, is how a warning becomes wallpaper.
+ * written is the halves: warning every machine that cannot draw text,
+ * including the projects with no titles at all, is how a warning becomes
+ * wallpaper.
  */
 import { act, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";

@@ -219,14 +219,14 @@ jobs:
           echo "ffmpeg: $(command -v ffmpeg)"
           ffmpeg -hide_banner -version | head -1
           missing=()
-          for filter in drawtext ass subtitles; do
+          for filter in ass subtitles; do
             ffmpeg -hide_banner -filters 2>/dev/null | grep -qE "^ *[A-Z.]+ +${filter} " || missing+=("$filter")
           done
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::this ffmpeg lacks required filters: ${missing[*]} — it was built without libass/libfreetype/libharfbuzz, so burned-in captions and on-screen titles cannot render"
+            echo "::error::this ffmpeg lacks required filters: ${missing[*]} — it was built without libass, so burned-in captions and on-screen titles cannot render"
             exit 1
           fi
-          echo "drawtext, ass and subtitles all present"
+          echo "ass and subtitles both present"
 
       - run: uv run ruff check .
       - run: uv run ruff format --check .

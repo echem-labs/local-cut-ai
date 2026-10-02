@@ -3,6 +3,7 @@ narration-drives-timing rule end to end. Skipped where ffmpeg is absent."""
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ from conftest import make_spec
 from localcut_engine import fonts
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
+from localcut_engine.captions import srt_to_ass, title_to_ass
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
 from localcut_engine.otio import edl_to_otio, timeline_seconds
@@ -536,11 +538,10 @@ async def test_burned_captions_draw_on_a_machine_without_fonts(
 
 
 # A directory name holding what a filtergraph reads as syntax: its quote, its
-# separators and the characters around them. Windows refuses `:` and `\` in a
-# name. It gets no non-ASCII either: drawtext hands its font path to FreeType,
-# which opens files through the ANSI code page there (CreateFileA), so a font
-# under `é` cannot be opened however its path is escaped.
-_SYNTAX_IN_A_NAME = "O'Brien, [1]; a=b 100%" + ("" if os.name == "nt" else r" é 中 a:b\c")
+# separators and the characters around them, and letters from outside ASCII,
+# as in a profile folder named José or named in Chinese. Windows refuses `:`
+# and `\` in a name, so only POSIX adds them.
+_SYNTAX_IN_A_NAME = "O'Brien, [1]; a=b 100% é 中" + ("" if os.name == "nt" else r" a:b\c")
 
 
 async def test_text_draws_from_paths_that_hold_filtergraph_syntax(
@@ -573,6 +574,125 @@ async def test_text_draws_from_paths_that_hold_filtergraph_syntax(
     )
     assert lit_pixels(out, 0.5, TOP_HALF) > 0, "the title drew nothing"
     assert lit_pixels(out, 0.5, BOTTOM_HALF) > 0, "the burned-in caption drew nothing"
+
+
+def burned(backend: FFmpegBackend, tmp_path: Path, ass: str, width: int, height: int) -> bytes:
+    """One black `width` x `height` frame with the ASS document `ass` burned
+    in the way an export burns it, as gray bytes."""
+    document = tmp_path / f"burned{len(list(tmp_path.glob('burned*.ass')))}.ass"
+    document.write_text(ass, encoding="utf-8")
+    frame = subprocess.run(
+        [FFMPEG, "-v", "error", "-f", "lavfi", "-i", f"color=black:size={width}x{height}"]
+        + ["-vf", backend._text_filter(document), "-frames:v", "1"]
+        + ["-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert len(frame) == width * height, f"no frame drawn from {document}"
+    return frame
+
+
+def lit_box(frame: bytes, width: int) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) of the pixels brighter than mid-grey."""
+    lit = [index for index, value in enumerate(frame) if value > 127]
+    assert lit, "nothing was drawn"
+    return (
+        min(index % width for index in lit),
+        lit[0] // width,
+        max(index % width for index in lit),
+        lit[-1] // width,
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "size", "box"),
+    [
+        ("THREE HEARTS", (1920, 1080), (676, 151, 1243, 208)),
+        ("HEARTS", (1080, 1920), (280, 268, 803, 369)),
+    ],
+)
+def test_a_title_burns_at_its_size_and_place(tmp_path, title, size, box):
+    """Capitals of a font whose em is a fourteenth of the frame height, their
+    top at 14% of it, centred. The boxes are measured. They pin the size and
+    the height libass reaches by way of the face's ascent and descent
+    (captions.title_to_ass), which nothing else in the title style shows."""
+    width, height = size
+    frame = burned(
+        FFmpegBackend(ffmpeg_bin=FFMPEG), tmp_path, title_to_ass(title, *size, 1.0), *size
+    )
+    assert lit_box(frame, width) == pytest.approx(box, abs=2)
+    assert box[1] == pytest.approx(height * 0.14, abs=1)
+
+
+def test_a_long_title_wraps_between_the_side_margins(tmp_path):
+    """Inter is wide, and a title an em of a fourteenth of the height tall
+    fits about twelve capitals across a 9:16 frame."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    width, height = 1080, 1920
+    one = lit_box(
+        burned(backend, tmp_path, title_to_ass("HEARTS", width, height, 1.0), width, height), width
+    )
+    text = "THE LONGEST TITLE ANYONE HAS EVER WRITTEN FOR A SHORT VIDEO"
+    left, top, right, bottom = lit_box(
+        burned(backend, tmp_path, title_to_ass(text, width, height, 1.0), width, height), width
+    )
+    margin = round(width * 60 / 1080)
+    assert margin <= left and right < width - margin
+    assert bottom - top > 3 * (one[3] - one[1]), "the title did not wrap"
+
+
+def test_a_title_is_drawn_as_it_was_written(tmp_path):
+    """Titles are the user's or an LLM's words. An override block in one
+    stays text rather than moving the title to the bottom of the frame, and
+    a backslash before N stays a backslash rather than breaking the line. A
+    real newline still does."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    width, height = 1080, 1920
+
+    def box(text: str) -> tuple[int, int, int, int]:
+        ass = title_to_ass(text, width, height, 1.0)
+        return lit_box(burned(backend, tmp_path, ass, width, height), width)
+
+    assert box("{\\an2}A")[3] < height // 2
+    assert box("A\\NB") == box("A/NB")
+    one_line, two_lines = box("AB"), box("A\nB")
+    assert two_lines[3] - two_lines[1] > 2 * (one_line[3] - one_line[1])
+
+
+# Plane 16 private use: no font draws these, so they show the missing glyph.
+# The BMP private use area is no such thing. Adwaita Sans covers U+E000,
+# OpenSymbol U+E001 on, and Unifont CSUR that area and plane 15, all of them
+# common on a Linux desktop.
+_NOWHERE = "\U00100000\U00100001\U00100002\U00100003"
+
+
+def test_a_title_in_a_script_inter_lacks_draws_from_a_system_font(tmp_path):
+    """Inter has no CJK. libass asks the system for any character the
+    bundled faces lack, and a CJK title has to draw the glyphs that finds
+    rather than a row of missing-glyph boxes, which is what four characters
+    no font has look like.
+
+    Whether this ffmpeg's libass reaches a CJK font at all is a property of
+    the machine and the build. It is read off a caption, the path that
+    already fell back, and the test skips when it does not."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    width, height = 1080, 1920
+    cjk = "中文标题"
+
+    def caption(text: str) -> bytes:
+        ass = srt_to_ass(f"1\n00:00:00,000 --> 00:00:05,000\n{text}\n", width, height)
+        return burned(backend, tmp_path, ass, width, height)
+
+    if caption(cjk) == caption(_NOWHERE):
+        pytest.skip(
+            "this ffmpeg's libass reaches no font with CJK glyphs: a CJK caption burns "
+            "the same frame as code points no font has"
+        )
+
+    def title(text: str) -> bytes:
+        return burned(backend, tmp_path, title_to_ass(text, width, height, 1.0), width, height)
+
+    assert title(cjk) != title(_NOWHERE)
 
 
 async def test_final_quality_uses_higher_bitrate(tmp_path, media):
@@ -974,17 +1094,43 @@ async def test_beat_align_narrationless_never_snaps_past_trim(tmp_path, media):
 
 
 async def test_real_ffmpeg_supports_drawtext():
-    """The build assembly runs against must render on-screen titles — a
-    static build without libharfbuzz would fail every titled export."""
+    """The build assembly runs against must burn titles and captions in
+    through libass. One without it would refuse every export that draws
+    text."""
     assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True
 
 
-async def test_the_probe_draws_text_rather_than_finding_the_filter(no_system_fonts):
-    """A machine without fonts lists drawtext and ass, then draws nothing with
-    either. A probe that reads the filter list says yes there, and the export
+def libass_font_provider(tmp_path: Path) -> str:
+    """The font provider this ffmpeg's libass finds system fonts through, in
+    its own words ("fontconfig", "directwrite (with GDI)", "coretext")."""
+    document = tmp_path / "provider.ass"
+    cue = "1\n00:00:00,000 --> 00:00:01,000\nx\n"
+    document.write_text(srt_to_ass(cue, 64, 64), encoding="utf-8")
+    run = subprocess.run(
+        [FFMPEG, "-hide_banner", "-f", "lavfi", "-i", "color=black:size=64x64"]
+        + ["-vf", FFmpegBackend(ffmpeg_bin=FFMPEG)._text_filter(document)]
+        + ["-frames:v", "1", "-f", "null", "-"],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    used = re.search(r"Using font provider (.+)", run.stderr)
+    return used.group(1).strip() if used else "none"
+
+
+async def test_the_probe_draws_text_rather_than_finding_the_filter(tmp_path, no_system_fonts):
+    """A machine without fonts lists the ass filter, then draws nothing with
+    it. A probe that reads the filter list says yes there, and the export
     finds out at its last step. Drawing is the only way to tell the two apart,
-    so the probe has to say yes with the bundled faces and no without them."""
+    so the probe has to say yes with the bundled faces and no without them.
+
+    The second half needs a machine with no fonts, which the fixture makes
+    out of fontconfig. A libass that finds system fonts through DirectWrite
+    or CoreText never reads its file, so that half is skipped there."""
     assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True
+    provider = libass_font_provider(tmp_path)
+    if provider != "fontconfig":
+        pytest.skip(f"libass finds fonts through {provider}, which FONTCONFIG_FILE cannot empty")
     without_faces = FFmpegBackend(ffmpeg_bin=FFMPEG)
     without_faces.fonts_dir = no_system_fonts
     assert await without_faces.supports_drawtext() is False

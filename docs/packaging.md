@@ -45,14 +45,15 @@ burned-in captions use Inter, which the engine package carries in
 do not depend on any font the machine has, so they render where none is
 installed. Inter is by the Inter Project Authors under the SIL Open Font
 License 1.1, and every installer's `THIRD-PARTY-NOTICES.txt` names the release
-and reproduces the licence. Characters Inter lacks, CJK among them, still come
-from system fonts in captions; in titles they draw as missing-glyph boxes.
+and reproduces the licence. Characters Inter lacks, CJK among them, come from
+system fonts, in titles and captions alike, wherever libass's font provider
+finds one.
 
 **No package bundles ffmpeg.** The engine finds one via
-`LOCALCUT_FFMPEG_BIN` or `PATH`. Titles and burned-in captions need its
-`drawtext` and `ass` filters, and FFmpeg 7+ static builds without libharfbuzz
-lack `drawtext`. `GET /system` reports `ffmpeg_drawtext` as true only after
-the engine has drawn a title and a caption with the bundled font.
+`LOCALCUT_FFMPEG_BIN` or `PATH`. Titles and burned-in captions both need its
+`ass` filter, which a build without libass lacks. `GET /system` reports
+`ffmpeg_drawtext` as true only after the engine has burned in a title and a
+caption with the bundled font.
 
 **The installers include espeak-ng, which is GPL-3.0-or-later.** Kokoro
 narration turns text into phonemes with espeak-ng, through phonemizer-fork

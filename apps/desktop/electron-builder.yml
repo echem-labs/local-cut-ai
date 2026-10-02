@@ -66,8 +66,8 @@ linux:
   # AppImage runs on any distro; deb serves apt-based installs (the dev/test
   # baseline is Ubuntu). ffmpeg is NOT bundled: the engine locates one via
   # LOCALCUT_FFMPEG_BIN/PATH, and /system's ffmpeg_drawtext flag tells the
-  # UI when that build can't render on-screen titles (FFmpeg 7 static
-  # builds without libharfbuzz).
+  # UI when that build can't burn titles or captions in (a build without
+  # libass).
   target:
     - target: AppImage
       arch:
