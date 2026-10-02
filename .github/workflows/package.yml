@@ -145,24 +145,28 @@ jobs:
         run: ./${{ matrix.engine_bin }} --version
 
       # The same pinned action ci-engine.yml uses, for the reason it gives
-      # there: one ffmpeg build on every runner. The check below needs it
-      # twice over, because the timeline is assembled with it and the aligner
-      # decodes narration with it.
+      # there: one ffmpeg build on every runner. The check below needs it at
+      # every step after narration. The aligner decodes narration with it, the
+      # timeline and the export are cut with it, and the check reads the
+      # exported file back with its ffprobe and ffmpeg.
       - name: Install ffmpeg for the speech check
         if: matrix.speech_check
         uses: AnimMouse/setup-ffmpeg@0633f1f6ad34ac671f07224b3c89b00386f0c717 # v1.2.5
 
-      - name: The frozen engine narrates and captions
+      - name: The frozen engine makes a finished video
         # `--version` proves the freeze starts, not that it can make a video.
         # PyInstaller freezes a package's modules and leaves the files beside
         # them behind, and an engine missing kokoro-onnx's vocabulary or
         # espeak-ng's voice data starts, serves and answers `--version` while
         # failing every narration it is given. Nothing else in CI asks the
         # freeze to do any work, so this renders a short project through it:
-        # weights fetched by its own `download`, then `serve`, `create` and
-        # `render`, failing unless kokoro narrated every scene and align
-        # captioned the timeline. packaging/speech_check.py says what it runs
-        # and why.
+        # weights fetched by its own `download`, then `serve`, `create`,
+        # `render` and `export`. It fails unless kokoro narrated every scene,
+        # align captioned the timeline and ffmpeg cut the export, and unless
+        # the file `export` wrote is a video: a picture and a soundtrack as
+        # long as the timeline, every frame decodable, and the title and the
+        # burned-in captions drawn. packaging/speech_check.py says what it
+        # runs and why.
         #
         # Linux and Windows for now. The macOS leg builds the same freeze from
         # the same spec, but nothing makes it speak yet.
@@ -172,7 +176,8 @@ jobs:
         # C:\Users\<name>\AppData\Local\Programs\LocalCut AI\resources\engine,
         # its data dir is C:\Users\<name>\.localcut and %TEMP% is under the
         # same folder: every file the engine hands a native library to open
-        # has the user's name in its path. The folder here is named with each
+        # has the user's name in its path, and so does the cut the check
+        # exports into the data dir. The folder here is named with each
         # kind of character that can break that. A Latin letter with a
         # diacritic is in the ANSI code page but changes when its UTF-8 bytes
         # are read in it, CJK is in no Western code page at all, an
