@@ -19,10 +19,17 @@ FROM python:3.14.1-slim
 # has to be verified — `ADD` on its own downloads whatever answers, and this
 # container is network-exposed and processes untrusted media.
 #
-# BtbN's autobuild-* releases are immutable but are eventually deleted, so
-# this pin has a shelf life: when it 404s the build fails loudly here rather
-# than silently installing something else. Bump the tag, the filename and the
-# checksum together — `curl -sL <url> | sha256sum` prints the third.
+# BtbN's autobuild-* releases are immutable, but BtbN deletes all of them
+# except the 14 newest and the last build of each of the 24 most recent
+# months. Pin the last build of a month that has ended, which BtbN keeps for
+# about two years. Any other build 404s about two weeks after it was
+# published. test_container_contract.py checks the tag's date. When the pin
+# does go, the build fails loudly here rather than silently installing
+# something else.
+#
+# Bump the tag, the filename and the checksum together. The checksum is in
+# the release's checksums.sha256, and `curl -fsSL <url> | sha256sum` should
+# print the same value.
 #
 # The digest is checked twice because `ADD --checksum=` is a BuildKit
 # feature: the legacy builder accepts the flag, ignores it, and builds
@@ -32,8 +39,8 @@ FROM python:3.14.1-slim
 # off take that path, so the verification that has to hold is the one in
 # a RUN, which every builder executes. Both read the same ARG, so they
 # cannot drift apart.
-ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-03-13-17/ffmpeg-n8.1.2-50-g1a748fe2cd-linux64-lgpl-8.1.tar.xz
-ARG FFMPEG_SHA256=303cd5a6f714d4409cf5c80a17589eed1b202b53567b26754f9e1a321cc6b40a
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1.tar.xz
+ARG FFMPEG_SHA256=dfa863a00ca81f1bdf58a372b18cff4820f0017e55de32778de8ecd8ed92a02e
 ADD --checksum=sha256:${FFMPEG_SHA256} ${FFMPEG_URL} /tmp/ffmpeg.tar.xz
 RUN echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
     && apt-get update \
