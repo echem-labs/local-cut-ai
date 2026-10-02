@@ -5,13 +5,16 @@ without libharfbuzz has no drawtext, and a machine without fonts draws nothing
 with either filter, so titles must fail loudly at probe/use, not mid-export
 with "No such filter" or as captions that burn in blank."""
 
+import json
 from pathlib import PureWindowsPath
 
 import pytest
+from conftest import make_spec
 
 from localcut_engine import fonts
-from localcut_engine.backends.base import GenerationError
+from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend, _filter_path
+from localcut_engine.graph.model import NodeKind
 
 
 def _drawing(monkeypatch, *, titles: int | None, captions: int | None) -> FFmpegBackend:
@@ -58,6 +61,69 @@ async def test_titles_are_not_refused_because_captions_cannot_draw(monkeypatch):
     but cannot burn captions can still export a titled cut whose captions go
     out as a sidecar, and refusing the titles would fail that export."""
     await _drawing(monkeypatch, titles=900, captions=0)._require_drawtext()
+
+
+class _SceneRendered(Exception):
+    """Raised where an export starts rendering its first scene."""
+
+
+async def _export(backend: FFmpegBackend, tmp_path, monkeypatch, captions: str) -> None:
+    """Run a one-scene export with burned or sidecar `captions` up to the
+    first scene render, which raises _SceneRendered."""
+    clip = tmp_path / "s1.mp4"
+    clip.write_bytes(b"")
+    timeline = tmp_path / "cut.timeline.json"
+    segment = {"scene": "s1", "srcs": [clip.name], "duration": 1.0}
+    timeline.write_text(json.dumps({"aspect": "9:16", "video": [segment], "duration": 1.0}))
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello captions\n", encoding="utf-8")
+
+    async def encoder() -> str:
+        return "mpeg4"
+
+    async def render(*args, **kwargs) -> None:
+        raise _SceneRendered
+
+    monkeypatch.setattr(backend, "_pick_encoder", encoder)
+    monkeypatch.setattr(backend, "_render_segment", render)
+    await backend.execute(
+        make_spec(NodeKind.EXPORT, {"captions": captions}),
+        ExecutionContext(
+            output_dir=tmp_path, input_artifacts={"default": timeline, "captions": srt}
+        ),
+    )
+
+
+async def test_an_export_that_burns_captions_it_cannot_draw_is_refused_first(tmp_path, monkeypatch):
+    """Without libass the export dies in its last encode on "No such filter:
+    'ass'", and with a libass that draws nothing it ships blank captions as a
+    success. Either way every scene has rendered first. The refusal comes
+    before the first one, and names a setting that gets the export out."""
+    backend = _drawing(monkeypatch, titles=900, captions=0)
+    with pytest.raises(GenerationError) as refused:
+        await _export(backend, tmp_path, monkeypatch, "burn")
+    assert "LOCALCUT_FFMPEG_BIN" in str(refused.value)
+    assert '"Separate file (.srt)"' in str(refused.value)
+
+
+async def test_captions_that_are_not_burned_are_not_refused(tmp_path, monkeypatch):
+    """A sidecar is a file beside the video, which this build writes fine."""
+    backend = _drawing(monkeypatch, titles=900, captions=0)
+    with pytest.raises(_SceneRendered):
+        await _export(backend, tmp_path, monkeypatch, "sidecar")
+
+
+async def test_captions_this_build_draws_are_burned(tmp_path, monkeypatch):
+    backend = _drawing(monkeypatch, titles=0, captions=700)
+    with pytest.raises(_SceneRendered):
+        await _export(backend, tmp_path, monkeypatch, "burn")
+
+
+async def test_an_unknown_probe_does_not_refuse_captions(tmp_path, monkeypatch):
+    """None is an ffmpeg that could not be run, which fails louder on its own."""
+    backend = _drawing(monkeypatch, titles=None, captions=None)
+    with pytest.raises(_SceneRendered):
+        await _export(backend, tmp_path, monkeypatch, "burn")
 
 
 async def test_probe_is_cached(monkeypatch):

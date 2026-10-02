@@ -82,7 +82,10 @@ A few parameters worth knowing:
 
 On-screen titles need an ffmpeg with the `drawtext` filter. FFmpeg 7+ static
 builds without libharfbuzz lack it — `GET /system` reports this as
-`ffmpeg_drawtext`.
+`ffmpeg_drawtext`. Burned-in captions need the `ass` filter (libass). On an
+ffmpeg that cannot draw them, an export that would burn them is refused
+before it renders a scene, and the readiness report says so beforehand with
+`ffmpeg_cannot_draw_text`.
 
 ## Downloads over the API
 
