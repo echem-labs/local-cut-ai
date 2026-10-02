@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NARRATION_VERSION, NodeKind
+from . import espeak
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 
 log = logging.getLogger(__name__)
@@ -224,6 +225,10 @@ class KokoroBackend(ExecutionBackend):
                 )
             from kokoro_onnx import Kokoro
 
+            # Before the first phonemization, which is when espeak-ng first
+            # starts: an espeak-ng that cannot load its data has to fail the
+            # narration, not end the engine (espeak.py).
+            espeak.never_exit()
             self._engine = Kokoro(str(self.model_path), str(self.voices_path))
         return self._engine
 
@@ -298,9 +303,21 @@ class KokoroBackend(ExecutionBackend):
             import soundfile as sf
 
             engine = self._load()
-            samples, sample_rate = engine.create(
-                text, voice=voice, speed=speed, lang=language_of(voice)
-            )
+            try:
+                samples, sample_rate = engine.create(
+                    text, voice=voice, speed=speed, lang=language_of(voice)
+                )
+            except espeak.EspeakDidNotStart as exc:
+                raise GenerationError(espeak.failure_text(exc.data_path)) from exc
+            except RuntimeError as exc:
+                # espeak-ng can also start and then fail partway, which
+                # phonemizer raises as its own RuntimeError (on Windows, a
+                # later start that finds no voices). The path's reason is
+                # the one to give, where the path shows one.
+                reason = espeak.path_failure()
+                if reason is None:
+                    raise
+                raise GenerationError(reason) from exc
             sf.write(str(target), samples, sample_rate)
 
         # ONNX inference is blocking; one at a time keeps memory bounded.

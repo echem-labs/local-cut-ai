@@ -74,9 +74,8 @@ is per-user, so the engine, its data and `%TEMP%` all sit under
 that read a path in the process's ANSI code page. `localcut.exe` declares
 UTF-8 in its manifest so those paths open whatever the user is called.
 Windows 10 1903 and later honour the declaration. On an older build, a
-profile folder name outside ASCII makes the engine exit at its first
-narration, with espeak-ng's "Error processing file" as the last line it
-prints.
+profile folder name outside ASCII fails every narration, and the failure
+names the code page Windows read the path in.
 
 **After changing `localcut.spec`, make the freeze render a video.** PyInstaller
 freezes a package's modules and leaves behind the files the package reads
