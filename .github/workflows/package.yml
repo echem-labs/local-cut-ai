@@ -75,6 +75,7 @@ jobs:
             script: package
             engine_bin: dist/localcut/localcut.exe
             artifact: localcut-windows-x64
+            speech_check: true
             glob: |
               apps/desktop/release/*.exe
           - os: ubuntu-latest
@@ -82,6 +83,7 @@ jobs:
             script: package:linux
             engine_bin: dist/localcut/localcut
             artifact: localcut-linux-x64
+            speech_check: true
             glob: |
               apps/desktop/release/*.AppImage
               apps/desktop/release/*.deb
@@ -141,6 +143,33 @@ jobs:
         # installs the app. `--version` is the cheapest proof of life.
         working-directory: engine
         run: ./${{ matrix.engine_bin }} --version
+
+      # The same pinned action ci-engine.yml uses, for the reason it gives
+      # there: one ffmpeg build on every runner. The check below needs it
+      # twice over, because the timeline is assembled with it and the aligner
+      # decodes narration with it.
+      - name: Install ffmpeg for the speech check
+        if: matrix.speech_check
+        uses: AnimMouse/setup-ffmpeg@0633f1f6ad34ac671f07224b3c89b00386f0c717 # v1.2.5
+
+      - name: The frozen engine narrates and captions
+        # `--version` proves the freeze starts, not that it can make a video.
+        # PyInstaller freezes a package's modules and leaves the files beside
+        # them behind, and an engine missing kokoro-onnx's vocabulary or
+        # espeak-ng's voice data starts, serves and answers `--version` while
+        # failing every narration it is given. Nothing else in CI asks the
+        # freeze to do any work, so this renders a short project through it:
+        # weights fetched by its own `download`, then `serve`, `create` and
+        # `render`, failing unless kokoro narrated every scene and align
+        # captioned the timeline. packaging/speech_check.py says what it runs
+        # and why.
+        #
+        # Linux and Windows for now. The macOS leg builds the same freeze from
+        # the same spec, but nothing makes it speak yet.
+        if: matrix.speech_check
+        working-directory: engine
+        timeout-minutes: 20
+        run: uv run python packaging/speech_check.py ./${{ matrix.engine_bin }} --data-dir "${{ runner.temp }}/localcut-speech"
 
       - name: Build the installer
         working-directory: apps/desktop
