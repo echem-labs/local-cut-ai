@@ -1,51 +1,42 @@
-"""FFmpeg capability probing — no real ffmpeg required. FFmpeg 7 moved
-drawtext behind libharfbuzz and popular static builds omit it, so titles
-must fail loudly at probe/use, not mid-export with "No such filter"."""
+"""FFmpeg capability probing, with the drawing stubbed out so no real ffmpeg
+is required. Text is probed by drawing it: a title through drawtext and a
+caption through libass, both with the bundled font. A static FFmpeg 7+ build
+without libharfbuzz has no drawtext, and a machine without fonts draws nothing
+with either filter, so titles must fail loudly at probe/use, not mid-export
+with "No such filter" or as captions that burn in blank."""
+
+from pathlib import PureWindowsPath
 
 import pytest
 
+from localcut_engine import fonts
 from localcut_engine.backends.base import GenerationError
-from localcut_engine.backends.ffmpeg import FFmpegBackend
-
-# Trimmed real `ffmpeg -filters` table shapes.
-_FILTERS_WITH_DRAWTEXT = """\
-Filters:
-  T.. = Timeline support
- ... crop              V->V       Crop the input video.
- T.C drawtext          V->V       Draw text on top of video frames using libfreetype library.
- ... scale             V->V       Scale the input video size and/or convert the image format.
-"""
-_FILTERS_WITHOUT_DRAWTEXT = """\
-Filters:
-  T.. = Timeline support
- ... crop              V->V       Crop the input video.
- ... scale             V->V       Scale the input video size and/or convert the image format.
-"""
+from localcut_engine.backends.ffmpeg import FFmpegBackend, _filter_path
 
 
-def _stubbed(monkeypatch, filters_output: str) -> FFmpegBackend:
+def _drawing(monkeypatch, *, titles: int | None, captions: int | None) -> FFmpegBackend:
+    """A backend whose probe frames light this many pixels: `titles` for the
+    drawtext frame, `captions` for the libass one. None = the binary could
+    not be run."""
     backend = FFmpegBackend(ffmpeg_bin="ffmpeg")
 
-    async def fake_probe() -> str:
-        return filters_output
+    async def fake_lit(vf: str) -> int | None:
+        return titles if vf.startswith("drawtext=") else captions
 
-    monkeypatch.setattr(backend, "_probe_filters", fake_probe)
+    monkeypatch.setattr(backend, "_lit_pixels", fake_lit)
     return backend
 
 
-async def test_drawtext_detected_from_filters_table(monkeypatch):
-    backend = _stubbed(monkeypatch, _FILTERS_WITH_DRAWTEXT)
-    assert await backend.supports_drawtext() is True
+async def test_text_draws_when_titles_and_captions_both_light_pixels(monkeypatch):
+    assert await _drawing(monkeypatch, titles=900, captions=700).supports_drawtext() is True
 
 
-async def test_drawtext_missing_from_filters_table(monkeypatch):
-    backend = _stubbed(monkeypatch, _FILTERS_WITHOUT_DRAWTEXT)
-    assert await backend.supports_drawtext() is False
-    # The name appearing only in prose (another filter's description) must
-    # not count — the check reads the name column, not the whole line.
-    prose = _FILTERS_WITHOUT_DRAWTEXT + " ... subtitles V->V Render like drawtext does.\n"
-    other = _stubbed(monkeypatch, prose)
-    assert await other.supports_drawtext() is False
+async def test_a_filter_that_draws_nothing_does_not_count(monkeypatch):
+    """Both filters exist on a machine without fonts. What it lacks only
+    shows up as a frame with nothing on it, and either half missing is a
+    video that will not carry its text."""
+    assert await _drawing(monkeypatch, titles=0, captions=700).supports_drawtext() is False
+    assert await _drawing(monkeypatch, titles=900, captions=0).supports_drawtext() is False
 
 
 async def test_missing_binary_probes_as_unknown(tmp_path):
@@ -57,24 +48,61 @@ async def test_missing_binary_probes_as_unknown(tmp_path):
 
 
 async def test_titles_guard_raises_clear_error(monkeypatch):
-    backend = _stubbed(monkeypatch, _FILTERS_WITHOUT_DRAWTEXT)
+    backend = _drawing(monkeypatch, titles=0, captions=700)
     with pytest.raises(GenerationError, match="drawtext"):
         await backend._require_drawtext()
 
 
+async def test_titles_are_not_refused_because_captions_cannot_draw(monkeypatch):
+    """The guard stands in front of drawtext alone. A build that draws titles
+    but cannot burn captions can still export a titled cut whose captions go
+    out as a sidecar, and refusing the titles would fail that export."""
+    await _drawing(monkeypatch, titles=900, captions=0)._require_drawtext()
+
+
 async def test_probe_is_cached(monkeypatch):
     backend = FFmpegBackend(ffmpeg_bin="ffmpeg")
-    calls = 0
+    drawn: list[str] = []
 
-    async def fake_probe() -> str:
-        nonlocal calls
-        calls += 1
-        return _FILTERS_WITH_DRAWTEXT
+    async def fake_lit(vf: str) -> int:
+        drawn.append(vf)
+        return 500
 
-    monkeypatch.setattr(backend, "_probe_filters", fake_probe)
+    monkeypatch.setattr(backend, "_lit_pixels", fake_lit)
     await backend.supports_drawtext()
     await backend.supports_drawtext()
-    assert calls == 1
+    await backend._require_drawtext()
+    assert len(drawn) == 2, "one title and one caption, drawn once"
+
+
+async def test_the_probe_draws_with_the_faces_the_engine_ships(monkeypatch):
+    """A probe that let ffmpeg pick a font would answer for the machine it
+    ran on, which is the question this fix stops depending on."""
+    backend = FFmpegBackend(ffmpeg_bin="ffmpeg")
+    drawn: list[str] = []
+
+    async def fake_lit(vf: str) -> int:
+        drawn.append(vf)
+        return 500
+
+    monkeypatch.setattr(backend, "_lit_pixels", fake_lit)
+    await backend.supports_drawtext()
+    title, captions = drawn
+    assert f"fontfile='{_filter_path(fonts.DIR / fonts.REGULAR)}'" in title
+    assert ":font=" not in title, "a family name is a fontconfig lookup"
+    assert f"fontsdir='{_filter_path(fonts.DIR)}'" in captions
+
+
+def test_font_paths_keep_a_windows_drive_letter_out_of_the_option_syntax():
+    """Inside a filtergraph a backslash is an escape and a colon separates
+    options, so `C:\\...` has to reach ffmpeg as `C\\:/...`. The font paths
+    point into the install directory, which on Windows always has one."""
+    backend = FFmpegBackend(ffmpeg_bin="ffmpeg")
+    backend.fonts_dir = PureWindowsPath(r"C:\Program Files\LocalCut AI\fonts")
+    title = backend._title_filter(PureWindowsPath(r"C:\Temp\seg000.txt"), 1920)
+    assert r"fontfile='C\:/Program Files/LocalCut AI/fonts/Inter-Regular.ttf'" in title
+    captions = backend._captions_filter(PureWindowsPath(r"C:\Temp\captions.ass"))
+    assert r"fontsdir='C\:/Program Files/LocalCut AI/fonts'" in captions
 
 
 def test_ffprobe_keeps_the_executable_extension():

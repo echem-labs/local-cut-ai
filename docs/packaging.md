@@ -39,10 +39,20 @@ pin the chain yourself.
 **Windows builds are unsigned for now.** SmartScreen warns on the installer:
 More info → Run anyway.
 
+**The engine ships the font it draws text with.** On-screen titles and
+burned-in captions use Inter, which the engine package carries in
+`localcut_engine/assets/fonts/` and the freeze picks up as package data. They
+do not depend on any font the machine has, so they render where none is
+installed. Inter is by the Inter Project Authors under the SIL Open Font
+License 1.1, and every installer's `THIRD-PARTY-NOTICES.txt` names the release
+and reproduces the licence. Characters Inter lacks, CJK among them, still come
+from system fonts in captions; in titles they draw as missing-glyph boxes.
+
 **No package bundles ffmpeg.** The engine finds one via
-`LOCALCUT_FFMPEG_BIN` or `PATH`. On-screen titles need a build with the
-`drawtext` filter — FFmpeg 7+ static builds without libharfbuzz lack it, and
-`GET /system` reports this as `ffmpeg_drawtext`.
+`LOCALCUT_FFMPEG_BIN` or `PATH`. Titles and burned-in captions need its
+`drawtext` and `ass` filters, and FFmpeg 7+ static builds without libharfbuzz
+lack `drawtext`. `GET /system` reports `ffmpeg_drawtext` as true only after
+the engine has drawn a title and a caption with the bundled font.
 
 **macOS builds are unsigned and un-notarized.** `.github/workflows/package.yml`
 builds an arm64 dmg on every release run, but `electron-builder.yml` sets

@@ -222,7 +222,7 @@
       "timeline": "Cuts clips, narration, captions and music into one edit",
       "export": "Renders the final MP4 file"
     },
-    "noDrawtext": "This machine's FFmpeg cannot draw text, so on-screen titles will not be burned into the video. Everything else renders normally. Installing an FFmpeg build with libharfbuzz (most distribution packages have it) restores titles."
+    "noDrawtext": "This machine's FFmpeg cannot draw text, so on-screen titles or burned-in captions will be missing from the video. Everything else renders normally. An FFmpeg build with libharfbuzz and libass (most distribution packages have both) draws them."
   },
   "setup": {
     "heading": "Setup",
