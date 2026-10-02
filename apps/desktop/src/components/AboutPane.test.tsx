@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AboutPane } from "./AboutPane";
 import { t } from "../i18n";
+import { absoluteTime } from "../lib/time";
 import { useApp } from "../store";
 
 const SYSTEM = {
@@ -130,9 +131,9 @@ describe("this machine", () => {
 });
 
 describe("the update check", () => {
-  it("is absent until a release feed is configured", async () => {
+  it("is absent when the shell has no release feed", async () => {
     // Hidden, not disabled: a button that can only ever fail is worse than
-    // no button, and this is the shipping state until the repo is public.
+    // no button. A dev run that names no feed is in this state.
     await mount();
     expect(screen.queryByText(t("settings.about.checkUpdates"))).not.toBeInTheDocument();
   });
@@ -193,6 +194,73 @@ describe("the update check", () => {
       fireEvent.click(screen.getByText(t("settings.about.checkUpdates")));
     });
     expect(screen.getByText("HTTP 503")).toBeInTheDocument();
+  });
+
+  it("says no release is out yet, without calling it a failure", async () => {
+    // GitHub's answer for a repository with no published release. There is
+    // nothing newer to offer, and "Up to date" would claim a comparison that
+    // never happened.
+    stubBridge({
+      updatesConfigured: true,
+      checkForUpdates: vi.fn(async () => ({
+        latest: null,
+        url: null,
+        error: null,
+        reason: "no-release",
+      })),
+    });
+    await mount();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(t("settings.about.checkUpdates")));
+    });
+    expect(screen.getByText(t("settings.about.noRelease"))).toBeInTheDocument();
+    expect(screen.queryByText(t("settings.about.upToDate"))).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("explains a rate limit in words, and when to try again", async () => {
+    // The status code means nothing to the person reading it, and the limit
+    // is per address, so it can be spent by anything else on their network.
+    const retryAt = Math.floor(Date.now() / 1000) + 1800;
+    stubBridge({
+      updatesConfigured: true,
+      checkForUpdates: vi.fn(async () => ({
+        latest: null,
+        url: null,
+        error: "HTTP 403",
+        reason: "rate-limited",
+        retryAt,
+      })),
+    });
+    await mount();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(t("settings.about.checkUpdates")));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      t("settings.about.rateLimitedUntil", { time: absoluteTime(retryAt) }),
+    );
+    expect(screen.queryByText("HTTP 403")).not.toBeInTheDocument();
+  });
+
+  it("still explains a rate limit GitHub gave no time for", async () => {
+    stubBridge({
+      updatesConfigured: true,
+      checkForUpdates: vi.fn(async () => ({
+        latest: null,
+        url: null,
+        error: "HTTP 429",
+        reason: "rate-limited",
+        retryAt: null,
+      })),
+    });
+    await mount();
+
+    await act(async () => {
+      fireEvent.click(screen.getByText(t("settings.about.checkUpdates")));
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(t("settings.about.rateLimited"));
   });
 });
 

@@ -7,7 +7,9 @@
  * piece of logic on this side of the wall, `setUiZoom`'s clamp, which is what
  * stops a bad persisted value from rendering the app unusable at 0.01×.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   exposedBridges,
   ipcInvocations,
@@ -91,6 +93,34 @@ describe("the exposed surface", () => {
   // the rig's environment variable was present at preload time.
   it("exposes seedHookEnabled as plain data, false without the env flag", () => {
     expect(bridge.seedHookEnabled).toBe(false);
+  });
+
+  // Whether to offer the update check rests on facts this sandboxed script
+  // cannot read (an installed build or not, the homepage in package.json),
+  // so main decides and passes the answer on the renderer's command line.
+  // The variable alone says nothing about an installed build, where nobody
+  // sets it. main.test.ts drives both halves together.
+  it("takes updatesConfigured from main, not from the environment", async () => {
+    vi.resetModules();
+    process.env.LOCALCUT_UPDATE_FEED = "https://example.invalid/latest";
+    try {
+      const electron = await import("./test/electron-stub");
+      await import("./preload");
+      expect(electron.exposedBridges.get("localcut")!.updatesConfigured).toBe(false);
+    } finally {
+      delete process.env.LOCALCUT_UPDATE_FEED;
+    }
+  });
+
+  // The window is sandboxed (Electron's default, and nothing here turns it
+  // off), and a sandboxed preload's `require` knows a few built-in modules
+  // and no files. A sibling import compiles to a require that throws at
+  // load and takes the whole bridge with it, while vitest resolves the same
+  // import without complaint, so no other test here would notice.
+  it("imports nothing but electron, all a sandboxed preload can load", () => {
+    const source = fs.readFileSync(path.join(__dirname, "preload.ts"), "utf8");
+    const loaded = [...source.matchAll(/^import\s+(?!type\b)[^;]*?\sfrom\s+["']([^"']+)["']/gm)];
+    expect(loaded.map((match) => match[1])).toEqual(["electron"]);
   });
 });
 

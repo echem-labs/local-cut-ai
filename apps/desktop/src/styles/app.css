@@ -6639,6 +6639,13 @@ a.icon-btn-sm {
   color: var(--status-final);
 }
 
+/* A feed with nothing published: a plain fact in the status slot, without
+   the up-to-date colour and check, since nothing was compared. */
+.about-norelease {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
 .about-newer {
   font-size: var(--text-xs);
   color: var(--accent);
