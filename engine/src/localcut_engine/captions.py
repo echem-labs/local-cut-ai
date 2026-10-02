@@ -12,6 +12,8 @@ import difflib
 import re
 from dataclasses import dataclass
 
+from . import fonts
+
 MAX_CUE_WORDS = 5
 MAX_CUE_SPAN_S = 2.4
 CUE_GAP_BREAK_S = 0.6  # a pause this long starts a new cue
@@ -250,6 +252,9 @@ _SHADOW_OF_FONT = 1 / _REF_FONT_PX
 _MARGIN_V_OF_HEIGHT = 340 / _REF_H
 _MARGIN_H_OF_WIDTH = 60 / _REF_W
 
+# The font is named by family, and the export hands libass the bundled faces
+# as its fonts directory, so the name resolves to a file the engine ships
+# rather than to whatever the machine has installed under it (fonts.py).
 _ASS_HEADER = """\
 [Script Info]
 ScriptType: v4.00+
@@ -260,7 +265,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
-Style: Default,Sans,{font},&H00FFFFFF,&H00101014,&H80000000,-1,{outline},{shadow},2,{margin_h},{margin_h},{margin_v}
+Style: Default,{family},{font},&H00FFFFFF,&H00101014,&H80000000,-1,{outline},{shadow},2,{margin_h},{margin_h},{margin_v}
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -275,6 +280,7 @@ def ass_header(width: int, height: int) -> str:
     return _ASS_HEADER.format(
         width=width,
         height=height,
+        family=fonts.FAMILY,
         font=font,
         outline=round(font * _OUTLINE_OF_FONT),
         shadow=round(font * _SHADOW_OF_FONT),

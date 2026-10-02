@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import pytest
 from conftest import make_spec
@@ -439,6 +440,91 @@ async def test_captions_burn_in(tmp_path, media):
     assert d1 == pytest.approx(d2, abs=0.1)  # burn-in must not change timing
 
 
+@pytest.fixture
+def no_system_fonts(tmp_path, monkeypatch) -> Path:
+    """Fontconfig pointed at an empty directory, for every ffmpeg the test
+    starts. That is a machine with no fonts installed, like the engine's
+    container image: nothing can be found by family name, so text draws only
+    from a font the engine hands ffmpeg itself. Returns the empty directory.
+    """
+    empty = tmp_path / "no-fonts"
+    empty.mkdir()
+    conf = tmp_path / "fonts.conf"
+    conf.write_text(
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n'
+        f"<fontconfig><dir>{escape(str(empty))}</dir>"
+        f"<cachedir>{escape(str(tmp_path / 'fc-cache'))}</cachedir></fontconfig>\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FONTCONFIG_FILE", str(conf))
+    return empty
+
+
+@pytest.fixture
+def dark_scene(tmp_path) -> dict:
+    """One scene on a black clip. Anything lit in its frames is drawn text."""
+    return {
+        "s1": synth(
+            tmp_path,
+            "black.mp4",
+            ["-f", "lavfi", "-i", "color=black:size=320x568:rate=24:duration=2"],
+        ),
+        "s1.audio": synth(
+            tmp_path, "line.wav", ["-f", "lavfi", "-i", "sine=frequency=330:duration=1"]
+        ),
+    }
+
+
+def lit_pixels(path: Path, at: float) -> int:
+    """Pixels brighter than mid-grey in the frame `at` seconds into `path`."""
+    frame = subprocess.run(
+        [FFMPEG, "-v", "error", "-ss", f"{at}", "-i", str(path)]
+        + ["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert frame, f"no frame decoded at {at}s of {path}"
+    return sum(1 for value in frame if value > 127)
+
+
+async def test_a_title_draws_on_a_machine_without_fonts(tmp_path, dark_scene, no_system_fonts):
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16", "overlays": {"s1": "THREE HEARTS"}}),
+        ExecutionContext(output_dir=out_dir, input_artifacts=dark_scene),
+    )
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="b" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": timeline_path}),
+    )
+    assert lit_pixels(out, 0.5) > 0, "the title drew nothing"
+
+
+async def test_burned_captions_draw_on_a_machine_without_fonts(
+    tmp_path, dark_scene, no_system_fonts
+):
+    """libass exits 0 when it finds no font, so a blank caption track is a
+    successful export. Only the pixels can tell."""
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16"}),
+        ExecutionContext(output_dir=out_dir, input_artifacts=dark_scene),
+    )
+    srt = tmp_path / "caps.srt"
+    srt.write_text("1\n00:00:00,100 --> 00:00:01,000\nhello captions\n", encoding="utf-8")
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"captions": "burn"}, output_hash="c" * 64),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"default": timeline_path, "captions": srt},
+        ),
+    )
+    assert lit_pixels(out, 0.5) > 0, "the burned-in caption drew nothing"
+
+
 async def test_final_quality_uses_higher_bitrate(tmp_path, media):
     backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
     out_dir = tmp_path / "generated"
@@ -841,6 +927,17 @@ async def test_real_ffmpeg_supports_drawtext():
     """The build assembly runs against must render on-screen titles — a
     static build without libharfbuzz would fail every titled export."""
     assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True
+
+
+async def test_the_probe_draws_text_rather_than_finding_the_filter(no_system_fonts):
+    """A machine without fonts lists drawtext and ass, then draws nothing with
+    either. A probe that reads the filter list says yes there, and the export
+    finds out at its last step. Drawing is the only way to tell the two apart,
+    so the probe has to say yes with the bundled faces and no without them."""
+    assert await FFmpegBackend(ffmpeg_bin=FFMPEG).supports_drawtext() is True
+    without_faces = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    without_faces.fonts_dir = no_system_fonts
+    assert await without_faces.supports_drawtext() is False
 
 
 async def test_still_clip_from_keyframe(tmp_path):

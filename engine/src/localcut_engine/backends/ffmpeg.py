@@ -22,6 +22,7 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+from .. import fonts
 from ..aspects import (
     DEFAULT_ASPECT,
     EXPORT_AUDIO_KBPS_BOUNDS,
@@ -74,6 +75,11 @@ AUDIO_SHORTFALL_S = 0.5
 
 # Export bitrate by quality tier; draft favors speed, final favors fidelity.
 _VIDEO_BITRATE = {"draft": "4M", "final": "10M"}
+
+# What the text probe draws, and on how big a frame: tall enough that the
+# title's height-derived font size is a legible 25px.
+_PROBE_TEXT = "LocalCut"
+_PROBE_FRAME = (640, 360)
 
 
 @asynccontextmanager
@@ -186,8 +192,11 @@ class FFmpegBackend(ExecutionBackend):
             else "ffprobe"
         )
         self._encoder: str | None = None
-        self._drawtext: bool | None = None
-        self._drawtext_checked = False
+        # Where titles and captions are drawn from. Never the system's fonts:
+        # a machine without any must render the same video (fonts.py).
+        self.fonts_dir = fonts.DIR
+        # (titles, captions) once probed; see _draws_text.
+        self._text: tuple[bool, bool] | None = None
 
     def supports(self, kind: NodeKind) -> bool:
         # Binary-gated: without an ffmpeg on disk (managed download) or on
@@ -699,7 +708,7 @@ class FFmpegBackend(ExecutionBackend):
             cur_v, cur_a = f"[v{i}]", f"[a{i}]"
 
         if burn is not None:
-            steps.append(f"{cur_v}ass='{_filter_path(burn)}'[vout]")
+            steps.append(f"{cur_v}{self._captions_filter(burn)}[vout]")
             cur_v = "[vout]"
         if not steps:
             # Single segment, nothing to burn: re-encode to the target rate.
@@ -864,20 +873,7 @@ class FFmpegBackend(ExecutionBackend):
             # platform default (cp1252) would mangle or reject CJK titles.
             textfile = workdir / f"{out.stem}.txt"
             textfile.write_text(str(text), encoding="utf-8")
-            vf += (
-                # Single-quote AND filtergraph-escape the path: an unquoted
-                # ':'/',' in the temp dir path (legal on Linux) or a Windows
-                # backslash/drive-colon would otherwise be parsed as a drawtext
-                # option/filter separator and break -vf.
-                # expansion=none: titles are user/LLM text, and drawtext's
-                # default expansion evaluates %{...} — "SAVE 100%{TODAY}"
-                # fails the whole export, and "%{pts}" silently burns a
-                # running timestamp in place of the words the user typed.
-                f",drawtext=expansion=none:textfile='{_filter_path(textfile)}'"
-                f":font=Sans:fontsize={height // 14}"
-                f":fontcolor=white:borderw={max(2, height // 270)}"
-                ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
-            )
+            vf += "," + self._title_filter(textfile, height)
         if fade_in:
             vf += f",fade=t=in:st=0:d={DIP_S}"
         if segment.get("transition") == "dip":
@@ -1001,45 +997,120 @@ class FFmpegBackend(ExecutionBackend):
 
     # -- helpers ------------------------------------------------------------------
 
-    async def _probe_filters(self) -> str:
-        """`ffmpeg -filters` output, or "" when the binary is missing or
-        broken — a capability probe must degrade to "unknown", never crash."""
+    # Text reaches a frame through these two builders and nothing else, so the
+    # probe below draws exactly what an export draws.
+
+    def _title_filter(self, textfile: Path, height: int) -> str:
+        """drawtext for an on-screen title read from `textfile`, sized for a
+        frame `height` pixels tall."""
+        return (
+            # Single-quote AND filtergraph-escape the paths: an unquoted
+            # ':'/',' in the temp dir path (legal on Linux) or a Windows
+            # backslash/drive-colon would otherwise be parsed as a drawtext
+            # option/filter separator and break -vf.
+            # expansion=none: titles are user/LLM text, and drawtext's
+            # default expansion evaluates %{...} — "SAVE 100%{TODAY}"
+            # fails the whole export, and "%{pts}" silently burns a
+            # running timestamp in place of the words the user typed.
+            # fontfile=: the bundled face, opened directly. A family name
+            # would go through fontconfig, which on a machine with no fonts
+            # finds nothing and stops the filter from starting.
+            f"drawtext=expansion=none:textfile='{_filter_path(textfile)}'"
+            f":fontfile='{_filter_path(self.fonts_dir / fonts.REGULAR)}'"
+            f":fontsize={height // 14}"
+            f":fontcolor=white:borderw={max(2, height // 270)}"
+            ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
+        )
+
+    def _captions_filter(self, ass: Path) -> str:
+        """libass burn-in of the styled captions in `ass`. fontsdir= is where
+        the family the style names (captions.py) is found. Without it libass
+        asks the system, and on a machine with no fonts the captions burn in
+        blank while ffmpeg reports success."""
+        return f"ass='{_filter_path(ass)}':fontsdir='{_filter_path(self.fonts_dir)}'"
+
+    async def _lit_pixels(self, vf: str) -> int | None:
+        """How many pixels `vf` lights on one black probe frame. 0 when ffmpeg
+        could not draw it at all, None when the binary cannot be run."""
+        width, height = _PROBE_FRAME
         try:
             process = await asyncio.create_subprocess_exec(
                 self.ffmpeg_bin,
                 "-hide_banner",
-                "-filters",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=black:size={width}x{height}:duration=1",
+                "-vf",
+                vf,
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "pipe:1",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
         except OSError:
-            return ""
+            return None
         async with _terminating(process):
             stdout, _ = await process.communicate()
-        return stdout.decode(errors="replace") if process.returncode == 0 else ""
+        if process.returncode != 0:
+            return 0
+        return sum(1 for value in stdout if value > 127)
+
+    async def _draws_text(self) -> tuple[bool | None, bool | None]:
+        """(titles, captions): whether each one draws. One black frame apiece,
+        through the filters an export uses, counts only if something on it
+        lit up.
+
+        Drawn rather than looked up, because a listed filter says nothing
+        about fonts. On a machine without any, drawtext and ass are both
+        listed; then drawtext refuses to start, and libass draws nothing while
+        ffmpeg exits 0. A static FFmpeg 7+ build without libharfbuzz has no
+        drawtext at all, and fails here the same way.
+
+        (None, None) when the binary could not be run, which fails louder on
+        its own at use. Cached once known: neither the binary nor the bundled
+        font changes under a running engine."""
+        if self._text is not None:
+            return self._text
+        width, height = _PROBE_FRAME
+        with tempfile.TemporaryDirectory(prefix="localcut-text-probe-") as tmp:
+            textfile = Path(tmp) / "title.txt"
+            textfile.write_text(_PROBE_TEXT, encoding="utf-8")
+            ass = Path(tmp) / "captions.ass"
+            cue = f"1\n00:00:00,000 --> 00:00:05,000\n{_PROBE_TEXT}\n"
+            ass.write_text(srt_to_ass(cue, width, height), encoding="utf-8")
+            titles = await self._lit_pixels(self._title_filter(textfile, height))
+            captions = await self._lit_pixels(self._captions_filter(ass))
+        if titles is None or captions is None:
+            return None, None
+        self._text = (titles > 0, captions > 0)
+        return self._text
 
     async def supports_drawtext(self) -> bool | None:
-        """Whether this ffmpeg can render on-screen titles. FFmpeg 7 moved
-        drawtext behind libharfbuzz and popular static builds omit it, so the
-        filter later fails at export with a cryptic "No such filter". None =
-        binary missing/unprobeable (surfaced as its own clearer error at use).
-        Cached — the binary can't change under a running engine."""
-        if not self._drawtext_checked:
-            output = await self._probe_filters()
-            if output:
-                # Second column of the filters table is the filter name.
-                self._drawtext = any(
-                    line.split()[1:2] == ["drawtext"] for line in output.splitlines()
-                )
-            self._drawtext_checked = True
-        return self._drawtext
+        """Whether this ffmpeg puts text on the video: on-screen titles and
+        burned-in captions both. /system reports it as `ffmpeg_drawtext`, so
+        the setup surface can say so before an export dies or ships blank
+        captions. None = the binary is missing or could not be run."""
+        titles, captions = await self._draws_text()
+        if titles is None or captions is None:
+            return None
+        return titles and captions
 
     async def _require_drawtext(self) -> None:
-        if await self.supports_drawtext() is False:
+        # The title half only. A build that cannot burn captions may still
+        # draw titles, and refusing them for it would fail an export that
+        # works.
+        titles, _ = await self._draws_text()
+        if titles is False:
             raise GenerationError(
-                "on-screen titles need ffmpeg's drawtext filter, which this build "
-                "lacks (FFmpeg 7+ needs libfreetype and libharfbuzz compiled in; "
-                "some static builds omit them) — point LOCALCUT_FFMPEG_BIN at a "
+                "on-screen titles need ffmpeg's drawtext filter, and this build drew "
+                "nothing with it (FFmpeg 7+ needs libfreetype and libharfbuzz compiled "
+                "in; some static builds omit them) - point LOCALCUT_FFMPEG_BIN at a "
                 "full build, or clear the scene's on-screen text"
             )
 

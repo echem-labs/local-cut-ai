@@ -263,10 +263,11 @@ def test_ass_caption_size_and_placement_hold_across_aspects(aspect):
 
 def test_ass_9_16_style_is_unchanged():
     """The portrait style is the one validated on a real export; keep it
-    byte-identical so fixing the other aspects cannot regress it."""
+    byte-identical so fixing the other aspects cannot regress it. The font
+    is the bundled family, which test_fonts.py holds to the shipped files."""
     ass = srt_to_ass(cues_to_srt([Cue(0.0, 1.0, "hi")]), *EXPORT_RESOLUTIONS["9:16"])
     assert "PlayResX: 1080\nPlayResY: 1920" in ass
-    assert "Style: Default,Sans,84,&H00FFFFFF,&H00101014,&H80000000,-1,5,1,2,60,60,340" in ass
+    assert "Style: Default,Inter,84,&H00FFFFFF,&H00101014,&H80000000,-1,5,1,2,60,60,340" in ass
 
 
 def test_burned_captions_use_the_frame_the_export_encodes(tmp_path):

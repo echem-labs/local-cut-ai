@@ -538,6 +538,49 @@ def bundled_libraries(filenames: Iterable[str] | None = None) -> list[str]:
     return sorted(found)
 
 
+#: The SPDX identifier of the bundled typeface's licence. test_fonts holds it
+#: to the licence text that ships beside the faces.
+FONT_LICENSE = "OFL-1.1"
+
+
+def font_notice() -> list[str]:
+    """The section for the typeface the engine draws titles and captions with.
+
+    It ships as package data rather than inside any wheel, so neither the
+    closure walk nor the library scan sees it, and the OFL asks for its
+    copyright notice and licence to travel with every copy. Placed above the
+    native libraries because everything below that heading is read as
+    `name - terms` rows, and a licence text is not one.
+
+    A missing licence fails the build, for the walk's reason: an entry naming
+    a licence with nothing under it still ships, and still reads as compliance
+    from the outside.
+    """
+    from localcut_engine import fonts
+
+    try:
+        text = fonts.LICENSE.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise LookupError(
+            f"{fonts.FAMILY}'s licence is not at {fonts.LICENSE}, so the notices would "
+            "name the font without reproducing its licence"
+        ) from exc
+    lines = ["", "FONTS", "-" * 72, ""]
+    lines += [
+        "The typeface the engine draws on-screen titles and burned-in captions",
+        "with. It ships inside the engine package, unmodified.",
+        "",
+        f"{fonts.FAMILY} {fonts.VERSION}",
+        f"    License: {FONT_LICENSE}",
+        f"    {fonts.SOURCE}",
+        f"    Files: {fonts.REGULAR}, {fonts.BOLD}",
+        "",
+    ]
+    lines += ["    " + line if line.strip() else "" for line in text.splitlines()]
+    lines.append("")
+    return lines
+
+
 def build_notices(libraries: list[str] | None = None) -> str:
     """The whole document, as it should land beside LICENSE in the freeze.
 
@@ -573,6 +616,7 @@ def build_notices(libraries: list[str] | None = None) -> str:
         "describes this build on this platform rather than a checkout.",
         "",
     ]
+    lines += font_notice()
 
     distributions = shipped_distributions() if describes_the_freeze else runtime_distributions()
     lines += ["", "PYTHON DISTRIBUTIONS", "-" * 72, ""]

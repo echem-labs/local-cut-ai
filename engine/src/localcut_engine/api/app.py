@@ -708,9 +708,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             )
         profile = app.state.hardware_profile
         if not hasattr(app.state, "ffmpeg_drawtext"):
-            # FFmpeg 7 static builds without libharfbuzz lack drawtext; the
-            # setup surface must say so before an export dies on it. None =
-            # ffmpeg not found at all (its own, clearer failure at use).
+            # Whether titles and burned-in captions will draw, found out by
+            # drawing one of each with the bundled font. A static FFmpeg 7
+            # build without libharfbuzz lacks drawtext, and the setup surface
+            # must say so before an export dies on it. None = ffmpeg not
+            # found at all (its own, clearer failure at use).
             app.state.ffmpeg_drawtext = await FFmpegBackend(
                 ffmpeg_bin=config.resolved_ffmpeg_bin
             ).supports_drawtext()
