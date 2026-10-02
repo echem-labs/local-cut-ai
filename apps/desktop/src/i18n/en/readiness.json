@@ -10,7 +10,8 @@
     "cloud_model_unknown": "No provider offers \"{model}\" for this kind of work.",
     "comfyui_down": "The program that draws images and video isn't running.",
     "no_ffmpeg": "ffmpeg, the tool that puts the video together, wasn't found.",
-    "ffmpeg_cannot_draw_text": "This machine's FFmpeg can't draw text onto the video."
+    "ffmpeg_cannot_draw_text": "This machine's FFmpeg can't draw text onto the video.",
+    "install_path_too_long": "LocalCut AI is installed in a folder whose path is too long for espeak-ng, the tool that turns narration text into speech sounds."
   },
   "effects": {
     "degraded": "a lower-quality result",

@@ -972,3 +972,68 @@ async def test_the_comfy_probe_is_shared_between_rows(tmp_path):
     first = _COMFY_PROBES["http://127.0.0.1:59999/queue"]
     _comfy_alive(config)
     assert _COMFY_PROBES["http://127.0.0.1:59999/queue"] is first
+
+
+# -- narration and espeak-ng's data path ---------------------------------------
+
+
+def _kokoro_serves_narration(tmp_path) -> tuple[EngineConfig, object]:
+    config = EngineConfig(data_dir=tmp_path, backend="kokoro,mock")
+    backends = _build_backends(config)
+    kokoro = backends.find("kokoro")
+    for weights in (kokoro.model_path, kokoro.voices_path):
+        weights.parent.mkdir(parents=True, exist_ok=True)
+        weights.touch()
+    return config, backends
+
+
+def _data_path_of_length(tmp_path, length: int) -> str:
+    """A path to espeak-ng's data `length` bytes long as phonemizer hands it
+    to espeak-ng: resolved, in UTF-8. Nothing has to exist there, because
+    the report judges the path and never opens it."""
+    base = tmp_path.resolve()
+    pad = length - len(str(base / "d" / "espeak-ng-data").encode("utf-8")) + 1
+    path = str(base / ("d" * pad) / "espeak-ng-data")
+    assert len(path.encode("utf-8")) == length
+    return path
+
+
+@pytest.mark.parametrize(
+    ("over", "verdict"),
+    [(-1, "ready"), (0, "will_fail"), (1, "will_fail")],
+    ids=["one byte short", "at the limit", "one byte over"],
+)
+async def test_narration_will_fail_where_espeak_ng_cannot_hold_its_data_path(
+    tmp_path, monkeypatch, over, verdict
+):
+    """espeak-ng copies the path to its data into a fixed buffer, and a path
+    that does not fit, 160 bytes or more on Linux and macOS and 231 or more
+    on Windows, is cut short and not found. Every narration then fails, so
+    the report says so before a render is spent rather than after the first
+    scene.
+
+    espeakng-loader finds the data beside itself, so a copy of the engine in
+    a deeper folder is exactly a longer answer from get_data_path."""
+    import espeakng_loader
+
+    from localcut_engine.backends.espeak import DATA_PATH_LIMIT
+
+    length = DATA_PATH_LIMIT + over
+    data = _data_path_of_length(tmp_path, length)
+    monkeypatch.setattr(espeakng_loader, "get_data_path", lambda: data)
+    config, backends = _kokoro_serves_narration(tmp_path)
+
+    (row,) = await readiness_rows(config, backends, [(NodeKind.NARRATION, None)])
+
+    assert row["verdict"] == verdict
+    assert row["backend"] == "kokoro"
+    assert row["fix"] is None  # moving an install is not something a click can do
+    if verdict == "ready":
+        assert row["reason"] == "ok"
+    else:
+        assert row["reason"] == "install_path_too_long"
+        assert row["data"] == {
+            "task": "speech.tts",
+            "path_bytes": length,
+            "path_limit": DATA_PATH_LIMIT,
+        }
