@@ -155,6 +155,25 @@ def phonemizer_short():
 
 
 @check
+def phonemizer_short_unresolved():
+    """phonemizer with its resolve() of the data path taken out of the way."""
+    import pathlib
+
+    from phonemizer.backend.espeak.wrapper import EspeakWrapper
+
+    original = EspeakWrapper.data_path.fget
+
+    def unresolved(self):
+        if self._ESPEAK_DATA_PATH:
+            self._data_path = pathlib.Path(self._ESPEAK_DATA_PATH)
+            return self._data_path
+        return original(self)
+
+    EspeakWrapper.data_path = property(unresolved)
+    _kokoro_tokenizer(short_path(ESPEAK_DATA))
+
+
+@check
 def phonemizer_long_crt_locale():
     out(f"setlocale -> {locale.setlocale(locale.LC_CTYPE, '.UTF-8')}")
     _kokoro_tokenizer(str(ESPEAK_DATA))
@@ -230,12 +249,13 @@ def tokenizers_from_file():
     out(f"tokenizers ok vocab {tok.get_vocab_size()}")
 
 
-def run_all() -> int:
+def run_all(names=None) -> int:
     import espeakng_loader
 
     if not ESPEAK_DATA.exists():
+        ESPEAK_DATA.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(espeakng_loader.get_data_path(), ESPEAK_DATA)
-    for name in CHECKS:
+    for name in names or CHECKS:
         out(f"===== {name}")
         proc = subprocess.run(
             [sys.executable, __file__, name], capture_output=True, timeout=600, check=False
@@ -251,4 +271,6 @@ if __name__ == "__main__":
     which = sys.argv[1]
     if which == "all":
         sys.exit(run_all())
+    if which == "some":
+        sys.exit(run_all(sys.argv[2:]))
     CHECKS[which]()

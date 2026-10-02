@@ -42,6 +42,12 @@ jobs:
           uv run localcut download kokoro-82m --models-dir "$root/models"
           uv run localcut download faster-whisper-base-en --models-dir "$root/models"
 
+      - name: Short names on C, where 8.3 creation is enabled
+        env:
+          PROFILE_NAME: "Zoë O'Brien 中文"
+        run: |
+          PROBE_ROOT="$USERPROFILE/$PROFILE_NAME" uv run python ../probe/unicode_probe.py some info espeak_raw_utf8 espeak_raw_short phonemizer_short phonemizer_short_unresolved
+
       - name: Probe with the stock interpreter
         env:
           PROFILE_NAME: "Zoë O'Brien 中文"
