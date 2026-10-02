@@ -1417,9 +1417,10 @@ export function Settings() {
                     </p>
                   )}
                   {/* An ffmpeg that cannot draw text. A warning rather than
-                      an error: everything works except burning a title, and
-                      a project with no titles is wholly unaffected — so the
-                      cost of being wrong here is a banner nobody needed.
+                      an error: everything works except burning in a title or
+                      a caption, and a project with no titles and sidecar
+                      captions is wholly unaffected, so the cost of being
+                      wrong here is a banner nobody needed.
                       `false` only; `null` means no ffmpeg at all, which the
                       row above already says louder, and `undefined` is an
                       engine too old to have looked. */}

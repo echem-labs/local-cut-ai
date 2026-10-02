@@ -214,11 +214,12 @@ export interface SystemInfo {
     reason: string;
   }[];
   backend_mode: string;
-  /** Whether this engine's ffmpeg can draw text. FFmpeg 7 static builds
-   * without libharfbuzz cannot, and burned-in captions or any on-screen
-   * text dies at export — so the setup surface has to say so first.
-   * `null` means ffmpeg was not found at all, which fails louder on its
-   * own; `undefined` means an engine older than the field. */
+  /** Whether this engine's ffmpeg can draw text: true once the engine has
+   * drawn a title and a burned-in caption with the font it ships. FFmpeg 7
+   * static builds without libharfbuzz cannot, and burned-in captions or
+   * any on-screen text dies at export, so the setup surface has to say so
+   * first. `null` means ffmpeg was not found at all, which fails louder on
+   * its own; `undefined` means an engine older than the field. */
   ffmpeg_drawtext?: boolean | null;
   /** Resolved per-task routing — absent on engines older than this field. */
   backends?: {
