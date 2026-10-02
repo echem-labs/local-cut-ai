@@ -14,11 +14,14 @@ everything-else fallback — never GPL x264.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import json
 import math
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -111,6 +114,91 @@ async def _terminating(process: asyncio.subprocess.Process):
         raise
 
 
+#: How a backend is told which ffmpeg to run: a name or path fixed for the
+#: backend's life, or a function asked at each use. The engine passes a
+#: function that reads EngineConfig.resolved_ffmpeg_bin (api.app's
+#: _ffmpeg_at_use), so a binary downloaded into <data_dir>/bin while the
+#: engine runs is the one the next use finds.
+FFmpegBin = str | Callable[[], str]
+
+
+def resolve_ffmpeg(ffmpeg_bin: FFmpegBin) -> str:
+    """The name or path to run now."""
+    return ffmpeg_bin() if callable(ffmpeg_bin) else ffmpeg_bin
+
+
+def _ffprobe_beside(ffmpeg_bin: str) -> str:
+    """The ffprobe that comes with this ffmpeg.
+
+    Keeps the extension: ffmpeg ships as ffmpeg.exe on Windows, and a bare
+    with_name("ffprobe") would look for an extensionless sibling that isn't
+    there. Every render would then die at the first probe, after the clips
+    have already been generated. A bare name stays bare and is looked up on
+    PATH.
+    """
+    bin_path = Path(ffmpeg_bin)
+    if bin_path.parent == Path("."):
+        return "ffprobe"
+    return str(bin_path.with_name(f"ffprobe{bin_path.suffix}"))
+
+
+def _binary_identity(ffmpeg_bin: str) -> tuple:
+    """What a probe result is filed under: the file this name runs, and enough
+    of its stat to tell it from a replacement.
+
+    The path alone is not enough: an upgrade lands at the same path, and an
+    answer measured on the old build would go on describing a binary that is
+    gone. Size and mtime change when the file is rewritten in place or
+    replaced by nearly any other build. The inode changes when a new file is
+    renamed over the old one, which is how a finished download lands, so it
+    also catches the rare replacement whose size and mtime match. A lookup
+    is one stat, so an answer already on file costs no ffmpeg run.
+
+    A name that resolves to no file is filed under the name. The probes keep
+    nothing they could not measure, and a file that appears there later has
+    an identity of its own.
+    """
+    located = ffmpeg_bin if os.path.dirname(ffmpeg_bin) else shutil.which(ffmpeg_bin)
+    if located is not None:
+        with suppress(OSError):
+            stat = os.stat(located)
+            return (located, stat.st_size, stat.st_mtime_ns, stat.st_ino)
+    return (ffmpeg_bin,)
+
+
+# The ffmpeg a backend call wrapped by _one_binary started with, held for that
+# call alone. A context variable rather than an attribute: it belongs to the
+# task that set it, so nothing else using the same backend at the same time
+# sees it, and it cannot outlive the call.
+_PINNED_FFMPEG: contextvars.ContextVar[tuple[FFmpegBackend, str] | None] = contextvars.ContextVar(
+    "localcut_pinned_ffmpeg", default=None
+)
+
+
+def _one_binary(method):
+    """Runs `method` start to finish against the ffmpeg resolved as it starts.
+
+    What one ffmpeg run learns is handed to the next. An export picks its
+    encoder once and feeds it to every run after, and the text probe files
+    its two draws under the binary it looked up first. A binary that lands
+    partway through therefore belongs to the next call: switching in the
+    middle would mix two builds' answers.
+    """
+
+    @functools.wraps(method)
+    async def run(self: FFmpegBackend, *args, **kwargs):
+        pinned = _PINNED_FFMPEG.get()
+        if pinned is not None and pinned[0] is self:
+            return await method(self, *args, **kwargs)
+        token = _PINNED_FFMPEG.set((self, self.ffmpeg_bin))
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            _PINNED_FFMPEG.reset(token)
+
+    return run
+
+
 def ffmpeg_available(ffmpeg_bin: str) -> bool:
     """Whether this name resolves to an ffmpeg the engine can actually run.
 
@@ -179,31 +267,42 @@ def _scaled_canvas(width: int, height: int, short_side: object) -> tuple[int, in
 class FFmpegBackend(ExecutionBackend):
     name = "ffmpeg"
 
-    def __init__(self, ffmpeg_bin: str = "ffmpeg") -> None:
-        self.ffmpeg_bin = ffmpeg_bin
-        bin_path = Path(ffmpeg_bin)
-        # Keep the extension: ffmpeg ships as ffmpeg.exe on Windows, and a
-        # bare with_name("ffprobe") would look for an extensionless sibling
-        # that isn't there — every render then dies at the first probe,
-        # after the clips have already been generated.
-        self.ffprobe_bin = (
-            str(bin_path.with_name(f"ffprobe{bin_path.suffix}"))
-            if bin_path.parent != Path(".")
-            else "ffprobe"
-        )
-        self._encoder: str | None = None
+    def __init__(self, ffmpeg_bin: FFmpegBin = "ffmpeg") -> None:
+        self._ffmpeg_bin = ffmpeg_bin
+        # The encoder that opened, per binary (_binary_identity); see
+        # _pick_encoder.
+        self._encoder: dict[tuple, str] = {}
         # Where titles and captions are drawn from. Never the system's fonts:
         # a machine without any must render the same video (fonts.py).
         self.fonts_dir = fonts.DIR
-        # (titles, captions) once probed; see _draws_text.
-        self._text: tuple[bool, bool] | None = None
+        # (titles, captions) per binary, once probed; see _draws_text.
+        self._text: dict[tuple, tuple[bool, bool]] = {}
+
+    @property
+    def ffmpeg_bin(self) -> str:
+        """The ffmpeg this backend runs: inside a call _one_binary wraps, the
+        one that call started with; anywhere else, whatever its source names
+        right now."""
+        pinned = _PINNED_FFMPEG.get()
+        if pinned is not None and pinned[0] is self:
+            return pinned[1]
+        return resolve_ffmpeg(self._ffmpeg_bin)
+
+    @property
+    def ffprobe_bin(self) -> str:
+        """Derived from ffmpeg_bin on every read, so the pair moves together."""
+        return _ffprobe_beside(self.ffmpeg_bin)
 
     def supports(self, kind: NodeKind) -> bool:
         # Binary-gated: without an ffmpeg on disk (managed download) or on
         # PATH, assembly falls through to the chain's fallback instead of
-        # failing — and starts claiming the moment the download lands.
+        # failing. The binary is looked up on every call, so a download that
+        # lands in <data_dir>/bin claims these kinds from the next resolve
+        # on. PATH is the one this process started with, though: an ffmpeg
+        # whose installer adds a directory to PATH needs an engine restart.
         return kind in _KINDS and ffmpeg_available(self.ffmpeg_bin)
 
+    @_one_binary
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
         match spec.kind:
             case NodeKind.CLIP:
@@ -1073,10 +1172,13 @@ class FFmpegBackend(ExecutionBackend):
         drawtext at all, and fails here the same way.
 
         (None, None) when the binary could not be run, which fails louder on
-        its own at use. Cached once known: neither the binary nor the bundled
-        font changes under a running engine."""
-        if self._text is not None:
-            return self._text
+        its own at use. That answer is never kept, because the download that
+        fixes it can land at any moment. A drawn answer is kept for the binary
+        it was drawn with (_binary_identity), so a binary that appears or is
+        replaced is drawn with again, and an unchanged one never is."""
+        key = _binary_identity(self.ffmpeg_bin)
+        if key in self._text:
+            return self._text[key]
         width, height = _PROBE_FRAME
         with tempfile.TemporaryDirectory(prefix="localcut-text-probe-") as tmp:
             textfile = Path(tmp) / "title.txt"
@@ -1088,9 +1190,10 @@ class FFmpegBackend(ExecutionBackend):
             captions = await self._lit_pixels(self._captions_filter(ass))
         if titles is None or captions is None:
             return None, None
-        self._text = (titles > 0, captions > 0)
-        return self._text
+        self._text[key] = (titles > 0, captions > 0)
+        return self._text[key]
 
+    @_one_binary
     async def supports_drawtext(self) -> bool | None:
         """Whether this ffmpeg puts text on the video: on-screen titles and
         burned-in captions both. /system reports it as `ffmpeg_drawtext`, so
@@ -1220,8 +1323,11 @@ class FFmpegBackend(ExecutionBackend):
     async def _pick_encoder(self) -> str:
         """First candidate that actually encodes a frame wins — being listed
         in -encoders doesn't mean it can open (NVENC needs driver/GPU access,
-        which headless or containerized environments may lack)."""
-        if self._encoder is None:
+        which headless or containerized environments may lack). Kept per
+        binary, like the text probe: which encoders open is a property of the
+        build."""
+        key = _binary_identity(self.ffmpeg_bin)
+        if key not in self._encoder:
             # No libx264: GPL encoders are excluded by the licensing policy.
             for candidate in ("h264_nvenc", "libopenh264", "mpeg4"):
                 try:
@@ -1248,8 +1354,8 @@ class FFmpegBackend(ExecutionBackend):
                 async with _terminating(process):
                     await process.communicate()
                 if process.returncode == 0:
-                    self._encoder = candidate
+                    self._encoder[key] = candidate
                     break
             else:
                 raise GenerationError("no working H.264/MPEG-4 encoder in this ffmpeg build")
-        return self._encoder
+        return self._encoder[key]

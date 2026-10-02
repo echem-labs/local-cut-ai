@@ -27,6 +27,7 @@ from pathlib import Path
 from ..graph.compiler import JobSpec
 from ..graph.model import VOICE_REF_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
+from .ffmpeg import FFmpegBin, resolve_ffmpeg
 
 CLONE_MODEL = "local:chatterbox"
 _SPEED_MIN, _SPEED_MAX = 0.5, 2.0  # atempo's single-pass range
@@ -42,16 +43,22 @@ INSTALL_HINT = (
 class ChatterboxBackend(ExecutionBackend):
     name = "chatterbox"
 
-    def __init__(self, models_dir: Path, ffmpeg_bin: str = "ffmpeg") -> None:
+    def __init__(self, models_dir: Path, ffmpeg_bin: FFmpegBin = "ffmpeg") -> None:
         # Optional manifest-managed weights; absent → the package's own
         # from_pretrained cache (HF hub) is used.
         self.model_dir = models_dir / "tts" / "chatterbox"
-        self.ffmpeg_bin = ffmpeg_bin
+        self._ffmpeg_bin = ffmpeg_bin
         self._engine = None
         # Serialize load + GPU inference (like Kokoro/align): concurrent
         # narration jobs would otherwise double-load the weights into VRAM and
         # run simultaneous CUDA generate() calls → out-of-memory.
         self._lock = asyncio.Lock()
+
+    @property
+    def ffmpeg_bin(self) -> str:
+        """Asked at each use, as FFmpegBackend asks: the retime runs whichever
+        binary is there when the job does."""
+        return resolve_ffmpeg(self._ffmpeg_bin)
 
     def supports(self, kind: NodeKind) -> bool:
         return kind is NodeKind.NARRATION

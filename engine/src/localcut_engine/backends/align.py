@@ -17,7 +17,7 @@ from ..captions import Word, anchor_words_to_text, cues_to_srt, words_to_cues
 from ..graph.compiler import JobSpec
 from ..graph.model import DEFAULT_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
-from .ffmpeg import ffmpeg_available
+from .ffmpeg import FFmpegBin, ffmpeg_available, resolve_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,19 @@ class AlignBackend(ExecutionBackend):
         self,
         models_dir: Path,
         file_dests: list[str] | None = None,
-        ffmpeg_bin: str = "ffmpeg",
+        ffmpeg_bin: FFmpegBin = "ffmpeg",
     ) -> None:
         first = (file_dests or [f"{_DEFAULT_MODEL_DIR}/model.bin"])[0]
         self.model_dir = models_dir / Path(first).parent
-        self.ffmpeg_bin = ffmpeg_bin
+        self._ffmpeg_bin = ffmpeg_bin
         self._model = None
         self._lock = asyncio.Lock()
+
+    @property
+    def ffmpeg_bin(self) -> str:
+        """Asked at each use, as FFmpegBackend asks: narration is decoded by
+        whichever binary is there when the job runs."""
+        return resolve_ffmpeg(self._ffmpeg_bin)
 
     def supports(self, kind: NodeKind) -> bool:
         # Weights-gated like the other local backends: no whisper model on

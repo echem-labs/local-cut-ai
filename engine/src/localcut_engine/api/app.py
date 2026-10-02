@@ -15,6 +15,7 @@ import logging
 import re
 import secrets
 import statistics
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
@@ -330,11 +331,21 @@ def _llm_default_reader(config: EngineConfig):
     return read
 
 
+def _ffmpeg_at_use(config: EngineConfig) -> Callable[[], str]:
+    """The engine's ffmpeg as every holder of it takes it: the resolution
+    itself rather than its answer at startup. The app downloads ffmpeg into
+    <data_dir>/bin while the engine runs, and a name read once would leave
+    assembly, captions and the waveform decoder on whatever was there at
+    boot until a restart."""
+    return lambda: config.resolved_ffmpeg_bin
+
+
 def _build_backends(config: EngineConfig) -> BackendRegistry:
     """Build the backend chain from config; first registered wins per node
     kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
     registry = BackendRegistry()
     chain = config.backend_chain
+    ffmpeg_bin = _ffmpeg_at_use(config)
     # Mock may stand in for a real assembly backend ONLY in an explicit
     # all-mock chain (the demo/test configuration). In any hybrid chain it
     # would be covering for a missing ffmpeg, and a placeholder MP4 handed
@@ -400,9 +411,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 )
             case "chatterbox":
                 registry.register(
-                    ChatterboxBackend(
-                        models_dir=config.resolved_models_dir, ffmpeg_bin=config.resolved_ffmpeg_bin
-                    )
+                    ChatterboxBackend(models_dir=config.resolved_models_dir, ffmpeg_bin=ffmpeg_bin)
                 )
             case "kokoro":
                 registry.register(
@@ -416,11 +425,11 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                     AlignBackend(
                         models_dir=config.resolved_models_dir,
                         file_dests=_model_dests(config, "faster-whisper-base-en"),
-                        ffmpeg_bin=config.resolved_ffmpeg_bin,
+                        ffmpeg_bin=ffmpeg_bin,
                     )
                 )
             case "ffmpeg":
-                registry.register(FFmpegBackend(ffmpeg_bin=config.resolved_ffmpeg_bin))
+                registry.register(FFmpegBackend(ffmpeg_bin=ffmpeg_bin))
             case _:
                 raise ValueError(f"unknown backend in chain: {name!r}")
     # Model-driven, not chain-driven: `cloud:*` node models route here no
@@ -698,6 +707,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             "api_version": ENGINE_API_VERSION,
         }
 
+    # One probe for the life of the app, because its answers are kept per
+    # binary (backends/ffmpeg.py): asking about an unchanged binary runs no
+    # ffmpeg, and a binary that appears or is replaced is drawn with again.
+    text_probe = FFmpegBackend(ffmpeg_bin=_ffmpeg_at_use(config))
+
     @app.get("/system", dependencies=[Authed])
     async def system() -> dict:
         # Hardware doesn't change at runtime; probe once, off the event loop
@@ -707,21 +721,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 probe_hardware, str(config.data_dir)
             )
         profile = app.state.hardware_profile
-        if not hasattr(app.state, "ffmpeg_drawtext"):
-            # Whether titles and burned-in captions will draw, found out by
-            # drawing one of each with the bundled font. A static FFmpeg 7
-            # build without libharfbuzz lacks drawtext, and the setup surface
-            # must say so before an export dies on it. None = ffmpeg not
-            # found at all (its own, clearer failure at use).
-            app.state.ffmpeg_drawtext = await FFmpegBackend(
-                ffmpeg_bin=config.resolved_ffmpeg_bin
-            ).supports_drawtext()
+        # Whether titles and burned-in captions will draw, found out by
+        # drawing one of each with the bundled font. A static FFmpeg 7 build
+        # without libharfbuzz lacks drawtext, and the setup surface must say
+        # so before an export dies on it. None = ffmpeg not found at all (its
+        # own, clearer failure at use), and asked again on the next call, so
+        # an ffmpeg downloaded while the engine runs shows up here.
+        drawtext = await text_probe.supports_drawtext()
         manifest = load_manifest(config)
         return {
             "hardware": profile.model_dump(),
             "recommendations": [r.model_dump() for r in recommend_slate(manifest, profile)],
             "backend_mode": config.backend,
-            "ffmpeg_drawtext": app.state.ffmpeg_drawtext,
+            "ffmpeg_drawtext": drawtext,
             # Per-file exists() checks scale with the manifest — keep them
             # off the loop, like /models does.
             "backends": {
@@ -2084,7 +2096,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     # A dedicated decoder instance rather than a chain lookup: the chain may
     # not include an ffmpeg backend at all (all-mock demo config), and peaks
     # are a read-model concern, not a render.
-    peaks_decoder = FFmpegBackend(ffmpeg_bin=config.resolved_ffmpeg_bin)
+    peaks_decoder = FFmpegBackend(ffmpeg_bin=_ffmpeg_at_use(config))
 
     @app.get("/projects/{project_id}/artifacts/{output_hash}/peaks", dependencies=[Authed])
     async def artifact_peaks(
