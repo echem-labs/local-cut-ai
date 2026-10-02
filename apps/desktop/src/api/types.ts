@@ -371,7 +371,11 @@ export type ReadinessReason =
   | "cloud_key_missing"
   | "cloud_model_unknown"
   | "comfyui_down"
-  | "no_ffmpeg";
+  | "no_ffmpeg"
+  /** ffmpeg runs, and draws nothing where the export needs text drawn
+   * (its burned-in captions), so the export refuses before it renders a
+   * scene. */
+  | "ffmpeg_cannot_draw_text";
 
 export type ReadinessFix =
   | { type: "download"; model_id: string; size_bytes: number }

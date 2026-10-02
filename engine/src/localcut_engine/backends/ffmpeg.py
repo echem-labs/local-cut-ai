@@ -516,6 +516,12 @@ class FFmpegBackend(ExecutionBackend):
         work = Path(tempfile.mkdtemp(prefix="localcut-export-"))
         partial: Path | None = None  # set once the final artifact path is known
         try:
+            # Asked before the first scene renders. Captions this ffmpeg
+            # cannot draw otherwise fail the last encode, or burn in blank,
+            # after every scene has already been paid for.
+            burn = self._burnable_captions(spec, ctx, work, width, height)
+            if burn is not None:
+                await self._require_burned_captions()
             scene_files: list[Path] = []
             total = len(segments)
             for index, segment in enumerate(segments):
@@ -542,7 +548,6 @@ class FFmpegBackend(ExecutionBackend):
                 )
                 await ctx.progress(0.8 * (index + 1) / total)
 
-            burn = self._burnable_captions(spec, ctx, work, width, height)
             cut = await self._join_segments(
                 segments,
                 scene_files,
@@ -1120,6 +1125,25 @@ class FFmpegBackend(ExecutionBackend):
         if titles is None or captions is None:
             return None
         return titles and captions
+
+    async def draws_captions(self) -> bool | None:
+        """Whether this ffmpeg burns captions in: the caption half of the
+        probe, which the readiness report asks so that it says what
+        `_require_burned_captions` will do. None = the binary is missing or
+        could not be run."""
+        _, captions = await self._draws_text()
+        return captions
+
+    async def _require_burned_captions(self) -> None:
+        # The caption half only, as the title guard reads the title half.
+        _, captions = await self._draws_text()
+        if captions is False:
+            raise GenerationError(
+                "burned-in captions need ffmpeg's ass filter, and this build drew "
+                "nothing with it (it needs libass compiled in; some builds omit it) - "
+                "point LOCALCUT_FFMPEG_BIN at a full build, or switch Captions to "
+                '"Separate file (.srt)"'
+            )
 
     async def _require_drawtext(self) -> None:
         # The title half only. A build that cannot burn captions may still

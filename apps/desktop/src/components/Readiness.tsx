@@ -95,6 +95,7 @@ const CAUSE_ICON: Record<string, LucideIcon> = {
   cloud_key_missing: PlugZap,
   cloud_model_unknown: PlugZap,
   no_ffmpeg: Clapperboard,
+  ffmpeg_cannot_draw_text: Clapperboard,
 };
 
 export interface GapItem {

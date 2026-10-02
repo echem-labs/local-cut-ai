@@ -9,7 +9,8 @@
     "cloud_key_missing": "No {provider} API key is set for \"{model}\".",
     "cloud_model_unknown": "No provider offers \"{model}\" for this kind of work.",
     "comfyui_down": "The program that draws images and video isn't running.",
-    "no_ffmpeg": "ffmpeg, the tool that puts the video together, wasn't found."
+    "no_ffmpeg": "ffmpeg, the tool that puts the video together, wasn't found.",
+    "ffmpeg_cannot_draw_text": "This machine's FFmpeg can't draw text onto the video."
   },
   "effects": {
     "degraded": "a lower-quality result",

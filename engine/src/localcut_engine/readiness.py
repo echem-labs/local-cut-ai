@@ -42,9 +42,9 @@ from dataclasses import dataclass, field
 import httpx
 
 from .backends.base import BackendRegistry, GenerationError, ServiceProbe
-from .backends.ffmpeg import ffmpeg_available
+from .backends.ffmpeg import FFmpegBackend, ffmpeg_available
 from .config import EngineConfig
-from .graph.model import NodeKind
+from .graph.model import CAPTIONS_PORT, NodeKind
 from .manifest.capability import COMFY_TASKS, installed_by_task, installed_comfy_models
 from .manifest.defaults import DEFAULTABLE_TASKS, load_defaults
 from .manifest.downloads import is_downloaded
@@ -77,6 +77,9 @@ READINESS_REASONS = (
     "cloud_model_unknown",
     "comfyui_down",
     "no_ffmpeg",
+    # ffmpeg runs, and draws nothing where the export needs text drawn (its
+    # burned-in captions): the export refuses before it renders a scene.
+    "ffmpeg_cannot_draw_text",
 )
 
 READINESS_FIX_TYPES = ("download", "pick_model", "configure_provider", "install_ffmpeg")
@@ -214,6 +217,22 @@ def project_pairs(graph, *, is_tool_session: bool) -> list[tuple[NodeKind, str |
         covered = {kind for kind, _ in pairs}
         pairs += [(kind, None) for kind in PIPELINE_KINDS if kind not in covered]
     return pairs
+
+
+def export_burns_captions(graph) -> bool:
+    """Whether the project's export burns its captions into the picture, and
+    so needs this ffmpeg to draw them. Read the way `_burnable_captions`
+    reads it at render time: the export's captions mode, and a captions node
+    feeding the export at all. A graph that has not expanded yet has no
+    export; the one its expansion plants burns them (templates.py)."""
+    exports = [node for node in graph.nodes.values() if node.kind is NodeKind.EXPORT]
+    if not exports:
+        return True
+    return any(
+        node.params.get("captions", "burn") == "burn"
+        and any(edge.dst == node.id and edge.port == CAPTIONS_PORT for edge in graph.edges)
+        for node in exports
+    )
 
 
 @dataclass
@@ -647,19 +666,45 @@ async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: st
     return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
 
 
+async def _finish_export_row(backends: BackendRegistry, row: dict) -> dict:
+    """An export ffmpeg serves still fails when it burns captions this
+    ffmpeg cannot draw, because it refuses before rendering a scene. Asked
+    of the backend instance the scheduler runs, through the probe that
+    refusal reads, so the two cannot disagree. An ffmpeg that could not be
+    run answers None, and its own failure at render time says more."""
+    if row["verdict"] != "ready" or row["backend"] != "ffmpeg":
+        return row
+    ffmpeg = backends.find("ffmpeg")
+    if not isinstance(ffmpeg, FFmpegBackend) or await ffmpeg.draws_captions() is not False:
+        return row
+    return _row(
+        NodeKind.EXPORT,
+        verdict="will_fail",
+        reason="ffmpeg_cannot_draw_text",
+        backend="ffmpeg",
+    )
+
+
 async def readiness_rows(
     config: EngineConfig,
     backends: BackendRegistry,
     pairs: list[tuple[NodeKind, str | None]],
     profile: object | None = None,
+    *,
+    burns_captions: bool = True,
 ) -> list[dict]:
     """One report row per (kind, model) pair, in the order given.
 
     `profile` is this machine's hardware, when the caller already holds it
     — it only narrows the offered download to something the box can run.
 
+    `burns_captions` is whether the export burns its captions in
+    (`export_burns_captions` for a project). Without a project the answer is
+    the export a new one gets, which does.
+
     Blocking work (manifest scans, resolve's capability probes) runs off
-    the event loop; only the LLM server's model listing is awaited here.
+    the event loop; the LLM server's model listing and the ffmpeg text probe
+    are awaited here.
     """
     snap = await asyncio.to_thread(_load_snapshot, config, profile)
     rows: list[dict] = []
@@ -671,5 +716,7 @@ async def readiness_rows(
         if isinstance(result, tuple):
             backend, resolved_model = result
             result = await _finish_llm_row(snap, kind, backend, resolved_model)
+        elif kind is NodeKind.EXPORT and burns_captions:
+            result = await _finish_export_row(backends, result)
         rows.append(result)
     return rows

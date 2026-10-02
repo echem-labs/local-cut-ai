@@ -20,6 +20,7 @@ import pytest
 from localcut_engine.api.app import _build_backends, create_app
 from localcut_engine.automation import outstanding_jobs
 from localcut_engine.backends.base import ServiceProbe
+from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
 from localcut_engine.graph.model import NodeKind
@@ -529,14 +530,9 @@ async def test_a_cause_is_never_guessed_from_the_winning_backend(tmp_path):
     assert rows["export"]["verdict"] == "ready"
 
 
-@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
-async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp_path):
-    """A report is a prediction, made without rendering anything. This
-    renders, on the chain a machine with ffmpeg and no models runs, and holds
-    the project's report to the jobs: each row names the backend that served
-    its kind, and nothing the report did not call a failure failed. Assembly
-    is judged ready on ffmpeg alone, so this is also where a placeholder
-    ffmpeg cannot decode shows up."""
+async def _report_then_render(tmp_path) -> tuple[list[dict], list[dict]]:
+    """A project's readiness report, then every job its render ran, on the
+    chain a machine with ffmpeg and no models runs."""
     config = EngineConfig(data_dir=tmp_path, token="test-token", backend="ffmpeg,mock")
     app = create_app(config)
     transport = httpx.ASGITransport(app=app)
@@ -559,10 +555,27 @@ async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp
                     if exported and not outstanding_jobs(jobs):
                         break
                     await asyncio.sleep(0.1)
+    return report, jobs
 
+
+def _served(jobs: list[dict]) -> dict[str, set[tuple[str, str]]]:
+    """Per kind, the (backend, status) pairs its jobs ended on."""
     served: dict[str, set[tuple[str, str]]] = {}
     for job in jobs:
         served.setdefault(job["spec"]["kind"], set()).add((job["backend"], job["status"]))
+    return served
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp_path):
+    """A report is a prediction, made without rendering anything. This
+    renders, on the chain a machine with ffmpeg and no models runs, and holds
+    the project's report to the jobs: each row names the backend that served
+    its kind, and nothing the report did not call a failure failed. Assembly
+    is judged ready on ffmpeg alone, so this is also where a placeholder
+    ffmpeg cannot decode shows up."""
+    report, jobs = await _report_then_render(tmp_path)
+    served = _served(jobs)
     wrong = {
         row["kind"]: sorted(served.get(row["kind"], ()))
         for row in report
@@ -570,6 +583,89 @@ async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp
     }
     errors = {job["spec"]["node_id"]: job["error"] for job in jobs if job["status"] == "failed"}
     assert wrong == {}, errors
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+async def test_burned_captions_this_ffmpeg_cannot_draw_fail_where_the_report_said(
+    tmp_path, monkeypatch
+):
+    """The same render on an ffmpeg that draws titles and no captions. The
+    export burns its captions unless told otherwise, so it refuses before its
+    first scene, and the report has to have said so beforehand: about the
+    export, and about nothing else."""
+
+    async def no_captions(self, vf: str) -> int:
+        return 0 if vf.startswith("ass=") else 500
+
+    monkeypatch.setattr(FFmpegBackend, "_lit_pixels", no_captions)
+    report, jobs = await _report_then_render(tmp_path)
+    served = _served(jobs)
+    assert [row["kind"] for row in report if row["verdict"] == "will_fail"] == ["export"]
+    assert served["export"] == {("ffmpeg", "failed")}
+    wrong = {
+        row["kind"]: sorted(served.get(row["kind"], ()))
+        for row in report
+        if row["kind"] != "export" and served.get(row["kind"]) != {(row["backend"], "done")}
+    }
+    assert wrong == {}
+    (error,) = [job["error"] for job in jobs if job["status"] == "failed"]
+    assert '"Separate file (.srt)"' in error
+
+
+async def test_an_export_row_asks_whether_this_ffmpeg_draws_captions(tmp_path, monkeypatch):
+    """Through the same probe the export's refusal reads, on the backend
+    instance the scheduler runs. Only an export that burns its captions
+    needs them drawn."""
+    config = EngineConfig(
+        data_dir=tmp_path, backend="ffmpeg,mock", ffmpeg_bin=_planted_ffmpeg(tmp_path)
+    )
+    backends = _build_backends(config)
+    drawn = {"captions": 0}
+
+    async def lit(vf: str) -> int:
+        return drawn["captions"] if vf.startswith("ass=") else 500
+
+    monkeypatch.setattr(backends.find("ffmpeg"), "_lit_pixels", lit)
+    (row,) = await readiness_rows(config, backends, [(NodeKind.EXPORT, None)])
+    assert (row["verdict"], row["reason"], row["backend"]) == (
+        "will_fail",
+        "ffmpeg_cannot_draw_text",
+        "ffmpeg",
+    )
+    assert row["fix"] is None
+    (row,) = await readiness_rows(config, backends, [(NodeKind.EXPORT, None)], burns_captions=False)
+    assert row["verdict"] == "ready"
+
+
+async def test_an_ffmpeg_that_cannot_be_run_is_not_blamed_for_captions(tmp_path):
+    """A planted ffmpeg that is not a program: the probe cannot say, and the
+    render's own failure to start it is the louder error."""
+    config = EngineConfig(
+        data_dir=tmp_path, backend="ffmpeg,mock", ffmpeg_bin=_planted_ffmpeg(tmp_path)
+    )
+    (row,) = await readiness_rows(config, _build_backends(config), [(NodeKind.EXPORT, None)])
+    assert row["verdict"] == "ready"
+
+
+def test_a_project_burns_its_captions_unless_its_export_says_otherwise():
+    """What the export's refusal reads at render time, read off the graph:
+    the captions mode, and a captions node feeding the export at all. A
+    graph that has not expanded yet gets the export its expansion plants,
+    which burns them."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.readiness import export_burns_captions
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("tides")
+    assert export_burns_captions(graph) is True
+    scenes = [Scene(id="a", duration_s=4, narration="one", visual="v1")]
+    expand_screenplay(graph, Screenplay(title="t", scenes=scenes))
+    assert export_burns_captions(graph) is True
+    graph.nodes["export"].params["captions"] = "sidecar"
+    assert export_burns_captions(graph) is False
+    graph.nodes["export"].params["captions"] = "burn"
+    graph.edges = [edge for edge in graph.edges if edge.dst != "export" or edge.src != "captions"]
+    assert export_burns_captions(graph) is False
 
 
 async def test_an_all_mock_chain_does_not_blame_a_missing_model_for_assembly(tmp_path):
