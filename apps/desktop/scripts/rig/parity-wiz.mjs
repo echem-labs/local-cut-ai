@@ -429,6 +429,11 @@ try {
   console.log(`  SYSTEM ${JSON.stringify(verdict)}`);
   await shoot("wiz-2");
   await click("Continue");
+  // Through the programs step, which the reference set predates: by its
+  // "Skip for now" where it offers one (its primary would start a real
+  // download), and by its Continue where it does not.
+  await click("Skip for now");
+  await click("Continue");
   await shoot("wiz-3");
   await click("Open full library");
   await click("All models"); // the greyed-rows frame; filter chip is masked

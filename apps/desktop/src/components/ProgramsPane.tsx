@@ -5,6 +5,7 @@ import { hostOf, isKnownProgram, PROGRAM_ORDER } from "../lib/programs";
 import { useVoices } from "../lib/useVoices";
 import { useApp } from "../store";
 import { formatSize } from "./ModelLibrary";
+import { PipelineStrip } from "./PipelineStrip";
 import { ChatterboxWell, ProgramWell, useCheckAgain, WithCode } from "./ProgramWell";
 import { Tip } from "./Tooltip";
 
@@ -83,6 +84,7 @@ export function ProgramsPane() {
         </Tip>
       </div>
       {host && <p className="hint programs-remote">{t("programs.pane.remoteHint")}</p>}
+      <PipelineStrip context="settings" />
       {programsError && (
         <p className="banner error" role="alert">
           {t("programs.pane.failed", { error: programsError })}
