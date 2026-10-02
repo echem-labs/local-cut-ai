@@ -1,0 +1,71 @@
+name: Unicode path probe
+
+# Throwaway: runs on pushes to this branch only.
+on:
+  push:
+    branches: ["probe/unicode-paths"]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - run: uv sync --all-groups
+
+      - name: 8.3 name creation per volume
+        shell: pwsh
+        run: |
+          fsutil 8dot3name query C:
+          fsutil 8dot3name query D:
+          echo "RUNNER_TEMP=$env:RUNNER_TEMP TEMP=$env:TEMP"
+
+      - name: Fetch weights into the awkward folder
+        env:
+          PROFILE_NAME: "Zoë O'Brien 中文"
+        run: |
+          root="$RUNNER_TEMP/$PROFILE_NAME"
+          mkdir -p "$root"
+          uv run localcut download kokoro-82m --models-dir "$root/models"
+          uv run localcut download faster-whisper-base-en --models-dir "$root/models"
+
+      - name: Probe with the stock interpreter
+        env:
+          PROFILE_NAME: "Zoë O'Brien 中文"
+        run: |
+          PROBE_ROOT="$RUNNER_TEMP/$PROFILE_NAME" uv run python ../probe/unicode_probe.py all
+
+      - name: Probe with an interpreter whose active code page is UTF-8
+        env:
+          PROFILE_NAME: "Zoë O'Brien 中文"
+        run: |
+          base="$(uv run python -c 'import sys; print(sys._base_executable)')"
+          site_dir="$(uv run python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          utf8="$(dirname "$base")/python-utf8.exe"
+          cp "$base" "$utf8"
+          uv run python - "$utf8" <<'EOF'
+          import sys
+          from PyInstaller.utils.win32 import winmanifest
+
+          xml = winmanifest._DEFAULT_MANIFEST_XML.replace(
+              b"<windowsSettings>",
+              b'<windowsSettings><activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>',
+          )
+          manifest = winmanifest.create_application_manifest(xml)
+          winmanifest.write_manifest_to_executable(sys.argv[1], manifest)
+          print(winmanifest.read_manifest_from_executable(sys.argv[1]).decode())
+          EOF
+          PROBE_SITE="$site_dir" PROBE_ROOT="$RUNNER_TEMP/$PROFILE_NAME" "$utf8" ../probe/unicode_probe.py all
