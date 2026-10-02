@@ -235,4 +235,11 @@ jobs:
       # absent — which is exactly how a runner with a crippled ffmpeg once
       # looked green while testing no assembly at all. What is NOT running
       # should be readable from the log without re-running anything.
-      - run: uv run pytest -q -rs
+      #
+      # --basetemp puts every test's tmp_path under a folder named like a
+      # user's profile folder: a diacritic, an apostrophe, a space and CJK.
+      # On Windows an installed engine keeps its projects and data under such
+      # a folder. bash on every OS, so the one line quotes the path the same
+      # way on all three.
+      - shell: bash
+        run: uv run pytest -q -rs --basetemp "$RUNNER_TEMP/Zoë O'Brien 中文"
