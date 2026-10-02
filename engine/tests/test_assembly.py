@@ -5,12 +5,14 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
 import pytest
 from conftest import make_spec
 
+from localcut_engine import fonts
 from localcut_engine.backends.base import ExecutionContext, GenerationError
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.graph.compiler import JobSpec
@@ -476,10 +478,18 @@ def dark_scene(tmp_path) -> dict:
     }
 
 
-def lit_pixels(path: Path, at: float) -> int:
-    """Pixels brighter than mid-grey in the frame `at` seconds into `path`."""
+#: ffmpeg crop windows (w:h:x:y): the half of the frame a title draws in,
+#: and the half burned captions draw in.
+TOP_HALF = "iw:ih/2:0:0"
+BOTTOM_HALF = "iw:ih/2:0:ih/2"
+
+
+def lit_pixels(path: Path, at: float, crop: str | None = None) -> int:
+    """Pixels brighter than mid-grey in the frame `at` seconds into `path`,
+    inside the `crop` window when one is given."""
+    window = ["-vf", f"crop={crop}"] if crop is not None else []
     frame = subprocess.run(
-        [FFMPEG, "-v", "error", "-ss", f"{at}", "-i", str(path)]
+        [FFMPEG, "-v", "error", "-ss", f"{at}", "-i", str(path), *window]
         + ["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
         capture_output=True,
         check=True,
@@ -523,6 +533,46 @@ async def test_burned_captions_draw_on_a_machine_without_fonts(
         ),
     )
     assert lit_pixels(out, 0.5) > 0, "the burned-in caption drew nothing"
+
+
+# A directory name holding what a filtergraph reads as syntax: its quote, its
+# separators and the characters around them. Windows refuses `:` and `\` in a
+# name. It gets no non-ASCII either: drawtext hands its font path to FreeType,
+# which opens files through the ANSI code page there (CreateFileA), so a font
+# under `é` cannot be opened however its path is escaped.
+_SYNTAX_IN_A_NAME = "O'Brien, [1]; a=b 100%" + ("" if os.name == "nt" else r" é 中 a:b\c")
+
+
+async def test_text_draws_from_paths_that_hold_filtergraph_syntax(
+    tmp_path, dark_scene, monkeypatch
+):
+    """The title's text file, the captions file and the fonts all reach
+    ffmpeg as option values inside a filtergraph, and on Windows every one of
+    them sits under the user's profile folder (the export works in the temp
+    directory, the app installs into AppData). A profile named O'Brien has to
+    draw the same video as anyone else's."""
+    awkward = tmp_path / _SYNTAX_IN_A_NAME
+    faces = awkward / "fonts"
+    shutil.copytree(fonts.DIR, faces)
+    monkeypatch.setattr(tempfile, "tempdir", str(awkward))
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    backend.fonts_dir = faces
+    out_dir = awkward / "generated"
+    timeline_path = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "9:16", "overlays": {"s1": "THREE HEARTS"}}),
+        ExecutionContext(output_dir=out_dir, input_artifacts=dark_scene),
+    )
+    srt = awkward / "caps.srt"
+    srt.write_text("1\n00:00:00,100 --> 00:00:01,000\nhello captions\n", encoding="utf-8")
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {"captions": "burn"}, output_hash="c" * 64),
+        ExecutionContext(
+            output_dir=out_dir,
+            input_artifacts={"default": timeline_path, "captions": srt},
+        ),
+    )
+    assert lit_pixels(out, 0.5, TOP_HALF) > 0, "the title drew nothing"
+    assert lit_pixels(out, 0.5, BOTTOM_HALF) > 0, "the burned-in caption drew nothing"
 
 
 async def test_final_quality_uses_higher_bitrate(tmp_path, media):
