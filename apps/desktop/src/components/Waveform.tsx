@@ -9,8 +9,8 @@ import { WavePlot, useArtifactPeaks } from "./WavePlot";
  *
  * The shape comes from the engine's peaks route — computed once and cached
  * server-side — so the renderer never decodes audio. A session whose
- * artifact is not decodable audio (mock placeholders) just gets the bare
- * native player: the wave is a reading aid, never a gate.
+ * artifact is not decodable audio just gets the bare native player: the
+ * wave is a reading aid, never a gate.
  */
 export function Waveform({
   projectId,

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -64,6 +66,55 @@ def test_a_prompt_becomes_a_rendered_file_without_a_ui(engine, capsys, tmp_path)
     assert out.is_file()
     assert out.stat().st_size > 0
     assert json_out(capsys)["bytes"] == out.stat().st_size
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_with_ffmpeg_and_no_models_the_cut_is_a_video_that_plays(tmp_path, capsys):
+    """The same trip with ffmpeg installed and no models downloaded. Assembly
+    is real and everything it assembles is a mock placeholder, so those
+    placeholders have to be media ffmpeg can cut together. Narration decides
+    it: each scene runs as long as its narration, so a narration ffmpeg
+    cannot decode stops the timeline and leaves no cut at all."""
+    with serve_engine(tmp_path / "engine", TOKEN, backend="ffmpeg,mock") as engine:
+        assert run(engine, "create", "a short film about tides", "--duration", "5", "--json") == 0
+        project_id = json_out(capsys)["id"]
+
+        status = run(engine, "render", project_id, "--timeout", "300", "--json")
+        assert json_out(capsys)["failed"] == []
+        assert status == 0
+
+        cut = tmp_path / "cut.mp4"
+        assert run(engine, "export", project_id, "--out", str(cut), "--json") == 0
+
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,width,height,duration:format=duration",
+            "-of",
+            "json",
+            str(cut),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    media = json.loads(probe.stdout)
+    streams = {stream["codec_type"]: stream for stream in media["streams"]}
+    assert sorted(streams) == ["audio", "video"]
+    assert (streams["video"]["width"], streams["video"]["height"]) == (1080, 1920)
+    # The soundtrack runs under the whole picture rather than stopping short.
+    length = float(media["format"]["duration"])
+    assert float(streams["audio"]["duration"]) == pytest.approx(length, abs=0.5)
+    # Every frame decodes, not only the header ffprobe reads.
+    decode = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(cut), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+    )
+    assert (decode.returncode, decode.stderr) == (0, "")
 
 
 def test_a_project_is_listed_once_it_exists(engine, capsys):

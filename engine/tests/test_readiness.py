@@ -9,13 +9,16 @@ same contract the capability tests hold the backends to.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import shutil
 
 import httpx
 import pytest
 
 from localcut_engine.api.app import _build_backends, create_app
+from localcut_engine.automation import outstanding_jobs
 from localcut_engine.backends.base import ServiceProbe
 from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
@@ -524,6 +527,49 @@ async def test_a_cause_is_never_guessed_from_the_winning_backend(tmp_path):
         assert rows[kind]["fix"] is None, kind
     # ffmpeg is present, so assembly is genuinely fine.
     assert rows["export"]["verdict"] == "ready"
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp_path):
+    """A report is a prediction, made without rendering anything. This
+    renders, on the chain a machine with ffmpeg and no models runs, and holds
+    the project's report to the jobs: each row names the backend that served
+    its kind, and nothing the report did not call a failure failed. Assembly
+    is judged ready on ffmpeg alone, so this is also where a placeholder
+    ffmpeg cannot decode shows up."""
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="ffmpeg,mock")
+    app = create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+    ):
+        async with app.router.lifespan_context(app):
+            created = await http.post("/projects", json={"prompt": "tides", "target_duration_s": 5})
+            project_id = created.json()["id"]
+            report = (await http.get(f"/projects/{project_id}/readiness")).json()["rows"]
+            async with asyncio.timeout(300):
+                while True:
+                    jobs = (await http.get("/jobs", params={"project_id": project_id})).json()
+                    exported = any(job["spec"]["kind"] == "export" for job in jobs)
+                    if exported and not outstanding_jobs(jobs):
+                        break
+                    await asyncio.sleep(0.1)
+
+    served: dict[str, set[tuple[str, str]]] = {}
+    for job in jobs:
+        served.setdefault(job["spec"]["kind"], set()).add((job["backend"], job["status"]))
+    wrong = {
+        row["kind"]: sorted(served.get(row["kind"], ()))
+        for row in report
+        if row["verdict"] == "will_fail" or served.get(row["kind"]) != {(row["backend"], "done")}
+    }
+    errors = {job["spec"]["node_id"]: job["error"] for job in jobs if job["status"] == "failed"}
+    assert wrong == {}, errors
 
 
 async def test_an_all_mock_chain_does_not_blame_a_missing_model_for_assembly(tmp_path):

@@ -55,10 +55,10 @@ export function WavePlot({
 /**
  * An artifact's waveform shape, computed and cached engine-side.
  *
- * Null while loading AND when the artifact is not decodable audio (a mock
- * placeholder) or the engine has no ffmpeg. Callers treat all three the
- * same: no wave. It is a reading aid, never a gate — a 422 or 503 here must
- * not take the surface down with it.
+ * Null while loading AND when the artifact is not decodable audio or the
+ * engine has no ffmpeg. Callers treat all three the same: no wave. It is a
+ * reading aid, never a gate — a 422 or 503 here must not take the surface
+ * down with it.
  */
 export function useArtifactPeaks(projectId: string | null, hash: string | null): AudioPeaks | null {
   const client = useApp((state) => state.client);
