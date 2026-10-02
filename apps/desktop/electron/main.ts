@@ -15,7 +15,7 @@ import { execFile } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { EngineCrash } from "../src/api/types";
+import type { EngineCrash, UpdateCheckResult } from "../src/api/types";
 import { EngineManager } from "./engine";
 import {
   type KeyPresence,
@@ -27,6 +27,7 @@ import { installLogSink, readLogFiles } from "./logfile";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
 import { capturePinnedCert, engineRequest } from "./request";
 import { bundleEntries, zipEntries } from "./support";
+import { readAnswer, readHomepage, resolveUpdateFeed, UPDATE_CHECK_SWITCH } from "./updates";
 
 // Dev-only: the test rig points userData at a temp dir so a run starts from
 // a fresh profile (first-run state, empty layout store) without touching the
@@ -58,17 +59,26 @@ const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 installLogSink(LOGS_DIR);
 
 /**
- * The release feed, opt-in through `LOCALCUT_UPDATE_FEED`. No build sets it:
- * the installers are unsigned, and an in-app update path that fetches one is
- * a way to hand somebody a binary with nothing vouching for it. Empty means
- * the renderer is told updates are not configured and never offers the check.
+ * The release feed the update check reads, or "" for none. The rules are
+ * `resolveUpdateFeed`'s: an installed build asks GitHub for this repository's
+ * latest release, a dev run asks nothing, and LOCALCUT_UPDATE_FEED overrides
+ * both. With no feed, the renderer is told there is none and never offers
+ * the check.
+ *
+ * The check reports a version and a link to that release's page, and
+ * downloads nothing. The installers are unsigned, so fetching a new one
+ * stays a decision a person makes on the release page.
  *
  * It lives in the main process and never crosses the bridge: the renderer
- * asks *whether* to offer the check and asks for one to run, but never
+ * learns *whether* there is a feed and asks for a check to run, but never
  * says what URL to fetch. Otherwise anything running in the renderer could
  * point the shell's own network stack at a host of its choosing.
  */
-const UPDATE_FEED = process.env.LOCALCUT_UPDATE_FEED?.trim() ?? "";
+const UPDATE_FEED = resolveUpdateFeed({
+  override: process.env.LOCALCUT_UPDATE_FEED,
+  packaged: app.isPackaged,
+  homepage: readHomepage(app.getAppPath()),
+});
 
 const engine = new EngineManager();
 /**
@@ -319,6 +329,12 @@ async function createWindow(): Promise<void> {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Whether there is an update feed, for the preload to report. It runs
+      // sandboxed, where neither `app.isPackaged` nor package.json can be
+      // read, and a value on its command line is there before its first
+      // line runs, so About can lay itself out without waiting on IPC. The
+      // feed's URL stays in this process (see UPDATE_FEED).
+      additionalArguments: UPDATE_FEED ? [UPDATE_CHECK_SWITCH] : [],
     },
   });
 
@@ -913,19 +929,7 @@ ipcMain.handle("support:export-bundle", async (event, report: unknown) => {
 
 /* --------------------------------------------------- About → Updates -- */
 
-/** Whatever the feed calls it, reduced to the two things About shows. Both
- * shapes are accepted so the feed decision (GitHub releases vs a static
- * JSON file) does not have to be made before this ships. */
-function readFeed(body: unknown): { version: string; url: string } | null {
-  if (!body || typeof body !== "object") return null;
-  const row = body as Record<string, unknown>;
-  const version = typeof row.tag_name === "string" ? row.tag_name : row.version;
-  const url = typeof row.html_url === "string" ? row.html_url : row.url;
-  if (typeof version !== "string" || !version.trim()) return null;
-  return { version: version.trim().replace(/^v/i, ""), url: typeof url === "string" ? url : "" };
-}
-
-ipcMain.handle("update:check", async (event) => {
+ipcMain.handle("update:check", async (event): Promise<UpdateCheckResult> => {
   if (!trustedSender(event)) return { latest: null, url: null, error: "untrusted sender" };
   if (!UPDATE_FEED) return { latest: null, url: null, error: "updates are not configured" };
   try {
@@ -936,10 +940,7 @@ ipcMain.handle("update:check", async (event) => {
       credentials: "omit",
       headers: { accept: "application/json" },
     });
-    if (!response.ok) return { latest: null, url: null, error: `HTTP ${response.status}` };
-    const release = readFeed(await response.json());
-    if (!release) return { latest: null, url: null, error: "the release feed made no sense" };
-    return { latest: release.version, url: release.url, error: null };
+    return await readAnswer(response);
   } catch (error) {
     return {
       latest: null,

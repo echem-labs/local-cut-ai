@@ -16,6 +16,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { declaredModelId } from "./test/appId";
 
@@ -269,11 +270,11 @@ function zipNames(zip: Buffer): string[] {
 }
 
 /** A loopback stand-in for the release feed. Real HTTP rather than a fetch
- * stub: the handler's job includes reading a status code and a body it did
- * not construct. */
-async function feedServing(status: number, body: unknown) {
+ * stub: the handler's job includes reading a status code, headers and a body
+ * it did not construct. */
+async function feedServing(status: number, body: unknown, headers: Record<string, string> = {}) {
   const server = http.createServer((_req, res) => {
-    res.writeHead(status, { "content-type": "application/json" });
+    res.writeHead(status, { "content-type": "application/json", ...headers });
     res.end(JSON.stringify(body));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1323,15 +1324,173 @@ describe("About → Support", () => {
 });
 
 describe("About → the update check", () => {
-  it("declines when no release feed was configured", async () => {
+  const LATEST = "https://api.github.com/repos/echem-labs/local-cut-ai/releases/latest";
+  const RELEASE_PAGE = "https://github.com/echem-labs/local-cut-ai/releases/tag/v0.2.0";
+
+  /** An IPC event from an installed build's renderer: a file in the bundle,
+   * not the dev server. Two levels up from the main module, the way main.ts
+   * resolves it (see "the app icon" for why that lands outside the app here). */
+  const fromInstalledApp = () =>
+    trusted(pathToFileURL(path.join(__dirname, "..", "..", "dist", "index.html")).href);
+
+  /**
+   * Whether About would offer the check, decided the way a launch decides it:
+   * main puts its answer in the window's options, and the real preload reads
+   * it back out of `process.argv`. Both halves on purpose. Main and the
+   * sandboxed preload cannot share a module, so this is what holds them to
+   * the same switch.
+   */
+  async function offered(electron: Awaited<ReturnType<typeof loadMain>>["electron"]) {
+    const preferences = electron.BrowserWindow.instances[0]!.options.webPreferences as {
+      additionalArguments?: string[];
+    };
+    const argv = process.argv;
+    process.argv = [...argv, ...(preferences.additionalArguments ?? [])];
+    try {
+      await import("./preload");
+    } finally {
+      process.argv = argv;
+    }
+    return electron.exposedBridges.get("localcut")?.updatesConfigured as unknown;
+  }
+
+  it("offers the check in an installed build nobody configured", async () => {
+    // Nobody who downloads a release sets an environment variable, so this
+    // default is the only way an installed copy hears about a newer one.
+    const { electron } = await loadMain({ packaged: true });
+    expect(await offered(electron)).toBe(true);
+  });
+
+  it("asks GitHub for this repository's latest release once installed", async () => {
+    // The repository comes from package.json's homepage, the field the About
+    // links already read, so moving it is still a one-field edit.
+    const { electron } = await loadMain({ packaged: true });
+    const fetched: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      fetched.push(String(input));
+      return Response.json({ tag_name: "v0.2.0", html_url: RELEASE_PAGE });
+    });
+
+    expect(await electron.invokeIpc("update:check", fromInstalledApp())).toEqual({
+      latest: "0.2.0",
+      url: RELEASE_PAGE,
+      error: null,
+    });
+    expect(fetched).toEqual([LATEST]);
+  });
+
+  it("offers nothing in a dev run that names no feed", async () => {
+    // So a contributor's `npm run dev` never calls the API by itself. The
+    // button is hidden here, and this is the answer for anything that calls
+    // the channel anyway.
     const { electron } = await loadMain({ devUrl: DEV_ORIGIN });
-    // The default. The button is hidden in this state, so this is the
-    // answer for anything that calls the channel anyway.
+    expect(await offered(electron)).toBe(false);
     expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
       latest: null,
       url: null,
       error: "updates are not configured",
     });
+  });
+
+  it("lets LOCALCUT_UPDATE_FEED point an installed build somewhere else", async () => {
+    const feed = await feedServing(200, { tag_name: "v0.3.0", html_url: "https://example/rel" });
+    try {
+      const { electron } = await loadMain({ packaged: true, feed: feed.url });
+      expect(await offered(electron)).toBe(true);
+      expect(await electron.invokeIpc("update:check", fromInstalledApp())).toEqual({
+        latest: "0.3.0",
+        url: "https://example/rel",
+        error: null,
+      });
+    } finally {
+      await feed.close();
+    }
+  });
+
+  it.each(["", "off"])(
+    "turns the check off for LOCALCUT_UPDATE_FEED=%j, even installed",
+    async (feed) => {
+      // Set, but not a web address: somebody saying "no feed". See
+      // resolveUpdateFeed for why a word counts as well as an empty value.
+      const { electron } = await loadMain({ packaged: true, feed });
+      expect(await offered(electron)).toBe(false);
+      expect(await electron.invokeIpc("update:check", fromInstalledApp())).toEqual({
+        latest: null,
+        url: null,
+        error: "updates are not configured",
+      });
+    },
+  );
+
+  it("reads GitHub's 404 as no release yet, not as a failure", async () => {
+    // /releases/latest skips drafts and prereleases, so until the first full
+    // release this repository answers 404 with exactly this body. Nothing
+    // newer exists, and an error box would say the check itself broke.
+    const feed = await feedServing(404, {
+      message: "Not Found",
+      documentation_url: "https://docs.github.com/rest/releases/releases#get-the-latest-release",
+      status: "404",
+    });
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
+        latest: null,
+        url: null,
+        error: null,
+        reason: "no-release",
+      });
+    } finally {
+      await feed.close();
+    }
+  });
+
+  it.each([
+    ["the time it lifts", true],
+    ["no time, when GitHub gives none", false],
+  ])("reads a 403 as GitHub's rate limit, with %s", async (_label, timed) => {
+    // Unauthenticated, GitHub allows 60 requests an hour per address, and
+    // that address is shared with everything else on the same network.
+    const reset = Math.floor(Date.now() / 1000) + 1800;
+    const feed = await feedServing(
+      403,
+      { message: "API rate limit exceeded for 203.0.113.7." },
+      timed ? { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) } : {},
+    );
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      expect(await electron.invokeIpc("update:check", senderStub(electron))).toEqual({
+        latest: null,
+        url: null,
+        error: "HTTP 403",
+        reason: "rate-limited",
+        retryAt: timed ? reset : null,
+      });
+    } finally {
+      await feed.close();
+    }
+  });
+
+  it("reads a 429 the same way, timed from retry-after", async () => {
+    // GitHub's secondary limits can answer either status, and say how long
+    // to wait rather than when.
+    const feed = await feedServing(
+      429,
+      { message: "You have exceeded a secondary rate limit." },
+      { "retry-after": "120" },
+    );
+    try {
+      const { electron } = await loadMain({ devUrl: DEV_ORIGIN, feed: feed.url });
+      const before = Math.floor(Date.now() / 1000);
+      const result = (await electron.invokeIpc("update:check", senderStub(electron))) as {
+        retryAt?: number;
+      };
+      const after = Math.ceil(Date.now() / 1000);
+      expect(result).toMatchObject({ latest: null, error: "HTTP 429", reason: "rate-limited" });
+      expect(result.retryAt).toBeGreaterThanOrEqual(before + 120);
+      expect(result.retryAt).toBeLessThanOrEqual(after + 120);
+    } finally {
+      await feed.close();
+    }
   });
 
   it("reads the version and link out of a GitHub release", async () => {

@@ -37,6 +37,7 @@ import type {
   StoryGraph,
   SystemInfo,
   ToolKind,
+  UpdateCheckResult,
 } from "./api/types";
 
 /** Key ids as the shell stores them — note google's key is `gemini`. */
@@ -127,13 +128,10 @@ declare global {
         versions: unknown;
         system: unknown;
       }) => Promise<{ path: string | null; error: string | null }>;
-      checkForUpdates: () => Promise<{
-        latest: string | null;
-        url: string | null;
-        error: string | null;
-      }>;
-      /** False until a release feed is configured — About hides the check
-       * rather than offering one that can only ever fail. */
+      checkForUpdates: () => Promise<UpdateCheckResult>;
+      /** False when the shell has no release feed (see resolveUpdateFeed in
+       * electron/updates.ts). About then hides the check rather than
+       * offering one that can only ever fail. */
       updatesConfigured?: boolean;
       /** Dev-only rig affordance; absent (undefined) in packaged builds. */
       seedHookEnabled?: boolean;

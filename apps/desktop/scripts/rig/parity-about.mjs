@@ -7,12 +7,12 @@
  * The window is fixed at 1440x900 like every other panel gate, and the
  * capture is clipped to `.about`.
  *
- * One thing is POSED, and it has to be. The update controls do not render
- * until a release feed is configured (U6: "the button hides behind a
- * config flag"), which is the shipping state and the one the mock does not
- * draw. So this gate starts a loopback server answering as a release feed,
- * points the shell at it through the environment — the same variable a
- * release build would set — and clicks Check for updates. That renders the
+ * One thing is POSED, and it has to be. The rig drives an unpackaged run,
+ * and there the update controls do not render unless LOCALCUT_UPDATE_FEED
+ * names a release feed (U6: "the button hides behind a config flag"). An
+ * installed build asks GitHub instead, which a gate cannot pin. So this gate
+ * starts a loopback server answering as a release feed, points the shell at
+ * it through that variable, and clicks Check for updates. That renders the
  * up-to-date row the mock shows. Posing it in the store instead would gate
  * a state the app cannot actually reach.
  *

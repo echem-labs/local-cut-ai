@@ -198,6 +198,28 @@ export interface EngineCrash {
   at: string;
 }
 
+/**
+ * What one update check found, as the shell reports it to About.
+ *
+ * Here for the reason `EngineCrash` is: the shell fills it in and the
+ * renderer reads it, and one type is what lets the compiler hold the two to
+ * the same reasons. A reason names an answer About has its own words for,
+ * so no sentence is composed on the shell's side of the bridge.
+ */
+export interface UpdateCheckResult {
+  /** The newest release's version, without the tag's leading "v". */
+  latest: string | null;
+  /** That release's page. */
+  url: string | null;
+  /** Why the check failed, in the shell's terms; null when it did not. */
+  error: string | null;
+  /** `no-release`: the feed has nothing published yet (GitHub's 404).
+   * `rate-limited`: GitHub refused this address for now (403 or 429). */
+  reason?: "no-release" | "rate-limited";
+  /** When GitHub said to try again, in epoch seconds, if it said. */
+  retryAt?: number | null;
+}
+
 export interface SystemInfo {
   hardware: {
     os: string;

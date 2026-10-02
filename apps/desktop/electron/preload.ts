@@ -62,11 +62,17 @@ contextBridge.exposeInMainWorld("localcut", {
   exportSupportBundle: (report: { versions: unknown; system: unknown }) =>
     ipcRenderer.invoke("support:export-bundle", report),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
-  // Whether a release feed was configured at all. Data, not a call: About
+  // Whether the shell has a release feed at all. Data, not a call: About
   // needs the answer to decide whether to render the button, and a pane
   // that must await an IPC round trip before it can lay itself out would
   // flash a control it then takes away.
-  updatesConfigured: !!process.env.LOCALCUT_UPDATE_FEED?.trim(),
+  //
+  // Main decides, from facts this sandboxed script cannot read (whether the
+  // build is installed, and package.json), and passes the answer as a switch
+  // on this process's command line. The literal is UPDATE_CHECK_SWITCH in
+  // updates.ts, repeated rather than imported because a sandboxed preload
+  // can require no file of ours.
+  updatesConfigured: process.argv.includes("--localcut-update-check"),
   getSystemTextScale: () => ipcRenderer.invoke("window:system-text-scale"),
   setUiZoom: (factor: number) => {
     const value = Number(factor);

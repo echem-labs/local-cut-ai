@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import { t } from "../i18n";
 import { formatSize } from "./ModelLibrary";
-import { relativeTime } from "../lib/time";
+import { absoluteTime, relativeTime } from "../lib/time";
 import { useApp } from "../store";
 import { Alert } from "./Alert";
 import { BrandMark } from "./BrandMark";
@@ -157,17 +157,19 @@ type UpdateState =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "current" }
+  /** The feed has published nothing yet, so there is nothing to compare. */
+  | { kind: "none" }
   | { kind: "available"; version: string; url: string }
   | { kind: "failed"; message: string };
 
 /**
  * The update check, which happens only when asked.
  *
- * Absent entirely until a release feed is configured — the shell reports
- * whether one is, and hiding the control is the honest form of "we cannot
- * answer that yet". A button that always said "could not check" would be
- * worse than no button, and a background check would break the promise the
- * privacy card makes two cards down.
+ * Absent entirely when the shell reports no release feed (resolveUpdateFeed
+ * in electron/updates.ts says when that is), and hiding the control is the
+ * honest form of "we cannot answer that". A button that always said "could
+ * not check" would be worse than no button, and a background check would
+ * break the promise the privacy card makes two cards down.
  */
 function UpdateCheck() {
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
@@ -188,6 +190,10 @@ function UpdateCheck() {
       const now = Math.floor(Date.now() / 1000);
       localStorage.setItem(CHECKED_KEY, String(now));
       setCheckedAt(now);
+      if (result.reason === "no-release") return setState({ kind: "none" });
+      if (result.reason === "rate-limited") {
+        return setState({ kind: "failed", message: rateLimitMessage(result.retryAt) });
+      }
       if (result.error) return setState({ kind: "failed", message: result.error });
       if (result.url) setReleaseUrl(result.url);
       // Same version, or an older one: a feed that has rolled back is not
@@ -212,6 +218,9 @@ function UpdateCheck() {
             <Check size={13} strokeWidth={2.4} aria-hidden="true" />
             {t("settings.about.upToDate")}
           </span>
+        )}
+        {state.kind === "none" && (
+          <span className="about-norelease">{t("settings.about.noRelease")}</span>
         )}
         {state.kind === "available" && (
           <a className="about-newer" href={state.url} target="_blank" rel="noreferrer">
@@ -252,6 +261,15 @@ function UpdateCheck() {
       {state.kind === "failed" && <Alert message={state.message} />}
     </>
   );
+}
+
+/** GitHub's rate limit, in words. Unauthenticated, the limit is per address,
+ * so whatever else shares the network can spend it, which is why the message
+ * names the network rather than this app. */
+function rateLimitMessage(retryAt: number | null | undefined): string {
+  return retryAt
+    ? t("settings.about.rateLimitedUntil", { time: absoluteTime(retryAt) })
+    : t("settings.about.rateLimited");
 }
 
 /** Numeric semver compare, prerelease ignored — enough to answer "is the

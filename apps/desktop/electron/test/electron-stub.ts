@@ -17,11 +17,19 @@
  * keychain; the IPC registry replays handlers), and an auto-mock returning
  * undefined everywhere would let a test pass against code that never ran.
  */
+import path from "node:path";
+
+/** This app's own directory, which is what `electron .` reports as the app
+ * path. A test that reads package.json through `app.getAppPath()` reads the
+ * real one by default, with the fields a packaged build ships. */
+const APP_DIR = path.resolve(__dirname, "..", "..");
 
 /** Everything a test can vary. Reset between tests via `resetElectron()`. */
 export const state = {
   /** Backs `app.getPath("userData")` — point this at a tmp dir. */
   userData: "",
+  /** Backs `app.getAppPath()`, the directory holding package.json. */
+  appPath: APP_DIR,
   isPackaged: false,
   /** `false` makes the whenReady body quit early, so importing main.ts is inert. */
   singleInstanceLock: false,
@@ -56,6 +64,7 @@ const SEAL = "::sealed::";
 
 export function resetElectron(): void {
   state.userData = "";
+  state.appPath = APP_DIR;
   state.isPackaged = false;
   state.singleInstanceLock = false;
   state.encryptionAvailable = true;
@@ -103,6 +112,9 @@ export const app = {
   setPath(name: string, value: string): void {
     if (name !== "userData") throw new Error(`stub app.setPath: unhandled ${name}`);
     state.userData = value;
+  },
+  getAppPath(): string {
+    return state.appPath;
   },
   get isPackaged(): boolean {
     return state.isPackaged;
