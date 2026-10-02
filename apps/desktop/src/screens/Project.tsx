@@ -801,7 +801,7 @@ export function Project() {
   const runFinalize = async () => {
     if (finalizing) return;
     // Warned before the spend, not after it fails — the same reasoning as
-    // the drawtext banner below, for the same most-expensive moment.
+    // the titles banner below, for the same most-expensive moment.
     await readinessGuard(async () => {
       setFinalizing(true);
       setFinalizeError(null);
@@ -981,12 +981,12 @@ export function Project() {
       <StalledNotice />
       {/* Said BEFORE the finalize, not after it fails.
           This engine's ffmpeg cannot draw text, and this cut burns a title
-          on at least one scene — so the export will die on "No such filter:
-          'drawtext'" at the very end, after every scene has re-rendered at
-          final quality. That is the most expensive possible moment to find
-          out. Both halves are required: a machine without drawtext and a
-          project with no titles is unaffected, and warning it anyway would
-          teach people to ignore this. */}
+          on at least one scene, so the export will be refused at the very
+          end, after every scene has re-rendered at final quality. That is
+          the most expensive possible moment to find out. Both halves are
+          required: a machine that cannot draw text and a project with no
+          titles is unaffected, and warning it anyway would teach people to
+          ignore this. */}
       {titlesWontRender && (
         <div role="status" className="banner warning">
           {t("project.noDrawtext")}

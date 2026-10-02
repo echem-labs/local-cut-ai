@@ -83,6 +83,23 @@ def test_the_recorded_release_is_the_one_the_faces_carry() -> None:
         assert revision / 65536 == pytest.approx(major + minor / 1000, abs=0.0005), name
 
 
+def test_the_title_metrics_are_the_ones_the_regular_face_carries() -> None:
+    """Titles are sized and placed from these four numbers. A face from
+    another release with other metrics would still draw, at a size and a
+    height that no longer match what the title style promises."""
+    tables = _tables(_face(fonts.REGULAR))
+    (units_per_em,) = struct.unpack_from(">H", tables[b"head"], 18)
+    os2 = tables[b"OS/2"]
+    win_ascent, win_descent = struct.unpack_from(">HH", os2, 74)
+    (cap_height,) = struct.unpack_from(">h", os2, 88)
+    assert (units_per_em, win_ascent, win_descent, cap_height) == (
+        fonts.UNITS_PER_EM,
+        fonts.WIN_ASCENT,
+        fonts.WIN_DESCENT,
+        fonts.CAP_HEIGHT,
+    )
+
+
 def test_the_fonts_directory_holds_the_faces_and_nothing_else() -> None:
     """libass loads every file in its fonts directory as a font and logs an
     error for each one that is not, so the licence lives a level up."""

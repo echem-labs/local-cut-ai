@@ -4,6 +4,11 @@ Word timestamps (from the align backend) become short readable cues; cues
 serialize to SRT (the caption node's artifact and the sidecar format) and to
 styled ASS for burn-in. Short-form pacing: few words per cue, bottom-third,
 strong outline.
+
+On-screen titles are burned in through the same ASS path, one document per
+titled scene (`title_to_ass`), so a title and a caption are drawn by the same
+filter with the same fonts and the same fallback to system fonts for any
+character the bundled face lacks.
 """
 
 from __future__ import annotations
@@ -252,6 +257,15 @@ _SHADOW_OF_FONT = 1 / _REF_FONT_PX
 _MARGIN_V_OF_HEIGHT = 340 / _REF_H
 _MARGIN_H_OF_WIDTH = 60 / _REF_W
 
+# On-screen titles: an em of a fourteenth of the frame height, white, a black
+# outline at 0.85 opacity, centred, with the top of a capital at 14% of the
+# frame height. They wrap between the captions' side margins.
+_TITLE_EM_PER_HEIGHT = 14  # em = height // 14
+_TITLE_CAP_TOP_OF_HEIGHT = 0.14
+_TITLE_OUTLINE_PER_HEIGHT = 270  # outline = max(2, height // 270)
+# ASS alpha counts transparency, so 0x26 (38 of 255 see-through) is 0.85 opaque.
+_TITLE_OUTLINE_COLOUR = "&H26000000"
+
 # The font is named by family, and the export hands libass the bundled faces
 # as its fonts directory, so the name resolves to a file the engine ships
 # rather than to whatever the machine has installed under it (fonts.py).
@@ -265,7 +279,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Outline, Shadow, Alignment, MarginL, MarginR, MarginV
-Style: Default,{family},{font},&H00FFFFFF,&H00101014,&H80000000,-1,{outline},{shadow},2,{margin_h},{margin_h},{margin_v}
+Style: Default,{style}
 
 [Events]
 Format: Layer, Start, End, Style, Text
@@ -277,27 +291,69 @@ def ass_header(width: int, height: int) -> str:
     than an aspect name so the ASS canvas is by construction the canvas the
     export encodes at — the two cannot drift apart into a rescale."""
     font = round(min(width, height) * _FONT_OF_SHORT_SIDE)
+    outline = round(font * _OUTLINE_OF_FONT)
+    shadow = round(font * _SHADOW_OF_FONT)
+    margin_h = round(width * _MARGIN_H_OF_WIDTH)
+    margin_v = round(height * _MARGIN_V_OF_HEIGHT)
     return _ASS_HEADER.format(
         width=width,
         height=height,
-        family=fonts.FAMILY,
-        font=font,
-        outline=round(font * _OUTLINE_OF_FONT),
-        shadow=round(font * _SHADOW_OF_FONT),
-        margin_h=round(width * _MARGIN_H_OF_WIDTH),
-        margin_v=round(height * _MARGIN_V_OF_HEIGHT),
+        style=f"{fonts.FAMILY},{font},&H00FFFFFF,&H00101014,&H80000000,-1,"
+        f"{outline},{shadow},2,{margin_h},{margin_h},{margin_v}",
     )
+
+
+def ass_text(text: str) -> str:
+    """`text` as the text of an ASS event, drawn as written.
+
+    Captions and titles are the user's or an LLM's words, and libass reads
+    `{...}` as override tags and `\\N`, `\\n` and `\\h` as a line break, a
+    space and a hard space. Braces go through libass's own escapes, `\\{`
+    and `\\}`. ASS has no escape for a backslash, so each one is followed by
+    a zero-width no-break space, which leaves no letter able to complete a
+    sequence with it. A newline still breaks the line."""
+    return (
+        text.replace("\\", "\\﻿")
+        .replace("{", "\\{")
+        .replace("}", "\\}")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\n", "\\N")
+    )
+
+
+def _dialogue(start: float, end: float, text: str) -> str:
+    return f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Default,{ass_text(text)}"
 
 
 def srt_to_ass(srt_text: str, width: int, height: int) -> str:
     """Sidecar SRT → styled burn-in ASS (bottom-third, bold, outlined),
     sized for a `width` x `height` frame."""
-    lines = [
-        "Dialogue: 0,{},{},Default,{}".format(
-            _ass_time(c.start),
-            _ass_time(c.end),
-            c.text.replace("\n", r"\N").replace("{", "(").replace("}", ")"),
-        )
-        for c in parse_srt(srt_text)
-    ]
+    lines = [_dialogue(c.start, c.end, c.text) for c in parse_srt(srt_text)]
     return ass_header(width, height) + "\n".join(lines) + "\n"
+
+
+def title_to_ass(text: str, width: int, height: int, duration: float) -> str:
+    """An on-screen title as an ASS document for a `width` x `height` frame,
+    with one event that spans `duration` seconds.
+
+    libass sizes a font by the sum of its Windows ascent and descent rather
+    than by its em, as VSFilter does, so the style's font size is the em
+    scaled by that sum over the units per em. A top-aligned line puts the
+    top of its ascent at MarginV, which is the ascent less the cap height
+    above the capitals, so MarginV stands back by that much from 14%."""
+    em = height // _TITLE_EM_PER_HEIGHT
+    font = em * (fonts.WIN_ASCENT + fonts.WIN_DESCENT) / fonts.UNITS_PER_EM
+    above_capitals = em * (fonts.WIN_ASCENT - fonts.CAP_HEIGHT) / fonts.UNITS_PER_EM
+    outline = max(2, height // _TITLE_OUTLINE_PER_HEIGHT)
+    margin_h = round(width * _MARGIN_H_OF_WIDTH)
+    margin_v = round(height * _TITLE_CAP_TOP_OF_HEIGHT - above_capitals)
+    style = (
+        f"{fonts.FAMILY},{font:.2f},&H00FFFFFF,{_TITLE_OUTLINE_COLOUR},&H00000000,0,"
+        f"{outline},0,8,{margin_h},{margin_h},{margin_v}"
+    )
+    return (
+        _ASS_HEADER.format(width=width, height=height, style=style)
+        + _dialogue(0.0, duration, text)
+        + "\n"
+    )

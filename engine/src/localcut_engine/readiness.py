@@ -78,7 +78,8 @@ READINESS_REASONS = (
     "comfyui_down",
     "no_ffmpeg",
     # ffmpeg runs, and draws nothing where the export needs text drawn (its
-    # burned-in captions): the export refuses before it renders a scene.
+    # titles or burned-in captions): the export refuses before it renders a
+    # scene.
     "ffmpeg_cannot_draw_text",
 )
 
@@ -232,6 +233,18 @@ def export_burns_captions(graph) -> bool:
         node.params.get("captions", "burn") == "burn"
         and any(edge.dst == node.id and edge.port == CAPTIONS_PORT for edge in graph.edges)
         for node in exports
+    )
+
+
+def export_draws_titles(graph) -> bool:
+    """Whether any scene of the project carries an on-screen title, which the
+    export draws. Titles are timeline overlays, one per scene that has one. A
+    graph that has not expanded yet has none, whatever the screenplay about
+    to land may hold."""
+    return any(
+        isinstance(overlays := node.params.get("overlays"), dict) and any(overlays.values())
+        for node in graph.nodes.values()
+        if node.kind is NodeKind.TIMELINE
     )
 
 
@@ -667,15 +680,17 @@ async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: st
 
 
 async def _finish_export_row(backends: BackendRegistry, row: dict) -> dict:
-    """An export ffmpeg serves still fails when it burns captions this
-    ffmpeg cannot draw, because it refuses before rendering a scene. Asked
-    of the backend instance the scheduler runs, through the probe that
-    refusal reads, so the two cannot disagree. An ffmpeg that could not be
-    run answers None, and its own failure at render time says more."""
+    """An export ffmpeg serves still fails when it draws text this ffmpeg
+    cannot, because it refuses before rendering a scene. Asked of the
+    backend instance the scheduler runs, through the probe that refusal
+    reads, so the two cannot disagree. Titles and captions are burned
+    through the same filter and fonts, so one answer covers both. An ffmpeg
+    that could not be run answers None, and its own failure at render time
+    says more."""
     if row["verdict"] != "ready" or row["backend"] != "ffmpeg":
         return row
     ffmpeg = backends.find("ffmpeg")
-    if not isinstance(ffmpeg, FFmpegBackend) or await ffmpeg.draws_captions() is not False:
+    if not isinstance(ffmpeg, FFmpegBackend) or await ffmpeg.supports_drawtext() is not False:
         return row
     return _row(
         NodeKind.EXPORT,
@@ -692,15 +707,17 @@ async def readiness_rows(
     profile: object | None = None,
     *,
     burns_captions: bool = True,
+    draws_titles: bool = False,
 ) -> list[dict]:
     """One report row per (kind, model) pair, in the order given.
 
     `profile` is this machine's hardware, when the caller already holds it
     — it only narrows the offered download to something the box can run.
 
-    `burns_captions` is whether the export burns its captions in
-    (`export_burns_captions` for a project). Without a project the answer is
-    the export a new one gets, which does.
+    `burns_captions` and `draws_titles` say what text the export draws
+    (`export_burns_captions` and `export_draws_titles` for a project).
+    Without a project the answer is the export a new one gets, which burns
+    its captions and has no titles until a screenplay gives it some.
 
     Blocking work (manifest scans, resolve's capability probes) runs off
     the event loop; the LLM server's model listing and the ffmpeg text probe
@@ -716,7 +733,7 @@ async def readiness_rows(
         if isinstance(result, tuple):
             backend, resolved_model = result
             result = await _finish_llm_row(snap, kind, backend, resolved_model)
-        elif kind is NodeKind.EXPORT and burns_captions:
+        elif kind is NodeKind.EXPORT and (burns_captions or draws_titles):
             result = await _finish_export_row(backends, result)
         rows.append(result)
     return rows

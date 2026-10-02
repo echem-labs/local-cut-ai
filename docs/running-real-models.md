@@ -80,10 +80,9 @@ A few parameters worth knowing:
 - **`captions`** (export) — captions burn in by default; `sidecar` keeps the
   `.srt` external. On-screen titles render from the screenplay.
 
-On-screen titles need an ffmpeg with the `drawtext` filter. FFmpeg 7+ static
-builds without libharfbuzz lack it — `GET /system` reports this as
-`ffmpeg_drawtext`. Burned-in captions need the `ass` filter (libass). On an
-ffmpeg that cannot draw them, an export that would burn them is refused
+On-screen titles and burned-in captions both need an ffmpeg with the `ass`
+filter (libass), and `GET /system` reports whether this one draws them as
+`ffmpeg_drawtext`. On an ffmpeg that cannot, an export with either is refused
 before it renders a scene, and the readiness report says so beforehand with
 `ffmpeg_cannot_draw_text`.
 

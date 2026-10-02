@@ -586,18 +586,16 @@ async def test_a_render_on_ffmpeg_and_placeholders_does_what_the_report_said(tmp
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
-async def test_burned_captions_this_ffmpeg_cannot_draw_fail_where_the_report_said(
-    tmp_path, monkeypatch
-):
-    """The same render on an ffmpeg that draws titles and no captions. The
+async def test_text_this_ffmpeg_cannot_draw_fails_where_the_report_said(tmp_path, monkeypatch):
+    """The same render on an ffmpeg that draws nothing through libass. The
     export burns its captions unless told otherwise, so it refuses before its
     first scene, and the report has to have said so beforehand: about the
     export, and about nothing else."""
 
-    async def no_captions(self, vf: str) -> int:
+    async def no_libass(self, vf: str) -> int:
         return 0 if vf.startswith("ass=") else 500
 
-    monkeypatch.setattr(FFmpegBackend, "_lit_pixels", no_captions)
+    monkeypatch.setattr(FFmpegBackend, "_lit_pixels", no_libass)
     report, jobs = await _report_then_render(tmp_path)
     served = _served(jobs)
     assert [row["kind"] for row in report if row["verdict"] == "will_fail"] == ["export"]
@@ -612,18 +610,17 @@ async def test_burned_captions_this_ffmpeg_cannot_draw_fail_where_the_report_sai
     assert '"Separate file (.srt)"' in error
 
 
-async def test_an_export_row_asks_whether_this_ffmpeg_draws_captions(tmp_path, monkeypatch):
+async def test_an_export_row_asks_whether_this_ffmpeg_draws_its_text(tmp_path, monkeypatch):
     """Through the same probe the export's refusal reads, on the backend
-    instance the scheduler runs. Only an export that burns its captions
-    needs them drawn."""
+    instance the scheduler runs. Only an export that burns its captions in
+    or carries a title needs text drawn."""
     config = EngineConfig(
         data_dir=tmp_path, backend="ffmpeg,mock", ffmpeg_bin=_planted_ffmpeg(tmp_path)
     )
     backends = _build_backends(config)
-    drawn = {"captions": 0}
 
     async def lit(vf: str) -> int:
-        return drawn["captions"] if vf.startswith("ass=") else 500
+        return 0 if vf.startswith("ass=") else 500
 
     monkeypatch.setattr(backends.find("ffmpeg"), "_lit_pixels", lit)
     (row,) = await readiness_rows(config, backends, [(NodeKind.EXPORT, None)])
@@ -633,8 +630,11 @@ async def test_an_export_row_asks_whether_this_ffmpeg_draws_captions(tmp_path, m
         "ffmpeg",
     )
     assert row["fix"] is None
-    (row,) = await readiness_rows(config, backends, [(NodeKind.EXPORT, None)], burns_captions=False)
+    export = [(NodeKind.EXPORT, None)]
+    (row,) = await readiness_rows(config, backends, export, burns_captions=False)
     assert row["verdict"] == "ready"
+    (row,) = await readiness_rows(config, backends, export, burns_captions=False, draws_titles=True)
+    assert (row["verdict"], row["reason"]) == ("will_fail", "ffmpeg_cannot_draw_text")
 
 
 async def test_an_ffmpeg_that_cannot_be_run_is_not_blamed_for_captions(tmp_path):
@@ -645,6 +645,22 @@ async def test_an_ffmpeg_that_cannot_be_run_is_not_blamed_for_captions(tmp_path)
     )
     (row,) = await readiness_rows(config, _build_backends(config), [(NodeKind.EXPORT, None)])
     assert row["verdict"] == "ready"
+
+
+def test_a_project_draws_titles_when_a_scene_carries_one():
+    """Titles are the timeline's overlays, one per scene that has one. An
+    overlay map with no text in it draws nothing."""
+    from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
+    from localcut_engine.readiness import export_draws_titles
+    from localcut_engine.schema import Scene, Screenplay
+
+    graph = prompt_template_graph("tides")
+    assert export_draws_titles(graph) is False
+    scenes = [Scene(id="a", duration_s=4, narration="one", visual="v1", onscreen_text="HOOK!")]
+    expand_screenplay(graph, Screenplay(title="t", scenes=scenes))
+    assert export_draws_titles(graph) is True
+    graph.nodes["timeline"].params["overlays"] = {"s1": ""}
+    assert export_draws_titles(graph) is False
 
 
 def test_a_project_burns_its_captions_unless_its_export_says_otherwise():

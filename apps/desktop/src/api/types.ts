@@ -167,8 +167,8 @@ export interface Board {
   assembled_durations?: Record<string, number>;
   /** Whether any scene burns an on-screen title. Overlays are timeline
    * params and the board carries node status, so this is the only way the
-   * client can know — and it needs to, because an ffmpeg without drawtext
-   * fails the export only after a full-quality re-render. Absent on
+   * client can know — and it needs to, because an ffmpeg that cannot draw
+   * text fails the export only after a full-quality re-render. Absent on
    * engines older than the field. */
   has_onscreen_text?: boolean;
 }
@@ -237,11 +237,11 @@ export interface SystemInfo {
   }[];
   backend_mode: string;
   /** Whether this engine's ffmpeg can draw text: true once the engine has
-   * drawn a title and a burned-in caption with the font it ships. FFmpeg 7
-   * static builds without libharfbuzz cannot, and burned-in captions or
-   * any on-screen text dies at export, so the setup surface has to say so
-   * first. `null` means ffmpeg was not found at all, which fails louder on
-   * its own; `undefined` means an engine older than the field. */
+   * burned in a title and a caption with the font it ships. A build without
+   * libass cannot, and an export with on-screen titles or burned-in
+   * captions is then refused, so the setup surface has to say so first.
+   * `null` means ffmpeg was not found at all, which fails louder on its
+   * own; `undefined` means an engine older than the field. */
   ffmpeg_drawtext?: boolean | null;
   /** Resolved per-task routing — absent on engines older than this field. */
   backends?: {
