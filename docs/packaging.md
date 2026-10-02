@@ -65,6 +65,16 @@ Apache-2.0. Every installer's `THIRD-PARTY-NOTICES.txt`, beside `LICENSE` in
 `resources/engine/_internal/`, names espeak-ng with its licence text and where
 its source is.
 
+**The Windows engine runs with UTF-8 as its ANSI code page.** The installer
+is per-user, so the engine, its data and `%TEMP%` all sit under
+`C:\Users\<name>`, and espeak-ng opens its voice data through Windows APIs
+that read a path in the process's ANSI code page. `localcut.exe` declares
+UTF-8 in its manifest so those paths open whatever the user is called.
+Windows 10 1903 and later honour the declaration. On an older build, a
+profile folder name outside ASCII makes the engine exit at its first
+narration, with espeak-ng's "Error processing file" as the last line it
+prints.
+
 **After changing `localcut.spec`, make the freeze narrate.** PyInstaller
 freezes a package's modules and leaves behind the files the package reads
 from beside them. An engine missing those still starts and answers
@@ -79,7 +89,8 @@ uv run python packaging/speech_check.py dist/localcut/localcut --data-dir /tmp/l
 It downloads the Kokoro and faster-whisper weights through the frozen binary
 (about 500 MB, once per data dir), renders, and fails unless every narration
 and the captions came from the real backends. `package.yml` runs it on the
-Linux and Windows builds.
+Linux and Windows builds, from a copy of the freeze under a folder named
+`Zoë O'Brien 中文`, with the data dir and the temp dir in the same folder.
 
 **macOS builds are unsigned and un-notarized.** `.github/workflows/package.yml`
 builds an arm64 dmg on every release run, but `electron-builder.yml` sets
