@@ -96,7 +96,14 @@ class EngineConfig(BaseModel):
         """An explicit ffmpeg_bin wins; the bare default falls back to the
         managed download in <data_dir>/bin when one exists. The desktop
         shell installs ffmpeg there but spawns the engine without pointing
-        at it, so PATH-less machines would otherwise fail every assembly."""
+        at it, so PATH-less machines would otherwise fail every assembly.
+
+        Every holder of the binary reads this at each use rather than once
+        at startup (api.app._ffmpeg_at_use), so a download that lands while
+        the engine runs serves the next job with no restart. The bare name
+        is different: it is looked up on this process's own PATH, which was
+        fixed when the engine started. An installer that adds a directory to
+        PATH is not seen until the engine restarts."""
         if self.ffmpeg_bin != "ffmpeg":
             return self.ffmpeg_bin
         exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
