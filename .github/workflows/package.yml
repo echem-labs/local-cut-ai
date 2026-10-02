@@ -166,10 +166,38 @@ jobs:
         #
         # Linux and Windows for now. The macOS leg builds the same freeze from
         # the same spec, but nothing makes it speak yet.
+        #
+        # It runs from where an installed copy would be, not from dist/. The
+        # Windows installer is per-user, so the engine lands in
+        # C:\Users\<name>\AppData\Local\Programs\LocalCut AI\resources\engine,
+        # its data dir is C:\Users\<name>\.localcut and %TEMP% is under the
+        # same folder: every file the engine hands a native library to open
+        # has the user's name in its path. The folder here is named with each
+        # kind of character that can break that. A Latin letter with a
+        # diacritic is in the ANSI code page but changes when its UTF-8 bytes
+        # are read in it, CJK is in no Western code page at all, an
+        # apostrophe is a quote to ffmpeg's filtergraph parser, and a space
+        # splits a path anywhere it is unquoted.
+        #
+        # Only from there, not from dist/ as well: it is the same freeze, and
+        # an ASCII path exercises nothing this one does not. Linux takes the
+        # same layout because it costs nothing there.
         if: matrix.speech_check
         working-directory: engine
         timeout-minutes: 20
-        run: uv run python packaging/speech_check.py ./${{ matrix.engine_bin }} --data-dir "${{ runner.temp }}/localcut-speech"
+        env:
+          PROFILE_NAME: "Zoë O'Brien 中文"
+        run: |
+          profile="$RUNNER_TEMP/$PROFILE_NAME"
+          engine_dir="$profile/AppData/Local/Programs/LocalCut AI/resources/engine"
+          temp_dir="$profile/AppData/Local/Temp"
+          mkdir -p "$(dirname "$engine_dir")" "$temp_dir"
+          cp -R dist/localcut "$engine_dir"
+          # Python reads TMPDIR first on every platform; native code on
+          # Windows asks GetTempPath, which reads TMP and then TEMP.
+          TMPDIR="$temp_dir" TMP="$temp_dir" TEMP="$temp_dir" \
+            uv run python packaging/speech_check.py \
+            "$engine_dir/$(basename "${{ matrix.engine_bin }}")" --data-dir "$profile/.localcut"
 
       - name: Build the installer
         working-directory: apps/desktop

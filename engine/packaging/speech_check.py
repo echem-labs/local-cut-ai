@@ -35,6 +35,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -217,6 +218,15 @@ def main(argv: list[str] | None = None) -> int:
     token = secrets.token_urlsafe(24)
     env = {**os.environ, "LOCALCUT_ENGINE_URL": base, "LOCALCUT_TOKEN": token}
 
+    # Escaped by `say`, so a run under a non-ASCII folder shows which
+    # characters the paths really carried.
+    say(f"engine:   {binary}")
+    say(f"data dir: {data_dir}")
+    say(f"temp dir: {tempfile.gettempdir()}")
+    if _cli(binary, "--version", env=env).returncode:
+        say("FAIL: the frozen engine does not start from that folder")
+        return 1
+
     started = time.monotonic()
     models_dir = str(data_dir / "models")
     for model in WEIGHTS:
@@ -238,6 +248,13 @@ def main(argv: list[str] | None = None) -> int:
             problems = _render_and_judge(binary, base, token, env, args.timeout)
         except (CheckFailed, OSError, ValueError, KeyError) as exc:
             problems = [f"{type(exc).__name__}: {exc}"]
+            if engine.poll() is not None and not isinstance(exc, CheckFailed):
+                # A refused connection says nothing about why. An engine that
+                # is gone does, and the log tail below shows how it went.
+                problems.append(
+                    f"the engine exited with status {engine.returncode} while the check "
+                    "was driving it"
+                )
         finally:
             _stop(engine)
 
