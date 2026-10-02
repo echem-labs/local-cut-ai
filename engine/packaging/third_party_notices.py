@@ -35,10 +35,15 @@ import importlib.metadata as metadata
 import re
 import site
 import sysconfig
+import textwrap
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 
 _PROJECT = "localcut-engine"
+
+#: Licence texts committed beside this module, one directory per component.
+_LICENCES = Path(__file__).resolve().parent / "licences"
 
 #: Modules deliberately kept out of the freeze, and why. `localcut.spec` passes
 #: these to PyInstaller's `excludes`, and `shipped_distributions()` drops
@@ -106,6 +111,72 @@ def annotation_key(library: str) -> str:
     return library.lower().removeprefix("lib")
 
 
+@dataclass(frozen=True)
+class CarriedComponent:
+    """Software inside a wheel that the wheel's own metadata does not describe."""
+
+    name: str
+    version: str
+    licence: str
+    #: Where the project lives. The source of this build is its `version` tag.
+    upstream: str
+    #: The project that compiled it and put it in the wheel.
+    builder: str
+    #: What of it the wheel carries.
+    contents: str
+    #: The terms the installers carry it under, as a sentence for the reader.
+    terms: str
+    #: Its licence files, copied from the tag into `_LICENCES / name`.
+    texts: tuple[str, ...]
+
+    @property
+    def source(self) -> str:
+        return f"{self.upstream}/tree/{self.version}"
+
+
+#: Software inside a wheel that the wheel's metadata says nothing about, keyed
+#: by the distribution carrying it.
+#:
+#: espeakng-loader is the reason this exists. Its wheel holds libespeak-ng and
+#: espeak-ng-data, which narration phonemizes with, and it declares no licence,
+#: ships no licence file and names no project URL. Its entry among the
+#: distributions can only report that silence, and a recipient is owed the
+#: licence and the way to the source. So both were read from the projects
+#: instead: espeak-ng's README says "GPL version 3 or later", and the loader's
+#: build clones espeak-ng's 1.52.0 tag and builds the library and the data
+#: from it. The texts under `_LICENCES` are copied from that tag.
+#:
+#: The installers carry it by a decision made on 2026-10-02, because narration
+#: cannot phonemize without it. `terms` below states it to the reader, and
+#: docs/packaging.md to whoever packages the app.
+#:
+#: The version is written here rather than read at build time, and
+#: test_third_party_notices holds it to the version the library itself reports.
+#: A wheel that moves to a newer espeak-ng fails there, before a notice naming
+#: the old one can ship.
+CARRIED_COMPONENTS: dict[str, CarriedComponent] = {
+    "espeakng-loader": CarriedComponent(
+        name="espeak-ng",
+        version="1.52.0",
+        licence="GPL-3.0-or-later",
+        upstream="https://github.com/espeak-ng/espeak-ng",
+        builder="https://github.com/thewh1teagle/espeakng-loader",
+        contents="libespeak-ng and espeak-ng-data",
+        terms=(
+            "The installers distribute espeak-ng under the terms of the GNU General "
+            "Public License, version 3 or later. LocalCut AI's own source stays under "
+            "the Apache License 2.0."
+        ),
+        texts=("COPYING", "COPYING.UCD"),
+    ),
+}
+
+#: The heading the carried components are listed under. The section goes ahead
+#: of BUNDLED NATIVE LIBRARIES rather than after it, because everything after
+#: that heading is read as `name - terms` rows, and a licence text is not one.
+CARRIED_HEADING = "COMPONENTS A WHEEL CARRIES WITHOUT DECLARING THEM"
+
+
 #: Grouped so a note shared by several libraries is written once. Seven FFmpeg
 #: libraries carry the same sentence, and the failure mode of seven copies is
 #: correcting six of them — leaving one library quietly stating different
@@ -133,7 +204,10 @@ _COPYLEFT_TERMS = {
         "libiconv",
     ): "LGPL-2.1-or-later — bundled inside the `av` wheel's FFmpeg build",
     ("libmp3lame",): "LGPL-2.0-or-later — linked into libsndfile, inside the `soundfile` wheel",
-    ("libespeak-ng",): "GPL-3.0 — bundled inside the `espeakng-loader` wheel",
+    ("libespeak-ng",): (
+        f"{CARRIED_COMPONENTS['espeakng-loader'].licence} — espeak-ng, bundled inside "
+        "the `espeakng-loader` wheel"
+    ),
     ("libpcaudio",): "GPL-3.0-or-later — espeak-ng's audio output library",
     ("libsndfile",): "LGPL-2.1-or-later — bundled inside the `soundfile` wheel",
     ("libmpg123",): "LGPL-2.1-only — linked into libsndfile, inside the `soundfile` wheel",
@@ -618,7 +692,10 @@ def build_notices(libraries: list[str] | None = None) -> str:
     ]
     lines += font_notice()
 
+    from packaging.utils import canonicalize_name
+
     distributions = shipped_distributions() if describes_the_freeze else runtime_distributions()
+    carriers: list[tuple[metadata.Distribution, CarriedComponent]] = []
     lines += ["", "PYTHON DISTRIBUTIONS", "-" * 72, ""]
     for dist in distributions:
         name = dist.metadata["Name"]
@@ -644,7 +721,19 @@ def build_notices(libraries: list[str] | None = None) -> str:
                 if url
                 else "    This wheel publishes no licence file and names no project URL."
             )
+        component = CARRIED_COMPONENTS.get(canonicalize_name(name))
+        if component is not None:
+            # The entry a reader finds first. Without this line it says only
+            # that the wheel declares nothing, which reads as nothing to declare.
+            carriers.append((dist, component))
+            lines += [
+                f"    It carries {component.name} {component.version} ({component.licence}),",
+                f"    listed below under {CARRIED_HEADING}.",
+            ]
         lines.append("")
+
+    if carriers:
+        lines += _carried_section(carriers)
 
     lines += ["", "BUNDLED NATIVE LIBRARIES", "-" * 72, ""]
     lines += [
@@ -678,6 +767,53 @@ def build_notices(libraries: list[str] | None = None) -> str:
     lines.append("")
 
     return "\n".join(lines) + "\n"
+
+
+def _carried_section(
+    carriers: list[tuple[metadata.Distribution, CarriedComponent]],
+) -> list[str]:
+    """Each component a wheel above carries undeclared, with its licence texts.
+
+    Keyed on the carrier being described at all, the same way the entries
+    above are: a document that names espeak-ng for a freeze whose collection
+    broke says more than is there, which the speech check in package.yml
+    catches, while one that drops it says less, which nothing would.
+
+    A text that is missing fails the build, for the walk's reason: an entry
+    naming a licence with no text under it still ships, and still reads as
+    compliance from the outside.
+    """
+    lines = ["", CARRIED_HEADING, "-" * 72, ""]
+    lines += [
+        "Software inside the wheels above that their own metadata does not",
+        "describe, named here with its licence and where its source is.",
+        "",
+    ]
+    for dist, component in carriers:
+        lines += [
+            f"{component.name} {component.version}",
+            f"    License: {component.licence}",
+            f"    Carried by: {dist.metadata['Name']} {dist.version}, as {component.contents}",
+            f"    Source: {component.source}",
+            f"    Built by: {component.builder}",
+            "",
+        ]
+        lines += textwrap.wrap(
+            component.terms, width=72, initial_indent="    ", subsequent_indent="    "
+        )
+        for filename in component.texts:
+            path = _LICENCES / component.name / filename
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                raise LookupError(
+                    f"{component.name}'s licence text {filename} is not at {path}, so the "
+                    "notices would name its licence without reproducing it"
+                ) from exc
+            lines.append("")
+            lines += ["    " + line if line.strip() else "" for line in text.splitlines()]
+        lines.append("")
+    return lines
 
 
 def write_notices(destination: Path, libraries: list[str] | None = None) -> Path:

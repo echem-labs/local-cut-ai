@@ -54,6 +54,32 @@ from system fonts in captions; in titles they draw as missing-glyph boxes.
 lack `drawtext`. `GET /system` reports `ffmpeg_drawtext` as true only after
 the engine has drawn a title and a caption with the bundled font.
 
+**The installers include espeak-ng, which is GPL-3.0-or-later.** Kokoro
+narration turns text into phonemes with espeak-ng, through phonemizer-fork
+(also GPL-3.0-or-later), and narration cannot run without it. The frozen
+engine carries espeak-ng's library and voice data in
+`resources/engine/_internal/espeakng_loader/`. The installers distribute
+those components under the GPL's terms. LocalCut AI's own source stays
+Apache-2.0. Every installer's `THIRD-PARTY-NOTICES.txt`, beside `LICENSE` in
+`resources/engine/_internal/`, names espeak-ng with its licence text and where
+its source is.
+
+**After changing `localcut.spec`, make the freeze narrate.** PyInstaller
+freezes a package's modules and leaves behind the files the package reads
+from beside them. An engine missing those still starts and answers
+`--version`, then fails every narration. Render a short project through your
+freeze, with ffmpeg and ffprobe on `PATH`:
+
+```bash
+cd engine
+uv run python packaging/speech_check.py dist/localcut/localcut --data-dir /tmp/lc-speech
+```
+
+It downloads the Kokoro and faster-whisper weights through the frozen binary
+(about 500 MB, once per data dir), renders, and fails unless every narration
+and the captions came from the real backends. `package.yml` runs it on the
+Linux and Windows builds.
+
 **macOS builds are unsigned and un-notarized.** `.github/workflows/package.yml`
 builds an arm64 dmg on every release run, but `electron-builder.yml` sets
 `notarize: false` and the workflow turns identity discovery off, so a dmg from

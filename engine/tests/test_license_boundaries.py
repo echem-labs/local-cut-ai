@@ -23,8 +23,15 @@ The espeak chain is in both: it is loaded in the engine's own process.
 So these tests do not pretend either set is clean. They pin what is in each,
 so that the next `uv lock` cannot add to them silently: a new bundled library
 fails here and gets a licence decision, and the recorded copyleft may shrink
-but never grow. Fixing the espeak chain is separate work; noticing a third
-one arrive is this file's job.
+but never grow. Noticing a third chain arrive is this file's job.
+
+One exception is on record, by name, and it covers nothing else: espeak-ng,
+which espeakng-loader carries as libespeak-ng and its voice data. It is
+GPL-3.0-or-later and narration cannot phonemize without it, so on 2026-10-02
+it was decided that the installers ship it and carry it under the GPL's
+terms, while this repository's own source stays Apache-2.0. `_GPL_BY_DECISION`
+holds that decision, and a test holds every plain-GPL library in the frozen
+records to an entry there.
 """
 
 from __future__ import annotations
@@ -493,9 +500,13 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
 #: A record taken from the wrong machine reports a licence change on every
 #: build.
 #:
-#: Keyed by platform because the answer differs sharply: 12 libraries on Linux,
-#: 10 on macOS, 56 on Windows — most of the Windows set being UCRT and MSVC
+#: Keyed by platform because the answer differs sharply: 13 libraries on Linux,
+#: 11 on macOS, 57 on Windows — most of the Windows set being UCRT and MSVC
 #: runtime pieces the other two take from the system.
+#:
+#: espeak-ng is in all three, as `libespeak-ng` or, on Windows, `espeak-ng`.
+#: It is the one library here under plain GPL terms, and it is here by the
+#: decision `_GPL_BY_DECISION` holds: narration cannot phonemize without it.
 #:
 #: The `av` wheel is in none of them: `localcut.spec` excludes it, so the FFmpeg
 #: build it carries — 32 libraries on Linux, x264 and x265 among them — reaches
@@ -508,6 +519,7 @@ _FROZEN_LIBRARIES = {
     "linux": frozenset(
         {
             "libctranslate2",
+            "libespeak-ng",  # by decision: see _GPL_BY_DECISION
             "libgcc_s",
             "libgfortran",
             "libgomp",
@@ -525,6 +537,7 @@ _FROZEN_LIBRARIES = {
         {
             "libcrypto",
             "libctranslate2",
+            "libespeak-ng",  # by decision: see _GPL_BY_DECISION
             "liblzma",
             "libmpdec",
             "libonnxruntime",
@@ -576,6 +589,7 @@ _FROZEN_LIBRARIES = {
             "api-ms-win-crt-time-l1",
             "api-ms-win-crt-utility-l1",
             "ctranslate2",
+            "espeak-ng",  # by decision: see _GPL_BY_DECISION
             "libcrypto",
             "libffi",
             "libiomp5md",
@@ -605,6 +619,7 @@ _FROZEN_LIBRARIES = {
 _FROZEN_COPYLEFT = {
     "linux": frozenset(
         {
+            "libespeak-ng",
             "libgcc_s",
             "libgfortran",
             "libgomp",
@@ -616,15 +631,74 @@ _FROZEN_COPYLEFT = {
     ),
     "darwin": frozenset(
         {
+            "libespeak-ng",
             "libsndfile",
         }
     ),
     "win32": frozenset(
         {
+            "espeak-ng",
             "libsndfile",
         }
     ),
 }
+
+#: Libraries under plain GPL terms, with no linking exception, that a freeze is
+#: allowed to carry, each with the decision that allowed it. The module
+#: docstring's rule is that the recorded copyleft never grows. An entry here is
+#: the one way a GPL library joins the records above, and it names its reason.
+#: Keyed by `annotation_key`, so one entry covers `libespeak-ng.so`,
+#: `libespeak-ng.dylib` and `espeak-ng.dll` alike.
+_GPL_BY_DECISION = {
+    annotation_key("libespeak-ng"): (
+        "On 2026-10-02 it was decided that the installers ship espeak-ng, "
+        "GPL-3.0-or-later, which espeakng-loader carries as libespeak-ng and its voice "
+        "data, because narration cannot phonemize without it. They carry it under the "
+        "GPL's terms, and this repository's own source stays Apache-2.0."
+    ),
+}
+
+
+def _plain_gpl(library: str) -> bool:
+    """Whether a library's recorded terms are GPL with no linking exception.
+
+    Read off the identifier that opens its note in the copyleft table. GCC's
+    runtime libraries are GPL WITH an exception that leaves the program around
+    them alone, the LGPL set obliges relinking rather than the whole, and
+    libdbus can be taken under AFL instead. None of those needs a decision.
+    """
+    note = copyleft_note(library)
+    if note is None:
+        return False
+    terms = note.split(" — ", 1)[0]
+    return terms.startswith("GPL-") and " WITH " not in terms
+
+
+def test_plain_gpl_joins_a_frozen_record_only_by_a_named_decision() -> None:
+    """The recorded copyleft may shrink but never grow, save by name.
+
+    A library under plain GPL makes the installer around it a combined work on
+    those terms. That is a release decision rather than an inventory chore,
+    and recording the library in `_FROZEN_LIBRARIES` is the step that lets it
+    ship, so the decision has to be on file beside the record. Checked the
+    other way too: a decision for a library no freeze carries any more is
+    pruned, not left standing to cover the next one.
+
+    Asked of the records rather than of a freeze, so ci-engine runs it on
+    every push and every platform.
+    """
+    recorded = {annotation_key(lib) for libs in _FROZEN_LIBRARIES.values() for lib in libs}
+    undecided = sorted(key for key in recorded if _plain_gpl(key) and key not in _GPL_BY_DECISION)
+    assert not undecided, (
+        "these are recorded as shipping in a frozen engine under plain GPL terms, with no "
+        f"decision for them in _GPL_BY_DECISION: {undecided}"
+    )
+    stale = sorted(set(_GPL_BY_DECISION) - recorded)
+    assert not stale, (
+        f"_GPL_BY_DECISION allows {stale}, which no frozen record carries any more - "
+        "prune the entry rather than leave it to cover the next library"
+    )
+
 
 _FROZEN_TREE = Path(__file__).resolve().parents[1] / "dist" / "localcut" / "_internal"
 
@@ -729,13 +803,14 @@ def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
     change to what ships.
 
     Per-platform, because which libraries these are is a per-platform fact:
-    six of the seven Linux entries — the GCC runtime set and glibc's libmvec,
+    six of the eight Linux entries — the GCC runtime set and glibc's libmvec,
     which PyInstaller resolves from the build machine — are in neither of the
     others, where the toolchain runtime comes from the system instead. A single
     POSIX-spelled list asserted everywhere fails on the two platforms that
     simply do not ship them. Membership is tested on the key `copyleft_note`
     looks a name up by rather than on the literal string, so a platform
-    spelling its libraries differently is not read as an absence.
+    spelling its libraries differently is not read as an absence: Windows
+    ships espeak-ng as `espeak-ng.dll`, with no `lib` in front.
     """
     recorded = _FROZEN_COPYLEFT.get(sys.platform)
     assert recorded is not None, (

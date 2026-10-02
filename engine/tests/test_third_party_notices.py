@@ -31,6 +31,7 @@ from packaging.utils import canonicalize_name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packaging"))
 
 from third_party_notices import (  # noqa: E402  (needs the path above)
+    CARRIED_HEADING,
     FREEZE_EXCLUDES,
     _LINKED_INTO,
     _LICENCE_FILENAMES,
@@ -38,6 +39,7 @@ from third_party_notices import (  # noqa: E402  (needs the path above)
     _is_own_metadata,
     _normalise_library,
     _project_url,
+    annotation_key,
     copyleft_note,
     build_notices,
     bundled_libraries,
@@ -65,13 +67,14 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #:
 #: A sample rather than the whole set: `_FROZEN_LIBRARIES["win32"]` in
 #: test_license_boundaries is the complete Windows inventory, and duplicating
-#: 56 entries here would be a second record to keep in step. What this needs is
+#: 57 entries here would be a second record to keep in step. What this needs is
 #: one name of each *shape* the normaliser has to survive — a wheel-private
 #: directory behind a backslash, an arch suffix, a version tail in two
-#: hyphenated parts, a stem ending in digits that has to survive whole, and a
-#: name shouted in upper case — each carrying a library that is really in that
-#: inventory. That the sample stays inside the inventory is asserted rather
-#: than trusted, below.
+#: hyphenated parts, a stem ending in digits that has to survive whole, a name
+#: shouted in upper case, and a copyleft library with no `lib` in front of a
+#: name the terms table keys with one — each carrying a library that is really
+#: in that inventory. That the sample stays inside the inventory is asserted
+#: rather than trusted, below.
 #:
 #: The backslash is the only reason `bundled_libraries` normalises the
 #: separator at all: `localcut.spec` hands it PyInstaller's TOC destinations,
@@ -85,6 +88,7 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #: holds this one shouted for that reason.
 _WINDOWS_COLLECTED = (
     "_soundfile_data\\libsndfile_x64.dll",
+    "espeakng_loader\\espeak-ng.dll",
     "MSVCP140_1.DLL",
     "api-ms-win-crt-runtime-l1-1-0.dll",
     "ctranslate2.dll",
@@ -481,6 +485,7 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
         "MSVCP140_1",
         "api-ms-win-crt-runtime-l1",
         "ctranslate2",
+        "espeak-ng",
         "libsndfile",
         "msvcp140",
         "python314",
@@ -553,20 +558,24 @@ def test_the_copyleft_terms_survive_the_windows_spelling(windows_document: str) 
     copyleft terms, in the document that exists to say otherwise. Here the
     architecture suffix is the whole distance between the two spellings.
 
-    libsndfile is the whole assertion because it is the only copyleft library
+    `espeak-ng.dll` and `libespeak-ng.so` are the other half of the
+    reconciliation: the stem is the same, and the distance is the `lib` prefix
+    a Windows name does not carry. It is the strongest licence in that
+    installer, GPL-3.0-or-later, so listed bare it would be the costliest
+    silence in the document.
+
+    These two are the whole assertion because they are the copyleft libraries
     on that platform with a *file* to spell: `_FROZEN_COPYLEFT["win32"]` holds
-    one name, and that record keys on files. The document names two more —
-    libmp3lame and libmpg123, built into libsndfile and carried into it by
+    the two names, and that record keys on files. The document names two more
+    — libmp3lame and libmpg123, built into libsndfile and carried into it by
     `_LINKED_INTO` — but they arrive under a name this file writes down rather
-    than one a TOC spells, so they say nothing about spelling. Its stem is the
-    same on both platforms, so the other half of the reconciliation — the
-    `lib` prefix a Windows name does not carry — cannot be reached through
-    anything that ships there;
-    `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` pins that
-    instead, as a fact about the table rather than a claim that they ship.
+    than one a TOC spells, so they say nothing about spelling.
     """
     rows = _library_rows(windows_document)
     assert rows.get("libsndfile"), "libsndfile ships on Windows with no terms named"
+    assert rows.get("espeak-ng", "").startswith("GPL-3.0-or-later"), (
+        "espeak-ng ships on Windows without the GPL terms its row has on the other two"
+    )
 
 
 def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
@@ -645,10 +654,11 @@ def test_the_copyleft_table_is_read_in_every_platform_s_spelling() -> None:
     The document is generated per platform precisely so each installer
     describes itself, and a table only keyed the POSIX way answers for none of
     the spellings the other two collect under. About the table's keying, not
-    about what any installer holds: `_FROZEN_LIBRARIES` records that, and none
-    of FFmpeg, x264 or espeak-ng is in the Windows set. The day one of them
-    returns to a freeze it has to be annotated on every platform, and this is
-    what makes a new spelling cost no new row.
+    about what any installer holds: `_FROZEN_LIBRARIES` records that, and
+    neither FFmpeg nor x264 is in the Windows set. The day one of them returns
+    to a freeze it has to be annotated on every platform, and this is what
+    makes a new spelling cost no new row. espeak-ng is in that set, and
+    `test_the_copyleft_terms_survive_the_windows_spelling` reads its row there.
     """
     for filename in (
         "avcodec-62.dll",
@@ -1004,3 +1014,103 @@ class TestTheContainerKeepsPyAVOutToo:
         assert '"--no-sync"' in entrypoint, (
             "the entrypoint re-syncs from the lock, which reinstalls PyAV at runtime"
         )
+
+
+#: The heading the section opens with, rule and all. The bare words also appear
+#: in the carrier's own entry, which points the reader at the section.
+_CARRIED = f"\n{CARRIED_HEADING}\n{'-' * 72}\n"
+
+
+def _espeak_ng_version() -> str:
+    """The espeak-ng version inside the installed espeakng-loader, asked of the
+    library itself.
+
+    The wheel's version is the loader's, not espeak-ng's, and only two of the
+    three platforms put a version in the library's filename. `espeak_Info`
+    answers on all three, before espeak is initialised, from the binary that
+    ships.
+    """
+    import ctypes
+
+    import espeakng_loader
+
+    library = ctypes.CDLL(espeakng_loader.get_library_path())
+    library.espeak_Info.restype = ctypes.c_char_p
+    library.espeak_Info.argtypes = [ctypes.POINTER(ctypes.c_char_p)]
+    return library.espeak_Info(None).decode("ascii")
+
+
+def _carried_entry(document: str, name: str) -> str:
+    """One component's entry in the carried-components section, and no further.
+
+    Sliced rather than searched, because the GPL text is in the document twice
+    over: phonemizer-fork's own entry reproduces it, so a search of the whole
+    document finds the licence whether or not espeak-ng's entry carries one.
+    An entry starts at the left margin and runs to the next line that does.
+    """
+    assert _CARRIED in document, "the notices have no section for what a wheel carries undeclared"
+    section = document.split(_CARRIED, 1)[1].split("BUNDLED NATIVE LIBRARIES", 1)[0]
+    entry = re.search(rf"^{re.escape(name)} .*?(?=^\S|\Z)", section, re.S | re.M)
+    assert entry, f"{name} has no entry under {CARRIED_HEADING}"
+    return entry.group(0)
+
+
+class TestWhatAWheelCarriesWithoutDeclaringIt:
+    """espeakng-loader carries espeak-ng, and its metadata says nothing of it.
+
+    The wheel declares no licence, ships no licence file and names no project
+    URL, so everything this module reads from metadata can only report the
+    silence. Inside it are libespeak-ng and espeak-ng's voice data, both
+    GPL-3.0-or-later, which the installers carry by decision: narration cannot
+    phonemize without them. A recipient is owed the licence and the way to
+    the source, and metadata will never supply either.
+    """
+
+    def test_espeak_ng_is_named_with_its_licence_and_where_its_source_is(self, document):
+        version = _espeak_ng_version()
+        entry = _carried_entry(document, "espeak-ng")
+        assert entry.startswith(f"espeak-ng {version}\n"), (
+            f"the notices name a different espeak-ng from the {version} the wheel carries:\n"
+            f"{entry[:200]}"
+        )
+        assert "    License: GPL-3.0-or-later\n" in entry
+        # The tag this build was made from, then the project that built it.
+        assert f"https://github.com/espeak-ng/espeak-ng/tree/{version}" in entry
+        assert "https://github.com/thewh1teagle/espeakng-loader" in entry
+
+    def test_its_licence_texts_are_reproduced_in_its_own_entry(self, document):
+        # Collapsed, because the texts are hard-wrapped and indented here.
+        # Phrases from the start, the middle and the end of each text, so a
+        # copy cut short still fails: the GPL, then the Unicode terms that
+        # cover the character tables compiled into the library.
+        entry = " ".join(_carried_entry(document, "espeak-ng").split())
+        for phrase in (
+            "GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007",
+            "6. Conveying Non-Source Forms.",
+            "END OF TERMS AND CONDITIONS",
+            "1991-2018 Unicode, Inc. All rights reserved.",
+            "Permission is hereby granted, free of charge, to any person obtaining a copy "
+            "of the Unicode data files",
+            "without prior written authorization of the copyright holder.",
+        ):
+            assert phrase in entry, f"espeak-ng's entry does not reproduce {phrase!r}"
+
+    def test_the_wheel_s_own_entry_points_at_what_it_carries(self, document):
+        # The entry a reader finds first says only that the wheel declares
+        # nothing. Left at that, it reads as nothing to declare.
+        loader = next(
+            d
+            for d in runtime_distributions()
+            if canonicalize_name(d.metadata["Name"]) == "espeakng-loader"
+        )
+        entry = document.split(f"\n{loader.metadata['Name']} {loader.version}\n", 1)[1]
+        entry = re.split(r"\n(?=\S)", entry, maxsplit=1)[0]
+        assert f"espeak-ng {_espeak_ng_version()}" in entry, entry
+
+    def test_the_native_library_row_names_the_same_terms(self, document):
+        # The library row and the entry are two statements of one licence in
+        # one document, and a reader may meet either one first. Looked up by
+        # `annotation_key`, because this document describes whichever box
+        # runs it, and Windows spells the row `espeak-ng`.
+        rows = {annotation_key(name): terms for name, terms in _library_rows(document).items()}
+        assert rows[annotation_key("libespeak-ng")].startswith("GPL-3.0-or-later")
