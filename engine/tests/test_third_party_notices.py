@@ -67,13 +67,14 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #:
 #: A sample rather than the whole set: `_FROZEN_LIBRARIES["win32"]` in
 #: test_license_boundaries is the complete Windows inventory, and duplicating
-#: 56 entries here would be a second record to keep in step. What this needs is
+#: 57 entries here would be a second record to keep in step. What this needs is
 #: one name of each *shape* the normaliser has to survive — a wheel-private
 #: directory behind a backslash, an arch suffix, a version tail in two
-#: hyphenated parts, a stem ending in digits that has to survive whole, and a
-#: name shouted in upper case — each carrying a library that is really in that
-#: inventory. That the sample stays inside the inventory is asserted rather
-#: than trusted, below.
+#: hyphenated parts, a stem ending in digits that has to survive whole, a name
+#: shouted in upper case, and a copyleft library with no `lib` in front of a
+#: name the terms table keys with one — each carrying a library that is really
+#: in that inventory. That the sample stays inside the inventory is asserted
+#: rather than trusted, below.
 #:
 #: The backslash is the only reason `bundled_libraries` normalises the
 #: separator at all: `localcut.spec` hands it PyInstaller's TOC destinations,
@@ -87,6 +88,7 @@ _DEV_ONLY = ("pytest", "ruff", "pyinstaller", "pre-commit")
 #: holds this one shouted for that reason.
 _WINDOWS_COLLECTED = (
     "_soundfile_data\\libsndfile_x64.dll",
+    "espeakng_loader\\espeak-ng.dll",
     "MSVCP140_1.DLL",
     "api-ms-win-crt-runtime-l1-1-0.dll",
     "ctranslate2.dll",
@@ -483,6 +485,7 @@ def test_every_library_is_listed_in_the_spelling_its_platform_collects_it_under(
         "MSVCP140_1",
         "api-ms-win-crt-runtime-l1",
         "ctranslate2",
+        "espeak-ng",
         "libsndfile",
         "msvcp140",
         "python314",
@@ -555,20 +558,24 @@ def test_the_copyleft_terms_survive_the_windows_spelling(windows_document: str) 
     copyleft terms, in the document that exists to say otherwise. Here the
     architecture suffix is the whole distance between the two spellings.
 
-    libsndfile is the whole assertion because it is the only copyleft library
+    `espeak-ng.dll` and `libespeak-ng.so` are the other half of the
+    reconciliation: the stem is the same, and the distance is the `lib` prefix
+    a Windows name does not carry. It is the strongest licence in that
+    installer, GPL-3.0-or-later, so listed bare it would be the costliest
+    silence in the document.
+
+    These two are the whole assertion because they are the copyleft libraries
     on that platform with a *file* to spell: `_FROZEN_COPYLEFT["win32"]` holds
-    one name, and that record keys on files. The document names two more —
-    libmp3lame and libmpg123, built into libsndfile and carried into it by
+    the two names, and that record keys on files. The document names two more
+    — libmp3lame and libmpg123, built into libsndfile and carried into it by
     `_LINKED_INTO` — but they arrive under a name this file writes down rather
-    than one a TOC spells, so they say nothing about spelling. Its stem is the
-    same on both platforms, so the other half of the reconciliation — the
-    `lib` prefix a Windows name does not carry — cannot be reached through
-    anything that ships there;
-    `test_the_table_is_keyed_for_a_spelling_this_box_never_builds` pins that
-    instead, as a fact about the table rather than a claim that they ship.
+    than one a TOC spells, so they say nothing about spelling.
     """
     rows = _library_rows(windows_document)
     assert rows.get("libsndfile"), "libsndfile ships on Windows with no terms named"
+    assert rows.get("espeak-ng", "").startswith("GPL-3.0-or-later"), (
+        "espeak-ng ships on Windows without the GPL terms its row has on the other two"
+    )
 
 
 def test_the_table_is_keyed_for_a_spelling_this_box_never_builds() -> None:
@@ -647,10 +654,11 @@ def test_the_copyleft_table_is_read_in_every_platform_s_spelling() -> None:
     The document is generated per platform precisely so each installer
     describes itself, and a table only keyed the POSIX way answers for none of
     the spellings the other two collect under. About the table's keying, not
-    about what any installer holds: `_FROZEN_LIBRARIES` records that, and none
-    of FFmpeg, x264 or espeak-ng is in the Windows set. The day one of them
-    returns to a freeze it has to be annotated on every platform, and this is
-    what makes a new spelling cost no new row.
+    about what any installer holds: `_FROZEN_LIBRARIES` records that, and
+    neither FFmpeg nor x264 is in the Windows set. The day one of them returns
+    to a freeze it has to be annotated on every platform, and this is what
+    makes a new spelling cost no new row. espeak-ng is in that set, and
+    `test_the_copyleft_terms_survive_the_windows_spelling` reads its row there.
     """
     for filename in (
         "avcodec-62.dll",
