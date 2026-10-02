@@ -10,6 +10,7 @@ import logging
 import os
 import socket
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -641,6 +642,39 @@ def _add_automation_commands(subcommands) -> None:
     packs_disable.add_argument("pack_id")
     _add_automation_flags(packs_disable)
 
+    programs = subcommands.add_parser(
+        "programs", help="FFmpeg, the LLM server and ComfyUI, as the engine finds them"
+    )
+    program_actions = programs.add_subparsers(dest="action", required=True)
+    programs_list = program_actions.add_parser(
+        "list", help="show each program: found or not, where, its version, what setup takes"
+    )
+    _add_automation_flags(programs_list)
+    programs_setup = program_actions.add_parser(
+        "setup",
+        help="download LocalCut's own copy of a program, on the engine's machine, and wait",
+    )
+    programs_setup.add_argument("program")
+    programs_setup.add_argument(
+        "--timeout",
+        type=float,
+        default=1800.0,
+        dest="timeout_s",
+        help="seconds to wait before giving up (default 1800)",
+    )
+    programs_setup.add_argument(
+        "--no-wait", action="store_true", help="start the setup and return without waiting"
+    )
+    _add_automation_flags(programs_setup)
+    programs_cancel = program_actions.add_parser("cancel", help="stop a running setup")
+    programs_cancel.add_argument("program")
+    _add_automation_flags(programs_cancel)
+    programs_remove = program_actions.add_parser(
+        "remove", help="remove LocalCut's own copy of a program (never your own install)"
+    )
+    programs_remove.add_argument("program")
+    _add_automation_flags(programs_remove)
+
 
 def _automation_command(args: argparse.Namespace) -> int:
     from .automation import EXIT_FAILED, EngineClient, EngineError
@@ -890,6 +924,134 @@ def _packs_command(args: argparse.Namespace, client) -> int:
     return automation.EXIT_OK
 
 
+# How often `programs setup` asks the engine how its setup is going.
+_SETUP_POLL_S = 1.0
+
+
+def _mib(count: int | None) -> str:
+    return f"{(count or 0) / 2**20:.0f} MiB"
+
+
+def _program_line(row: dict) -> str:
+    """One program, as `programs list` prints it."""
+    version = row.get("version") or "-"
+    line = f"{row['id']:8} {row['state']:8} {version:10} {row['source']:10} {row['location']}"
+    notes = []
+    if row.get("problem"):
+        notes.append(row["problem"].replace("_", " "))
+    if row.get("checks", {}).get("draws_text") is False:
+        notes.append("draws no text")
+    if row.get("checks", {}).get("model_present") is False:
+        notes.append(f"no {row['checks']['model']}")
+    setup = row.get("setup") or {}
+    job = setup.get("job")
+    if job:
+        notes.append(f"setting up: {job['phase']}")
+    elif row["state"] != "ready" and setup.get("available"):
+        notes.append(
+            f"`localcut programs setup {row['id']}` downloads {_mib(setup['download_bytes'])}"
+        )
+    return f"{line}  ({'; '.join(notes)})" if notes else line
+
+
+def _setup_line(program: str, job: dict) -> str:
+    """Where a setup has got to, coarsely enough that a log is not flooded:
+    the phase, and the download in tenths."""
+    if job["phase"] != "downloading" or not job.get("total"):
+        return f"  {program}: {job['phase']}"
+    tenth = min(10, int(10 * job["done"] / job["total"]))
+    rate = job.get("bytes_per_s")
+    speed = f", {rate / 2**20:.1f} MiB/s" if rate else ""
+    return (
+        f"  {program}: downloading {_mib(tenth * job['total'] // 10)} "
+        f"of {_mib(job['total'])}{speed}"
+    )
+
+
+def _programs_command(args: argparse.Namespace, client) -> int:
+    from . import automation
+
+    if args.action == "list":
+        report = client.get("/programs") or {}
+        lines = [_program_line(row) for row in report.get("programs", [])]
+        lines.append(
+            f"LocalCut's own copies use {_mib(report.get('programs_bytes'))} "
+            f"in {report.get('programs_dir', '?')}"
+        )
+        automation.emit(report, as_json=args.json, lines=lines)
+        return automation.EXIT_OK
+
+    if args.action == "cancel":
+        client.delete(f"/programs/{args.program}/setup")
+        automation.emit(
+            {"ok": True}, as_json=args.json, lines=[f"cancelled the setup of {args.program}"]
+        )
+        return automation.EXIT_OK
+
+    if args.action == "remove":
+        result = client.delete(f"/programs/{args.program}")
+        freed = result.get("freed_bytes", 0)
+        automation.emit(
+            result,
+            as_json=args.json,
+            lines=[
+                f"removed LocalCut's {args.program}, {_mib(freed)} freed"
+                if freed
+                else f"LocalCut has no copy of {args.program} to remove"
+            ],
+        )
+        return automation.EXIT_OK
+
+    started = client.post(f"/programs/{args.program}/setup")
+    if started.get("status") == "installed":
+        automation.emit(started, as_json=args.json, lines=[f"{args.program} is set up already"])
+        return automation.EXIT_OK
+    if args.no_wait:
+        automation.emit(started, as_json=args.json, lines=[f"setting up {args.program}"])
+        return automation.EXIT_OK
+
+    # Polled rather than watched over /ws: the setup reports its job id
+    # when it ends, so a poll cannot mistake an earlier setup's outcome for
+    # this one's, and a poll survives a dropped connection.
+    deadline = time.monotonic() + args.timeout_s
+    shown = None
+    while True:
+        report = client.get("/programs") or {}
+        row = next(entry for entry in report["programs"] if entry["id"] == args.program)
+        last = row["setup"].get("last")
+        if last is not None and last.get("job") == started.get("job"):
+            break
+        job = row["setup"].get("job")
+        if job is not None and not args.json:
+            line = _setup_line(args.program, job)
+            if line != shown:
+                shown = line
+                print(line, flush=True)
+        if time.monotonic() >= deadline:
+            raise automation.EngineError(
+                f"{args.program} was still being set up after {args.timeout_s:.0f}s - raise "
+                "--timeout, or check the engine logs"
+            )
+        time.sleep(min(_SETUP_POLL_S, max(0.0, deadline - time.monotonic())))
+
+    payload = {"program": args.program, **last, "location": row.get("location")}
+    if last["outcome"] == "done":
+        automation.emit(
+            payload, as_json=args.json, lines=[f"{args.program} is set up: {row['location']}"]
+        )
+        return automation.EXIT_OK
+    if args.json:
+        automation.emit(payload, as_json=True)
+    if last["outcome"] == "cancelled":
+        print(f"error: the setup of {args.program} was cancelled", file=sys.stderr)
+    else:
+        print(
+            f"error: setting up {args.program} failed ({last.get('reason')}): {last.get('error')}",
+            file=sys.stderr,
+        )
+    return automation.EXIT_FAILED
+
+
 # ONE list of the automation commands, used for both the routing gate in
 # `main` and the dispatch above. Built from the functions themselves, so a
 # command cannot be registered in the parser and forgotten in one of the two
@@ -903,6 +1065,7 @@ _AUTOMATION_COMMANDS: dict[str, Callable[[argparse.Namespace, Any], int]] = {
     "template": _template_command,
     "workflow": _workflow_command,
     "packs": _packs_command,
+    "programs": _programs_command,
 }
 
 

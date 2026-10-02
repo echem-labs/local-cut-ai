@@ -79,6 +79,7 @@ docs/           the guides linked below
 | [Running with real models](docs/running-real-models.md) | Backends, ComfyUI, the quality ladder, timing and audio |
 | [Narration voices](docs/voices.md) | Choosing a stock voice, and consent-gated cloning |
 | [Editing a project](docs/editing.md) | Natural-language edits, your own images, re-cuts |
+| [Programs](docs/programs.md) | FFmpeg, the LLM server and ComfyUI: where the engine finds them, and its own FFmpeg |
 | [Remote engine and cloud](docs/remote-and-cloud.md) | Headless on a GPU box, TLS pairing, BYOK providers |
 | [Agents and automation](docs/agents-and-automation.md) | The automation CLI and the MCP server |
 | [Packaging](docs/packaging.md) | Freezing the engine and building installers |

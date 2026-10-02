@@ -17,6 +17,7 @@ localcut export <id> --out cut.mp4      # write a finished cut or an NLE handoff
 localcut template export|import         # move a project shape between engines
 localcut workflow import|list|remove    # manage imported ComfyUI workflows
 localcut packs list|enable|disable      # ComfyUI custom-node packs this engine allows
+localcut programs list|setup|remove     # FFmpeg, Ollama, ComfyUI; set up LocalCut's FFmpeg
 ```
 
 Each takes `--engine` (`$LOCALCUT_ENGINE_URL`, default

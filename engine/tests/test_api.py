@@ -20,8 +20,8 @@ from localcut_engine.backends.base import GenerationError
 from localcut_engine.backends.chatterbox import ChatterboxBackend
 from localcut_engine.config import EngineConfig
 
-# resolved_ffmpeg_bin discovers <data_dir>/bin/ffmpeg[.exe]; the managed copy
-# these tests plant has to use the name the platform actually looks for.
+# resolved_ffmpeg_bin discovers <data_dir>/bin/ffmpeg[.exe]; the copy these
+# tests plant there has to use the name the platform actually looks for.
 _FFMPEG_EXE = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
 
 
@@ -391,9 +391,9 @@ def _provision_local_stack(config, monkeypatch):
             path = config.resolved_models_dir / dest
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
-    managed_ffmpeg = config.data_dir / "bin" / _FFMPEG_EXE
-    managed_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
-    managed_ffmpeg.touch()
+    planted_ffmpeg = config.data_dir / "bin" / _FFMPEG_EXE
+    planted_ffmpeg.parent.mkdir(parents=True, exist_ok=True)
+    planted_ffmpeg.touch()
 
 
 def test_backend_chain_parsing_and_composition(tmp_path, monkeypatch):
@@ -527,9 +527,9 @@ def test_comfy_auto_kinds_follow_installed_weights(tmp_path, monkeypatch):
     from localcut_engine.graph.model import NodeKind
 
     monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
-    managed_ffmpeg = tmp_path / "bin" / _FFMPEG_EXE
-    managed_ffmpeg.parent.mkdir(parents=True)
-    managed_ffmpeg.touch()  # the still-clip tier needs a discoverable binary
+    planted_ffmpeg = tmp_path / "bin" / _FFMPEG_EXE
+    planted_ffmpeg.parent.mkdir(parents=True)
+    planted_ffmpeg.touch()  # the still-clip tier needs a discoverable binary
 
     (tmp_path / "model-manifest.json").write_text(
         json.dumps(
@@ -1360,10 +1360,10 @@ async def test_custom_model_lifecycle(client, tmp_path):
     assert (await client.delete(f"/models/custom/{curated}")).status_code == 404
 
 
-def test_resolved_ffmpeg_bin_prefers_managed_download(tmp_path):
-    """The bare default discovers <data_dir>/bin/ffmpeg (the shell installs
-    it there but spawns the engine without pointing at it); an explicit
-    path always wins; no managed copy → the bare name stays."""
+def test_resolved_ffmpeg_bin_prefers_a_binary_in_the_data_dir(tmp_path):
+    """The bare default discovers <data_dir>/bin/ffmpeg, where a binary can be
+    put by hand; an explicit path always wins; with neither, the bare name
+    stays, to be looked up on PATH. test_programs.py has the whole order."""
     from localcut_engine.config import EngineConfig
 
     config = EngineConfig(data_dir=tmp_path)

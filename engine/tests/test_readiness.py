@@ -100,10 +100,11 @@ async def test_bare_machine_reports_every_fallback_tier(tmp_path):
     assert rows["captions"]["fix"]["model_id"] == "faster-whisper-base-en"
 
     # Assembly never degrades to a placeholder - it fails, and the row
-    # says so before the render does.
+    # says so before the render does. This engine is pointed at an ffmpeg
+    # path, which outranks any copy LocalCut sets up, so no setup is offered.
     assert rows["export"]["verdict"] == "will_fail"
     assert rows["export"]["reason"] == "no_ffmpeg"
-    assert rows["export"]["fix"] == {"type": "install_ffmpeg"}
+    assert rows["export"]["fix"] is None
 
 
 def _tiny_manifest(tmp_path) -> None:
@@ -825,13 +826,105 @@ async def test_captions_names_the_missing_ffmpeg_rather_than_a_model_it_already_
         await readiness_rows(config, _build_backends(config), [(NodeKind.CAPTIONS, None)])
     )
     assert rows["captions"]["reason"] == "no_ffmpeg"
-    assert rows["captions"]["fix"] == {"type": "install_ffmpeg"}
+    # The configured path outranks LocalCut's own copy, so setting one up
+    # would change nothing here.
+    assert rows["captions"]["fix"] is None
 
     config = config.model_copy(update={"ffmpeg_bin": _planted_ffmpeg(tmp_path)})
     rows = _by_kind(
         await readiness_rows(config, _build_backends(config), [(NodeKind.CAPTIONS, None)])
     )
     assert rows["captions"]["verdict"] == "ready", "the binary landed and the row did not follow"
+
+
+# -- LocalCut's own FFmpeg as the fix -----------------------------------------
+
+
+def _unconfigured_bare_config(tmp_path, monkeypatch) -> EngineConfig:
+    """`_bare_config` without the configured ffmpeg path: the engine looks for
+    ffmpeg the way an installed app does, and PATH holds none."""
+    empty = tmp_path / "empty-path"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    weights = tmp_path / "models" / "asr" / "faster-whisper-base.en"
+    weights.mkdir(parents=True)
+    for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt"):
+        (weights / name).touch()
+    return EngineConfig(
+        data_dir=tmp_path,
+        backend="local,mock",
+        llm_url="http://127.0.0.1:9/v1",
+        comfyui_url="http://127.0.0.1:9",
+    )
+
+
+async def test_a_missing_ffmpeg_is_fixed_by_setting_up_localcuts_own(tmp_path, monkeypatch):
+    """Where a build is pinned for this machine and LocalCut's copy would be
+    the one the engine runs, the fix for a missing ffmpeg is that setup, with
+    the size of its download for the button to show. Where nothing is
+    pinned, there is no fix to offer."""
+    from localcut_engine.programs import manifest as program_manifest
+
+    config = _unconfigured_bare_config(tmp_path, monkeypatch)
+    pairs = [(NodeKind.CAPTIONS, None), (NodeKind.TIMELINE, None), (NodeKind.EXPORT, None)]
+
+    monkeypatch.setattr(program_manifest, "platform_key", lambda: "linux-x64")
+    pinned = program_manifest.load_programs_manifest().asset("ffmpeg", "linux-x64")
+    rows = _by_kind(await readiness_rows(config, _build_backends(config), pairs))
+    fix = {"type": "setup_program", "program": "ffmpeg", "size_bytes": pinned.size}
+    assert {kind: (row["reason"], row["fix"]) for kind, row in rows.items()} == {
+        "captions": ("no_ffmpeg", fix),
+        "timeline": ("no_ffmpeg", fix),
+        "export": ("no_ffmpeg", fix),
+    }
+
+    monkeypatch.setattr(program_manifest, "platform_key", lambda: "macos-arm64")
+    rows = _by_kind(await readiness_rows(config, _build_backends(config), pairs))
+    assert {row["fix"] for row in rows.values()} == {None}
+
+
+async def test_an_ffmpeg_that_cannot_draw_text_is_fixed_by_localcuts_own_only_where_it_wins(
+    tmp_path, monkeypatch
+):
+    """LocalCut's copy outranks one found on PATH, so setting it up fixes a
+    PATH ffmpeg that draws no text. It does not outrank one put in
+    <data_dir>/bin by hand, and setting up a copy already in use changes
+    nothing, so neither of those is offered it."""
+    from localcut_engine.programs import manifest as program_manifest
+
+    monkeypatch.setattr(program_manifest, "platform_key", lambda: "linux-x64")
+    path_dir = tmp_path / "path-dir"
+    path_dir.mkdir()
+    for name in ("ffmpeg", "ffprobe"):
+        binary = path_dir / f"{name}{'.exe' if os.name == 'nt' else ''}"
+        binary.write_bytes(b"draws nothing")
+        binary.chmod(0o755)
+    monkeypatch.setenv("PATH", str(path_dir))
+
+    async def no_libass(self, vf: str) -> int:
+        return 0 if vf.startswith("ass=") else 500
+
+    monkeypatch.setattr(FFmpegBackend, "_lit_pixels", no_libass)
+    config = EngineConfig(data_dir=tmp_path, backend="ffmpeg,mock")
+
+    async def export_row() -> dict:
+        (row,) = await readiness_rows(config, _build_backends(config), [(NodeKind.EXPORT, None)])
+        return row
+
+    row = await export_row()
+    assert (row["reason"], row["fix"]["type"]) == ("ffmpeg_cannot_draw_text", "setup_program")
+
+    managed = tmp_path / "programs" / "ffmpeg" / _FFMPEG_EXE
+    managed.parent.mkdir(parents=True)
+    managed.write_bytes(b"draws nothing either")
+    managed.with_name(_FFMPEG_EXE.replace("ffmpeg", "ffprobe")).write_bytes(b"ffprobe")
+    row = await export_row()
+    assert (row["reason"], row["fix"]) == ("ffmpeg_cannot_draw_text", None)
+
+    shutil.rmtree(managed.parent)
+    _planted_ffmpeg(tmp_path)
+    row = await export_row()
+    assert (row["reason"], row["fix"]) == ("ffmpeg_cannot_draw_text", None)
 
 
 # -- weights on disk are not a running server -------------------------------

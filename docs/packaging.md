@@ -49,8 +49,11 @@ and reproduces the licence. Characters Inter lacks, CJK among them, come from
 system fonts, in titles and captions alike, wherever libass's font provider
 finds one.
 
-**No package bundles ffmpeg.** The engine finds one via
-`LOCALCUT_FFMPEG_BIN` or `PATH`. Titles and burned-in captions both need its
+**No package bundles ffmpeg.** The engine runs `LOCALCUT_FFMPEG_BIN` when it
+is set, then a binary put in `<data_dir>/bin` by hand, then LocalCut's own
+copy in `<data_dir>/programs/ffmpeg`, then `ffmpeg` on `PATH`. On Windows x64
+and Linux x64 it downloads its own copy from a pinned build when asked; see
+[programs.md](programs.md). Titles and burned-in captions both need ffmpeg's
 `ass` filter, which a build without libass lacks. `GET /system` reports
 `ffmpeg_drawtext` as true only after the engine has burned in a title and a
 caption with the bundled font.

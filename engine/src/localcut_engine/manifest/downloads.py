@@ -47,7 +47,23 @@ class DownloadError(RuntimeError):
 
 
 class ChecksumMismatch(DownloadError):
-    pass
+    """The bytes received do not hash to the manifest's sha256. Carries both
+    digests, so a caller can word the refusal its own way."""
+
+    def __init__(self, message: str, *, expected: str = "", actual: str = "") -> None:
+        super().__init__(message)
+        self.expected = expected
+        self.actual = actual
+
+
+class SizeMismatch(DownloadError):
+    """The bytes received are not as many as the manifest says: more than it
+    allows, or, where the size has to be exact, fewer."""
+
+    def __init__(self, message: str, *, expected: int = 0, actual: int = 0) -> None:
+        super().__init__(message)
+        self.expected = expected
+        self.actual = actual
 
 
 class UnsafeURL(DownloadError):
@@ -188,12 +204,19 @@ async def download_file(
     models_dir: Path,
     progress: ProgressFn | None = None,
     client: httpx.AsyncClient | None = None,
+    *,
+    exact_size: bool = False,
 ) -> Path:
     """Download one file to models_dir/file.dest. Returns the final path.
 
     Already-complete files (existing + checksum ok when a checksum is
     known) are skipped. A `<dest>.part` file is resumed with a Range
     request; servers that ignore Range restart cleanly.
+
+    `exact_size` holds the download to `file.size` to the byte, checked
+    before the digest: a stream that runs past it is cut off there, and one
+    that ends short is refused, each as SizeMismatch. Without it the stream
+    may run a chunk past the size, and a short one is left to the digest.
     """
     dest = resolve_dest(models_dir, file.dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +258,12 @@ async def download_file(
                 total = int(response.headers.get("content-length", 0)) + offset
                 # Never trust the stream to end: a lying server must hit the
                 # manifest size (plus slack) or a hard ceiling, not the disk.
-                limit = file.size + _SIZE_SLACK if file.size else _MAX_UNSIZED_BYTES
+                if exact_size and file.size:
+                    limit = file.size
+                elif file.size:
+                    limit = file.size + _SIZE_SLACK
+                else:
+                    limit = _MAX_UNSIZED_BYTES
                 mode = "ab" if offset else "wb"
                 done = offset
                 oversized = False
@@ -253,13 +281,25 @@ async def download_file(
                     # to delete an open file. Poisoned bytes must not be kept
                     # for a later resume.
                     part.unlink(missing_ok=True)
-                    raise DownloadError(
+                    raise SizeMismatch(
                         f"{file.dest}: stream exceeded the expected "
-                        f"size ({done} > {limit} bytes) — aborted"
+                        f"size ({done} > {limit} bytes) — aborted",
+                        expected=file.size,
+                        actual=done,
                     )
     finally:
         if owns_client:
             await client.aclose()
+
+    if exact_size and file.size:
+        received = part.stat().st_size if part.exists() else 0
+        if received != file.size:
+            part.unlink(missing_ok=True)
+            raise SizeMismatch(
+                f"{file.dest}: expected {file.size} bytes, got {received}",
+                expected=file.size,
+                actual=received,
+            )
 
     if file.sha256:
         # Hashing a multi-GB file must not stall the event loop.
@@ -267,7 +307,9 @@ async def download_file(
         if actual != file.sha256:
             part.unlink(missing_ok=True)  # do not resume from poisoned bytes
             raise ChecksumMismatch(
-                f"{file.dest}: expected sha256 {file.sha256[:16]}…, got {actual[:16]}…"
+                f"{file.dest}: expected sha256 {file.sha256[:16]}…, got {actual[:16]}…",
+                expected=file.sha256,
+                actual=actual,
             )
     else:
         # Override manifests may omit checksums. Nothing can prove these bytes
