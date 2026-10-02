@@ -197,5 +197,68 @@
   },
   "refusals": {
     "noSpace": "Not enough room. Setting up {name} needs {size} free on the disk that holds {dir}."
+  },
+  "strip": {
+    "aria": "What a render would make right now",
+    "stages": {
+      "script": "Script",
+      "keyframes": "Keyframes",
+      "clips": "Video clips",
+      "narration": "Narration",
+      "music": "Music",
+      "captions": "Captions",
+      "final": "Final video"
+    },
+    "inSentence": {
+      "script": "the script",
+      "keyframes": "the keyframes",
+      "clips": "the video clips",
+      "narration": "the narration",
+      "music": "the music",
+      "captions": "the captions",
+      "final": "the final video"
+    },
+    "lights": {
+      "ok": "ready",
+      "busy": "setting up",
+      "ph": "a stand-in",
+      "fail": "fails",
+      "deg": "lower quality",
+      "wait": "next step",
+      "unknown": "checking"
+    },
+    "none": "none",
+    "stills": "stills"
+  },
+  "narrate": {
+    "checking": "Checking what a render would make…",
+    "ready_one": "{names} is ready.",
+    "ready_other": "{names} are ready.",
+    "settingUp": "Setting up {name}.",
+    "settingUpThen": "Setting up {name}, then {next}.",
+    "goOn": "You can go on to the models while this runs.",
+    "standIns_one": "A render right now would use a stand-in for one stage.",
+    "standIns_other": "A render right now would use stand-ins for {count} stages.",
+    "standInsFail_one": "A render right now would use a stand-in for one stage, then fail at {stages}.",
+    "standInsFail_other": "A render right now would use stand-ins for {count} stages, then fail at {stages}.",
+    "fail": "A render right now would fail at {stages}.",
+    "programsReady": "All three programs are ready. Next, choose the models they run.",
+    "programsDone": "Next, choose the models.",
+    "noModel_one": "{stages} has no model yet. Get one in {link}.",
+    "noModel_other": "{stages} have no model yet. Get them in {link}.",
+    "modelsLink": "Models",
+    "modelsTip": "Settings > Models",
+    "modelsTipHint": "Where models are downloaded",
+    "allReady": "Every stage is ready."
+  },
+  "wizard": {
+    "title": "Set up the programs LocalCut uses",
+    "sub": "LocalCut makes your video with three free programs. It can set each one up for you from the project's own download, and keep it in LocalCut's folder.",
+    "subSome": "LocalCut makes your video with three free programs. Where it can, it sets one up for you from the project's own download and keeps it in LocalCut's folder. The others come with steps for doing it yourself.",
+    "setupAll": "Set up all three",
+    "setupBoth": "Set up both",
+    "skip": "Skip for now",
+    "hintSetup": "Each download comes from that project's own releases and stays in LocalCut's folder. Nothing asks for admin rights.",
+    "hintRunning": "Setup keeps going in the background. The Ready step shows where each one has got to."
   }
 }

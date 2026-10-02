@@ -576,6 +576,15 @@ interface AppState {
   cancelProgramSetup: (programId: ProgramId) => Promise<string | null>;
   /** Remove LocalCut's own copy. Never touches an install of the user's. */
   removeProgram: (programId: ProgramId) => Promise<string | null>;
+  /** Programs waiting their turn behind a running setup, in the order they
+   * will start. Empty unless "Set up all" queued them. */
+  programQueue: ProgramId[];
+  /** Set up several programs one at a time, smallest download first, so the
+   * quick one is ready while the big ones still download. Runs here rather
+   * than in a screen, so it carries on when the screen that started it is
+   * left. Resolves once the last one has ended; `null` means none was
+   * refused. */
+  setupPrograms: (programIds: ProgramId[]) => Promise<string | null>;
   /** Decode a pairing code for review — nothing is sent, nothing is stored. */
   inspectPairing: (code: string) => Promise<PairingPreview>;
   /** Pair with a remote engine. `armKeys` is a separate, explicit decision:
@@ -1663,6 +1672,7 @@ export const useApp = create<AppState>((set, get) => {
       // And the programs are that box's programs, on its disk.
       programs: null,
       programsError: null,
+      programQueue: [],
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1718,6 +1728,7 @@ export const useApp = create<AppState>((set, get) => {
     readinessEpoch: 0,
     programs: null,
     programsError: null,
+    programQueue: [],
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -3040,6 +3051,39 @@ export const useApp = create<AppState>((set, get) => {
         await get().refreshPrograms();
         return messageOf(err);
       }
+    },
+
+    setupPrograms: async (programIds) => {
+      const rows = get().programs?.programs ?? [];
+      const size = (id: ProgramId) =>
+        rows.find((row) => row.id === id)?.setup.download_bytes ?? Number.MAX_SAFE_INTEGER;
+      const order = [...new Set(programIds)].sort((a, b) => size(a) - size(b));
+      const client = get().client;
+      set({ programQueue: order });
+      let refused: string | null = null;
+      while (get().programQueue.length > 0 && get().client === client) {
+        const [next, ...rest] = get().programQueue;
+        set({ programQueue: rest });
+        const error = await get().setupProgram(next);
+        if (error) {
+          refused ??= error;
+          continue;
+        }
+        // One at a time: the next starts when this one's job is gone,
+        // however it ended.
+        await new Promise<void>((resolve) => {
+          const settled = () =>
+            get().client !== client ||
+            !get().programs?.programs.find((row) => row.id === next)?.setup.job;
+          if (settled()) return resolve();
+          const stop = useApp.subscribe(() => {
+            if (!settled()) return;
+            stop();
+            resolve();
+          });
+        });
+      }
+      return refused;
     },
 
     removeProgram: async (programId) => {

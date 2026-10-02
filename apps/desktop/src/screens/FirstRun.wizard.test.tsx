@@ -6,10 +6,17 @@
  * read live install state — installed / downloading·% / external — from
  * the same store rows the engine updates.
  */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { HardwareGPU, ModelEntry, ModelRow, SystemInfo } from "../api/types";
+import type {
+  HardwareGPU,
+  ModelEntry,
+  ModelRow,
+  ProgramInfo,
+  ProgramsReport,
+  SystemInfo,
+} from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
 import { FirstRun } from "./FirstRun";
@@ -97,7 +104,10 @@ function seedStore(models: ModelRow[], overrides: Record<string, unknown> = {}) 
   startDownload = vi.fn(async () => {});
   finishFirstRun = vi.fn();
   useApp.setState({
-    client: {} as never,
+    // Only what the programs step asks of a client: whether it can clone.
+    client: {
+      voices: vi.fn(async () => ({ available: true, voices: [], default: null, cloning: false })),
+    },
     system: SYSTEM,
     models,
     downloadErrors: {},
@@ -108,6 +118,14 @@ function seedStore(models: ModelRow[], overrides: Record<string, unknown> = {}) 
     deleteModel: vi.fn(async () => {}),
     deleteCustomModel: vi.fn(async () => {}),
     finishFirstRun,
+    programs: null,
+    programsError: null,
+    programQueue: [],
+    readiness: null,
+    remoteEngine: false,
+    refreshPrograms: vi.fn(async () => {}),
+    refreshReadiness: vi.fn(async () => {}),
+    setupPrograms: vi.fn(async () => null),
     ...overrides,
   } as never);
 }
@@ -125,7 +143,12 @@ const CATALOG = () => [
 ];
 
 const toStep2 = () => fireEvent.click(screen.getByRole("button", { name: t("firstRun.getStarted") }));
-const toStep3 = () => fireEvent.click(screen.getByRole("button", { name: t("common.continue") }));
+const next = () => fireEvent.click(screen.getByRole("button", { name: t("common.continue") }));
+/** From the machine step, through the programs step, to the models. */
+const toStep3 = () => {
+  next();
+  next();
+};
 
 beforeEach(() => {
   localStorage.clear();
@@ -142,7 +165,7 @@ describe("the wizard's steps", () => {
     expect(actions[actions.length - 1]!.textContent).toBe(t("firstRun.skip"));
   });
 
-  it("walks welcome → machine → models, and Back returns without losing ticks", () => {
+  it("walks welcome, machine, programs, models, and Back returns without losing ticks", () => {
     seedStore(CATALOG());
     render(<FirstRun />);
     toStep2();
@@ -157,7 +180,8 @@ describe("the wizard's steps", () => {
       screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Narration" }) }),
     );
     fireEvent.click(screen.getByRole("button", { name: t("common.back") }));
-    toStep3();
+    expect(screen.getByText(t("programs.wizard.title"))).toBeInTheDocument();
+    next();
     expect(
       screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Narration" }) }),
     ).not.toBeChecked();
@@ -330,12 +354,13 @@ describe("download & continue → ready", () => {
     toStep2();
     toStep3();
     fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
-    expect(screen.getByText(t("firstRun.statusExternalOllama"))).toBeInTheDocument();
-    expect(screen.getAllByText(t("firstRun.statusExternalNone")).length).toBe(2);
-    expect(screen.getByText(t("firstRun.statusInstalled"))).toBeInTheDocument();
-    expect(screen.getByText(t("firstRun.statusDownloading", { pct: 51 }))).toBeInTheDocument();
+    const rows = within(document.querySelector(".sumrail") as HTMLElement);
+    expect(rows.getByText(t("firstRun.statusExternalOllama"))).toBeInTheDocument();
+    expect(rows.getAllByText(t("firstRun.statusExternalNone")).length).toBe(2);
+    expect(rows.getByText(t("firstRun.statusInstalled"))).toBeInTheDocument();
+    expect(rows.getByText(t("firstRun.statusDownloading", { pct: 51 }))).toBeInTheDocument();
     // ace: pending but no progress yet — queued, not a lie.
-    expect(screen.getByText(t("firstRun.statusQueued"))).toBeInTheDocument();
+    expect(rows.getByText(t("firstRun.statusQueued"))).toBeInTheDocument();
   });
 
   it("finishes setup from Start creating", () => {
@@ -346,5 +371,230 @@ describe("download & continue → ready", () => {
     fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
     fireEvent.click(screen.getByRole("button", { name: t("firstRun.startCreating") }));
     expect(finishFirstRun).toHaveBeenCalled();
+  });
+});
+
+/* ---- the programs step ---- */
+
+const MB = 2 ** 20;
+
+function program(
+  id: "ffmpeg" | "ollama" | "comfyui",
+  over: Partial<ProgramInfo> = {},
+): ProgramInfo {
+  const settable = id === "ffmpeg";
+  return {
+    id,
+    state: "missing",
+    problem: id === "ffmpeg" ? "not_found" : "unreachable",
+    source: id === "ffmpeg" ? "path" : "default",
+    location: {
+      ffmpeg: "ffmpeg",
+      ollama: "http://127.0.0.1:11434/v1",
+      comfyui: "http://127.0.0.1:8188",
+    }[id],
+    setting: "LOCALCUT_X",
+    version: null,
+    checks: id === "ollama" ? { server: null, model: "qwen3:14b", model_present: null } : {},
+    managed: null,
+    setup: {
+      available: settable,
+      unavailable_reason: settable ? null : "program_not_supported",
+      takes_effect: settable,
+      version: settable ? "8.1.3" : null,
+      url: null,
+      download_bytes: settable ? 131 * MB : null,
+      install_bytes: settable ? 271 * MB : null,
+      job: null,
+      last: null,
+    },
+    ...over,
+  };
+}
+
+/** A second program the engine can set up, for the "all" button. */
+const settableToo = (id: "ollama" | "comfyui", size: number): ProgramInfo =>
+  program(id, {
+    setup: {
+      ...program("ffmpeg").setup,
+      download_bytes: size,
+    },
+  });
+
+const report = (rows: ProgramInfo[]): ProgramsReport => ({
+  platform: "linux-x64",
+  programs_dir: "/home/me/.localcut/programs",
+  programs_bytes: 0,
+  disk_free_bytes: 20_000 * MB,
+  bin_dir: "/home/me/.localcut/bin",
+  models_dir: "/home/me/.localcut/models",
+  programs: rows,
+});
+
+const FRESH = () => report([program("ffmpeg"), program("ollama"), program("comfyui")]);
+
+const toPrograms = () => {
+  toStep2();
+  next();
+};
+
+describe("the programs step", () => {
+  it("sits between the machine and the models", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    expect(document.querySelectorAll(".stepper .step-label")).toHaveLength(5);
+    toPrograms();
+    expect(screen.getByText(t("programs.wizard.title"))).toBeInTheDocument();
+    expect(document.querySelectorAll(".pstrip .light")).toHaveLength(7);
+  });
+
+  it("offers the one program the engine can set up as the step's own button", () => {
+    const setupPrograms = vi.fn(async () => null);
+    seedStore(CATALOG(), { programs: FRESH(), setupPrograms });
+    render(<FirstRun />);
+    toPrograms();
+    const actions = [...document.querySelectorAll(".setup-actions button")];
+    expect(actions[0]).toHaveTextContent("Set up FFmpeg 131 MB");
+    fireEvent.click(actions[0]!);
+    expect(setupPrograms).toHaveBeenCalledWith(["ffmpeg"]);
+  });
+
+  it("says plainly that the rest are done by hand", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toPrograms();
+    expect(screen.getByText(t("programs.wizard.subSome"))).toBeInTheDocument();
+  });
+
+  it("sets up every program it can with one button, totalled", () => {
+    const setupPrograms = vi.fn(async () => null);
+    seedStore(CATALOG(), {
+      setupPrograms,
+      programs: report([
+        program("ffmpeg"),
+        settableToo("ollama", 1.4 * 1024 * MB),
+        settableToo("comfyui", 1.9 * 1024 * MB),
+      ]),
+    });
+    render(<FirstRun />);
+    toPrograms();
+    const primary = document.querySelector(".setup-actions .btn-primary")!;
+    expect(primary).toHaveTextContent(t("programs.wizard.setupAll"));
+    expect(primary).toHaveTextContent("3.4 GB");
+    expect(screen.getByText(t("programs.wizard.sub"))).toBeInTheDocument();
+    fireEvent.click(primary);
+    expect(setupPrograms).toHaveBeenCalledWith(["ffmpeg", "ollama", "comfyui"]);
+  });
+
+  it("calls two of them both", () => {
+    seedStore(CATALOG(), {
+      programs: report([program("ffmpeg"), settableToo("ollama", 1024 * MB), program("comfyui")]),
+    });
+    render(<FirstRun />);
+    toPrograms();
+    expect(document.querySelector(".setup-actions .btn-primary")).toHaveTextContent(
+      t("programs.wizard.setupBoth"),
+    );
+  });
+
+  it("can be skipped, which goes on to the models", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toPrograms();
+    fireEvent.click(screen.getByRole("button", { name: t("programs.wizard.skip") }));
+    expect(screen.getByText(t("firstRun.modelsTitle"))).toBeInTheDocument();
+  });
+
+  it("lets you go on while a setup runs, and says it keeps going", () => {
+    const running = program("ffmpeg", {
+      setup: {
+        ...program("ffmpeg").setup,
+        job: { id: "j", phase: "downloading", done: 40 * MB, total: 131 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), { programs: report([running, program("ollama"), program("comfyui")]) });
+    render(<FirstRun />);
+    toPrograms();
+    expect(screen.queryByRole("button", { name: t("programs.wizard.skip") })).toBeNull();
+    expect(screen.getByText(t("programs.wizard.hintRunning"))).toBeInTheDocument();
+    next();
+    expect(screen.getByText(t("firstRun.modelsTitle"))).toBeInTheDocument();
+  });
+
+  it("shows a program waiting its turn behind the running one", () => {
+    const running = program("ffmpeg", {
+      setup: {
+        ...program("ffmpeg").setup,
+        job: { id: "j", phase: "downloading", done: 1, total: 131 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([running, settableToo("ollama", 1024 * MB), program("comfyui")]),
+      programQueue: ["ollama"],
+    });
+    render(<FirstRun />);
+    toPrograms();
+    expect(screen.getByText(t("programs.queued", { name: "FFmpeg" }))).toBeInTheDocument();
+  });
+});
+
+describe("the ready step", () => {
+  const toReady = () => {
+    toStep2();
+    next();
+    // Past the programs step whichever way it offers: on, or skip.
+    const skip = screen.queryByRole("button", { name: t("programs.wizard.skip") });
+    fireEvent.click(skip ?? screen.getByRole("button", { name: t("common.continue") }));
+    fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
+  };
+
+  it("says what runs each model", () => {
+    seedStore(CATALOG());
+    render(<FirstRun />);
+    toReady();
+    const rows = within(document.querySelector(".sumrail") as HTMLElement);
+    expect(rows.getAllByText(t("firstRun.runners.comfyui")).length).toBeGreaterThan(0);
+    expect(rows.getAllByText(t("firstRun.runners.builtIn")).length).toBeGreaterThan(0);
+    expect(rows.getByText(t("firstRun.runners.ollama"))).toBeInTheDocument();
+  });
+
+  it("ends with the final video, made by FFmpeg", () => {
+    const managed = program("ffmpeg", {
+      state: "ready",
+      problem: null,
+      source: "managed",
+      version: "8.1.3",
+      checks: { draws_text: true },
+    });
+    seedStore(CATALOG(), { programs: report([managed, program("ollama"), program("comfyui")]) });
+    render(<FirstRun />);
+    toReady();
+    const last = [...document.querySelectorAll(".sumrail .srow")].at(-1)!;
+    expect(last).toHaveTextContent("Final video");
+    expect(last).toHaveTextContent("FFmpeg 8.1.3");
+    expect(last).toHaveTextContent(t("firstRun.runners.setUpByLocalCut"));
+    expect(last).toHaveTextContent(t("firstRun.statusInstalled"));
+  });
+
+  it("says the final video has no FFmpeg when the step was skipped", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toReady();
+    const last = [...document.querySelectorAll(".sumrail .srow")].at(-1)!;
+    expect(last).toHaveTextContent(t("firstRun.statusNotFound"));
+  });
+
+  it("names the script model the engine will ask its server for", () => {
+    const ollama = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "llama3.2", model_present: false },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toReady();
+    const first = document.querySelector(".sumrail .srow")!;
+    expect(first).toHaveTextContent("llama3.2");
+    expect(first).toHaveTextContent(t("firstRun.statusNotPulled"));
   });
 });
