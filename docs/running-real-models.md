@@ -25,7 +25,7 @@ uv run localcut serve --backend local,mock
 | `chatterbox` | voice-cloned narration, and only that — see [voices.md](voices.md) |
 | `kokoro` | stock-voice narration on CPU (`localcut download kokoro-82m`) |
 | `align` | word-timed captions (`localcut download faster-whisper-base-en`, CPU) |
-| `ffmpeg` | assembly and export (`LOCALCUT_FFMPEG_BIN`) |
+| `ffmpeg` | assembly and export (`LOCALCUT_FFMPEG_BIN`, or LocalCut's own copy: [programs.md](programs.md)) |
 
 `chatterbox` sits ahead of `kokoro` deliberately: it claims only
 `local:chatterbox` narration, so everything else falls through to the stock
@@ -90,6 +90,8 @@ before it renders a scene, and the readiness report says so beforehand with
 
 `GET /models` and `POST /models/{id}/download`, with progress over `/ws`. The
 desktop app's first-run screen and Settings → model library use exactly that.
+Programs work the same way, through `GET /programs` and
+`POST /programs/ffmpeg/setup`; [programs.md](programs.md) has the details.
 
 ## Handing off to an NLE
 

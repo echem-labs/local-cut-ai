@@ -1,11 +1,13 @@
 """An ffmpeg that arrives, or changes, while the engine is running.
 
-The app's setup step downloads ffmpeg into <data_dir>/bin with the engine
-already up, and `EngineConfig.resolved_ffmpeg_bin` prefers that copy. So
-every consumer has to look for the binary when it uses it: the backends that
-claim assembly and captions, the voice-clone retime, the readiness report,
-/system's text probe and the waveform decoder. None of these tests restarts
-the engine.
+LocalCut's own copy is set up into <data_dir>/programs/ffmpeg, and a binary
+can be put in <data_dir>/bin by hand, both with the engine already up, and
+`EngineConfig.resolved_ffmpeg_bin` prefers either to PATH. So every consumer
+has to look for the binary when it uses it: the backends that claim assembly
+and captions, the voice-clone retime, the readiness report, /system's text
+probe and the waveform decoder. None of these tests restarts the engine.
+These land the binary in <data_dir>/bin; test_programs.py lands it through
+the setup itself.
 
 The tests that look the binary up by name set PATH themselves, to one empty
 directory, so a machine with ffmpeg installed system-wide runs them exactly
@@ -64,9 +66,10 @@ def _plant(path: Path, content: bytes) -> Path:
 
 
 def _land_real_ffmpeg(data_dir: Path) -> Path:
-    """The real pair, put where the setup step puts its download: ffprobe
-    first, so there is never an ffmpeg there without its ffprobe. Copied
-    rather than linked, because Windows needs a privilege to make a symlink."""
+    """The real pair, put in <data_dir>/bin the way a binary placed by hand
+    gets there: ffprobe first, so there is never an ffmpeg there without its
+    ffprobe. Copied rather than linked, because Windows needs a privilege to
+    make a symlink."""
     source = Path(_REAL_FFMPEG)
     bin_dir = data_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
@@ -114,8 +117,8 @@ def _jobs(jobs: list[dict], kind: str, status: str | None = None) -> list[dict]:
 async def test_an_ffmpeg_that_lands_while_the_engine_runs_is_used_without_a_restart(
     tmp_path, monkeypatch
 ):
-    """The setup step's promise, end to end, on the chain a machine without
-    models runs. Before the download the render fails at assembly rather than
+    """An ffmpeg landing mid-run, end to end, on the chain a machine without
+    models runs. Before it lands the render fails at assembly rather than
     faking a cut, and every surface says ffmpeg is missing. After it, with the
     same engine still up, every surface says it is there and the same project
     renders a cut that plays."""

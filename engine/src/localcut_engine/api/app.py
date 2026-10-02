@@ -84,6 +84,15 @@ from ..manifest.defaults import (
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate
+from ..programs.setup import (
+    NotEnoughSpace,
+    ProgramInUse,
+    ProgramSetup,
+    SetupBusy,
+    SetupNotRunning,
+    SetupUnavailable,
+)
+from ..programs.status import programs_report
 from ..providers.registry import (
     cloud_vision_models,
     configured_providers,
@@ -239,6 +248,7 @@ NodeId = Annotated[str, PathParam(pattern=NODE_ID_PATTERN)]
 OutputHash = Annotated[str, PathParam(pattern=r"^[a-f0-9]{64}$")]
 JobId = Annotated[str, PathParam(pattern=JOB_ID_PATTERN)]
 ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
+ProgramId = Annotated[str, PathParam(pattern=r"^[a-z][a-z0-9-]{0,31}$")]
 VoiceId = Annotated[str, PathParam(pattern=VOICE_ID_PATTERN)]
 
 # Node kinds that render as jobs, in pipeline order — the Settings backend
@@ -340,10 +350,10 @@ def _llm_default_reader(config: EngineConfig):
 
 def _ffmpeg_at_use(config: EngineConfig) -> Callable[[], str]:
     """The engine's ffmpeg as every holder of it takes it: the resolution
-    itself rather than its answer at startup. The app downloads ffmpeg into
-    <data_dir>/bin while the engine runs, and a name read once would leave
-    assembly, captions and the waveform decoder on whatever was there at
-    boot until a restart."""
+    itself rather than its answer at startup. LocalCut's own copy is set up
+    into <data_dir>/programs/ffmpeg while the engine runs, and a name read
+    once would leave assembly, captions and the waveform decoder on whatever
+    was there at boot until a restart."""
     return lambda: config.resolved_ffmpeg_bin
 
 
@@ -465,6 +475,17 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     service.scheduler = scheduler
     downloads = DownloadManager(config, events)
 
+    def render_uses(program_id: str) -> bool:
+        """Whether the job rendering now runs this program. Only ffmpeg is run
+        by renders, through every backend that holds one (assembly, the
+        aligner's decode, the voice-clone retime)."""
+        if program_id != "ffmpeg":
+            return False
+        name = scheduler.running_backend()
+        return name is not None and hasattr(backends.find(name), "ffmpeg_bin")
+
+    programs = ProgramSetup(config, events, render_uses=render_uses)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         # Reclaim directories a previous delete could not finish (engine
@@ -497,8 +518,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             backfilled = 0
         if backfilled:
             logger.info("backfilled meta for %d quick tool session(s)", backfilled)
+        # What a setup that the last engine did not finish left in
+        # <data_dir>/programs. Before anything can start a setup of its own.
+        try:
+            await asyncio.to_thread(programs.sweep)
+        except Exception:  # noqa: BLE001 - startup outranks housekeeping
+            logger.exception("could not clear what an interrupted setup left; continuing")
         scheduler.start()
         yield
+        await programs.shutdown()
         await downloads.shutdown()
         await scheduler.stop()
         queue.close()
@@ -1012,6 +1040,64 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except ManifestError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True, "freed_bytes": freed}
+
+    # -- programs (the setup step, Settings > Programs) ----------------------
+    #
+    # FFmpeg, the LLM server and ComfyUI as this engine finds them, and
+    # LocalCut's own copy of one, set up on request. Everything happens on
+    # the engine's machine, so a desktop paired with a GPU box sees and sets
+    # up that box's programs. docs/programs.md is the reference for clients.
+
+    @app.get("/programs", dependencies=[Authed])
+    async def list_programs() -> dict:
+        """Each program: whether the engine has one that works, where it
+        comes from, its version and checks, LocalCut's own copy if there is
+        one, and what a setup would download and keep here. Never downloads
+        anything, and asks each server with a short timeout."""
+        return await programs_report(
+            config,
+            programs,
+            text_probe,
+            script_model=_llm_default_reader(config)() or config.llm_model,
+        )
+
+    @app.post("/programs/{program_id}/setup", dependencies=[Authed])
+    async def setup_program(program_id: ProgramId) -> dict:
+        """Start setting up LocalCut's own copy from the pinned build, and
+        return at once; progress and the outcome arrive over /ws. Takes no
+        body: what is fetched is the pin, and only the pin."""
+        try:
+            return await programs.start(program_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except NotEnoughSpace as exc:
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+        except (SetupUnavailable, SetupBusy, ProgramInUse) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/programs/{program_id}/setup", dependencies=[Authed])
+    async def cancel_program_setup(program_id: ProgramId) -> dict:
+        """Stop a running setup; what it wrote is removed before
+        `program.setup.cancelled` goes out."""
+        try:
+            programs.cancel(program_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except SetupNotRunning as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"ok": True}
+
+    @app.delete("/programs/{program_id}", dependencies=[Authed])
+    async def remove_program(program_id: ProgramId) -> dict:
+        """Remove LocalCut's own copy, never an install of the user's. The
+        engine uses the next one it finds from the next use on."""
+        try:
+            freed = await programs.remove(program_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except (SetupBusy, ProgramInUse) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True, "freed_bytes": freed}
 

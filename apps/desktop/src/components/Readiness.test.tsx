@@ -45,7 +45,7 @@ const exportFails: ReadinessRow = {
   verdict: "will_fail",
   reason: "no_ffmpeg",
   data: {},
-  fix: { type: "install_ffmpeg" },
+  fix: { type: "setup_program", program: "ffmpeg", size_bytes: 170_611_883 },
 };
 
 /** A store with a readiness report and a client whose readiness calls

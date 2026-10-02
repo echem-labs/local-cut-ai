@@ -381,7 +381,10 @@ export type ReadinessFix =
   | { type: "download"; model_id: string; size_bytes: number }
   | { type: "pick_model"; task: string }
   | { type: "configure_provider"; provider: string }
-  | { type: "install_ffmpeg" };
+  /** Set up LocalCut's own copy of a program (POST /programs/:id/setup).
+   * Offered only where that copy would become the one the engine runs;
+   * `size_bytes` is the download. `program` is a GET /programs id. */
+  | { type: "setup_program"; program: string; size_bytes: number };
 
 export interface ReadinessRow {
   kind: string;
@@ -593,7 +596,30 @@ export type EngineEvent =
   | { type: "model.download.progress"; model: string; file: string; done: number; total: number }
   | { type: "model.download.done"; model: string }
   | { type: "model.download.failed"; model: string; error: string }
-  | { type: "model.download.cancelled"; model: string };
+  | { type: "model.download.cancelled"; model: string }
+  // A program setup (POST /programs/:id/setup), described in
+  // docs/programs.md with the codes `phase` and `reason` take. done/total
+  // are bytes while downloading and unpacking, throttled to ~0.5s, and each
+  // phase is announced as it starts.
+  | {
+      type: "program.setup.progress";
+      program: string;
+      phase: string;
+      done: number;
+      total: number;
+      bytes_per_s: number | null;
+    }
+  | {
+      type: "program.setup.done";
+      program: string;
+      version: string;
+      location: string;
+      in_use: boolean;
+      draws_text: boolean | null;
+    }
+  | { type: "program.setup.failed"; program: string; reason: string; error: string }
+  | { type: "program.setup.cancelled"; program: string }
+  | { type: "program.removed"; program: string; freed_bytes: number };
 
 /** A project's shape, portable — the engine writes and validates it; the
  * desktop only carries the document between the two routes and never reads

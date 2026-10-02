@@ -50,6 +50,7 @@ from .manifest.defaults import DEFAULTABLE_TASKS, load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
 from .manifest.recommend import _fits
+from .programs.setup import setup_fix
 from .providers.registry import (
     PROVIDERS,
     VISION_MODELS,
@@ -83,7 +84,10 @@ READINESS_REASONS = (
     "ffmpeg_cannot_draw_text",
 )
 
-READINESS_FIX_TYPES = ("download", "pick_model", "configure_provider", "install_ffmpeg")
+# `setup_program` sets up LocalCut's own copy of a program
+# (programs/setup.py), and is offered only where that copy would become the
+# one the engine runs.
+READINESS_FIX_TYPES = ("download", "pick_model", "configure_provider", "setup_program")
 
 # Kinds that assemble the deliverable. Mock declines these in any hybrid
 # chain (a placeholder MP4 named "your export" is worse than a failure), so
@@ -561,7 +565,7 @@ def _local_row(
     except GenerationError:
         if kind in _ASSEMBLY_KINDS:
             return _row(
-                kind, verdict="will_fail", reason="no_ffmpeg", fix={"type": "install_ffmpeg"}
+                kind, verdict="will_fail", reason="no_ffmpeg", fix=setup_fix(config, "ffmpeg")
             )
         if kind is NodeKind.SCRIPT:
             return _row(
@@ -623,7 +627,7 @@ def _local_row(
                 reason="no_ffmpeg",
                 backend=name,
                 model=model,
-                fix={"type": "install_ffmpeg"},
+                fix=setup_fix(config, "ffmpeg"),
             )
         return _missing_model_row(
             snap, backends, kind, verdict="placeholder", backend=name, model=model
@@ -679,14 +683,17 @@ async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: st
     return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
 
 
-async def _finish_export_row(backends: BackendRegistry, row: dict) -> dict:
+async def _finish_export_row(config: EngineConfig, backends: BackendRegistry, row: dict) -> dict:
     """An export ffmpeg serves still fails when it draws text this ffmpeg
     cannot, because it refuses before rendering a scene. Asked of the
     backend instance the scheduler runs, through the probe that refusal
     reads, so the two cannot disagree. Titles and captions are burned
     through the same filter and fonts, so one answer covers both. An ffmpeg
     that could not be run answers None, and its own failure at render time
-    says more."""
+    says more.
+
+    LocalCut's own FFmpeg draws text, so setting it up is the fix where it
+    would replace the ffmpeg in use, which is one found on PATH."""
     if row["verdict"] != "ready" or row["backend"] != "ffmpeg":
         return row
     ffmpeg = backends.find("ffmpeg")
@@ -697,6 +704,7 @@ async def _finish_export_row(backends: BackendRegistry, row: dict) -> dict:
         verdict="will_fail",
         reason="ffmpeg_cannot_draw_text",
         backend="ffmpeg",
+        fix=await asyncio.to_thread(setup_fix, config, "ffmpeg"),
     )
 
 
@@ -734,6 +742,6 @@ async def readiness_rows(
             backend, resolved_model = result
             result = await _finish_llm_row(snap, kind, backend, resolved_model)
         elif kind is NodeKind.EXPORT and (burns_captions or draws_titles):
-            result = await _finish_export_row(backends, result)
+            result = await _finish_export_row(config, backends, result)
         rows.append(result)
     return rows

@@ -92,23 +92,48 @@ class EngineConfig(BaseModel):
         return self.models_dir if self.models_dir is not None else self.data_dir / "models"
 
     @property
-    def resolved_ffmpeg_bin(self) -> str:
-        """An explicit ffmpeg_bin wins; the bare default falls back to the
-        managed download in <data_dir>/bin when one exists. The desktop
-        shell installs ffmpeg there but spawns the engine without pointing
-        at it, so PATH-less machines would otherwise fail every assembly.
+    def programs_dir(self) -> Path:
+        """Where LocalCut keeps its own copies of the programs it runs, one
+        folder per program (programs/setup.py puts them there)."""
+        return self.data_dir / "programs"
+
+    @property
+    def ffmpeg_lookup(self) -> tuple[str, str]:
+        """Where the engine's ffmpeg comes from right now, as (source, name or
+        path). The first of these that applies wins:
+
+        - `configured`: ffmpeg_bin (LOCALCUT_FFMPEG_BIN) set to anything but
+          the bare default, used as given whether or not it exists.
+        - `data_dir`: <data_dir>/bin/ffmpeg[.exe], a binary someone put there
+          by hand.
+        - `managed`: <data_dir>/programs/ffmpeg/ffmpeg[.exe], LocalCut's own
+          copy, which exists only because someone asked for it. That is why
+          it outranks the user's own install on PATH.
+        - `path`: the bare name, looked up on PATH.
 
         Every holder of the binary reads this at each use rather than once
-        at startup (api.app._ffmpeg_at_use), so a download that lands while
-        the engine runs serves the next job with no restart. The bare name
-        is different: it is looked up on this process's own PATH, which was
-        fixed when the engine started. An installer that adds a directory to
-        PATH is not seen until the engine restarts."""
+        at startup (api.app._ffmpeg_at_use), so a binary that lands in either
+        folder while the engine runs serves the next job with no restart, and
+        one that is removed stops being used. ffprobe is taken from beside
+        whichever ffmpeg wins (backends/ffmpeg.py), so a folder must never
+        hold one without the other. PATH is different: it is this process's
+        own, fixed when the engine started, so an installer that adds a
+        directory to it is not seen until the engine restarts."""
         if self.ffmpeg_bin != "ffmpeg":
-            return self.ffmpeg_bin
+            return "configured", self.ffmpeg_bin
         exe = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-        managed = self.data_dir / "bin" / exe
-        return str(managed) if managed.exists() else self.ffmpeg_bin
+        by_hand = self.data_dir / "bin" / exe
+        if by_hand.exists():
+            return "data_dir", str(by_hand)
+        managed = self.programs_dir / "ffmpeg" / exe
+        if managed.exists():
+            return "managed", str(managed)
+        return "path", self.ffmpeg_bin
+
+    @property
+    def resolved_ffmpeg_bin(self) -> str:
+        """The ffmpeg to run now: the winner of `ffmpeg_lookup`."""
+        return self.ffmpeg_lookup[1]
 
     @property
     def backend_chain(self) -> list[str]:

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "updated": "2026-10-02",
+  "programs": [
+    {
+      "id": "ffmpeg",
+      "version": "8.1.3",
+      "license": "LGPL-3.0-or-later",
+      "assets": [
+        {
+          "platform": "windows-x64",
+          "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-8.1.zip",
+          "size": 170611883,
+          "sha256": "4a7642b2264c03e8a0ce8a3825b933ee5580656f45695a086fe7e294045ffc0a",
+          "format": "zip",
+          "files": [
+            {
+              "member": "ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-8.1/bin/ffprobe.exe",
+              "path": "ffprobe.exe",
+              "size": 133882880
+            },
+            {
+              "member": "ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-8.1/bin/ffmpeg.exe",
+              "path": "ffmpeg.exe",
+              "size": 134088704
+            }
+          ]
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1.tar.xz",
+          "size": 137034436,
+          "sha256": "dfa863a00ca81f1bdf58a372b18cff4820f0017e55de32778de8ecd8ed92a02e",
+          "format": "tar.xz",
+          "files": [
+            {
+              "member": "ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1/bin/ffprobe",
+              "path": "ffprobe",
+              "size": 141859048
+            },
+            {
+              "member": "ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1/bin/ffmpeg",
+              "path": "ffmpeg",
+              "size": 142096680
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,7 @@ from localcut_engine.manifest import downloads as downloads_module
 from localcut_engine.manifest.downloads import (
     ChecksumMismatch,
     DownloadError,
+    SizeMismatch,
     UnsafeURL,
     assert_public_url,
     download_file,
@@ -132,6 +133,29 @@ async def test_stream_larger_than_manifest_size_is_aborted(server, tmp_path):
         await download_file(oversized, tmp_path / "models")
     part = tmp_path / "models/checkpoints/weights.bin.part"
     assert not part.exists()  # poisoned bytes are not kept for resume
+
+
+@pytest.mark.parametrize("extra", [-1, 1])
+async def test_an_exact_size_download_refuses_any_other_length(tmp_path, monkeypatch, extra):
+    """A program's pin holds its download to the byte, and says so before
+    the digest does: a body one byte short or one byte long is refused as
+    the wrong size, and nothing of it is kept."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    body = PAYLOAD[:-1] if extra < 0 else PAYLOAD + b"!"
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
+    )
+    pinned = ModelFile(
+        url="https://cdn.example.com/w.bin",
+        dest="w.bin",
+        sha256=hashlib.sha256(PAYLOAD).hexdigest(),
+        size=len(PAYLOAD),
+    )
+    with pytest.raises(SizeMismatch) as refused:
+        await download_file(pinned, tmp_path / "out", client=client, exact_size=True)
+    await client.aclose()
+    assert (refused.value.expected, refused.value.actual) == (len(PAYLOAD), len(PAYLOAD) + extra)
+    assert list((tmp_path / "out").iterdir()) == []
 
 
 async def test_http_error_raises(server, tmp_path):

@@ -91,6 +91,7 @@ class Scheduler:
         # because this queue is serial. Interrupting needs a handle.
         self._running: tuple[str, asyncio.Task] | None = None
         self._running_project: str | None = None
+        self._running_job: Job | None = None
         # Set by cancel_job just before it cancels the task above, so the
         # loop can tell a cancel aimed at one job from one aimed at itself.
         self._cancelled_job: str | None = None
@@ -179,6 +180,13 @@ class Scheduler:
             return False
         return self.cancel_running(job_id)
 
+    def running_backend(self) -> str | None:
+        """The name of the backend rendering the job in flight, or None when
+        nothing is rendering. Read-only, for a caller that must not pull a
+        program out from under a render (api.app's DELETE /programs/{id})."""
+        job = self._running_job
+        return job.backend if job is not None else None
+
     def notify(self) -> None:
         """Call after enqueueing work — safe from worker threads."""
         try:
@@ -224,6 +232,7 @@ class Scheduler:
             render = asyncio.create_task(self._execute(job), name=f"job-{job.id}")
             self._running = (job.id, render)
             self._running_project = job.project_id
+            self._running_job = job
             try:
                 await render
             except asyncio.CancelledError:
@@ -260,6 +269,7 @@ class Scheduler:
             finally:
                 self._running = None
                 self._running_project = None
+                self._running_job = None
 
     async def _execute(self, job: Job) -> None:
         # claim_next already persisted RENDERING/started_at; this only adds

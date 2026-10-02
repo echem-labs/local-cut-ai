@@ -19,6 +19,7 @@ import functools
 import json
 import math
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -117,8 +118,9 @@ async def _terminating(process: asyncio.subprocess.Process):
 #: How a backend is told which ffmpeg to run: a name or path fixed for the
 #: backend's life, or a function asked at each use. The engine passes a
 #: function that reads EngineConfig.resolved_ffmpeg_bin (api.app's
-#: _ffmpeg_at_use), so a binary downloaded into <data_dir>/bin while the
-#: engine runs is the one the next use finds.
+#: _ffmpeg_at_use), so a binary that lands while the engine runs (LocalCut's
+#: own copy, set up into <data_dir>/programs/ffmpeg, or one put in
+#: <data_dir>/bin by hand) is the one the next use finds.
 FFmpegBin = str | Callable[[], str]
 
 
@@ -211,6 +213,48 @@ def ffmpeg_available(ffmpeg_bin: str) -> bool:
     every job dies at the first decode.
     """
     return Path(ffmpeg_bin).exists() or shutil.which(ffmpeg_bin) is not None
+
+
+# What each binary said its version was, filed under the binary
+# (_binary_identity) like the text probe's answers. A run that failed is
+# never kept, because the binary that fixes it can land at any moment.
+_VERSIONS: dict[tuple, str] = {}
+_VERSION_TIMEOUT_S = 60.0
+
+
+async def probe_version(binary: str) -> str | None:
+    """The version an ffmpeg or ffprobe reports for itself: the word after
+    "version" on the first line of `-version`, such as
+    "n8.1.3-9-g29e619e767-20260930". None when the binary cannot be started,
+    exits with an error, says something else, or takes over a minute (a
+    virus scanner looking at a new binary is the slow case that still
+    answers).
+
+    An unchanged binary is not run again, and a replacement is."""
+    key = _binary_identity(binary)
+    if key in _VERSIONS:
+        return _VERSIONS[key]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            binary,
+            "-version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+    try:
+        async with _terminating(process):
+            stdout, _ = await asyncio.wait_for(process.communicate(), _VERSION_TIMEOUT_S)
+    except TimeoutError:
+        return None
+    if process.returncode != 0:
+        return None
+    reported = re.match(r"\S+ version (\S+)", stdout.decode("utf-8", errors="replace"))
+    if reported is None:
+        return None
+    _VERSIONS[key] = reported.group(1)
+    return _VERSIONS[key]
 
 
 def _filter_escape(value: str, special: str) -> str:
@@ -318,12 +362,13 @@ class FFmpegBackend(ExecutionBackend):
         return _ffprobe_beside(self.ffmpeg_bin)
 
     def supports(self, kind: NodeKind) -> bool:
-        # Binary-gated: without an ffmpeg on disk (managed download) or on
-        # PATH, assembly falls through to the chain's fallback instead of
-        # failing. The binary is looked up on every call, so a download that
-        # lands in <data_dir>/bin claims these kinds from the next resolve
-        # on. PATH is the one this process started with, though: an ffmpeg
-        # whose installer adds a directory to PATH needs an engine restart.
+        # Binary-gated: without an ffmpeg on disk (LocalCut's own copy, or one
+        # in <data_dir>/bin) or on PATH, assembly falls through to the chain's
+        # fallback instead of failing. The binary is looked up on every call,
+        # so a copy set up while the engine runs claims these kinds from the
+        # next resolve on. PATH is the one this process started with, though:
+        # an ffmpeg whose installer adds a directory to PATH needs an engine
+        # restart.
         return kind in _KINDS and ffmpeg_available(self.ffmpeg_bin)
 
     @_one_binary

@@ -82,3 +82,22 @@ def test_the_ffmpeg_tarball_is_verified_by_something_every_builder_runs():
     assert unpacking.index("sha256sum -c") < unpacking.index("tar -xf")
     # The pin, not a second copy of the digest for the two to drift apart on.
     assert "${FFMPEG_SHA256}" in unpacking
+
+
+def test_the_image_and_localcuts_own_setup_pin_the_same_linux_ffmpeg():
+    """The container installs FFmpeg from this Dockerfile, and a Linux engine
+    outside one can set up its own copy from the programs manifest. The pin
+    is written down in both, so a bump to one alone would leave the GPU box
+    and the desktop rendering with different builds, and the image's
+    month-end check above would no longer cover the copy LocalCut sets up.
+    """
+    from localcut_engine.programs.manifest import load_programs_manifest
+
+    steps = _instructions(DOCKERFILE.read_text())
+    url = next(s.removeprefix("ARG FFMPEG_URL=") for s in steps if s.startswith("ARG FFMPEG_URL="))
+    digest = next(
+        s.removeprefix("ARG FFMPEG_SHA256=") for s in steps if s.startswith("ARG FFMPEG_SHA256=")
+    )
+    pinned = load_programs_manifest().asset("ffmpeg", "linux-x64")
+    assert pinned is not None, "the programs manifest pins no FFmpeg for linux-x64"
+    assert (pinned.url, pinned.sha256) == (url, digest)
