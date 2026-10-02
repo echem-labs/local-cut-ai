@@ -497,6 +497,13 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
     assert report["programs_dir"] == str((tmp_path / "data" / "programs").resolve())
     assert report["programs_bytes"] == 0
     assert report["disk_free_bytes"] > 0
+    # The two folders a person setting a program up by hand needs named:
+    # where a binary of their own outranks LocalCut's copy, and where the
+    # weights are that ComfyUI has to be pointed at. Both are the engine
+    # machine's own, resolved, which on a paired GPU box is the only place
+    # they can come from.
+    assert report["bin_dir"] == str((tmp_path / "data" / "bin").resolve())
+    assert report["models_dir"] == str((tmp_path / "data" / "models").resolve())
     assert [row["id"] for row in report["programs"]] == list(PROGRAM_IDS)
 
     ffmpeg = _row(report, "ffmpeg")
