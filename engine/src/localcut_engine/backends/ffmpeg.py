@@ -23,7 +23,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from .. import fonts
 from ..aspects import (
@@ -213,12 +213,36 @@ def ffmpeg_available(ffmpeg_bin: str) -> bool:
     return Path(ffmpeg_bin).exists() or shutil.which(ffmpeg_bin) is not None
 
 
-def _filter_path(path: Path) -> str:
-    """A filesystem path safe to embed in a single-quoted ffmpeg filtergraph
-    option (ass=, drawtext textfile=). ffmpeg accepts forward slashes on
-    Windows, and backslashes are escape characters inside a filtergraph, so a
-    raw `C:\\Users\\…` path is mis-parsed; the drive colon is also special."""
-    return str(path).replace("\\", "/").replace(":", r"\:")
+def _filter_escape(value: str, special: str) -> str:
+    """`value` escaped for one of ffmpeg's tokenizers (av_get_token), which
+    reads `\\` as an escape, `'` as a quote, the `special` characters as the
+    end of the token, and drops whitespace at either end. The same rule as
+    ffmpeg's own av_escape."""
+    last = len(value) - 1
+    return "".join(
+        f"\\{char}"
+        if char in special or char in "'\\" or (char in " \t\r\n" and index in (0, last))
+        else char
+        for index, char in enumerate(value)
+    )
+
+
+def _filter_path(path: PurePath) -> str:
+    """`path` as the value of a filter option in a filtergraph, after an
+    explicit `key=`.
+
+    ffmpeg unescapes that value twice ("Notes on filtergraph escaping" in
+    ffmpeg-filters): the graph parser ends a filter at `[ ] , ;`, then the
+    filter's option parser ends a value at `:`, and both read `\\` and `'`.
+    So the path is escaped for the option parser first and the result for
+    the graph parser, and a name like `O'Brien` or `a:b;c` reaches the filter
+    as itself. A positional value would not be safe even then: a path whose
+    start reads as a key followed by `=` is taken for one.
+
+    as_posix() gives a Windows path forward slashes, which ffmpeg accepts
+    there. A POSIX name can hold a backslash, so that one is escaped, never
+    converted."""
+    return _filter_escape(_filter_escape(path.as_posix(), ":"), "[],;")
 
 
 def _as_float(value: object, default: float) -> float:
@@ -1103,10 +1127,6 @@ class FFmpegBackend(ExecutionBackend):
         """drawtext for an on-screen title read from `textfile`, sized for a
         frame `height` pixels tall."""
         return (
-            # Single-quote AND filtergraph-escape the paths: an unquoted
-            # ':'/',' in the temp dir path (legal on Linux) or a Windows
-            # backslash/drive-colon would otherwise be parsed as a drawtext
-            # option/filter separator and break -vf.
             # expansion=none: titles are user/LLM text, and drawtext's
             # default expansion evaluates %{...} — "SAVE 100%{TODAY}"
             # fails the whole export, and "%{pts}" silently burns a
@@ -1114,8 +1134,8 @@ class FFmpegBackend(ExecutionBackend):
             # fontfile=: the bundled face, opened directly. A family name
             # would go through fontconfig, which on a machine with no fonts
             # finds nothing and stops the filter from starting.
-            f"drawtext=expansion=none:textfile='{_filter_path(textfile)}'"
-            f":fontfile='{_filter_path(self.fonts_dir / fonts.REGULAR)}'"
+            f"drawtext=expansion=none:textfile={_filter_path(textfile)}"
+            f":fontfile={_filter_path(self.fonts_dir / fonts.REGULAR)}"
             f":fontsize={height // 14}"
             f":fontcolor=white:borderw={max(2, height // 270)}"
             ":bordercolor=black@0.85:x=(w-text_w)/2:y=h*0.14"
@@ -1126,7 +1146,7 @@ class FFmpegBackend(ExecutionBackend):
         the family the style names (captions.py) is found. Without it libass
         asks the system, and on a machine with no fonts the captions burn in
         blank while ffmpeg reports success."""
-        return f"ass='{_filter_path(ass)}':fontsdir='{_filter_path(self.fonts_dir)}'"
+        return f"ass=filename={_filter_path(ass)}:fontsdir={_filter_path(self.fonts_dir)}"
 
     async def _lit_pixels(self, vf: str) -> int | None:
         """How many pixels `vf` lights on one black probe frame. 0 when ffmpeg

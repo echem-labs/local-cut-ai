@@ -88,21 +88,28 @@ async def test_the_probe_draws_with_the_faces_the_engine_ships(monkeypatch):
     monkeypatch.setattr(backend, "_lit_pixels", fake_lit)
     await backend.supports_drawtext()
     title, captions = drawn
-    assert f"fontfile='{_filter_path(fonts.DIR / fonts.REGULAR)}'" in title
+    assert f"fontfile={_filter_path(fonts.DIR / fonts.REGULAR)}:" in title
     assert ":font=" not in title, "a family name is a fontconfig lookup"
-    assert f"fontsdir='{_filter_path(fonts.DIR)}'" in captions
+    assert captions.endswith(f":fontsdir={_filter_path(fonts.DIR)}")
 
 
-def test_font_paths_keep_a_windows_drive_letter_out_of_the_option_syntax():
-    """Inside a filtergraph a backslash is an escape and a colon separates
-    options, so `C:\\...` has to reach ffmpeg as `C\\:/...`. The font paths
-    point into the install directory, which on Windows always has one."""
+def test_a_windows_profile_path_is_escaped_for_both_parsers():
+    """On Windows the fonts sit in the install directory and the work files
+    in the temp directory, both inside the user's profile folder. ffmpeg
+    unescapes an option value twice, in the graph parser and again in the
+    filter's option parser, so the drive colon and an apostrophe in the
+    profile name carry one escape for each."""
+    profile = PureWindowsPath(r"C:\Users\O'Brien\AppData\Local")
+    escaped = r"C\\:/Users/O\\\'Brien/AppData/Local"
     backend = FFmpegBackend(ffmpeg_bin="ffmpeg")
-    backend.fonts_dir = PureWindowsPath(r"C:\Program Files\LocalCut AI\fonts")
-    title = backend._title_filter(PureWindowsPath(r"C:\Temp\seg000.txt"), 1920)
-    assert r"fontfile='C\:/Program Files/LocalCut AI/fonts/Inter-Regular.ttf'" in title
-    captions = backend._captions_filter(PureWindowsPath(r"C:\Temp\captions.ass"))
-    assert r"fontsdir='C\:/Program Files/LocalCut AI/fonts'" in captions
+    backend.fonts_dir = profile / "Programs" / "LocalCut AI" / "fonts"
+    title = backend._title_filter(profile / "Temp" / "seg000.txt", 1920)
+    assert f":textfile={escaped}/Temp/seg000.txt:" in title
+    assert f":fontfile={escaped}/Programs/LocalCut AI/fonts/Inter-Regular.ttf:" in title
+    captions = backend._captions_filter(profile / "Temp" / "captions.ass")
+    assert captions == (
+        f"ass=filename={escaped}/Temp/captions.ass:fontsdir={escaped}/Programs/LocalCut AI/fonts"
+    )
 
 
 def test_ffprobe_keeps_the_executable_extension():
