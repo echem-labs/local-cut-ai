@@ -75,11 +75,11 @@ profile folder name outside ASCII makes the engine exit at its first
 narration, with espeak-ng's "Error processing file" as the last line it
 prints.
 
-**After changing `localcut.spec`, make the freeze narrate.** PyInstaller
+**After changing `localcut.spec`, make the freeze render a video.** PyInstaller
 freezes a package's modules and leaves behind the files the package reads
 from beside them. An engine missing those still starts and answers
-`--version`, then fails every narration. Render a short project through your
-freeze, with ffmpeg and ffprobe on `PATH`:
+`--version`, then fails every narration. Render and export a short project
+through your freeze, with ffmpeg and ffprobe on `PATH`:
 
 ```bash
 cd engine
@@ -87,10 +87,15 @@ uv run python packaging/speech_check.py dist/localcut/localcut --data-dir /tmp/l
 ```
 
 It downloads the Kokoro and faster-whisper weights through the frozen binary
-(about 500 MB, once per data dir), renders, and fails unless every narration
-and the captions came from the real backends. `package.yml` runs it on the
-Linux and Windows builds, from a copy of the freeze under a folder named
-`Zoë O'Brien 中文`, with the data dir and the temp dir in the same folder.
+(about 500 MB, once per data dir), renders, and exports the cut into the data
+dir. It fails unless every narration, the captions and the export came from
+the real backends, and unless the exported file holds a picture and a
+soundtrack as long as the timeline, decodes to its last frame, and shows the
+title and the burned-in captions. `package.yml` runs it on the Linux and
+Windows builds, from a copy of the freeze under a folder named
+`Zoë O'Brien 中文`, with the data dir and the temp dir in the same folder. A
+pull request that changes `engine/uv.lock` or `engine/pyproject.toml` runs it
+too, so a dependency bump is frozen and rendered before it merges.
 
 **macOS builds are unsigned and un-notarized.** `.github/workflows/package.yml`
 builds an arm64 dmg on every release run, but `electron-builder.yml` sets
