@@ -93,7 +93,9 @@ the real backends, and unless the exported file holds a picture and a
 soundtrack as long as the timeline, decodes to its last frame, and shows the
 title and the burned-in captions. `package.yml` runs it on the Linux and
 Windows builds, from a copy of the freeze under a folder named
-`Zoë O'Brien 中文`, with the data dir and the temp dir in the same folder.
+`Zoë O'Brien 中文`, with the data dir and the temp dir in the same folder. A
+pull request that changes `engine/uv.lock` or `engine/pyproject.toml` runs it
+too, so a dependency bump is frozen and rendered before it merges.
 
 **macOS builds are unsigned and un-notarized.** `.github/workflows/package.yml`
 builds an arm64 dmg on every release run, but `electron-builder.yml` sets

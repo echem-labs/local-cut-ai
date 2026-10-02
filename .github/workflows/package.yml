@@ -1,7 +1,8 @@
 name: Package
 
 # Building an installer is slow, so this does NOT run on every push: it runs
-# on a release tag, on a PR that touches the packaging path, and on demand.
+# on a release tag, on a PR that touches the packaging path or the engine's
+# dependencies, and on demand.
 #
 # The path filter is the interesting one. Packaging is the only part of this
 # repo that no other workflow exercises at all — a spec file, an
@@ -9,6 +10,12 @@ name: Package
 # somebody builds an installer, and by then the change is on main. That is
 # what the `pull_request` trigger is for; `workflow_dispatch` is for building
 # one deliberately, and a tag is what ships.
+#
+# The engine's pyproject and lock are in the filter for the same reason. A
+# bump of kokoro-onnx, phonemizer-fork, espeakng-loader, faster-whisper,
+# onnxruntime or ctranslate2 can move a file the freeze has to carry, and the
+# engine suite runs from site-packages, where nothing is ever missing. Only
+# the render below runs a bump the way an installer will.
 #
 # A run that uploads produces ~860 MB of artifacts — the Linux job alone is
 # 485 MB, because the AppImage and the deb each embed their own copy of the
@@ -34,6 +41,8 @@ on:
       - "branding/**"
       - "engine/localcut.spec"
       - "engine/packaging/**"
+      - "engine/pyproject.toml"
+      - "engine/uv.lock"
       - ".github/workflows/package.yml"
 
 # Only a pull_request run is safe to cancel. A tag push is a release build —
