@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .backends import espeak
 from .backends.base import BackendRegistry, GenerationError, ServiceProbe
 from .backends.ffmpeg import FFmpegBackend, ffmpeg_available
 from .config import EngineConfig
@@ -82,6 +83,11 @@ READINESS_REASONS = (
     # titles or burned-in captions): the export refuses before it renders a
     # scene.
     "ffmpeg_cannot_draw_text",
+    # The engine sits in a folder deep enough that the path to espeak-ng's
+    # data does not fit the buffer espeak-ng keeps it in, so every Kokoro
+    # narration fails (backends/espeak.py). `data` carries the path's length
+    # and the limit, both in bytes.
+    "install_path_too_long",
 )
 
 # `setup_program` sets up LocalCut's own copy of a program
@@ -633,9 +639,38 @@ def _local_row(
             snap, backends, kind, verdict="placeholder", backend=name, model=model
         )
 
-    # kokoro, align, chatterbox, ffmpeg assembly, and any future tier that
-    # claimed the kind for real.
+    if name == "kokoro":
+        return _kokoro_row(kind, model)
+
+    # align, chatterbox, ffmpeg assembly, and any future tier that claimed
+    # the kind for real.
     return _row(kind, verdict="ready", reason="ok", backend=name, model=model)
+
+
+def _kokoro_row(kind: NodeKind, model: str | None) -> dict:
+    """Kokoro claimed narration, and its text reaches the voice through
+    espeak-ng, which cannot take a path to its data that does not fit its
+    buffer. Judged from the path alone: espeak-ng is not started for this.
+
+    espeak-ng does look in a few other places before it gives up (an
+    ESPEAK_DATA_PATH variable, ~/espeak-ng-data, a system eSpeak NG's
+    registry entry on Windows), and a machine with one of those can still
+    narrate from that copy. The row does not look for them.
+    """
+    path = espeak.data_path()
+    if path is None or not espeak.too_long(path):
+        return _row(kind, verdict="ready", reason="ok", backend="kokoro", model=model)
+    return _row(
+        kind,
+        verdict="will_fail",
+        reason="install_path_too_long",
+        backend="kokoro",
+        model=model,
+        extra={
+            "path_bytes": len(espeak.encoded(path)),
+            "path_limit": espeak.DATA_PATH_LIMIT,
+        },
+    )
 
 
 def _lists_model(names: list[str], resolved: str) -> bool:

@@ -375,7 +375,11 @@ export type ReadinessReason =
   /** ffmpeg runs, and draws nothing where the export needs text drawn
    * (its burned-in captions), so the export refuses before it renders a
    * scene. */
-  | "ffmpeg_cannot_draw_text";
+  | "ffmpeg_cannot_draw_text"
+  /** The engine sits in a folder whose path is too long for espeak-ng to
+   * find its data, so every Kokoro narration fails. `data` carries
+   * `path_bytes` and `path_limit`. */
+  | "install_path_too_long";
 
 export type ReadinessFix =
   | { type: "download"; model_id: string; size_bytes: number }
