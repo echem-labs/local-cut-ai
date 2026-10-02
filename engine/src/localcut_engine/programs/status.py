@@ -85,6 +85,12 @@ def _totals(config: EngineConfig) -> dict:
         "programs_dir": str(root.resolve()),
         "programs_bytes": storage._dir_size(root),
         "disk_free_bytes": shutil.disk_usage(root if root.is_dir() else config.data_dir).free,
+        # The two folders a setup by hand needs named: where a binary of
+        # the user's own outranks LocalCut's copy (config.ffmpeg_lookup),
+        # and where the weights are that ComfyUI is pointed at. A client
+        # cannot work either out for itself on a remote engine.
+        "bin_dir": str((config.data_dir / "bin").resolve()),
+        "models_dir": str(config.resolved_models_dir.resolve()),
     }
 
 

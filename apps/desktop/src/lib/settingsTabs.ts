@@ -13,6 +13,7 @@ export const SETTINGS_TABS = [
   "general",
   "defaults",
   "providers",
+  "programs",
   "models",
   "storage",
   "engine",

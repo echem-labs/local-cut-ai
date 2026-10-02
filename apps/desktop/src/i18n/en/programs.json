@@ -1,0 +1,201 @@
+{
+  "names": {
+    "ffmpeg": "FFmpeg",
+    "ollama": "Ollama",
+    "comfyui": "ComfyUI"
+  },
+  "does": {
+    "ffmpeg": "Puts the video together: cuts, music, captions, titles and the final MP4.",
+    "ollama": "Writes the script, and makes the changes you ask for in plain words.",
+    "comfyui": "Draws the keyframes and the video clips, and makes the music."
+  },
+  "states": {
+    "ready": "Ready",
+    "missing": "Not found",
+    "broken": "Not working"
+  },
+  "problems": {
+    "not_found": "Not found on {where}.",
+    "ffprobe_missing": "Found {name}, but not the ffprobe that goes with it.",
+    "does_not_run": "Found {name} at {location}, but it doesn't run.",
+    "unreachable": "Nothing answers at {address}.",
+    "unexpected_response": "Something answers at {address}, but it isn't {name}."
+  },
+  "sources": {
+    "managed": "Set up by LocalCut.",
+    "configured": "Set by {setting}, at {location}.",
+    "data_dir": "Your own copy, in {location}.",
+    "path": "Your own install, found on the PATH.",
+    "default": "Your own {name}, at {address}."
+  },
+  "unavailable": {
+    "platform_not_supported": "LocalCut has no build of {name} for this system, so it can't set it up for you.",
+    "program_not_supported": "LocalCut can't set {name} up for you yet."
+  },
+  "phases": {
+    "downloading": "Downloading {name}",
+    "verifying": "Checking the download",
+    "unpacking": "Unpacking {name}",
+    "checking": "Making sure {name} runs",
+    "installing": "Moving {name} into place"
+  },
+  "outcomes": {
+    "done": "{name} is set up.",
+    "failed": "Setting up {name} stopped.",
+    "cancelled": "Setting up {name} was cancelled."
+  },
+  "failures": {
+    "no_space": "Setup stopped: the disk filled up.",
+    "download_failed": "Setup stopped: the download didn't finish.",
+    "size_mismatch": "Setup stopped: the download wasn't the size LocalCut expected.",
+    "checksum_mismatch": "Setup stopped: the download didn't match its checksum.",
+    "unpack_failed": "Setup stopped: the download couldn't be unpacked.",
+    "does_not_run": "Setup stopped: the {name} it downloaded doesn't run on this system.",
+    "in_use": "Setup stopped: another program has LocalCut's copy of {name} open.",
+    "install_failed": "Setup stopped: it couldn't be moved into place."
+  },
+  "advice": {
+    "no_space": "It needs {size} free on the disk that holds {dir}. Free some space, then try again.",
+    "download_failed": "Nothing was kept. Check the connection, then try again.",
+    "size_mismatch": "Nothing from it was kept or run. Try again in a while.",
+    "checksum_mismatch": "Nothing from it was kept or run. Try again in a while, or set {name} up yourself with the steps below.",
+    "unpack_failed": "Nothing was kept. Try again, or set {name} up yourself with the steps below.",
+    "does_not_run": "Nothing was kept. Set {name} up yourself with the steps below.",
+    "in_use": "Close whatever is using it, then try again.",
+    "install_failed": "Nothing changed. Try again."
+  },
+  "here": "this computer",
+  "on": "On {where}",
+  "wellAria": "{name}, {state}",
+  "versionAria": "version {version}",
+  "queued": "Next, once {name} is done.",
+  "checks": {
+    "drawsText": "Captions and titles render.",
+    "noText": "It can't draw captions or titles, so a video with them won't export.",
+    "noTextFix": "LocalCut's own copy can.",
+    "modelMissing": "It doesn't have {model}, the model LocalCut writes scripts with.",
+    "otherServer": "Your own language model server, at {address}.",
+    "notUsedConfigured": "LocalCut's own copy is here too, but {setting} comes first.",
+    "notUsedDataDir": "LocalCut's own copy is here too, but the one in {location} comes first.",
+    "outdated": "LocalCut's copy is {version}, and it now sets up {pinned}.",
+    "wouldNotBeUsedConfigured": "{setting} points here, so LocalCut's own copy wouldn't be used.",
+    "wouldNotBeUsedDataDir": "The one in {location} comes first, so LocalCut's own copy wouldn't be used."
+  },
+  "setup": {
+    "action": "Set up {name}",
+    "actionOn": "Set up on {host}",
+    "update": "Update {name}",
+    "retry": "Try again",
+    "tip": "Set up {name} for me",
+    "tipHint": "Downloads {size} from the project's own release into LocalCut's folder",
+    "tipHintOn": "Downloads {size} on {host}, into LocalCut's folder there",
+    "updateTip": "Replace LocalCut's copy with {version}",
+    "updateTipHint": "Downloads {size}",
+    "retryTip": "Set up {name} again",
+    "retryTipHint": "Starts the {size} download from the beginning",
+    "cancelTip": "Stop setting up {name}",
+    "cancelTipHint": "What it downloaded so far is removed",
+    "cancelLateTip": "Almost done",
+    "cancelLateTipHint": "Moving it into place can't be stopped",
+    "progress": "{done} of {total}",
+    "progressEta": "{done} of {total}, {eta}",
+    "etaMinutes": "about {minutes} min",
+    "etaUnderMinute": "less than a minute",
+    "progressAria": "Setting up {name}"
+  },
+  "menu": {
+    "aria": "More for {name}",
+    "tip": "More for {name}",
+    "tipHint": "Its site, and LocalCut's own copy",
+    "site": "Open {name}'s site",
+    "remove": "Remove LocalCut's copy",
+    "cloud": "Use a cloud model instead",
+    "workflows": "Node packs and workflows"
+  },
+  "remove": {
+    "title": "Remove LocalCut's copy of {name}?",
+    "message": "This deletes only the copy LocalCut set up, never an install of your own. Without another {name}, videos stop at the final step until you set it up again.",
+    "confirm": "Remove {size}",
+    "failed": "Couldn't remove it: {error}"
+  },
+  "diy": {
+    "summary": "Do it myself",
+    "summaryOn": "Do it myself, on {host}",
+    "check": "Check again",
+    "checking": "Checking…",
+    "checkTip": "Look for {name} again",
+    "checkTipHint": "Also tests that it runs",
+    "copyTip": "Copy",
+    "copyTipHint": "Puts this on the clipboard",
+    "copied": "Copied",
+    "copyAria": "Copy {text}",
+    "openTip": "Opens in your browser",
+    "ffmpeg": {
+      "winget": "Install it with winget, in a terminal:",
+      "restart": "Quit and reopen LocalCut, so the engine sees the new PATH.",
+      "restartOn": "Restart the engine on {host}, so it sees the new PATH.",
+      "bin": "Or put ffmpeg.exe and ffprobe.exe from any FFmpeg build in {bin}. LocalCut uses them from the next job, with no restart.",
+      "apt": "Install it from your package manager. On Ubuntu or Debian:",
+      "brew": "Install the full build with Homebrew. The plain ffmpeg formula can't draw captions or titles.",
+      "link": "Link it into LocalCut's own folder, where it comes first:",
+      "site": "Install FFmpeg from its site, in a build with libass so captions and titles render.",
+      "siteLink": "ffmpeg.org",
+      "check": "Check again. LocalCut also tests that captions and titles render."
+    },
+    "ollama": {
+      "download": "Download Ollama and install it.",
+      "downloadLink": "ollama.com/download",
+      "script": "Install it with Ollama's script:",
+      "pull": "Get the model LocalCut writes scripts with:",
+      "pullOther": "Load {model} into your server.",
+      "check": "Check again.",
+      "address": "Running it somewhere else? LocalCut reads its address from {setting}.",
+      "cloud": "Rather use a cloud model? Add an API key in",
+      "cloudLater": "Rather use a cloud model? You can add an API key later, in Settings > Providers.",
+      "cloudLink": "Settings > Providers",
+      "cloudTipHint": "Where API keys for cloud models go"
+    },
+    "comfyui": {
+      "portable": "Download the portable build for {vendor} graphics cards, and extract it anywhere, for example C:\\ComfyUI.",
+      "manual": "Install ComfyUI and the PyTorch build for your graphics card, as its README describes.",
+      "readmeLink": "ComfyUI's install guide",
+      "models": "Point it at LocalCut's models. Save this as extra_model_paths.yaml in its ComfyUI folder:",
+      "modelsUnknown": "Point it at LocalCut's models folder with an extra_model_paths.yaml in its ComfyUI folder.",
+      "start": "Start it with {command}, then check again.",
+      "address": "Running it somewhere else? LocalCut reads its address from {setting}. The ComfyUI desktop app listens on port 8000."
+    },
+    "vendors": {
+      "nvidia": "NVIDIA",
+      "amd": "AMD",
+      "intel": "Intel"
+    }
+  },
+  "chatterbox": {
+    "name": "Chatterbox",
+    "does": "Reads the narration in a real person's voice, with their permission.",
+    "notInstalled": "Not in the installed app yet. The stock voices don't need it.",
+    "notInEngine": "Not installed with this engine. The stock voices don't need it.",
+    "ready": "Installed with the engine, so voice cloning works."
+  },
+  "pane": {
+    "hint": "The programs LocalCut runs, and what each one makes.",
+    "remoteHint": "The engine this app is paired with. Setup runs there, on its disk.",
+    "check": "Check again",
+    "checking": "Checking…",
+    "checkTip": "Look for every program again",
+    "checkTipHint": "Also tests that each one runs",
+    "optional": "Not needed to make a video",
+    "loading": "Looking for programs…",
+    "noEngine": "The engine isn't running, so there is nothing to ask about its programs yet.",
+    "failed": "Couldn't ask the engine about its programs. {error}",
+    "foot": "LocalCut's own copies use {size} in {dir}.",
+    "footEmpty": "LocalCut keeps the copies it sets up in {dir}.",
+    "footFree": "{size} free there.",
+    "manageStorage": "Manage storage",
+    "manageStorageTip": "Settings > Storage",
+    "manageStorageTipHint": "What else is using the disk"
+  },
+  "refusals": {
+    "noSpace": "Not enough room. Setting up {name} needs {size} free on the disk that holds {dir}."
+  }
+}

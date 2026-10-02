@@ -4,6 +4,7 @@ import type { ModelLicense, ModelRow } from "../api/types";
 import { m, t } from "../i18n";
 import type { Fit } from "../lib/fit";
 import { isWindows } from "../lib/platform";
+import { formatSize } from "../lib/size";
 import { useApp } from "../store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Dropdown } from "./Dropdown";
@@ -13,13 +14,7 @@ import { Tip } from "./Tooltip";
 // progress events (~0.5s) drive the bars in between.
 const POLL_MS = 4000;
 
-export function formatSize(bytes: number): string {
-  if (bytes <= 0) return t("common.sizeGb", { value: 0 });
-  const gb = bytes / 2 ** 30;
-  if (gb >= 10) return t("common.sizeGb", { value: Math.round(gb) });
-  if (gb >= 1) return t("common.sizeGb", { value: gb.toFixed(1) });
-  return t("common.sizeMb", { value: Math.max(1, Math.round(bytes / 2 ** 20)) });
-}
+export { formatSize } from "../lib/size";
 
 /** "wan 2.2" → "Wan 2.2", "ltx" → "LTX", "sdxl" → "SDXL": manifest family
  * strings are lowercase ids; display leads with a human name (review 4

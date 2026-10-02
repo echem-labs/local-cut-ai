@@ -35,18 +35,28 @@ export function noteworthyGaps(rows: readonly ReadinessRow[] | null): ReadinessR
 
 /** One line per distinct problem. Keyframes and thumbnails both render
  * from `image.gen`, so an engine with no image model reports the same
- * sentence twice — true, and worth saying once. */
+ * sentence twice — true, and worth saying once.
+ *
+ * Where timeline and export share a problem, the export row is the one
+ * kept, in the timeline's place: the stage both of them make is the final
+ * video, and that is the name a person reading the list knows it by. */
 export function distinctGaps(rows: readonly ReadinessRow[]): ReadinessRow[] {
-  const seen = new Set<string>();
-  return rows.filter((row) => {
+  const kept = new Map<string, number>();
+  const out: ReadinessRow[] = [];
+  for (const row of rows) {
     // Keyed on the task, NOT the kind — timeline and export share one
     // missing ffmpeg and one sentence, exactly as keyframe and thumbnail
     // share one missing image model. Neither has a task, hence the "".
     const key = `${row.data.task ?? ""}:${row.reason}:${row.model ?? ""}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const at = kept.get(key);
+    if (at === undefined) {
+      kept.set(key, out.length);
+      out.push(row);
+    } else if (row.kind === "export" && out[at].kind === "timeline") {
+      out[at] = row;
+    }
+  }
+  return out;
 }
 
 /** A dismissal covers exactly this set of problems: fix one model but lose

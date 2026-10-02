@@ -108,3 +108,45 @@ describe("what the prompt row keeps", () => {
     expect(screen.getByLabelText(t("home.styleAria")).textContent).toContain("Anime");
   });
 });
+
+/**
+ * The note under the prompt names the first thing a video would hit, and its
+ * link goes where that thing is fixed: a missing FFmpeg is set up in
+ * Settings > Programs, which nothing in Settings > Models can do.
+ */
+describe("where the prompt row's readiness note leads", () => {
+  const exportFails = {
+    kind: "export",
+    model: null,
+    backend: null,
+    verdict: "will_fail",
+    reason: "no_ffmpeg",
+    data: {},
+    fix: { type: "setup_program", program: "ffmpeg", size_bytes: 137_034_436 },
+  };
+  const musicGap = {
+    kind: "music",
+    model: null,
+    backend: "mock",
+    verdict: "placeholder",
+    reason: "no_model_installed",
+    data: { task: "music.gen" },
+    fix: null,
+  };
+
+  it("opens Programs for a program", () => {
+    const openSettings = vi.fn();
+    useApp.setState({ readiness: [exportFails], openSettings } as never);
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: t("home.getIt") }));
+    expect(openSettings).toHaveBeenCalledWith("programs");
+  });
+
+  it("opens Models for a model", () => {
+    const openSettings = vi.fn();
+    useApp.setState({ readiness: [musicGap], openSettings } as never);
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: t("home.getIt") }));
+    expect(openSettings).toHaveBeenCalledWith("models");
+  });
+});
