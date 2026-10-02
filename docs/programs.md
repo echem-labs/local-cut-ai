@@ -241,3 +241,19 @@ ffmpeg came from `PATH`. It is not offered where nothing is pinned for this
 machine, where `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` would still win, or
 where LocalCut's copy is already the one in use.
 
+## From a terminal
+
+The CLI is a client of a running engine like the desktop, so a headless GPU
+box sets itself up from its own shell:
+
+```bash
+localcut programs list                # each program, and what setup would take
+localcut programs setup ffmpeg        # download LocalCut's copy, and wait
+localcut programs cancel ffmpeg       # stop a setup
+localcut programs remove ffmpeg       # remove LocalCut's copy, never your own
+```
+
+Each takes `--engine`, `--token`, `--cert` and `--json`, as in
+[agents-and-automation.md](agents-and-automation.md). `setup` exits 0 when
+the copy is in place, 1 when the setup failed or was cancelled, and 2 when no
+engine answered.

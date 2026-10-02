@@ -34,6 +34,7 @@ import httpx
 import pytest
 from conftest import serve_engine
 
+from localcut_engine import cli
 from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL, create_app
 from localcut_engine.automation import outstanding_jobs
 from localcut_engine.backends import ffmpeg as ffmpeg_backend
@@ -1141,3 +1142,42 @@ async def test_what_an_interrupted_setup_left_is_cleared_when_the_engine_starts(
 
     assert _leftovers(tmp_path) == []
     assert (programs / "ffmpeg" / f"ffmpeg{_EXE}").read_bytes() == b"the old copy"
+
+
+# -- the CLI -------------------------------------------------------------------
+
+
+def test_the_cli_sets_up_and_removes_a_program_on_the_engine(
+    tmp_path, monkeypatch, archives, capsys
+):
+    """A headless GPU box is set up from its own terminal, through the
+    engine like every other client. Exit 0 when the setup lands, 1 when it
+    fails, 2 when there is no engine."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _stub_check(monkeypatch)
+    _pin(monkeypatch, archives)
+    monkeypatch.setattr(cli, "_SETUP_POLL_S", 0.05)
+
+    with serve_engine(tmp_path / "engine", TOKEN, backend="ffmpeg,mock") as url:
+
+        def run(*args: str) -> int:
+            return cli.main(["programs", *args, "--engine", url, "--token", TOKEN])
+
+        assert run("list", "--json") == 0
+        listed = json.loads(capsys.readouterr().out)
+        assert _row(listed, "ffmpeg")["state"] == "missing"
+
+        assert run("setup", "ffmpeg") == 0
+        assert "ffmpeg is set up" in capsys.readouterr().out
+
+        assert run("remove", "ffmpeg", "--json") == 0
+        assert json.loads(capsys.readouterr().out)["freed_bytes"] > 0
+
+        archive = archives.root / "ffmpeg-test.zip"
+        archive.write_bytes(archive.read_bytes()[:-1] + b"!")
+        assert run("setup", "ffmpeg") == 1
+        assert "checksum_mismatch" in capsys.readouterr().err
+
+        assert run("setup", "ollama") == 1
+
+    assert cli.main(["programs", "list", "--engine", url, "--token", TOKEN]) == 2
