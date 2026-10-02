@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Boxes,
   Cpu,
   Database,
@@ -30,6 +31,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
+import { ProgramsPane } from "../components/ProgramsPane";
 import { InfoDot, Tip } from "../components/Tooltip";
 import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
@@ -65,6 +67,7 @@ const TAB_ICONS: Record<SettingsTab, typeof SunMoon> = {
   general: SunMoon,
   defaults: SlidersHorizontal,
   providers: KeyRound,
+  programs: AppWindow,
   models: Boxes,
   storage: HardDrive,
   engine: Server,
@@ -965,6 +968,8 @@ export function Settings() {
               })}
             </section>
           )}
+
+          {tab === "programs" && <ProgramsPane />}
 
           {tab === "models" && (
             <section>

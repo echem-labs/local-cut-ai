@@ -402,6 +402,139 @@ export interface ReadinessRow {
   fix: ReadinessFix | null;
 }
 
+/* ---- Programs (GET /programs, docs/programs.md) ----
+   The programs real output needs and LocalCut does not ship. Everything
+   below crosses the wire as a code the desktop words from its own catalog
+   (i18n/en/programs.json); each union mirrors a closed set in the engine's
+   programs/__init__.py, and test_ui_contract compares the two. */
+
+export type ProgramId = "ffmpeg" | "ollama" | "comfyui";
+
+/** Whether the program the engine would use is there and works. */
+export type ProgramState = "ready" | "missing" | "broken";
+
+/** Why a program is missing or broken. */
+export type ProgramProblem =
+  | "not_found"
+  | "ffprobe_missing"
+  | "does_not_run"
+  | "unreachable"
+  | "unexpected_response";
+
+/** Where the program the engine uses comes from. `managed` is LocalCut's
+ * own copy, `configured` the variable in the row's `setting`, `data_dir` a
+ * binary in <data_dir>/bin, `path` the engine's PATH, and `default` a
+ * server at its usual address. */
+export type ProgramSource = "managed" | "configured" | "data_dir" | "path" | "default";
+
+/** Why the engine cannot set a program up itself. */
+export type SetupUnavailableReason = "platform_not_supported" | "program_not_supported";
+
+/** What a running setup is doing, in the order it does it. */
+export type SetupPhase = "downloading" | "verifying" | "unpacking" | "checking" | "installing";
+
+/** How a setup ended. */
+export type SetupOutcome = "done" | "failed" | "cancelled";
+
+/** Why a setup failed. */
+export type SetupFailure =
+  | "no_space"
+  | "download_failed"
+  | "size_mismatch"
+  | "checksum_mismatch"
+  | "unpack_failed"
+  | "does_not_run"
+  | "in_use"
+  | "install_failed";
+
+/** The setup running now. `done` and `total` are bytes while downloading,
+ * verifying and unpacking, and 0 of 0 in the other phases. */
+export interface ProgramJob {
+  id: string;
+  phase: SetupPhase;
+  done: number;
+  total: number;
+  /** Measured over the last few seconds of the download; null otherwise. */
+  bytes_per_s: number | null;
+}
+
+/** How the last setup in this engine's life ended. */
+export interface ProgramLastSetup {
+  job: string;
+  outcome: SetupOutcome;
+  reason: SetupFailure | null;
+  /** The same failure in English, for logs and the CLI. */
+  error: string | null;
+}
+
+/** LocalCut's own copy, in <data_dir>/programs/<id>. */
+export interface ProgramManagedCopy {
+  location: string;
+  bytes: number;
+  version: string | null;
+  /** Whether it is the build pinned now, whole. */
+  current: boolean;
+  /** Whether the engine runs it: a configured path or <data_dir>/bin
+   * outranks it. */
+  in_use: boolean;
+}
+
+/** What a setup would do on the engine's machine. The sizes are exact,
+ * and null when `available` is false. */
+export interface ProgramSetupInfo {
+  available: boolean;
+  unavailable_reason: SetupUnavailableReason | null;
+  /** False when something outranks LocalCut's copy, so setting it up
+   * would not change what the engine runs. */
+  takes_effect: boolean;
+  version: string | null;
+  url: string | null;
+  download_bytes: number | null;
+  install_bytes: number | null;
+  job: ProgramJob | null;
+  last: ProgramLastSetup | null;
+}
+
+export interface ProgramInfo {
+  id: ProgramId;
+  state: ProgramState;
+  problem: ProgramProblem | null;
+  source: ProgramSource;
+  /** A path for FFmpeg, a URL for the servers: where the engine looks,
+   * even when nothing is there. On a paired engine, that machine's. */
+  location: string;
+  /** The variable that sets `location`. */
+  setting: string;
+  version: string | null;
+  /** FFmpeg: `draws_text`. The LLM server: `server`, the script `model`
+   * and `model_present`. ComfyUI: nothing yet. */
+  checks: {
+    draws_text?: boolean | null;
+    server?: "ollama" | "other" | null;
+    model?: string;
+    model_present?: boolean | null;
+  };
+  managed: ProgramManagedCopy | null;
+  setup: ProgramSetupInfo;
+}
+
+/** GET /programs. Paths are the engine machine's own. */
+export interface ProgramsReport {
+  /** The engine machine as a pin names it ("windows-x64", "linux-arm64"
+   * and so on), or null for one no pin can name. */
+  platform: string | null;
+  programs_dir: string;
+  programs_bytes: number;
+  disk_free_bytes: number;
+  /** <data_dir>/bin, where a binary put by hand outranks LocalCut's copy.
+   * Absent on engines older than the field. */
+  bin_dir?: string;
+  /** Where the engine keeps model weights, the folder ComfyUI is pointed
+   * at. Absent on engines older than the field. */
+  models_dir?: string;
+  programs: ProgramInfo[];
+}
+
 export type ProviderId = "anthropic" | "openai" | "google" | "fal";
 
 export interface Provider {
@@ -607,23 +740,23 @@ export type EngineEvent =
   // phase is announced as it starts.
   | {
       type: "program.setup.progress";
-      program: string;
-      phase: string;
+      program: ProgramId;
+      phase: SetupPhase;
       done: number;
       total: number;
       bytes_per_s: number | null;
     }
   | {
       type: "program.setup.done";
-      program: string;
+      program: ProgramId;
       version: string;
       location: string;
       in_use: boolean;
       draws_text: boolean | null;
     }
-  | { type: "program.setup.failed"; program: string; reason: string; error: string }
-  | { type: "program.setup.cancelled"; program: string }
-  | { type: "program.removed"; program: string; freed_bytes: number };
+  | { type: "program.setup.failed"; program: ProgramId; reason: SetupFailure; error: string }
+  | { type: "program.setup.cancelled"; program: ProgramId }
+  | { type: "program.removed"; program: ProgramId; freed_bytes: number };
 
 /** A project's shape, portable — the engine writes and validates it; the
  * desktop only carries the document between the two routes and never reads

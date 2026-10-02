@@ -66,6 +66,7 @@ _CATALOGS = (
     "failure.json",
     "models.json",
     "notices.json",
+    "programs.json",
     "project.json",
     "readiness.json",
     "status.json",
@@ -300,6 +301,61 @@ def test_readiness_vocabulary_matches_the_desktop():
     effects = set(catalog["effects"])
     missing = set(READINESS_VERDICTS) - {"ready"} - effects
     assert not missing, f"readiness.json has no effect phrase for {sorted(missing)}"
+
+
+def test_program_vocabulary_matches_the_desktop():
+    """GET /programs and the setup events cross the wire as codes, the way
+    the readiness report does, and the desktop words every one of them from
+    programs.json. Each closed set in programs/__init__.py is written down a
+    second time as a TypeScript union the screens switch on, and a third
+    time as the catalog's keys. A code only the engine knows renders as
+    nothing (a program with no name, a failure with no reason, a phase with
+    no word beside a moving bar), and a key only the catalog knows is copy
+    no engine can ever reach."""
+    from localcut_engine.programs import (
+        PROGRAM_IDS,
+        PROGRAM_PROBLEMS,
+        PROGRAM_SOURCES,
+        PROGRAM_STATES,
+        SETUP_FAILURES,
+        SETUP_OUTCOMES,
+        SETUP_PHASES,
+        SETUP_UNAVAILABLE,
+    )
+
+    text = _ts_source(_TYPES)
+
+    def union(name: str) -> set[str]:
+        match = re.search(rf"export type {name} =(.*?);", text, re.S)
+        assert match, f"types.ts no longer declares {name}"
+        return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    catalog = json.loads((_I18N / "programs.json").read_text("utf-8"))
+    pairs = (
+        ("ProgramId", "names", PROGRAM_IDS),
+        ("ProgramId", "does", PROGRAM_IDS),
+        ("ProgramState", "states", PROGRAM_STATES),
+        ("ProgramProblem", "problems", PROGRAM_PROBLEMS),
+        ("ProgramSource", "sources", PROGRAM_SOURCES),
+        ("SetupUnavailableReason", "unavailable", SETUP_UNAVAILABLE),
+        ("SetupPhase", "phases", SETUP_PHASES),
+        ("SetupOutcome", "outcomes", SETUP_OUTCOMES),
+        ("SetupFailure", "failures", SETUP_FAILURES),
+        # A failure is said twice: what happened, then what to do about it.
+        ("SetupFailure", "advice", SETUP_FAILURES),
+    )
+    for declaration, section, engine in pairs:
+        assert union(declaration) == set(engine), (
+            f"types.ts {declaration} and the engine disagree: "
+            f"only in UI {sorted(union(declaration) - set(engine))}, "
+            f"only in engine {sorted(set(engine) - union(declaration))}"
+        )
+        labelled = set(catalog[section])
+        assert labelled == set(engine), (
+            f"programs.json {section} and the engine disagree: "
+            f"only in catalog {sorted(labelled - set(engine))}, "
+            f"only in engine {sorted(set(engine) - labelled)}"
+        )
 
 
 def test_the_video_kinds_home_warns_about_match_the_pipeline():

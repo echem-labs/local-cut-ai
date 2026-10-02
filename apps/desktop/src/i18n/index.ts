@@ -30,6 +30,7 @@ import eta from "./en/eta.json";
 import palette from "./en/palette.json";
 import notices from "./en/notices.json";
 import readiness from "./en/readiness.json";
+import programs from "./en/programs.json";
 import notify from "./en/notify.json";
 import drop from "./en/drop.json";
 import failure from "./en/failure.json";
@@ -87,6 +88,7 @@ const en = {
   failure,
   publish,
   readiness,
+  programs,
   voices,
 };
 

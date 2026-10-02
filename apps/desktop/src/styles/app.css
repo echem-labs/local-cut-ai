@@ -5671,6 +5671,414 @@ a.icon-btn-sm {
   margin-top: 0;
 }
 
+/* ---- programs: Settings > Programs and the first-run step ----
+   Each program is a well from the instrument panel. Its left edge carries
+   the worst light in it (red for a failure or a missing program in
+   Settings, amber for one that renders worse, the accent while a setup
+   runs); a program that is fine goes quiet, with no edge and no rows. The
+   body indents to the name's column, 44px, so the icon tile stands alone. */
+.pw-list {
+  margin-top: var(--space-4);
+}
+
+.pw {
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 14px var(--space-4) var(--space-1);
+}
+
+.pw + .pw {
+  margin-top: var(--space-3);
+}
+
+.pw.edge-fail {
+  border-left: 2px solid var(--status-failed);
+}
+
+.pw.edge-deg {
+  border-left: 2px solid var(--status-draft);
+}
+
+.pw.edge-busy {
+  border-left: 2px solid var(--accent);
+}
+
+.pw.quiet {
+  padding-bottom: 14px;
+}
+
+/* Not needed, and not there: present, but out of the way. */
+.pw.off {
+  opacity: 0.62;
+}
+
+.pw-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.pw-ico {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.pw-id {
+  flex: 1;
+  min-width: 0;
+}
+
+.pw-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--text-s);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pw-does {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.pw-act {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex: none;
+}
+
+.pw-status {
+  margin: 10px 0 0 44px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.pw-status .readout {
+  margin-left: 6px;
+}
+
+.pw-status span > .readout,
+.pw-detail .readout,
+.pw-alt .readout,
+.pw-diy .readout,
+.programs-foot .readout {
+  margin-left: 0;
+}
+
+/* The one place a status colour reaches prose here: a setup that stopped. */
+.pw-status.fail {
+  color: var(--status-failed);
+  font-weight: 500;
+}
+
+.pw-detail {
+  margin: var(--space-1) 0 0 44px;
+  max-width: 60ch;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.pw-bar {
+  height: 2px;
+  margin: var(--space-2) 0 0 44px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.pw-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--motion-slow);
+}
+
+/* The stages a program costs, in the gate's own row anatomy. */
+.pw-rows {
+  margin: 10px 0 0 44px;
+  border-top: 1px solid var(--border);
+}
+
+.pw-alt {
+  margin: 0 0 0 44px;
+  padding: 6px 0 10px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.pw-alt button.link {
+  font-size: inherit;
+}
+
+/* A failure's actions sit under its explanation, not in the header. */
+.pw-fix {
+  display: flex;
+  gap: var(--space-2);
+  margin: 10px 0 2px 44px;
+}
+
+.pw-error {
+  margin: 6px 0 0 44px;
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+.pw-diy {
+  margin: 10px 0 0 44px;
+  border-top: 1px solid var(--border);
+}
+
+.pw-diy summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: var(--space-2) 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pw-diy summary::-webkit-details-marker {
+  display: none;
+}
+
+.pw-diy summary svg {
+  color: var(--text-tertiary);
+  transition: transform var(--motion-fast);
+}
+
+.pw-diy[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.pw-diy summary:hover {
+  color: var(--text-primary);
+}
+
+.pw-diy summary:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--accent-glow);
+}
+
+/* Numbered, because these are a sequence. */
+.pw-diy ol {
+  margin: 0 0 var(--space-3);
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pw-diy li {
+  margin: 0 0 10px;
+  padding-left: var(--space-1);
+}
+
+.pw-diy .pw-alt {
+  margin-left: 0;
+  padding-top: 0;
+}
+
+.pw-step-action {
+  margin-top: 6px;
+}
+
+/* A command to paste, recessed one step further than the well. */
+.pw-cmd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+  padding: 5px 6px 5px 10px;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.pw-cmd .t {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.pw-cmd.block {
+  align-items: flex-start;
+}
+
+.pw-cmd.block .t {
+  margin: 0;
+  padding: 2px 0;
+  white-space: pre;
+}
+
+.link-out {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.link-out:hover {
+  text-decoration: underline;
+}
+
+.ok-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--status-final);
+}
+
+/* One step down the control scale, for actions inside a well's header. */
+.btn-outline.sm,
+.btn-ghost.sm {
+  min-height: 28px;
+  padding: var(--space-1) 10px;
+  font-size: 13px;
+}
+
+.pw-menu {
+  position: relative;
+}
+
+.pw-gear {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+}
+
+.programs-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.programs-where svg {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.programs-where b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.programs-where .spacer {
+  flex: 1;
+}
+
+.settings section > .hint.programs-remote {
+  margin: var(--space-1) 0 0;
+}
+
+.programs-group {
+  margin: var(--space-6) 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.programs-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.programs-foot svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.programs-foot button.link {
+  font-size: inherit;
+}
+
+/* Said to a screen reader, drawn nowhere. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A program set up from inside the gate: the model rows' anatomy, with a
+   bar under the row while it runs. */
+.gate-programs .prow {
+  flex-wrap: wrap;
+  min-height: 36px;
+}
+
+.gate-programs .price {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gate-program-bar {
+  flex-basis: 100%;
+  height: 2px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.gate-program-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.gate-program-error {
+  flex-basis: 100%;
+  padding-bottom: 6px;
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+.gate-programs + .model-groups {
+  margin-top: var(--space-2);
+}
+
+.banner.readiness .banner-error {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
 /* ---- first-run setup ---- */
 .setup {
   max-width: var(--content-col);
