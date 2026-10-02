@@ -764,7 +764,6 @@ const rig = await startRig({
   ...(ozone ? { RIG_OZONE: ozone } : {}),
 });
 
-let firstWorkspaceAt = Number.MAX_SAFE_INTEGER;
 /** Sizes the display could not actually provide, and what came back. */
 const unreached = new Map();
 try {
@@ -979,12 +978,6 @@ try {
   );
 
   for (const stop of STOPS) {
-    // Marked BEFORE driving, not after: mounting the workspace is what
-    // fires the peaks requests, so a count taken once `go` returns is
-    // already past the errors it exists to excuse.
-    if (stop.sashes && firstWorkspaceAt === Number.MAX_SAFE_INTEGER) {
-      firstWorkspaceAt = (await health()).consoleErrors.length;
-    }
     const reached = await evalInApp(stop.go);
     // Reachability IS the gate (plan U8 acceptance): a stop that cannot be
     // driven to is a failure, and every check it would have run is missing
@@ -1135,22 +1128,10 @@ try {
   );
 
   const report = await health();
-  // The peaks route answers 422 for anything that is not decodable audio,
-  // which is every narration and music file the MOCK backend writes: JSON
-  // placeholders with a .wav name. The audio lanes ask for peaks on each
-  // one the moment a timeline is on screen, degrade exactly as designed
-  // (`useArtifactPeaks` returns null, the segment draws empty), and
-  // Chromium logs the failed response anyway. Scoped to after the first
-  // workspace mounted and to that one status — walk.mjs and the e2e filter
-  // the same thing the same way, and every other status still fails here.
-  const peaksNoise = /Failed to load resource[^|]*422 \(Unprocessable/;
-  const consoleErrors = report.consoleErrors.filter(
-    (line, at) => !(at >= firstWorkspaceAt && peaksNoise.test(line)),
-  );
   check(
     "no console errors across the sweep",
-    consoleErrors.length === 0 && report.pageErrors.length === 0,
-    JSON.stringify([...consoleErrors, ...report.pageErrors].slice(0, 3)),
+    report.consoleErrors.length === 0 && report.pageErrors.length === 0,
+    JSON.stringify([...report.consoleErrors, ...report.pageErrors].slice(0, 3)),
   );
 } finally {
   await stopRig(rig);

@@ -1,25 +1,34 @@
 """Deterministic mock backend — the whole pipeline runs without any model
 weights, GPU, or ComfyUI install. Used by tests and `--backend mock` dev
-mode. Artifacts are small JSON/placeholder files keyed by output hash, so
+mode. Artifacts are small placeholder files keyed by output hash, so
 caching, dirty-subgraph re-execution and the scene-board state machine are
 all exercised for real.
+
+Stills and audio are real media, slate PNGs and silent WAVs: in a hybrid
+chain ffmpeg assembles them, so they have to decode. Clips and exports are
+JSON stand-ins, since an MP4 takes an encoder this backend does not have,
+and the timeline and captions are JSON records of their inputs.
 """
 
 from __future__ import annotations
 
 import colorsys
 import hashlib
+import io
 import json
 import math
 import struct
+import wave
 import zlib
 from pathlib import Path
 
 from ..aspects import DEFAULT_ASPECT
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
+from ..graph.templates import GENERATOR_MAX_MUSIC_S
 from ..schema import Scene, Screenplay
 from .base import ExecutionBackend, ExecutionContext
+from .llm import SPEECH_WORDS_PER_S
 
 _SUFFIX = {
     NodeKind.SCRIPT: ".screenplay.json",
@@ -64,6 +73,43 @@ def _slate_png(node_id: str, seed: int, width: int = 320, height: int = 180) -> 
         + _png_chunk(b"IDAT", zlib.compress(bytes(rows), 6))
         + _png_chunk(b"IEND", b"")
     )
+
+
+# Placeholder audio has Kokoro's shape (mono 16-bit PCM at 24 kHz), so it
+# takes the path real narration takes through assembly.
+_AUDIO_RATE = 24_000
+# Even a one-word line gets a second. An empty text would otherwise give a
+# file with no samples, and the aligner refuses one of those outright.
+_MIN_NARRATION_S = 1.0
+
+
+def silent_wav(seconds: float) -> bytes:
+    """`seconds` of silence as a WAV file. The same length gives the same
+    bytes."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(_AUDIO_RATE)
+        out.writeframes(bytes(2 * round(seconds * _AUDIO_RATE)))
+    return buffer.getvalue()
+
+
+def narration_seconds(text: str) -> float:
+    """How long `text` takes to say at the rate scripts are budgeted
+    against. Assembly gives each scene the length of its narration, so this
+    is what makes a placeholder cut run as long as its script."""
+    return max(_MIN_NARRATION_S, len(text.split()) / SPEECH_WORDS_PER_S)
+
+
+def music_seconds(params: dict) -> float:
+    """The length the music node asks for, held inside what the generator
+    accepts. A cut longer than the bed loops it, the same as a real one."""
+    try:
+        seconds = float(params.get("target_duration_s") or 60)
+    except (TypeError, ValueError):
+        seconds = 60.0
+    return min(float(GENERATOR_MAX_MUSIC_S), max(1.0, seconds))
 
 
 # Distinct per-scene beats — a board of identical filler sentences reads as
@@ -171,11 +217,15 @@ class MockBackend(ExecutionBackend):
             body = screenplay.model_dump_json(indent=2).encode()
         elif spec.kind in (NodeKind.KEYFRAME, NodeKind.THUMBNAIL):
             body = _slate_png(spec.node_id, spec.seed)
+        elif spec.kind is NodeKind.NARRATION:
+            body = silent_wav(narration_seconds(str(spec.params.get("text", ""))))
+        elif spec.kind is NodeKind.MUSIC:
+            body = silent_wav(music_seconds(spec.params))
         elif spec.kind in (NodeKind.TIMELINE, NodeKind.CAPTIONS):
             body = json.dumps(
                 {"node": spec.node_id, "inputs": spec.input_hashes}, indent=2
             ).encode()
         else:
-            # Media placeholder: enough to exercise artifact plumbing.
+            # Clip and export: enough to exercise artifact plumbing.
             body = json.dumps({"mock": spec.node_id, "seed": spec.seed}).encode()
         return ctx.publish_bytes(spec.output_hash, suffix, body)

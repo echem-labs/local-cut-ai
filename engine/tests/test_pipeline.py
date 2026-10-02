@@ -4,12 +4,16 @@ Phase-0 spine minus real models.
 """
 
 import asyncio
+import wave
 
 import pytest
+from conftest import make_spec
 
-from localcut_engine.backends.base import BackendRegistry
+from localcut_engine.backends.base import BackendRegistry, ExecutionContext
+from localcut_engine.backends.llm import SPEECH_WORDS_PER_S
 from localcut_engine.backends.mock import MockBackend
 from localcut_engine.events import EventBus
+from localcut_engine.graph.model import NodeKind
 from localcut_engine.graph.patch import PatchOp
 from localcut_engine.jobs.models import JobStatus
 from localcut_engine.jobs.queue import JobQueue
@@ -66,6 +70,33 @@ async def test_prompt_to_export(rig):
 
     export_hash = board["aux"]["export"]["artifact_hash"]
     assert store.resolve_artifact(project.id, export_hash).exists()
+
+
+async def test_mock_audio_is_silence_as_long_as_the_node_asks_for(tmp_path):
+    """Mock narration and music reach ffmpeg in a hybrid chain, which gives
+    every scene the length of its narration, so they have to be audio and
+    that length has to follow the text. An artifact's address is its inputs,
+    so a repeat of the same request has to give the same bytes."""
+    backend = MockBackend()
+    ctx = ExecutionContext(output_dir=tmp_path)
+
+    async def render(kind: NodeKind, params: dict, output_hash: str) -> tuple[float, bytes]:
+        path = await backend.execute(make_spec(kind, params, output_hash=output_hash), ctx)
+        with wave.open(str(path), "rb") as audio:
+            seconds = audio.getnframes() / audio.getframerate()
+            assert not any(audio.readframes(audio.getnframes())), f"{kind} is not silent"
+        return seconds, path.read_bytes()
+
+    line = " ".join(["word"] * 35)
+    spoken, first = await render(NodeKind.NARRATION, {"text": line}, "1" * 64)
+    assert spoken == pytest.approx(35 / SPEECH_WORDS_PER_S)
+    brief, _ = await render(NodeKind.NARRATION, {"text": "Hi."}, "2" * 64)
+    assert 0 < brief < spoken
+    bed, _ = await render(NodeKind.MUSIC, {"target_duration_s": 24}, "3" * 64)
+    assert bed == pytest.approx(24)
+
+    _, again = await render(NodeKind.NARRATION, {"text": line}, "4" * 64)
+    assert again == first
 
 
 async def test_regenerate_only_dirties_one_scene(rig):

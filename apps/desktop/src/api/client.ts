@@ -178,8 +178,8 @@ export class EngineClient {
   }
 
   /** Waveform shape of an audio artifact, computed and cached engine-side
-   * — the client never decodes audio itself. 422 = not decodable audio
-   * (mock artifacts), 503 = the engine has no ffmpeg; both reject. */
+   * — the client never decodes audio itself. 422 = not decodable audio,
+   * 503 = the engine has no ffmpeg; both reject. */
   artifactPeaks(projectId: string, hash: string, bins = 192): Promise<AudioPeaks> {
     return this.request(`/projects/${projectId}/artifacts/${hash}/peaks?bins=${bins}`);
   }
