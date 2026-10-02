@@ -121,6 +121,43 @@ a.datas += [("THIRD-PARTY-NOTICES.txt", str(_notices), "DATA")]
 
 pyz = PYZ(a.pure)
 
+# On Windows the executable declares UTF-8 as its ANSI code page.
+#
+# espeak-ng opens its voice data through narrow Windows APIs (stat, fopen,
+# FindFirstFileA), which read a path's bytes in the process's ANSI code page,
+# and phonemizer hands it that path as UTF-8. The per-user installer puts the
+# data under C:\Users\<name>, so for a name like Zoë or 中文 the two disagree:
+# espeak-ng finds nothing there, prints "Error processing file '...phontab'"
+# and calls exit(1), which ends the whole engine at its first narration. With
+# UTF-8 declared, every narrow API in the process reads paths the way
+# phonemizer writes them. Windows 10 1903 and later honour the declaration.
+# Older builds ignore it, and on those any name outside ASCII still ends the
+# engine that way. package.yml's speech check runs the freeze from a folder
+# with such a name.
+#
+# It also makes UTF-8 Python's locale encoding in the frozen engine, as it is
+# on Linux and macOS: the default for open(), and for stdout and stderr when
+# they are pipes, which is how the desktop reads them.
+#
+# The declaration is added to PyInstaller's own default manifest, which keeps
+# everything else that declares: long paths, the supported OS list and the
+# common controls.
+manifest = None
+if sys.platform == "win32":
+    from PyInstaller.utils.win32.winmanifest import create_application_manifest
+
+    manifest = (
+        create_application_manifest()
+        .decode("utf-8")
+        .replace(
+            "<windowsSettings>",
+            "<windowsSettings>"
+            '<activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">'
+            "UTF-8</activeCodePage>",
+        )
+    )
+    assert "activeCodePage" in manifest, "PyInstaller's default manifest has no windowsSettings"
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -132,6 +169,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=True,
+    manifest=manifest,
 )
 
 coll = COLLECT(
