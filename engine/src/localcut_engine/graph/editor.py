@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -77,6 +78,9 @@ JSON only (no markdown fences), in this exact shape:
 Rules:
 - "narration" is what the voice says over this scene. Write it to be spoken aloud, in the \
 voice and tense the project's existing narration already uses.
+- Write the narration in the language the project's existing narration is written in (for the \
+first scene with words, the language the video's description is written in). Never switch \
+language partway through, not even for the last few words of a sentence.
 - Write narration to the word count you are given. That count IS the scene's length: the \
 narration is spoken and the clip runs as long as the speech, so a handful of words makes a \
 scene that is over before it is seen.
@@ -110,6 +114,101 @@ def typical_clip_s(durations: list[float]) -> float:
         return DEFAULT_CLIP_S
     ordered = sorted(durations)
     return min(MAX_CLIP_S, max(1.0, ordered[len(ordered) // 2]))
+
+
+def _narration_lines(view: dict) -> list[str]:
+    """Every narration line the project's scenes already speak, in order."""
+    return [
+        text
+        for scene in view.get("scenes") or []
+        for node in scene.get("nodes") or []
+        if node.get("kind") == "narration"
+        for text in [str(node.get("params", {}).get("text") or "").strip()]
+        if text
+    ]
+
+
+def language_sample(view: dict) -> str:
+    """The project's own words, which a suggestion's letters are held to.
+
+    The narration already written when there is any, because that is what
+    the new line will be heard beside, whatever language the brief was typed
+    in. Before there is any, the description the user typed for the video:
+    the only words of theirs such a project holds, and the language they
+    asked in. Empty when there is neither, and an empty sample holds a
+    suggestion to nothing (see `foreign_letters`).
+    """
+    said = _narration_lines(view)
+    if said:
+        return "\n".join(said)
+    return str((view.get("brief") or {}).get("prompt") or "")
+
+
+# Han and both kana count as one writing system, because Japanese writes all
+# three in a single sentence: a project whose earlier lines happened to use no
+# katakana must still take a line that does. Bopomofo is the phonetic script
+# Chinese is annotated in. Hangul stays apart, since modern Korean prose is
+# written in Hangul alone and Han characters in a Korean project are the switch.
+_SAME_SYSTEM = {"HIRAGANA": "CJK", "KATAKANA": "CJK", "IDEOGRAPHIC": "CJK", "BOPOMOFO": "CJK"}
+
+
+def _systems_of(char: str) -> set[str]:
+    """The writing system a character's letters belong to; empty for anything
+    that is not a letter.
+
+    Only letters carry a language. Punctuation, digits, symbols and emoji are
+    shared across writing systems (an English line can end in "。" or carry
+    "✨" without being in another language), so they never count. Modifier
+    letters are left out with them: the length mark in カード and the repeat
+    mark in 時々 only ever stand beside letters of their own system, while
+    `ʼ` turns up in plain English transliteration.
+
+    The system is the first word of the letter's Unicode name, which is how
+    the standard spells it: LATIN SMALL LETTER A, CYRILLIC SMALL LETTER A,
+    CJK UNIFIED IDEOGRAPH-7684. NFKC folds presentation variants (fullwidth
+    Latin, halfwidth katakana, mathematical bold) onto the letters they stand
+    for first, and only a letter is folded, so a symbol whose compatibility
+    form spells words (㍿, ™) stays a symbol.
+    """
+    category = unicodedata.category(char)
+    if not category.startswith("L") or category == "Lm":
+        return set()
+    systems = set()
+    for folded in unicodedata.normalize("NFKC", char):
+        category = unicodedata.category(folded)
+        if category.startswith("L") and category != "Lm":
+            word = unicodedata.name(folded, "").split(" ", 1)[0]
+            if word:
+                systems.add(_SAME_SYSTEM.get(word, word))
+    return systems
+
+
+# Writing systems no project's text is held against. Latin is the one other
+# languages' prose borrows as a matter of course, for names, acronyms and
+# units ("AI" in a Japanese line, "km" in a Russian one), and a shot
+# description is English in every project because English is what image and
+# video models read. Greek letters stand as symbols in any language's science
+# and maths (π, Δ, and µ, which NFKC folds onto Greek mu). What this lets
+# through is a drift INTO Latin or Greek prose, and that is not the failure
+# being caught: a model whose training leans on another language finishing
+# an English sentence in it.
+_SHARED_SYSTEMS = frozenset({"LATIN", "GREEK"})
+
+
+def foreign_letters(text: str, sample: str) -> str:
+    """The letters in `text` from a writing system `sample` does not use (and
+    not one of `_SHARED_SYSTEMS`), each once and in order of appearance.
+    Empty when there are none.
+
+    A sample with no letters at all holds `text` to nothing. With no words
+    of the user's to go on there is no language to keep to, and assuming one
+    would refuse the user's own.
+    """
+    known = set().union(*map(_systems_of, sample))
+    if not known:
+        return ""
+    known |= _SHARED_SYSTEMS
+    return "".join(dict.fromkeys(char for char in text if _systems_of(char) - known))
 
 
 def suggest_scene_prompt(view: dict, seconds: float | None = None) -> str:
@@ -155,20 +254,23 @@ def suggest_scene_prompt(view: dict, seconds: float | None = None) -> str:
 
     # The narration already written, in order, so the new line continues a
     # voice rather than inventing one.
-    said = [
-        text
-        for node in nodes
-        if node.get("kind") == "narration"
-        for text in [str(node.get("params", {}).get("text") or "").strip()]
-        if text
-    ]
+    said = _narration_lines(view)
     if said:
         recent = said[-_SUGGEST_SCENE_RECENT:]
         lines = "\n".join(f"- {line}" for line in recent)
         parts.append(f"The scenes before this one say:\n{lines}")
         parts.append("Your new scene comes after those. Do not repeat what they already said.")
+        # Pointed at the lines rather than named: nothing here knows what
+        # language a project is in, only what its narration looks like.
+        parts.append(
+            "Write your narration in the same language as those lines, from first word to last."
+        )
     else:
         parts.append("This is the first scene with words, so the narration sets the voice.")
+        if topic:
+            parts.append(
+                "Write it in the language the description of the video above is written in."
+            )
 
     # Imported here, not at module scope: `backends.llm` pulls httpx and the
     # ffmpeg timing constants, which a graph module has no business loading
@@ -207,20 +309,41 @@ class SceneSuggestion(BaseModel):
     prompt: str = Field(min_length=1, max_length=_MAX_TEXT)
 
 
-def parse_scene_suggestion(raw: str) -> dict:
+# How many of the stray letters a refusal quotes. Enough to recognise what
+# the model switched into, not a paragraph of it.
+_STRAY_QUOTED = 12
+
+
+def parse_scene_suggestion(raw: str, sample: str = "") -> dict:
     """LLM output → the two strings. Raises ValueError on anything unusable.
 
     Same fence-stripping as `parse_edit_plan`: models emit ```json blocks
     however firmly the system prompt asks them not to. Validated rather than
     passed through, because these two strings go straight into a patch.
+
+    `sample` is the project's own words (`language_sample`). A suggestion
+    that slips into a writing system they do not use is unusable in the
+    same way bad JSON is: an English voice reads each CJK character aloud as
+    "Chinese letter", and the captions burn the characters onto the cut. It
+    is refused rather than repaired, because the route's caller can simply
+    ask again and nothing here can say what the stray clause meant.
     """
     text = raw.strip()
     if text.startswith("```"):
         text = text.split("```")[1].removeprefix("json").strip()
     try:
-        return SceneSuggestion.model_validate(json.loads(text)).model_dump()
+        suggestion = SceneSuggestion.model_validate(json.loads(text))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise ValueError(f"the model returned an unusable scene suggestion: {exc}") from exc
+    # Named the way the dialog labels the two fields.
+    for field, label in (("narration", "narration"), ("prompt", "shot description")):
+        stray = foreign_letters(getattr(suggestion, field), sample)
+        if stray:
+            raise ValueError(
+                f"the model's {label} switched to a writing system this project is not "
+                f"written in ({stray[:_STRAY_QUOTED]}). Ask again for another suggestion."
+            )
+    return suggestion.model_dump()
 
 
 EDIT_SYSTEM_PROMPT = """You are a video project editor operating on a scene graph. You receive a \

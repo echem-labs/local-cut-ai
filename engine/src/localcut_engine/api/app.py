@@ -61,6 +61,7 @@ from ..graph.editor import (
     SUGGEST_SCENE_MAX_TOKENS,
     SUGGEST_SCENE_SYSTEM_PROMPT,
     EditPlan,
+    language_sample,
     parse_edit_plan,
     parse_scene_suggestion,
     suggest_scene_prompt,
@@ -1885,7 +1886,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 image=image,
                 max_tokens=SUGGEST_SCENE_MAX_TOKENS,
             )
-            return parse_scene_suggestion(raw)
+            # Held to the project's own letters as well as to the shape: a
+            # line that switches language partway through is model output
+            # this route cannot use, and the caller can ask again.
+            return parse_scene_suggestion(raw, language_sample(view))
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
