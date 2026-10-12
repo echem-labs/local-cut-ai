@@ -5,7 +5,7 @@
   "sceneName": "Scene {n}",
   "dash": "—",
   "ellipsis": "…",
-  "durQueued": "~{d}s",
+  "durEstimate": "~{d}s",
   "durValue": "{d}s",
   "narrationAria": "Scene {n} narration",
   "narrationEditTitle": "Click to change the words — the narration re-renders",
