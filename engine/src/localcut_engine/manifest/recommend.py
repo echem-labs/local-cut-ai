@@ -49,7 +49,15 @@ def _fits(model: ModelEntry, profile: HardwareProfile) -> bool:
     return (
         vram >= model.requirements.vram_gb
         and profile.ram_gb >= model.requirements.ram_gb
-        and profile.disk_free_gb >= model.requirements.disk_gb
+        # Free disk is measured on LocalCut's data folder, where the app's
+        # own downloads land, and only those are held to it. A text.llm
+        # model lives in Ollama's store, which the app does not fill. The
+        # figure falls with every video model downloaded, so holding the
+        # script model to it would move Auto (auto_llm_model) off the model
+        # the user pulled, and the wizard's pick along with it.
+        and (
+            model.task not in DOWNLOADED_TASKS or profile.disk_free_gb >= model.requirements.disk_gb
+        )
     )
 
 

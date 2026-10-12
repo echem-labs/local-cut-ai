@@ -183,34 +183,48 @@ def probe_hardware(disk_path: str = "/") -> HardwareProfile:
         os=platform.system().lower(),
         arch=platform.machine(),
         ram_gb=round(psutil.virtual_memory().total / 2**30, 1),
-        disk_free_gb=round(psutil.disk_usage(disk_path).free / 2**30, 1),
+        disk_free_gb=_disk_free_gb(disk_path),
         gpus=gpus,
         primary_gpu=primary,
         tier=_tier_for(primary.vram_gb) if primary else Tier.S,
     )
 
 
-# One profile per disk path for the life of the process. The hardware does
-# not change while the engine runs, and the probe shells out to a vendor
-# tool that can take seconds under GPU load. It is also what keeps two
-# surfaces from disagreeing: /system's recommendation, which the first-run
-# wizard shows, and what Auto means for the script model are read off the
-# same answer.
+def _disk_free_gb(disk_path: str) -> float:
+    return round(psutil.disk_usage(disk_path).free / 2**30, 1)
+
+
+# The probe's answer per disk path, kept for the life of the process. GPUs
+# and RAM do not change while the engine runs, and asking shells out to a
+# vendor tool that can take seconds under GPU load. Keeping it is also what
+# keeps /system's recommendation, which the first-run wizard shows, and what
+# Auto means for the script model on the same hardware.
 _profiles: dict[str, HardwareProfile] = {}
 _profiles_lock = threading.Lock()
 
 
 def machine_profile(disk_path: str) -> HardwareProfile:
-    """`probe_hardware(disk_path)`, probed once and kept. Blocks for the
-    probe on the first call for a path, so a caller on the event loop takes
-    it to a thread. Concurrent first calls wait for the one probe rather
-    than each running their own."""
+    """This machine: the GPUs, RAM and tier from one `probe_hardware` call
+    kept for the life of the process, and the free disk measured now. Free
+    disk is the one figure that moves while the engine runs (it falls by
+    tens of GB as models download, and the wizard shows it), and measuring
+    it costs a statfs, not a vendor tool.
+
+    Blocks for the probe on the first call for a path, so a caller on the
+    event loop takes it to a thread. Concurrent first calls wait for the one
+    probe rather than each running their own."""
     with _profiles_lock:
-        if disk_path not in _profiles:
-            _profiles[disk_path] = probe_hardware(disk_path)
-        return _profiles[disk_path]
+        kept = _profiles.get(disk_path)
+        if kept is None:
+            kept = probe_hardware(disk_path)
+        else:
+            kept = kept.model_copy(update={"disk_free_gb": _disk_free_gb(disk_path)})
+        _profiles[disk_path] = kept
+        return kept
 
 
 def known_profile(disk_path: str) -> HardwareProfile | None:
-    """The kept profile, or None when nothing has probed yet. Never probes."""
+    """The kept profile, free disk as of the last `machine_profile` call, or
+    None when nothing has probed yet. Never probes or measures, so it is
+    safe on the event loop."""
     return _profiles.get(disk_path)

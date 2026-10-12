@@ -263,6 +263,36 @@ def test_auto_survives_the_serve_commands_rebuild_of_its_config(tmp_path, monkey
     assert auto_defaults(rebuilt)["text.llm"] == "qwen3:8b"
 
 
+async def test_free_disk_moves_neither_auto_nor_the_wizards_script_model(tmp_path, monkeypatch):
+    """Free disk falls as models download, and /system reads it fresh. The
+    script model is not held to it: free space is measured on LocalCut's
+    data folder, Ollama keeps its models in a store of its own, and an Auto
+    that followed the figure would move a user who pulled qwen3:14b onto a
+    model they never pulled the moment a video download filled the disk."""
+    import psutil
+
+    pin_hardware(monkeypatch, 12.0)
+    free = {"gb": 100}
+    measured = psutil.disk_usage
+    monkeypatch.setattr(
+        psutil, "disk_usage", lambda path: measured(path)._replace(free=free["gb"] * 2**30)
+    )
+
+    async def picks(http: httpx.AsyncClient) -> tuple[str, str]:
+        system = (await http.get("/system")).json()
+        wizard = next(row for row in system["recommendations"] if row["task"] == "text.llm")
+        auto = (await http.get("/models/defaults")).json()["auto"]["text.llm"]
+        return wizard["model"]["id"], auto
+
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock")
+    async with _engine(config) as http:
+        before = await picks(http)
+        # Under qwen3-14b's 9 GB, over qwen3-8b's 5.
+        free["gb"] = 6
+        after = await picks(http)
+    assert before == after == ("qwen3-14b-q4", "qwen3:14b")
+
+
 def test_with_no_local_text_model_that_fits_auto_keeps_the_engine_default(tmp_path, monkeypatch):
     """No GPU: the wizard sends scripts to the cloud and recommends no local
     text model, so there is no recommendation for Auto to follow."""
