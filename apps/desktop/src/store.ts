@@ -1221,6 +1221,14 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "program.setup.done" || event.type === "program.removed") {
+          // A program set up or taken away moves verdicts the same way
+          // weights do: without LocalCut's own FFmpeg there is nothing to
+          // assemble the timeline with. Failed and cancelled setups leave
+          // the machine as it was, so they have nothing to refetch.
+          void get()
+            .refreshReadiness()
+            .catch((err) => console.warn("readiness refresh failed:", err));
         } else if (event.type === "job.failed") {
           // Keep the advice with the node it is about. `suggestions` is
           // absent on ordinary failures — only the exhausted OOM ladder
