@@ -428,3 +428,51 @@ def test_the_bind_clash_message_does_not_send_you_to_a_shared_data_dir():
     source = Path(cli.__file__).read_text(encoding="utf-8")
     assert "quit it, or pass a different --port" not in source
     assert "different --data-dir" in source
+
+
+def test_a_model_download_prints_one_line_per_256_mib(tmp_path, monkeypatch, capsys):
+    """`localcut download` says how far a file has got at its start and then
+    once every 256 MiB. The downloader hands the bytes over as they arrive,
+    tens of kilobytes at a time, so a test on where one read lands holds for
+    every read just past each mark, and each of them printed a line."""
+    import json
+
+    from localcut_engine.manifest import downloads
+
+    size = 3 * (256 << 20) + (1 << 20)
+    read = 64 << 10
+    manifest = {
+        "models": [
+            {
+                "id": "big",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [
+                    {
+                        "url": "https://cdn.example.com/big.bin",
+                        "dest": "checkpoints/big.bin",
+                        "size": size,
+                    }
+                ],
+            }
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("LOCALCUT_DATA_DIR", str(tmp_path))
+
+    async def arriving(entry, models_dir, progress=None):
+        for done in range(read, size + 1, read):
+            await progress("checkpoints/big.bin", done, size)
+        return [models_dir / "checkpoints" / "big.bin"]
+
+    monkeypatch.setattr(downloads, "download_model", arriving)
+    assert cli.main(["download", "big", "--models-dir", str(tmp_path / "models")]) == 0
+    printed = [line for line in capsys.readouterr().out.splitlines() if "GiB" in line]
+    assert printed == [
+        "  checkpoints/big.bin: 0.00 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.25 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.50 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.75 / 0.75 GiB",
+    ], f"{len(printed)} lines"

@@ -456,8 +456,15 @@ def _models_command(args: argparse.Namespace) -> int:
         print(f"unknown model id: {args.model_id}", file=sys.stderr)
         return 1
 
+    # The 256 MiB mark each file last printed at. The bytes arrive in reads
+    # of tens of kilobytes, so where one read lands says nothing about
+    # whether the read before it already printed this mark.
+    printed: dict[str, int] = {}
+
     async def report(dest: str, done: int, total: int) -> None:
-        if total and done % (256 << 20) < (1 << 20):  # ~every 256 MB
+        mark = done // (256 << 20)
+        if total and printed.get(dest) != mark:
+            printed[dest] = mark
             print(f"  {dest}: {done / 2**30:.2f} / {total / 2**30:.2f} GiB", flush=True)
 
     try:
