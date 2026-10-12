@@ -25,6 +25,7 @@ export function FilterTabs<V extends string>({
         <button
           key={option.value}
           className={option.value === value ? "active" : ""}
+          aria-pressed={option.value === value}
           onClick={() => onChange(option.value)}
         >
           {option.label}

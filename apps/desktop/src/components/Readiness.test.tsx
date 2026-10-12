@@ -411,6 +411,22 @@ describe("suppression", () => {
     return run;
   }
 
+  it("says which scope is picked, not only by colour", async () => {
+    seed([musicGap]);
+    render(<Harness onRun={vi.fn()} scopeKey={nextKey()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    await waitFor(() => expect(renderAnyway()).not.toBeNull());
+    const scope = (name: RegExp) =>
+      screen.getByRole("button", { name }).getAttribute("aria-pressed");
+    expect(scope(/this session/i)).toBe("true");
+    expect(scope(/this project/i)).toBe("false");
+    expect(scope(/^always$/i)).toBe("false");
+
+    await userEvent.click(screen.getByRole("button", { name: /this project/i }));
+    expect(scope(/this project/i)).toBe("true");
+    expect(scope(/this session/i)).toBe("false");
+  });
+
   it("stops warning for the same gaps after Render anyway", async () => {
     const key = nextKey();
     seed([musicGap]);

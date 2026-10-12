@@ -403,6 +403,7 @@ export function Home() {
               <Tip label={t("home.modeAuto")} hint={t("home.modeAutoTitle")} side="bottom">
                 <button
                   className={mode === "prompt" ? "active" : ""}
+                  aria-pressed={mode === "prompt"}
                   onClick={() => setHomeDraft({ mode: "prompt" })}
                 >
                   {t("home.modeAuto")}
@@ -411,6 +412,7 @@ export function Home() {
               <Tip label={t("home.modeReview")} hint={t("home.modeReviewTitle")} side="bottom">
                 <button
                   className={mode === "beginner" ? "active" : ""}
+                  aria-pressed={mode === "beginner"}
                   onClick={() => setHomeDraft({ mode: "beginner" })}
                 >
                   {t("home.modeReview")}
