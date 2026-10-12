@@ -302,6 +302,31 @@ def test_readiness_vocabulary_matches_the_desktop():
     assert not missing, f"readiness.json has no effect phrase for {sorted(missing)}"
 
 
+def test_program_setup_vocabulary_matches_the_desktop():
+    """A `setup_program` fix names a program, and the setup it starts
+    reports a phase while it runs and a reason when it fails, all as codes
+    the desktop words from readiness.json. A phase only the engine knows
+    shows as a bare "setting up" with no step, and a reason only the engine
+    knows loses the one sentence that says what went wrong and whether
+    trying again can help."""
+    from localcut_engine.programs import PROGRAM_IDS, SETUP_FAILURES, SETUP_PHASES
+
+    text = _ts_source(_TYPES)
+    for declaration, engine in (
+        ("export type ProgramSetupPhase =", SETUP_PHASES),
+        ("export type ProgramSetupFailure =", SETUP_FAILURES),
+    ):
+        assert declaration in text, f"types.ts no longer declares {declaration!r}"
+        assert _ts_union(text, declaration) == set(engine), declaration
+
+    catalog = json.loads((_I18N / "readiness.json").read_text("utf-8"))
+    assert "programs" in catalog, "readiness.json has no wording for program setups"
+    words = catalog["programs"]
+    assert set(words["phases"]) == set(SETUP_PHASES)
+    assert set(words["reasons"]) == set(SETUP_FAILURES)
+    assert set(words["names"]) == set(PROGRAM_IDS)
+
+
 def test_the_video_kinds_home_warns_about_match_the_pipeline():
     """Home scopes its pre-generate warning to what a video renders, so a
     thumbnail model it will never touch cannot interrupt one. That list is

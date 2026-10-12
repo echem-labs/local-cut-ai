@@ -8,7 +8,7 @@
  * and it covers exactly the gap set it was dismissed for, so fixing one
  * model while losing another warns again rather than staying quiet.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +100,7 @@ beforeEach(() => {
     projectReadiness: null,
     readiness: null,
     warnMissingModels: true,
+    programSetups: {},
   } as never);
 });
 
@@ -525,5 +526,146 @@ describe("folding the banner", () => {
     seed([musicGap, exportFails]);
     render(<ReadinessBanner />);
     expect(screen.getByRole("status").querySelector(".gap-list")).not.toBeNull();
+  });
+});
+
+/**
+ * A row whose fix is `setup_program` is one the engine can fix itself:
+ * LocalCut's own copy of FFmpeg, downloaded into its data folder. Both
+ * surfaces that state the gap have to offer it, because a fresh machine
+ * has no other way to get one from inside the app, and the readiness
+ * report already said so with nothing on screen acting on it.
+ */
+describe("setting a program up from a readiness row", () => {
+  const running = {
+    status: "running",
+    phase: "downloading",
+    done: 68_157_440,
+    total: 170_611_883,
+    bytesPerS: 3_407_872,
+  };
+
+  it("offers FFmpeg on the banner, with the download's size", async () => {
+    const startProgramSetup = vi.fn().mockResolvedValue(null);
+    seed([exportFails], { startProgramSetup });
+    render(<ReadinessBanner />);
+    const offer = screen.getByRole("button", { name: /set up ffmpeg/i });
+    expect(offer.textContent).toContain("163 MB");
+    await userEvent.click(offer);
+    expect(startProgramSetup).toHaveBeenCalledWith("ffmpeg");
+  });
+
+  it("offers it only where a row's fix asks for it", () => {
+    // The engine decides where its copy would help (not where a PATH or
+    // configured ffmpeg would still win), so the row is the only
+    // authority. A missing ffmpeg with no fix gets no button.
+    seed([{ ...exportFails, fix: null }, musicGap]);
+    const without = render(<ReadinessBanner />);
+    expect(screen.queryByRole("button", { name: /set up ffmpeg/i })).toBeNull();
+    without.unmount();
+
+    seed([exportFails, musicGap]);
+    render(<ReadinessBanner />);
+    expect(screen.getAllByRole("button", { name: /set up ffmpeg/i })).toHaveLength(1);
+  });
+
+  it("shows the phase, the bytes and the speed while it runs, and cancels", async () => {
+    const cancelProgramSetup = vi.fn().mockResolvedValue(null);
+    seed([exportFails], { cancelProgramSetup, programSetups: { ffmpeg: running } });
+    render(<ReadinessBanner />);
+    const strip = screen.getByRole("status");
+    expect(strip.textContent).toContain("Downloading FFmpeg");
+    expect(strip.textContent).toContain("65 MB of 163 MB");
+    expect(strip.textContent).toContain("3 MB/s");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "40");
+    // The offer is gone while it runs: a second click would only be refused.
+    expect(screen.queryByRole("button", { name: /set up ffmpeg/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(cancelProgramSetup).toHaveBeenCalledWith("ffmpeg");
+  });
+
+  it("keeps the bytes out of the live region, so a screen reader hears phases, not ticks", () => {
+    // The banner is role="status", which re-reads itself on every text
+    // change. Bytes move twice a second while downloading.
+    seed([exportFails], { programSetups: { ffmpeg: running } });
+    render(<ReadinessBanner />);
+    const bytes = screen.getByText("65 MB of 163 MB");
+    expect(bytes.closest("[aria-hidden='true']")).not.toBeNull();
+  });
+
+  it("says why a setup failed, in words, and offers it again", async () => {
+    const startProgramSetup = vi.fn().mockResolvedValue(null);
+    seed([exportFails], {
+      startProgramSetup,
+      programSetups: {
+        ffmpeg: {
+          status: "failed",
+          reason: "checksum_mismatch",
+          error: "the download's SHA-256 is 00, and the pin for ffmpeg 8.1.3 is ff",
+        },
+      },
+    });
+    render(<ReadinessBanner />);
+    const strip = screen.getByRole("status");
+    expect(strip.textContent).toContain(t("readiness.programs.reasons.checksum_mismatch"));
+    // The engine's English is for logs and the CLI, not this sentence.
+    expect(strip.textContent).not.toContain("SHA-256");
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(startProgramSetup).toHaveBeenCalledWith("ffmpeg");
+  });
+
+  it("shows the engine's refusal when a setup will not start", async () => {
+    const startProgramSetup = vi
+      .fn()
+      .mockResolvedValue("engine 507: setting up ffmpeg needs 400 bytes free");
+    seed([exportFails], { startProgramSetup });
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: /set up ffmpeg/i }));
+    expect(await screen.findByText(/needs 400 bytes free/)).toBeInTheDocument();
+  });
+
+  it("offers FFmpeg in the gate too, beside Render anyway", async () => {
+    const startProgramSetup = vi.fn().mockResolvedValue(null);
+    seed([exportFails], { startProgramSetup });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const gate = await screen.findByRole("alertdialog");
+    await userEvent.click(within(gate).getByRole("button", { name: /set up ffmpeg/i }));
+    expect(startProgramSetup).toHaveBeenCalledWith("ffmpeg");
+    expect(renderAnyway()).not.toBeNull();
+  });
+
+  it("asks again when the setup lands, and stops calling the render a risk", async () => {
+    // The gate holds a snapshot taken at the click. Once FFmpeg is in
+    // place that snapshot is wrong, and "Render anyway" over a list of
+    // problems that no longer exist is the dialog lying.
+    const run = vi.fn();
+    seed([exportFails]);
+    render(<Harness onRun={run} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const gate = await screen.findByRole("alertdialog");
+    expect(gate.textContent).toContain(t("readiness.reasons.no_ffmpeg"));
+
+    const client = useApp.getState().client as unknown as {
+      readiness: ReturnType<typeof vi.fn>;
+      projectReadiness: ReturnType<typeof vi.fn>;
+    };
+    client.readiness.mockResolvedValue({ rows: [] });
+    client.projectReadiness.mockResolvedValue({ rows: [] });
+    act(() => {
+      useApp.setState({
+        programSetups: { ffmpeg: { status: "done", version: "8.1.3", drawsText: true } },
+      } as never);
+    });
+
+    const renderNow = await within(gate).findByRole("button", {
+      name: t("readiness.dialog.render"),
+    });
+    expect(gate.textContent).not.toContain(t("readiness.reasons.no_ffmpeg"));
+    expect(gate.textContent).toContain(t("readiness.dialog.clear"));
+    expect(gate.textContent).toContain("FFmpeg 8.1.3");
+    expect(renderAnyway()).toBeNull();
+    await userEvent.click(renderNow);
+    await waitFor(() => expect(run).toHaveBeenCalled());
   });
 });

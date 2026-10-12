@@ -519,6 +519,24 @@ export class EngineClient {
     return this.request(`/projects/${encodeURIComponent(projectId)}/readiness`);
   }
 
+  /** Start setting up LocalCut's own copy of a program, on the engine's
+   * machine. Returns at once: progress and the outcome arrive over /ws as
+   * `program.setup.*`. No body, because nothing a client sends changes what
+   * is downloaded. `installed` means the pinned copy is already in place.
+   * docs/programs.md has the refusals (409, 507). */
+  startProgramSetup(
+    programId: string,
+  ): Promise<{ status: "started"; job: string } | { status: "installed" }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/setup`, { method: "POST" });
+  }
+
+  /** Stop a running setup; `program.setup.cancelled` follows once what it
+   * wrote is gone. 409 when nothing is running, or it is already moving the
+   * copy into place and will finish. */
+  cancelProgramSetup(programId: string): Promise<{ ok: boolean }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/setup`, { method: "DELETE" });
+  }
+
   /** Persisted per-task default models (Settings → Models). */
   modelDefaults(): Promise<ModelDefaults> {
     return this.request("/models/defaults");

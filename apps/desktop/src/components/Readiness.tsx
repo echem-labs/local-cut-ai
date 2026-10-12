@@ -9,15 +9,17 @@ import {
   PlugZap,
   ServerOff,
   TriangleAlert,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ReadinessRow } from "../api/types";
 import { m, plural, t, type MessageKey } from "../i18n";
 import { distinctGaps, noteworthyGaps, readinessFingerprint } from "../lib/readiness";
 import { useApp } from "../store";
 import { formatSize, ModelLibrary } from "./ModelLibrary";
 import { Modal } from "./Modal";
+import { ProgramSetupControl } from "./ProgramSetup";
 import { Tip } from "./Tooltip";
 
 /** The stage a row is about, in the words the rest of the app uses for it. */
@@ -143,6 +145,19 @@ export function gapGroups(rows: readonly ReadinessRow[]): GapGroup[] {
   return [...groups.values()].sort((a, b) => b.severity - a.severity);
 }
 
+/** The programs the engine offers to set up for these rows, once each, with
+ * the download's size. A missing ffmpeg costs timeline, export and
+ * captions, three rows, and it is still one download. */
+function programFixes(rows: readonly ReadinessRow[]): { program: string; sizeBytes: number }[] {
+  const fixes = new Map<string, number>();
+  for (const row of rows) {
+    if (row.fix?.type === "setup_program" && !fixes.has(row.fix.program)) {
+      fixes.set(row.fix.program, row.fix.size_bytes);
+    }
+  }
+  return [...fixes].map(([program, sizeBytes]) => ({ program, sizeBytes }));
+}
+
 /** One readiness gap as a standalone sentence, for the surfaces that have
  * room for exactly one (Home's prompt box and tool box). Null when the
  * reason has no catalog entry — those callers gate on it. */
@@ -266,8 +281,8 @@ const writeFolded = (fingerprint: string | null) => {
 /** Non-blocking facts strip for the workspace (project board and tool
  * sessions): what will not render properly, and the shortest path to
  * fixing it. Never suppressed — dismissing the DIALOG must not take the
- * facts off the screen — and it clears itself the moment a download lands,
- * because the store refetches readiness on every terminal download event.
+ * facts off the screen — and it clears itself the moment a download or a
+ * program setup lands, because the store refetches readiness on both.
  *
  * It FOLDS rather than closes, and that is the whole answer to "should this
  * be dismissable": the sentence and the severity chips stay, so the board
@@ -306,6 +321,11 @@ export function ReadinessBanner() {
   const directFix = direct?.fix?.type === "download" ? direct.fix : null;
   const downloading =
     directFix != null && models.some((row) => row.id === directFix.model_id && row.downloading);
+  // A program the engine can set up itself is a fix with no other door:
+  // Settings > Models has nothing for FFmpeg. So each one gets its control
+  // here, whatever else is missing, and the store's refetch when the setup
+  // lands is what takes it (and its rows) off the strip.
+  const setups = programFixes(gaps);
 
   // The strip's own edge repeats the worst light inside it, so the board
   // can be read from the corner of the eye without expanding anything.
@@ -341,6 +361,9 @@ export function ReadinessBanner() {
             survive, so the strip never reads as "everything is fine". */}
         {shut && <SeverityChips groups={gapGroups(gaps)} />}
         <span className="spacer" />
+        {setups.map((fix) => (
+          <ProgramSetupControl key={fix.program} program={fix.program} sizeBytes={fix.sizeBytes} />
+        ))}
         {directFix && (
           <button
             className="btn-outline"
@@ -381,15 +404,17 @@ export function ReadinessBanner() {
 /** The gate at the moment of spend. Fires only from an explicit
  * render-starting click (never from implicit re-renders — doc 09 P5), lists
  * each gap in plain words, embeds the model library filtered to the
- * downloadable fixes, and always leaves "Render anyway" on the table —
- * warning, not paywall. The scope control decides how long this exact set
- * of problems stays quiet. */
+ * downloadable fixes and a setup for each program the engine can fetch,
+ * and always leaves "Render anyway" on the table — warning, not paywall.
+ * The scope control decides how long this exact set of problems stays
+ * quiet. */
 export function ReadinessDialog({
   scopeKey,
   rows,
   kinds,
   onProceed,
   onClose,
+  onRecheck,
 }: {
   scopeKey: string;
   rows: ReadinessRow[];
@@ -398,16 +423,41 @@ export function ReadinessDialog({
   kinds?: string[];
   onProceed: () => void;
   onClose: () => void;
+  /** Ask the engine again, after a fix made from inside the dialog. */
+  onRecheck?: () => void;
 }) {
   const suppressReadiness = useApp((state) => state.suppressReadiness);
   const openSettings = useApp((state) => state.openSettings);
+  const programSetups = useApp((state) => state.programSetups);
   const [scope, setScope] = useState<"session" | "project" | "always">("session");
   const setupRef = useRef<HTMLButtonElement>(null);
   const downloadIds = new Set(
     rows.flatMap((row) => (row.fix?.type === "download" ? [row.fix.model_id] : [])),
   );
+  // From the rows the dialog OPENED with, not the current ones: a setup
+  // that lands takes its rows out of the next answer, and the control has
+  // to stay to say that it landed.
+  const [offered] = useState(() => programFixes(rows));
   const groups = gapGroups(rows);
   const stages = groups.reduce((count, group) => count + group.items.length, 0);
+  // Nothing left after a recheck. The click is still held, so the dialog
+  // stays to release it, but as a plain Render: "anyway" over an empty list
+  // would be warning about a machine that no longer exists.
+  const clear = rows.length === 0;
+
+  // The rows were taken at the click. When a setup offered here lands, the
+  // ones it fixed are stale, so the gate asks again. Keyed on which
+  // programs have landed, so a retry that lands later asks again too.
+  const landed = offered
+    .filter((fix) => programSetups[fix.program]?.status === "done")
+    .map((fix) => fix.program)
+    .join(",");
+  const seenLanded = useRef(landed);
+  useEffect(() => {
+    if (landed === seenLanded.current) return;
+    seenLanded.current = landed;
+    if (landed) onRecheck?.();
+  }, [landed, onRecheck]);
   // A segmented toggle, not a checkbox plus a dropdown: that pairing put a
   // button inside a <label> (which then absorbed the menu's value into the
   // checkbox's accessible name), and Modal's capture-phase Escape closed
@@ -442,17 +492,36 @@ export function ReadinessDialog({
           <button
             className="btn-primary"
             onClick={() => {
-              suppressReadiness(scopeKey, rows, scope, kinds);
+              // An empty set is nothing to stop warning about, and its
+              // fingerprint would match every later empty answer.
+              if (!clear) suppressReadiness(scopeKey, rows, scope, kinds);
               onProceed();
             }}
           >
-            {t("readiness.dialog.renderAnyway")}
+            {t(clear ? "readiness.dialog.render" : "readiness.dialog.renderAnyway")}
           </button>
         </>
       }
     >
-      <IntroSentence stages={stages} />
+      {clear ? (
+        <p className="gate-intro">{t("readiness.dialog.clear")}</p>
+      ) : (
+        <IntroSentence stages={stages} />
+      )}
       <GapList rows={rows} />
+      {offered.length > 0 && (
+        <div className="well gate-downloads">
+          <div className="whead label">
+            <Wrench size={14} strokeWidth={1.8} aria-hidden="true" />
+            <span>{t("readiness.dialog.programs")}</span>
+          </div>
+          {offered.map((fix) => (
+            <div className="gate-program" key={fix.program}>
+              <ProgramSetupControl program={fix.program} sizeBytes={fix.sizeBytes} />
+            </div>
+          ))}
+        </div>
+      )}
       {downloadIds.size > 0 && (
         <div className="well gate-downloads">
           <div className="whead label">
@@ -462,29 +531,31 @@ export function ReadinessDialog({
           <ModelLibrary showActions filterIds={downloadIds} />
         </div>
       )}
-      <div className="gate-scope">
-        <div className="lbl">{t("readiness.dialog.skip")}</div>
-        <div className="sc">
-          <div className="seg-toggle" role="group" aria-label={t("readiness.dialog.skip")}>
-            {scopes.map((option) => (
-              <button
-                key={option.id}
-                className={scope === option.id ? "active" : ""}
-                onClick={() => setScope(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {/* The hint that used to live in a tooltip on each segment. On
-              screen it costs one line and answers the question the control
-              actually raises ("for how long?") without a hover, which is
-              the only way a pointerless user was ever going to read it. */}
-          <div className="scope-hint" role="status">
-            {t(`readiness.dialog.scopeHint.${scope}` as MessageKey)}
+      {!clear && (
+        <div className="gate-scope">
+          <div className="lbl">{t("readiness.dialog.skip")}</div>
+          <div className="sc">
+            <div className="seg-toggle" role="group" aria-label={t("readiness.dialog.skip")}>
+              {scopes.map((option) => (
+                <button
+                  key={option.id}
+                  className={scope === option.id ? "active" : ""}
+                  onClick={() => setScope(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {/* The hint that used to live in a tooltip on each segment. On
+                screen it costs one line and answers the question the control
+                actually raises ("for how long?") without a hover, which is
+                the only way a pointerless user was ever going to read it. */}
+            <div className="scope-hint" role="status">
+              {t(`readiness.dialog.scopeHint.${scope}` as MessageKey)}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </Modal>
   );
 }
@@ -564,6 +635,15 @@ export function useReadinessGuard(scopeKey: string): {
   };
   pendingRef.current = pending !== null;
 
+  // Through the same door the click went through, so suppression and the
+  // downloads already moving count exactly as they did then. Null is what
+  // would have let the click straight through, so it empties the list. The
+  // held render stays held either way: it is still the user's to release.
+  const recheck = async (kinds?: string[]) => {
+    const rows = await readinessGaps(scopeKey, kinds);
+    setPending((held) => (held ? { ...held, rows: rows ?? [] } : held));
+  };
+
   const dialog = pending ? (
     <ReadinessDialog
       scopeKey={scopeKey}
@@ -575,6 +655,7 @@ export function useReadinessGuard(scopeKey: string): {
         held.proceed();
       }}
       onClose={release}
+      onRecheck={() => void recheck(pending.kinds)}
     />
   ) : null;
 

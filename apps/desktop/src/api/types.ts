@@ -402,6 +402,28 @@ export interface ReadinessRow {
   fix: ReadinessFix | null;
 }
 
+/** What a program setup is doing, in the order it does it, and why one
+ * failed. Mirrored from SETUP_PHASES and SETUP_FAILURES in the engine's
+ * programs/__init__.py and worded in readiness.json; test_ui_contract
+ * compares the sets, so a code added on one side alone fails there. A code
+ * a newer engine sends anyway still renders, in generic words. */
+export type ProgramSetupPhase =
+  | "downloading"
+  | "verifying"
+  | "unpacking"
+  | "checking"
+  | "installing";
+
+export type ProgramSetupFailure =
+  | "no_space"
+  | "download_failed"
+  | "size_mismatch"
+  | "checksum_mismatch"
+  | "unpack_failed"
+  | "does_not_run"
+  | "in_use"
+  | "install_failed";
+
 export type ProviderId = "anthropic" | "openai" | "google" | "fal";
 
 export interface Provider {
@@ -608,7 +630,7 @@ export type EngineEvent =
   | {
       type: "program.setup.progress";
       program: string;
-      phase: string;
+      phase: ProgramSetupPhase;
       done: number;
       total: number;
       bytes_per_s: number | null;
@@ -621,7 +643,7 @@ export type EngineEvent =
       in_use: boolean;
       draws_text: boolean | null;
     }
-  | { type: "program.setup.failed"; program: string; reason: string; error: string }
+  | { type: "program.setup.failed"; program: string; reason: ProgramSetupFailure; error: string }
   | { type: "program.setup.cancelled"; program: string }
   | { type: "program.removed"; program: string; freed_bytes: number };
 

@@ -5525,6 +5525,7 @@ button.link:hover {
 
 .banner.readiness .row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
 }
@@ -5669,6 +5670,37 @@ a.icon-btn-sm {
 
 .gate-downloads .model-group + .model-group {
   margin-top: 0;
+}
+
+/* Setting a program up from a readiness row: the offer, then the setup's
+   phase and bytes, then how it ended. One line in the banner's title row,
+   and the same line in the gate's well. */
+.program-setup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* Beside the words rather than under them, so the banner's row keeps its
+   height while the bytes move. */
+.program-setup .dl-bar {
+  width: 96px;
+  margin-top: 0;
+}
+
+.program-setup .dl-bar-fill {
+  display: block;
+}
+
+.program-setup.done > svg {
+  color: var(--status-final);
+}
+
+.gate-program {
+  padding: var(--space-2) 0;
 }
 
 /* ---- first-run setup ---- */

@@ -31,6 +31,8 @@ import type {
   NodePacks,
   NodeState,
   OomFallback,
+  ProgramSetupFailure,
+  ProgramSetupPhase,
   Project,
   ReadinessRow,
   StorageInfo,
@@ -241,6 +243,22 @@ export interface HomeDraft {
   clipSeconds: number;
 }
 
+/** One program's setup, as this window has heard it over /ws: running,
+ * with the phase and bytes the last event carried, or how it ended. A
+ * cancelled setup leaves no entry, because what is on screen afterwards is
+ * the offer it started from. `phase` is null between the click and the
+ * first event. */
+export type ProgramSetup =
+  | {
+      status: "running";
+      phase: ProgramSetupPhase | null;
+      done: number;
+      total: number;
+      bytesPerS: number | null;
+    }
+  | { status: "done"; version: string | null; drawsText: boolean | null }
+  | { status: "failed"; reason: ProgramSetupFailure; error: string };
+
 interface AppState {
   client: EngineClient | null;
   engineError: string | null;
@@ -288,6 +306,9 @@ interface AppState {
   models: ModelRow[];
   // model id → last download failure, cleared on retry/success.
   downloadErrors: Record<string, string>;
+  /** Each program's setup by id, from the `program.setup.*` events. Absent
+   * means none has run since this window connected to this engine. */
+  programSetups: Record<string, ProgramSetup>;
   // node id → what the engine said when this node's render gave up, and what
   // it suggested doing about it. Only the websocket ever carries these: the
   // scheduler computes `suggestions` at publish time and persists nothing, so
@@ -542,6 +563,13 @@ interface AppState {
   startDownload: (modelId: string) => Promise<void>;
   cancelDownload: (modelId: string) => Promise<void>;
   deleteModel: (modelId: string) => Promise<void>;
+  /** Set up LocalCut's own copy of a program on the engine's machine. Null
+   * means the engine took it (or already had it); how it goes from there
+   * is `programSetups`. */
+  startProgramSetup: (programId: string) => Promise<string | null>;
+  /** Stop a running setup. Null means the engine took the cancel; the
+   * entry clears when `program.setup.cancelled` arrives. */
+  cancelProgramSetup: (programId: string) => Promise<string | null>;
   /** Decode a pairing code for review — nothing is sent, nothing is stored. */
   inspectPairing: (code: string) => Promise<PairingPreview>;
   /** Pair with a remote engine. `armKeys` is a separate, explicit decision:
@@ -959,6 +987,15 @@ export const useApp = create<AppState>((set, get) => {
     });
   };
 
+  // One program's entry replaced, or dropped with null. Frozen means a rig
+  // posed this frame, and the engine's own traffic must not move it, as
+  // with the download bars above.
+  const setProgramSetup = (programId: string, setup: ProgramSetup | null) => {
+    if (seedFrozen) return;
+    const { [programId]: _replaced, ...rest } = get().programSetups;
+    set({ programSetups: setup ? { ...rest, [programId]: setup } : rest });
+  };
+
   // A /models response can be older than the WS stream it races: it may
   // still say `downloading` after the terminal event, or carry byte counts
   // behind the last progress tick. Never let it move a bar backward or
@@ -1165,6 +1202,11 @@ export const useApp = create<AppState>((set, get) => {
       remoteEngine: remote === true,
       remotePaired: remotePaired === true,
       remoteKeysArmed: keysArmed !== false,
+      // Setups are known only from the socket, and a new socket may have
+      // missed how one ended. A setup still running says so again within
+      // half a second, and readiness, refetched below, is what decides
+      // whether the offer is still on screen.
+      programSetups: {},
     });
 
     const sub = client.subscribe(
@@ -1221,6 +1263,32 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "program.setup.progress") {
+          setProgramSetup(event.program, {
+            status: "running",
+            phase: event.phase,
+            done: event.done,
+            total: event.total,
+            bytesPerS: event.bytes_per_s,
+          });
+        } else if (event.type === "program.setup.failed") {
+          setProgramSetup(event.program, {
+            status: "failed",
+            reason: event.reason,
+            error: event.error,
+          });
+        } else if (event.type === "program.setup.done") {
+          setProgramSetup(event.program, {
+            status: "done",
+            version: event.version,
+            drawsText: event.draws_text,
+          });
+          refreshProgramFacts();
+        } else if (event.type === "program.setup.cancelled") {
+          setProgramSetup(event.program, null);
+        } else if (event.type === "program.removed") {
+          setProgramSetup(event.program, null);
+          refreshProgramFacts();
         } else if (event.type === "job.failed") {
           // Keep the advice with the node it is about. `suggestions` is
           // absent on ordinary failures — only the exhausted OOM ladder
@@ -1414,6 +1482,26 @@ export const useApp = create<AppState>((set, get) => {
       .catch((err) => console.warn("readiness refresh failed:", err));
   };
 
+  /** A program set up or removed while the app runs. The engine looks
+   * ffmpeg up again at every use, so the change is live at once, with no
+   * restart: readiness (the banner, the gate, Home's notes) and /system's
+   * ffmpeg facts (the drawtext warnings, Settings' "nothing can assemble")
+   * are asked again here, or they go on describing the machine as it was.
+   * /system is otherwise read once, at connect. */
+  const refreshProgramFacts = () => {
+    refreshReadinessQuietly();
+    const { client } = get();
+    if (!client || seedFrozen) return;
+    client
+      .system()
+      .then((info) => {
+        // The guards establish's own read has: another engine's hardware
+        // must not land after a switch, nor live facts over a posed frame.
+        if (get().client === client && !seedFrozen) set({ system: info });
+      })
+      .catch((err) => console.warn("system refresh failed:", err));
+  };
+
   const switchEngine = async () => {
     resetEngineScopedState();
     // A dismissal is about one engine's models; the newly paired box has
@@ -1432,6 +1520,7 @@ export const useApp = create<AppState>((set, get) => {
       projects: [],
       models: [],
       downloadErrors: {},
+      programSetups: {},
       nodeFailures: {},
       nodeRetries: {},
       // The old engine's hardware/recommendations must not survive the switch
@@ -1473,6 +1562,7 @@ export const useApp = create<AppState>((set, get) => {
     selectedNode: null,
     models: [],
     downloadErrors: {},
+    programSetups: {},
     nodeFailures: {},
     nodeRetries: {},
     firstRunDone: readFlag(FIRST_RUN_KEY),
@@ -2736,6 +2826,52 @@ export const useApp = create<AppState>((set, get) => {
       // the banner and the model picker have to hear about it now, not at
       // the next unrelated download event.
       refreshReadinessQuietly();
+    },
+
+    startProgramSetup: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      // Starting at once, before the engine answers: the click has to show
+      // that it landed, and the setup begins before the route returns, so
+      // its first event can beat the answer over the socket. The entry is
+      // put back only if it is still this placeholder, so neither an event
+      // that arrived meanwhile nor the outcome of a fast failure is undone.
+      const before = get().programSetups[programId] ?? null;
+      const starting: ProgramSetup = {
+        status: "running",
+        phase: null,
+        done: 0,
+        total: 0,
+        bytesPerS: null,
+      };
+      setProgramSetup(programId, starting);
+      let answer: Awaited<ReturnType<EngineClient["startProgramSetup"]>>;
+      try {
+        answer = await client.startProgramSetup(programId);
+      } catch (err) {
+        if (get().programSetups[programId] === starting) setProgramSetup(programId, before);
+        return messageOf(err);
+      }
+      if (answer.status === "installed" && get().programSetups[programId] === starting) {
+        // The pinned copy was already in place, so the report that offered
+        // this predates it. Asking again is the whole fix.
+        setProgramSetup(programId, { status: "done", version: null, drawsText: null });
+        refreshProgramFacts();
+      }
+      return null;
+    },
+
+    cancelProgramSetup: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.cancelProgramSetup(programId);
+      } catch (err) {
+        // 409: nothing is running, or it is already moving the copy into
+        // place and will finish. The events say which.
+        return messageOf(err);
+      }
+      return null;
     },
 
     inspectPairing: (code) => window.localcut.inspectPairing(code),

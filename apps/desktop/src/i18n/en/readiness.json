@@ -35,6 +35,9 @@
     "intro_one": "You can still render, but one stage won't turn out right:",
     "intro_other": "You can still render, but {count} stages won't turn out right:",
     "fixes": "Fixes you can download",
+    "programs": "Programs you can set up",
+    "clear": "Nothing stands in the way of this render now.",
+    "render": "Render",
     "renderAnyway": "Render anyway",
     "setup": "Set up models",
     "skip": "Stop warning me",
@@ -51,5 +54,44 @@
     "will_fail": "fail",
     "placeholder": "stand-in",
     "degraded": "lower quality"
+  },
+  "programs": {
+    "names": {
+      "ffmpeg": "FFmpeg",
+      "ollama": "Ollama",
+      "comfyui": "ComfyUI"
+    },
+    "setup": "Set up {program}",
+    "setupTip": "LocalCut AI's own copy of {program}",
+    "setupTipHint": "Downloaded into LocalCut AI's data folder on the machine the engine runs on. Nothing outside that folder changes.",
+    "starting": "Starting to set up {program}",
+    "working": "Setting up {program}",
+    "phases": {
+      "downloading": "Downloading {program}",
+      "verifying": "Checking the download",
+      "unpacking": "Unpacking {program}",
+      "checking": "Making sure {program} runs",
+      "installing": "Putting {program} in place"
+    },
+    "bytes": "{done} of {total}",
+    "rate": "{size}/s",
+    "progress": "Setting up {program}",
+    "cancel": "Cancel",
+    "cancelTipHint": "Stops the setup and deletes what it downloaded",
+    "failed": "{program} wasn't set up: {reason}",
+    "failedPlain": "{program} wasn't set up.",
+    "reasons": {
+      "no_space": "the disk filled up.",
+      "download_failed": "the download didn't finish.",
+      "size_mismatch": "the file that arrived wasn't the size it should be.",
+      "checksum_mismatch": "the file that arrived didn't match its checksum.",
+      "unpack_failed": "the download couldn't be unpacked.",
+      "does_not_run": "the copy it downloaded doesn't run on the engine's machine.",
+      "in_use": "another program has LocalCut AI's copy open. Close it and try again.",
+      "install_failed": "it couldn't be moved into place."
+    },
+    "retry": "Try again",
+    "done": "{program} {version} is set up.",
+    "donePlain": "{program} is set up."
   }
 }
