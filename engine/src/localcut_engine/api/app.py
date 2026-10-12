@@ -506,18 +506,18 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             reclaimed = 0
         if reclaimed:
             logger.info("reclaimed %d partially-deleted project(s)", reclaimed)
-        # A quick tool session that finished under an older build carries
-        # none of the meta the history list reads, and nothing would ever
-        # write it: a refresh only happens on a write, and a finished session
-        # is never written again. Off the event loop -- one graph load per
-        # session that still lacks the field.
+        # A project that finished under an older build carries none of the
+        # meta the tiles read, and nothing would ever write it: a refresh
+        # only happens on a write, and a finished project is never written
+        # again. Off the event loop -- one graph load per project that still
+        # lacks the field.
         try:
-            backfilled = await asyncio.to_thread(service.backfill_tool_metas)
+            backfilled = await asyncio.to_thread(service.backfill_metas)
         except Exception:  # noqa: BLE001 — startup outranks housekeeping
-            logger.exception("could not backfill quick tool metas; continuing")
+            logger.exception("could not backfill project metas; continuing")
             backfilled = 0
         if backfilled:
-            logger.info("backfilled meta for %d quick tool session(s)", backfilled)
+            logger.info("backfilled meta for %d finished project(s)", backfilled)
         # What a setup that the last engine did not finish left in
         # <data_dir>/programs. Before anything can start a setup of its own.
         try:

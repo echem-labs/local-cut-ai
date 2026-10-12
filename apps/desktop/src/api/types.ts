@@ -21,6 +21,9 @@ export interface Project {
   // The durable answer to "did this finish?" — /jobs only carries the newest
   // 200 rows across every project, so an old session's are long gone.
   tool_artifact_hash?: string | null;
+  // Video projects: the export's artifact for the graph as it stands. The
+  // same answer for the same reason, and what makes a tile "Final".
+  export_artifact_hash?: string | null;
   // Promotion provenance. Advisory both ways: either side can be deleted and
   // nothing rewrites the survivor, so an id that no longer resolves against
   // the project list means "no link", not "broken".
