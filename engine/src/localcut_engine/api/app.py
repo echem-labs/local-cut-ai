@@ -837,16 +837,31 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             }
         return {"etas": etas}
 
-    def can_clone() -> bool:
-        """Whether the clone control can work at all.
+    def clone_problem() -> str | None:
+        """Why the clone control cannot work on this engine, or None when it
+        can. Blocking: on a machine with chatterbox installed, the first call
+        imports it (PyTorch and all), so the routes run it in a thread.
 
         Separate from `available`, which is about the stock-voice pack:
         cloning routes to a different backend and a different optional
         runtime, so the two are independently present or absent. One reader,
         because the answer the client is shown and the answer the engine
-        enforces have to be the same answer.
+        enforces have to be the same answer, and the reason goes with it:
+        "not installed" sent to someone who has just installed the package
+        leaves them nothing to act on.
+
+        The order is cheapest first, and the import comes last so that a
+        chain without chatterbox never pays for it.
         """
-        return ChatterboxBackend.package_installed() and backends.find("chatterbox") is not None
+        if not ChatterboxBackend.package_installed():
+            return INSTALL_HINT
+        backend = backends.find("chatterbox")
+        if not isinstance(backend, ChatterboxBackend):
+            return (
+                "voice cloning needs the chatterbox backend, and this engine's backend "
+                "chain does not include it (`--backend local,mock` does)."
+            )
+        return backend.runtime_problem()
 
     @app.get("/voices", dependencies=[Authed])
     async def voices() -> dict:
@@ -899,14 +914,21 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend.installed_voices()
 
-        cloning = can_clone()
-
-        installed = await asyncio.to_thread(enumerate_pack)
+        # Side by side: the first clone answer on a machine with chatterbox
+        # can take as long as importing PyTorch, and the stock list should
+        # not wait behind it longer than it has to.
+        problem, installed = await asyncio.gather(
+            asyncio.to_thread(clone_problem), asyncio.to_thread(enumerate_pack)
+        )
+        # `cloning_reason` is the engine's own sentence, not an id the
+        # client labels: where an import failed it quotes the exception, and
+        # no catalog can hold a third-party error message.
+        cloning = {"cloning": problem is None, "cloning_reason": problem}
         if installed is None:
-            return {"available": False, "voices": [], "default": None, "cloning": cloning}
+            return {"available": False, "voices": [], "default": None, **cloning}
         ids = [voice["id"] for voice in installed]
         default = DEFAULT_VOICE if DEFAULT_VOICE in ids else next(iter(ids), None)
-        return {"available": True, "voices": installed, "default": default, "cloning": cloning}
+        return {"available": True, "voices": installed, "default": default, **cloning}
 
     @app.get("/voices/{voice_id}/preview", dependencies=[Authed])
     async def voice_preview(voice_id: VoiceId) -> FileResponse:
@@ -1656,10 +1678,12 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # capability to decide whether to show it, but that is advisory:
         # this is the answer that also holds for the CLI, for a window-wide
         # drop, and for a client too old to ask.
-        if suffix in _AUDIO_EXTENSIONS and consent and not can_clone():
-            raise HTTPException(
-                status_code=409, detail=f"no voice sample was stored: {INSTALL_HINT}"
-            )
+        if suffix in _AUDIO_EXTENSIONS and consent:
+            problem = await asyncio.to_thread(clone_problem)
+            if problem is not None:
+                raise HTTPException(
+                    status_code=409, detail=f"no voice sample was stored: {problem}"
+                )
         # voice=True only for audio WITH the affirmation — the one place
         # `voice_consent` can be minted.
         return await asyncio.to_thread(

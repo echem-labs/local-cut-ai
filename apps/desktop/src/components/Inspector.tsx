@@ -754,6 +754,13 @@ export function Inspector() {
                     ) : (
                       <div role="note" className="hint">
                         {t("inspector.cloneUnavailable")}
+                        {/* The engine's reason, when it sent one. Installed
+                            but not importable reads like not installed from
+                            the line above alone, and the reason quotes the
+                            import error that says what to fix. */}
+                        {voices?.cloning_reason && (
+                          <span className="clone-reason">{voices.cloning_reason}</span>
+                        )}
                       </div>
                     )}
                   </div>

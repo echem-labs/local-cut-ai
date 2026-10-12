@@ -670,10 +670,14 @@ export interface Voices {
   available: boolean;
   voices: Voice[];
   default: string | null;
-  /** Whether voice cloning can run at all — the optional chatterbox runtime
-   * is present AND in the backend chain. Independent of `available`, which
-   * is about the stock-voice pack: the two route to different backends.
-   * Absent from an older engine, which is why callers treat undefined as
-   * "do not offer it" rather than as true. */
+  /** Whether voice cloning can run at all: the optional chatterbox runtime
+   * imports in the engine AND is in the backend chain. Independent of
+   * `available`, which is about the stock-voice pack: the two route to
+   * different backends. Absent from an older engine, which is why callers
+   * treat undefined as "do not offer it" rather than as true. */
   cloning?: boolean;
+  /** Why `cloning` is false, as the engine's own sentence (it can quote an
+   * import error, which no catalog could hold). Null when cloning can run;
+   * absent from an older engine. */
+  cloning_reason?: string | null;
 }

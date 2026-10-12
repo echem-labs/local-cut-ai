@@ -3523,6 +3523,14 @@ button.link:hover {
   margin-top: var(--space-1);
 }
 
+/* The engine's reason cloning is off. It can quote an import error, whose
+   version specifiers ("tokenizers>=0.22.0,<=0.23.0") have nowhere to wrap. */
+.inspector .clone-reason {
+  display: block;
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
 /* ---- queue tray ---- */
 .queue-tray {
   position: fixed;
