@@ -193,6 +193,27 @@ describe("the Reading images picker", () => {
     expect((await options("Reading images")).slice(1)).toEqual(["qwen2.5vl:7b"]);
   });
 
+  it("names a cloud fallback without calling it missing from the server", async () => {
+    // Auto for reading images is a key's cloud model or nothing; the engine
+    // never resolves it to a name on the LLM server. Checking it against
+    // that server's list can only ever call it missing.
+    await mount({
+      client: engineClient(["qwen2.5vl:7b", "qwen3:8b"], {
+        models: ["local:qwen2.5vl:7b", "cloud:claude-sonnet-5"],
+        default: "cloud:claude-sonnet-5",
+        local_known: true,
+      }),
+      modelDefaults: {
+        ...DEFAULTS,
+        auto: { ...DEFAULTS.auto, "vision.llm": "cloud:claude-sonnet-5" },
+      },
+    });
+    // The row's trigger shows the Auto option, since nothing is stored.
+    expect(screen.getByRole("button", { name: "Reading images" }).textContent?.trim()).toBe(
+      t("settings.models.defaultsAutoResolved", { model: "cloud:claude-sonnet-5" }),
+    );
+  });
+
   it("offers no server names when the engine cannot tell which can see", async () => {
     // A server without Ollama's `/api/show` cannot be asked about eyesight.
     // Every name on it is a guess, so none is offered.

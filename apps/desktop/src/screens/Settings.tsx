@@ -242,7 +242,11 @@ function ModelDefaultsPanel() {
     // plainly here, it is one glance instead of one failed render. Only
     // once the list has arrived: an empty list is "not asked yet", and
     // calling every model missing on a slow server is worse than silence.
-    if (SERVER_TASKS.includes(task) && llmNames.length > 0 && !servesModel(llmNames, resolved)) {
+    // Not for a cloud fallback: Auto for reading images is a key's model
+    // when there is one, which no LLM server lists, so the check could only
+    // ever call it missing.
+    const onServer = SERVER_TASKS.includes(task) && !resolved.startsWith("cloud:");
+    if (onServer && llmNames.length > 0 && !servesModel(llmNames, resolved)) {
       return t("settings.models.defaultsAutoMissing", { model: name });
     }
     return t("settings.models.defaultsAutoResolved", { model: name });
