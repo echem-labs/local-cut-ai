@@ -239,13 +239,23 @@ describe("chain focus", () => {
   });
 
   it("says what the selection is doing, and how to move around", () => {
-    // The two gestures have no affordance to discover them by — ctrl+wheel
-    // and drag-to-pan are invisible until tried — so the mock puts them in
-    // the corner the graph flows away from.
+    // The two gestures have no affordance to discover them by (ctrl+wheel
+    // and drag-to-pan are invisible until tried), so they are spelled out
+    // in the bar, beside the zoom controls.
     mount({ selectedNode: "s1.clip" });
     const legend = document.querySelector(".canvas-legend")!;
     expect(legend.textContent).toContain(t("canvas.chainOf", { id: "s1.clip" }));
     expect(legend.textContent).toContain(t("canvas.panHint"));
+  });
+
+  it("says it in the toolbar, not over the graph", () => {
+    // Floating over the surface, the legend sat on whichever node the view
+    // put in its corner. In the bar it is beside the controls, and the
+    // stylesheet drops it there when the row has no room (canvasLegend.test).
+    mount({ selectedNode: "s1.clip" });
+    const legend = document.querySelector(".canvas-legend")!;
+    expect(legend.parentElement?.classList.contains("canvas-bar")).toBe(true);
+    expect(legend.closest(".canvas-surface")).toBeNull();
   });
 
   it("drops the chain line when there is no selection to describe", () => {

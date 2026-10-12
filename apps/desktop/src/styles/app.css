@@ -7472,26 +7472,46 @@ a.icon-btn-sm {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* The legend below floats over the surface rather than scrolling with it. */
-  position: relative;
 }
 
-/* What the canvas is doing and how to move around it, in the corner the
-   graph flows away from. The gestures have no affordance of their own —
-   ctrl+wheel and drag-to-pan are invisible until tried — and Help is a
-   different question from "what am I looking at". */
-.canvas-legend {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
+/* What the canvas is doing and how to move around it. The gestures have no
+   affordance of their own (ctrl+wheel and drag-to-pan are invisible until
+   tried), and Help is a different question from "what am I looking at".
+
+   In the bar, in the slack beside the zoom cluster. It used to float in
+   the graph's bottom-left corner, where it sat on whatever node the view
+   put there; at the default zoom that was the title of the first column's
+   third node. A strip of its own under the graph would have cost a quarter
+   of the 120px a 1440x900 window gives this panel.
+
+   It grows into the slack from nothing (flex 1 1 0, min-width 0), so no
+   control in the row moves for it, and each of its lines shows whole or
+   not at all. The zero-width ::before opens the first flex line; a line of
+   text that does not fit beside it wraps to a second, and the box is one
+   line tall with its overflow hidden. In that 1440x900 window the slack is
+   under 50px and nothing shows (the hint needs about 240): the panel's ?
+   popover carries the same two gestures, and a narrow bar leaves them
+   there. */
+.canvas-bar > .canvas-legend {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
-  gap: var(--space-1);
-  max-width: calc(100% - var(--space-6));
-  font-size: 11px;
-  color: var(--text-tertiary);
-  /* Over the surface, never in the way of it: every pointer gesture below
-     belongs to the canvas. */
-  pointer-events: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  height: 16px;
+  line-height: 16px;
+  overflow: hidden;
+  /* Already true of everything in the bar; said here because a line that
+     could break inside itself would never be too wide to fit. */
+  white-space: nowrap;
+}
+
+.canvas-legend::before {
+  content: "";
+}
+
+.canvas-legend > * + * {
+  margin-left: var(--space-1);
 }
 
 .canvas-legend b {
