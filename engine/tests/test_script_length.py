@@ -75,6 +75,24 @@ def test_system_prompt_does_not_name_the_visual_field_a_prompt():
     assert "image-generation prompt" not in _SYSTEM_PROMPT
 
 
+def test_a_scene_is_written_as_one_continuous_shot():
+    """Every scene renders as ONE keyframe image animated into ONE clip, so an
+    editing technique written into a scene is drawn literally. qwen3:8b wrote
+    the visual "A split-screen showing the dance's angle and duration, with
+    animated bees flying toward flowers" and the motion "Cut between the dance
+    and bees navigating through a field of flowers"; SDXL drew a three-panel
+    collage and LTX animated it."""
+    assert "ONE continuous shot" in _SYSTEM_PROMPT
+    for technique in ("split screen", "collage", "montage", "picture-in-picture", "never a cut"):
+        assert technique in _SYSTEM_PROMPT
+    # Words meant for the screen have a field of their own, burned in at
+    # assembly, instead of being lettered into the picture by the image model.
+    assert 'go in "onscreen_text"' in _SYSTEM_PROMPT
+    # And the rule is asked for as what to draw, not what to avoid: a model
+    # that copies "no split screen" into `visual` hands SDXL the words.
+    assert "only what is in the frame" in _SYSTEM_PROMPT
+
+
 async def test_a_screenplay_that_hits_the_target_is_asked_once():
     asked = []
 

@@ -36,7 +36,14 @@ Scenes are 3-8 seconds each for short videos; longer targets may use longer scen
 exceed 60 seconds per scene. "narration" is the words spoken aloud. "visual" describes what is \
 on screen, as a plain description of the picture — never a label, never the words "prompt" or \
 "image", just the scene itself. "motion" is a short camera direction. The first scene must hook \
-the viewer instantly."""
+the viewer instantly.
+Each scene is filmed as ONE continuous shot: a single picture is drawn from "visual" and then \
+animated with "motion", with no editing inside the scene. So "visual" is one moment in one \
+frame, never a split screen, collage, montage, grid of panels, picture-in-picture or sequence of \
+shots, and never words, captions or labels drawn into the picture. "motion" is one camera \
+movement through that shot, such as a slow push-in or a pan, never a cut or a transition. To show \
+something else, start a new scene. Words meant for the screen go in "onscreen_text". Describe \
+only what is in the frame, never what is absent from it."""
 
 _METADATA_PROMPT = """You are a short-form video publisher. Given a video's script, produce a \
 JSON publish kit with this exact shape (no markdown fences, JSON only):
