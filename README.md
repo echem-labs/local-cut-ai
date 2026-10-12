@@ -33,7 +33,7 @@ The macOS and Windows builds are unsigned for now.
 
 ## Try it
 
-No GPU, no models and no ComfyUI needed. You do need Python ≥3.13 with
+No GPU, no models and no ComfyUI needed. You do need Python 3.13 or 3.14 with
 [uv](https://docs.astral.sh/uv/) and Node ≥22.13 — the app spawns the engine
 itself, through `uv`.
 
@@ -86,7 +86,7 @@ docs/           the guides linked below
 
 ## Development
 
-**Requirements:** Python ≥3.13 with [uv](https://docs.astral.sh/uv/), Node ≥22.13.
+**Requirements:** Python 3.13 or 3.14 with [uv](https://docs.astral.sh/uv/), Node ≥22.13.
 
 Install the hooks once, from the repo root:
 
