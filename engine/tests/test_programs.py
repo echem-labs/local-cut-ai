@@ -17,11 +17,14 @@ import calendar
 import contextlib
 import hashlib
 import io
+import itertools
 import json
 import os
 import platform
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import tarfile
 import threading
@@ -65,8 +68,8 @@ _REAL_PAIR = (
 )
 # The folder every test archive unpacks from, the way BtbN's do.
 _TOP = "ffmpeg-n0.0-test-build"
-# What a held response sends before it stops: past the downloader's 1 MiB
-# read, so the setup has bytes on disk to report.
+# What a held response sends before it stops, so the setup has bytes on disk
+# to report.
 _FIRST_CHUNK = 2 << 20
 _TERMINAL = ("program.setup.done", "program.setup.failed", "program.setup.cancelled")
 
@@ -89,44 +92,113 @@ def _plant(path: Path, content: bytes) -> Path:
 
 
 class _Archives:
-    """Serves the files in one folder over loopback HTTP and records every
-    path it is asked for. While `hold()` is in force each response stops
-    after its first chunk until `release()`, so a setup can be caught in the
-    middle of its download."""
+    """Serves the files in one folder over loopback HTTP, and records every
+    path it is asked for and the Range each request carried. A Range of
+    `bytes=N-` gets a 206 with the rest of the file, the way GitHub's CDN
+    answers it.
+
+    While `hold()` is in force each response stops after its first chunk
+    until `release()`, so a setup can be caught in the middle of its
+    download. Each entry in `drops` ends one response after `drop_after`
+    bytes of its body, the way a flaky link ends it: `closed` before the
+    body is complete, `reset`, or `stalled` with the connection left open.
+    `answer_range` is what a Range gets instead of the rest of the file:
+    `ignored` sends the whole file with a 200, `misplaced` a 206 that starts
+    somewhere else. `pace` sends the body a piece at a time, as a slow link
+    delivers it."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.requests: list[str] = []
+        self.ranges: list[str | None] = []
+        self.drops: list[str] = []
+        self.drop_after = _FIRST_CHUNK
+        self.answer_range = "honoured"
+        self.pace: tuple[int, float] | None = None
         self._gate: threading.Event | None = None
+        self._closing = threading.Event()
+        self._resets: set[socket.socket] = set()
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
                 outer.requests.append(self.path)
+                asked = self.headers.get("Range")
+                outer.ranges.append(asked)
                 path = outer.root / self.path.lstrip("/")
                 if not path.is_file():
                     self.send_error(404)
                     return
-                self.send_response(200)
+                size = path.stat().st_size
+                start = int(asked.removeprefix("bytes=").split("-")[0]) if asked else 0
+                if start and outer.answer_range != "ignored":
+                    if outer.answer_range == "misplaced":
+                        start //= 2
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {start}-{size - 1}/{size}")
+                else:
+                    start = 0
+                    self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Length", str(path.stat().st_size))
+                self.send_header("Content-Length", str(size - start))
                 self.end_headers()
+                drop = outer.drops.pop(0) if outer.drops else None
                 gate = outer._gate
                 try:
                     with path.open("rb") as source:
+                        source.seek(start)
+                        if drop is not None:
+                            self.wfile.write(source.read(outer.drop_after))
+                            self.wfile.flush()
+                            self._drop(drop)
+                            return
                         if gate is not None:
                             self.wfile.write(source.read(_FIRST_CHUNK))
                             self.wfile.flush()
                             gate.wait(timeout=60)
-                        shutil.copyfileobj(source, self.wfile)
+                        if outer.pace is None:
+                            shutil.copyfileobj(source, self.wfile)
+                            return
+                        piece, every = outer.pace
+                        while chunk := source.read(piece):
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                            time.sleep(every)
                 except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
+
+            def _drop(self, how: str) -> None:
+                self.close_connection = True
+                if how == "stalled":
+                    # Nothing more, with the connection open: only the
+                    # client's read timeout ends this one.
+                    outer._closing.wait(timeout=30)
+                elif how == "reset":
+                    # A reset throws away whatever the client has not read
+                    # yet, so it gets a moment to read what was sent. Then
+                    # closing with a zero linger sends the reset, not a FIN.
+                    time.sleep(0.3)
+                    self.connection.setsockopt(
+                        socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+                    )
+                    outer._resets.add(self.connection)
 
             def log_message(self, *args) -> None:
                 pass
 
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.httpd.daemon_threads = True
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def shutdown_request(self, request) -> None:
+                if request in outer._resets:
+                    # Straight to the close: the shutdown the stdlib does
+                    # first would send a FIN ahead of the reset.
+                    outer._resets.discard(request)
+                    self.close_request(request)
+                    return
+                super().shutdown_request(request)
+
+        self.httpd = Server(("127.0.0.1", 0), Handler)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
 
@@ -139,6 +211,7 @@ class _Archives:
 
     def close(self) -> None:
         self.release()
+        self._closing.set()
         self.httpd.shutdown()
         self.httpd.server_close()
 
@@ -958,6 +1031,158 @@ async def test_cancel_stops_the_download_and_removes_what_it_wrote(tmp_path, mon
     assert _leftovers(data) == []
 
 
+@pytest.mark.parametrize("drop", ["closed", "reset", "stalled"])
+async def test_a_download_that_drops_picks_up_from_the_bytes_it_has(
+    tmp_path, monkeypatch, archives, drop
+):
+    """A slow or flaky link ends a long download partway: the connection
+    closes before the body is complete, is reset, or stalls past the read
+    timeout. Each time, the setup asks for the rest with a Range request
+    from where the bytes on disk end, further on every time and never from
+    the start. More drops than the setup retries a link that brings nothing,
+    because each of these brought something. (A reset loses what the client
+    had not read yet, so where each resume starts is not a fixed number.)"""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
+    _stub_check(monkeypatch)
+    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    monkeypatch.setattr(program_setup, "_READ_TIMEOUT_S", 0.5)
+    piece = 512 << 10
+    drops = program_setup._DOWNLOAD_RETRIES + 2
+    archives.drops = [drop] * drops
+    archives.drop_after = piece
+    data = tmp_path / "data"
+
+    async with _engine(_config(data)) as http:
+        assert (await http.post("/programs/ffmpeg/setup")).json()["status"] == "started"
+        row = await _settled(http)
+
+    assert row["setup"]["last"]["outcome"] == "done", row["setup"]["last"]
+    assert archives.ranges[0] is None
+    resumed_from = [int(asked.removeprefix("bytes=").rstrip("-")) for asked in archives.ranges[1:]]
+    assert len(resumed_from) == drops, archives.ranges
+    assert 0 < resumed_from[0] and all(a < b for a, b in itertools.pairwise(resumed_from))
+    assert (data / "programs" / "ffmpeg" / f"ffmpeg{_EXE}").read_bytes() == b"x" * (4 << 20)
+    assert _leftovers(data) == []
+
+
+@pytest.mark.parametrize("answer", ["ignored", "misplaced"])
+async def test_a_resume_the_server_does_not_answer_exactly_starts_over(
+    tmp_path, monkeypatch, archives, answer
+):
+    """Bytes are added to a partial download only from a 206 whose
+    Content-Range starts where the partial ends. A server that ignores the
+    Range and sends the whole file with a 200 is read from its first byte.
+    A 206 from anywhere else is not used at all, and the next attempt asks
+    for the whole file."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
+    _stub_check(monkeypatch)
+    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    archives.drops = ["closed"]
+    archives.answer_range = answer
+    data = tmp_path / "data"
+
+    async with _engine(_config(data)) as http:
+        await http.post("/programs/ffmpeg/setup")
+        row = await _settled(http)
+
+    assert row["setup"]["last"]["outcome"] == "done", row["setup"]["last"]
+    resumed = f"bytes={_FIRST_CHUNK}-"
+    assert archives.ranges == ([None, resumed] if answer == "ignored" else [None, resumed, None])
+    assert (data / "programs" / "ffmpeg" / f"ffmpeg{_EXE}").read_bytes() == b"x" * (4 << 20)
+    assert _leftovers(data) == []
+
+
+async def test_a_link_that_brings_nothing_fails_the_setup_after_a_few_attempts(
+    tmp_path, monkeypatch, archives
+):
+    """Attempts go on while each brings new bytes. A run of them that bring
+    none is a link that is down, and the setup fails with what stopped the
+    last one, and removes what it wrote."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives)
+    _stub_check(monkeypatch)
+    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    archives.drops = ["closed"] * 50
+    archives.drop_after = 0
+    data = tmp_path / "data"
+
+    async with _engine(_config(data)) as http:
+        await http.post("/programs/ffmpeg/setup")
+        row = await _settled(http)
+
+    last = row["setup"]["last"]
+    assert (last["outcome"], last["reason"]) == ("failed", "download_failed")
+    assert "peer closed connection" in last["error"]
+    assert len(archives.requests) == 1 + program_setup._DOWNLOAD_RETRIES
+    assert not (data / "programs" / "ffmpeg").exists()
+    assert _leftovers(data) == []
+
+
+async def test_cancel_stops_a_setup_that_is_waiting_to_resume(
+    tmp_path, monkeypatch, archives, caplog
+):
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
+    _stub_check(monkeypatch)
+    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 60.0)
+    archives.drops = ["closed"]
+    data = tmp_path / "data"
+
+    with caplog.at_level("WARNING"):
+        async with _engine(_config(data)) as http:
+            await http.post("/programs/ffmpeg/setup")
+            async with asyncio.timeout(30):
+                while "trying again" not in caplog.text:
+                    row = _row((await http.get("/programs")).json(), "ffmpeg")
+                    assert row["setup"]["job"] is not None, row["setup"]["last"]
+                    await asyncio.sleep(0.05)
+
+            assert (await http.delete("/programs/ffmpeg/setup")).status_code == 200
+            async with asyncio.timeout(10):
+                row = await _settled(http)
+
+    assert row["setup"]["last"]["outcome"] == "cancelled"
+    assert len(archives.requests) == 1
+    assert _leftovers(data) == []
+
+
+def test_the_download_speed_is_reported_while_bytes_arrive(tmp_path, monkeypatch, archives):
+    """A slow link is when the speed matters most. Every progress event
+    after the one that announces the download has bytes done and a speed
+    near the one the archive is served at, however long a megabyte takes to
+    arrive."""
+    from websockets.sync.client import connect
+
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives, ffmpeg=b"x" * (384 << 10))
+    _stub_check(monkeypatch)
+    piece, every = 8 << 10, 0.05
+    archives.pace = (piece, every)
+    served = piece / every
+
+    with (
+        serve_engine(tmp_path / "engine", TOKEN, backend="ffmpeg,mock") as url,
+        httpx.Client(base_url=url, headers={"Authorization": f"Bearer {TOKEN}"}) as http,
+    ):
+        with connect(_ws_url(url), subprotocols=[WS_TOKEN_SUBPROTOCOL, TOKEN]) as ws:
+            http.post("/programs/ffmpeg/setup")
+            events = _program_events(ws, "ffmpeg")
+
+    assert events[-1]["type"] == "program.setup.done", events[-1]
+    announced, *measured = [
+        (event["done"], event["bytes_per_s"])
+        for event in events
+        if event["type"] == "program.setup.progress" and event["phase"] == "downloading"
+    ]
+    assert announced[0] == 0
+    assert len(measured) >= 3, measured
+    for done, rate in measured:
+        assert done > 0 and rate is not None, measured
+        assert served / 4 < rate < served * 4, measured
+
+
 async def test_one_setup_of_a_program_runs_at_a_time(tmp_path, monkeypatch, archives):
     """A second POST while one runs is refused rather than queued or joined,
     and the program cannot be removed out from under its own setup."""
@@ -1181,3 +1406,36 @@ def test_the_cli_sets_up_and_removes_a_program_on_the_engine(
         assert run("setup", "ollama") == 1
 
     assert cli.main(["programs", "list", "--engine", url, "--token", TOKEN]) == 2
+
+
+def test_a_cli_that_stops_waiting_says_the_setup_carries_on(
+    tmp_path, monkeypatch, archives, capsys
+):
+    """--timeout bounds the wait, not the setup: the engine keeps going on
+    its own. Exit 1, and say so, with the command that shows how far the
+    setup has got."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _stub_check(monkeypatch)
+    _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
+    monkeypatch.setattr(cli, "_SETUP_POLL_S", 0.05)
+    archives.hold()
+
+    with (
+        serve_engine(tmp_path / "engine", TOKEN, backend="ffmpeg,mock") as url,
+        httpx.Client(base_url=url, headers={"Authorization": f"Bearer {TOKEN}"}) as http,
+    ):
+        status = cli.main(
+            ["programs", "setup", "ffmpeg", "--timeout", "1", "--engine", url, "--token", TOKEN]
+        )
+        assert status == 1
+        said = capsys.readouterr().err
+        assert "carries on" in said and "localcut programs list" in said, said
+        assert said.isascii()
+        assert _row(http.get("/programs").json(), "ffmpeg")["setup"]["job"] is not None
+
+        archives.release()
+        deadline = time.monotonic() + 60
+        while (row := _row(http.get("/programs").json(), "ffmpeg"))["setup"]["job"] is not None:
+            assert time.monotonic() < deadline, "the setup did not finish"
+            time.sleep(0.05)
+    assert row["setup"]["last"]["outcome"] == "done"

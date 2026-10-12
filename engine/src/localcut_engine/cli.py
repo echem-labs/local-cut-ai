@@ -1028,9 +1028,13 @@ def _programs_command(args: argparse.Namespace, client) -> int:
                 shown = line
                 print(line, flush=True)
         if time.monotonic() >= deadline:
+            # Only the wait ends here. The setup is the engine's, and a slow
+            # link is the usual reason it is still going.
             raise automation.EngineError(
-                f"{args.program} was still being set up after {args.timeout_s:.0f}s - raise "
-                "--timeout, or check the engine logs"
+                f"stopped waiting after {args.timeout_s:.0f}s; the engine is still setting up "
+                f"{args.program}, and the setup carries on there. `localcut programs list` "
+                f"shows how far it has got, and `localcut programs cancel {args.program}` "
+                "stops it"
             )
         time.sleep(min(_SETUP_POLL_S, max(0.0, deadline - time.monotonic())))
 

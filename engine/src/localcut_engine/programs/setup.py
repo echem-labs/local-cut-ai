@@ -7,7 +7,9 @@ phases, each announced as it starts:
 
 1. downloading: the pinned archive, into a scratch folder beside the program
    folders, through the model downloader, so every redirect hop passes the
-   same guard and the size has to match the pin to the byte;
+   same guard and the size has to match the pin to the byte. A connection
+   that drops or stalls partway is asked for the rest, with a Range request
+   from the bytes already written;
 2. verifying: the download's SHA-256 against the pin;
 3. unpacking: only the files the pin names, each taken by its exact member
    name and written under the bare name the pin gives it, so no member of
@@ -79,12 +81,32 @@ RECORD_VERSION = 1
 
 _PROGRESS_INTERVAL_S = 0.5  # the bus throttle model downloads use
 _RATE_WINDOW_S = 5.0  # bytes_per_s is measured over the last few seconds
+_RATE_MIN_S = 0.5  # and not over less than this
+_SAMPLE_EVERY_S = 0.1  # as fine as a window of seconds needs
 _CHUNK = 1 << 20
+# A download that stops partway (the connection drops or is reset, or no
+# bytes arrive for _READ_TIMEOUT_S) asks for the rest and carries on, for as
+# long as each attempt brings bytes. Attempts that bring none are a link that
+# is down: it tries again _DOWNLOAD_RETRIES times in a row, waiting twice as
+# long before each (1, 2, 4, 8, 16s), and then gives up.
+_READ_TIMEOUT_S = 120.0
+_DOWNLOAD_RETRIES = 5
+_RETRY_PAUSE_S = 1.0
 # How long a rename keeps trying while another process holds a file in the
 # folder. On Windows a virus scanner opens a new executable to look at it,
 # and a folder holding an open file cannot be renamed until it lets go.
 _RENAME_BUDGET_S = 30.0
 _REMOVE_BUDGET_S = 5.0
+# How a download stops partway: no bytes for the read timeout, a connection
+# reset or refused, one closed before the body was complete. A resume the
+# server answered from the wrong byte is one too: its .part is gone, so the
+# next attempt asks for the whole file.
+_RESUMABLE = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    downloads.RangeMismatch,
+)
 # What failed, by the phase it failed in, for an error nothing else names.
 _REASON_BY_PHASE = {
     "downloading": "download_failed",
@@ -268,17 +290,43 @@ class _Job:
     _samples: deque = field(default_factory=deque)
     _last_emit: float = 0.0
 
-    def rate(self) -> int | None:
-        """Bytes a second over the last few seconds of the download, or None
-        before there is enough of it to measure."""
-        if self.phase != "downloading" or len(self._samples) < 2:
+    def rate(self, now: float | None = None) -> int | None:
+        """Bytes a second over the last few seconds of the download: what
+        arrived since the window began, over the time since. 0 while nothing
+        arrives, and None for the first half second, which is too little to
+        measure."""
+        if self.phase != "downloading" or not self._samples:
             return None
-        (t0, d0), (t1, d1) = self._samples[0], self._samples[-1]
-        return round((d1 - d0) / (t1 - t0)) if t1 - t0 >= 0.5 else None
+        now = time.monotonic() if now is None else now
+        start = now - _RATE_WINDOW_S
+        # The window begins at the newest sample from before it, which is
+        # how much had arrived by then, or at the first sample, for a
+        # download younger than the window.
+        since, base = self._samples[0]
+        for at, done in self._samples:
+            if at > start:
+                break
+            since, base = at, done
+        span = now - max(since, start)
+        return round((self.done - base) / span) if span >= _RATE_MIN_S else None
 
     def sample(self, now: float) -> None:
-        self._samples.append((now, self.done))
-        while self._samples and now - self._samples[0][0] > _RATE_WINDOW_S:
+        """Note how far the job has got. A count lower than the last is a
+        download that started over (a server that answered the resume with
+        the whole file), and what came before it measures nothing now."""
+        if self._samples and self.done < self._samples[-1][1]:
+            self._samples.clear()
+        if len(self._samples) > 1 and now - self._samples[-2][0] < _SAMPLE_EVERY_S:
+            # Bytes arrive in many small reads. The newest stands in for the
+            # ones just before it, so the window holds tens of samples rather
+            # than thousands, and still ends at the latest count.
+            self._samples[-1] = (now, self.done)
+        else:
+            self._samples.append((now, self.done))
+        # One sample from before the window stays: it is where the window
+        # begins. Dropping it left a slow download, whose bytes arrive
+        # seconds apart, with a single sample and no speed at all.
+        while len(self._samples) > 1 and self._samples[1][0] <= now - _RATE_WINDOW_S:
             self._samples.popleft()
 
     def describe(self) -> dict:
@@ -469,6 +517,9 @@ class ProgramSetup:
     def _phase(self, job: _Job, phase: str, total: int, done: int = 0) -> None:
         job.phase, job.total, job.done = phase, total, done
         job._samples.clear()
+        # Where the phase starts is the first sample: the speed is measured
+        # from there until the window has filled.
+        job.sample(time.monotonic())
         self._emit(job)
 
     def _progress(self, job: _Job, done: int) -> None:
@@ -551,8 +602,11 @@ class ProgramSetup:
         if not name or name.startswith(".") or not all(c.isalnum() or c in "._-" for c in name):
             name = f"{job.program}-download"
         target = ModelFile(url=asset.url, dest=name, sha256=asset.sha256, size=asset.size)
+        brought = False
 
         async def progress(dest: str, done: int, total: int) -> None:
+            nonlocal brought
+            brought = True
             self._progress(job, done)
             if done >= asset.size and job.phase == "downloading":
                 # The whole download is in; hashing it is what comes next.
@@ -560,8 +614,33 @@ class ProgramSetup:
 
         # No follow_redirects: download_file walks the redirects itself, so
         # the guard sees every hop (GitHub hands a release asset to its CDN).
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=120)) as client:
-            return await downloads.download_file(target, scratch, progress, client, exact_size=True)
+        timeout = httpx.Timeout(30, read=_READ_TIMEOUT_S)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            misses = 0
+            while True:
+                brought = False
+                try:
+                    return await downloads.download_file(
+                        target, scratch, progress, client, exact_size=True
+                    )
+                except _RESUMABLE as exc:
+                    # The .part keeps what arrived, and the next attempt asks
+                    # for the rest of it (download_file resumes from there).
+                    # The size and the SHA-256 still decide at the end.
+                    misses = 0 if brought else misses + 1
+                    if misses > _DOWNLOAD_RETRIES:
+                        raise
+                    pause = _RETRY_PAUSE_S * 2 ** max(0, misses - 1)
+                    logger.warning(
+                        "the download of %s stopped at %d of %d bytes (%s); trying again in %gs",
+                        job.program,
+                        job.done,
+                        asset.size,
+                        str(exc) or type(exc).__name__,
+                        pause,
+                    )
+                    # Cancelling lands here as it would mid-download.
+                    await asyncio.sleep(pause)
 
     async def _unpack(self, job: _Job, asset: ProgramAsset, archive: Path, staged: Path) -> None:
         loop = asyncio.get_running_loop()
