@@ -579,6 +579,11 @@ export type EngineEvent =
       fallback?: OomFallback;
       project_id: string;
     }
+  // The scheduler ended a job without running it because a cancel upstream
+  // took its input (a stopped clip, and the timeline waiting on it). That
+  // can land many renders after the cancel request returned, so nothing
+  // else would refresh the board for it.
+  | { type: "job.cancelled"; job_id: string; node_id: string; project_id: string }
   | { type: "project.compiled"; project_id: string; enqueued: number }
   // A checkpoint was approved — possibly from the CLI or MCP against the same
   // engine, which is why the desktop cannot treat its own approve call as the
