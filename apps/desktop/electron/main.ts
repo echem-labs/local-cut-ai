@@ -248,6 +248,8 @@ const IDLE_TITLE = "LocalCut AI";
  * electron-builder.yml, which is the id stamped on the installed shortcut:
  * disagree and the pinned tile and the running window become two different
  * apps to the taskbar. `appId.contract.test.ts` holds the two together.
+ * Unpackaged, nothing has written that shortcut, so toasts come from
+ * "Electron" until `npm run dev:shortcut` writes one.
  *
  * Called unconditionally — it is a no-op off Windows, and a platform guard
  * here would only make the call untestable on the Linux CI runner. */

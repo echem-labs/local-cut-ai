@@ -49,6 +49,11 @@ so a machine with nothing installed renders the whole pipeline in placeholder
 artifacts, and upgrades itself piece by piece as models land.
 `LOCALCUT_ENGINE_CMD` and `LOCALCUT_BACKEND` override how the shell launches it.
 
+On Windows, run `npm run dev:shortcut` once per checkout. Without it, the dev
+build's notifications come from "Electron" instead of LocalCut AI, because
+Windows takes a toast's name and icon from a Start Menu shortcut that only the
+installer creates.
+
 For placeholders and nothing else — deterministic, whatever is installed —
 drive the API directly:
 
