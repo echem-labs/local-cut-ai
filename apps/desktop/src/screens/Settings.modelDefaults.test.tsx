@@ -20,6 +20,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Settings } from "./Settings";
+import { t } from "../i18n";
 import { useApp } from "../store";
 
 const MODELS = [
@@ -39,15 +40,27 @@ const MODELS = [
   },
 ];
 
+type VisionReply = { models: string[]; default: string | null; local_known: boolean };
+
+/** The two lists the server-task rows are built from: every name the LLM
+ *  server has, and the engine's answer for which of them can see. */
+function engineClient(
+  llm: string[] = ["llama3.2:latest"],
+  vision: VisionReply = { models: ["local:qwen2.5vl:7b"], default: null, local_known: true },
+) {
+  return {
+    baseUrl: "http://127.0.0.1:7830",
+    listProviders: async () => [],
+    llmModels: async () => ({ models: llm }),
+    visionModels: async () => vision,
+  };
+}
+
 async function mount(over: Record<string, unknown> = {}) {
   useApp.setState({
     settingsOpen: true,
     settingsTab: "models",
-    client: {
-      baseUrl: "http://127.0.0.1:7830",
-      listProviders: async () => [],
-      llmModels: async () => ({ models: ["llama3.2:latest"] }),
-    },
+    client: engineClient(),
     models: MODELS,
     downloadErrors: {},
     refreshModelDefaults: vi.fn(async () => {}),
@@ -127,5 +140,85 @@ describe("the Auto option", () => {
     });
     expect(shown()).toContain("Auto");
     expect(shown()).not.toContain("nothing installed");
+  });
+});
+
+describe("the Reading images picker", () => {
+  // The models a stored `vision.llm` is sent to. `/suggest-scene` checks the
+  // SHAPE of that name, not whether the model has eyes, so a text-only pick
+  // here comes back as a 400 from the server ("model does not support
+  // multimodal requests") relayed as a 502 the user cannot act on.
+  const DEFAULTS = {
+    tasks: ["text.llm", "vision.llm"],
+    defaults: {},
+    auto: { "text.llm": "qwen3:8b", "vision.llm": null },
+  };
+  const UNSET = t("settings.models.defaultsAutoUnset");
+
+  it("offers only the models the engine says can see", async () => {
+    await mount({
+      client: engineClient(["qwen2.5vl:7b", "qwen3:8b"], {
+        models: ["local:qwen2.5vl:7b"],
+        default: null,
+        local_known: true,
+      }),
+      modelDefaults: DEFAULTS,
+    });
+    // Bare names, the way a stored default holds them.
+    expect(await options("Reading images")).toEqual([UNSET, "qwen2.5vl:7b"]);
+    await userEvent.click(screen.getByRole("button", { name: "Reading images" }));
+    // Script writing is any model the server has, text-only ones included.
+    expect(await options("Script writing")).toEqual([
+      t("settings.models.defaultsAutoResolved", { model: "qwen3:8b" }),
+      "qwen2.5vl:7b",
+      "qwen3:8b",
+    ]);
+  });
+
+  it("leaves a cloud model to Auto", async () => {
+    // A stored `vision.llm` is a name on the LLM server; the engine would
+    // send a stored `cloud:` name there as `local:cloud:...`. A key's model
+    // is what Auto falls back to, so that is where it stays.
+    await mount({
+      client: engineClient(["qwen2.5vl:7b", "qwen3:8b"], {
+        models: ["local:qwen2.5vl:7b", "cloud:claude-sonnet-5"],
+        default: "cloud:claude-sonnet-5",
+        local_known: true,
+      }),
+      modelDefaults: {
+        ...DEFAULTS,
+        auto: { ...DEFAULTS.auto, "vision.llm": "cloud:claude-sonnet-5" },
+      },
+    });
+    expect((await options("Reading images")).slice(1)).toEqual(["qwen2.5vl:7b"]);
+  });
+
+  it("offers no server names when the engine cannot tell which can see", async () => {
+    // A server without Ollama's `/api/show` cannot be asked about eyesight.
+    // Every name on it is a guess, so none is offered.
+    await mount({
+      client: engineClient(["qwen2.5vl:7b", "qwen3:8b"], {
+        models: [],
+        default: null,
+        local_known: false,
+      }),
+      modelDefaults: DEFAULTS,
+    });
+    expect(screen.queryByRole("button", { name: "Reading images" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Script writing" })).toBeTruthy();
+  });
+
+  it("keeps a stored pick on the list when the engine cannot vouch for it", async () => {
+    // The user chose it themselves. Dropping it would show "Auto" for a
+    // model the engine still sends pictures to, with no way to clear it.
+    await mount({
+      client: engineClient(["qwen2.5vl:7b", "qwen3:8b"], {
+        models: ["local:qwen2.5vl:7b"],
+        default: "local:qwen2.5vl:7b",
+        local_known: false,
+      }),
+      modelDefaults: { ...DEFAULTS, defaults: { "vision.llm": "qwen2.5vl:7b" } },
+    });
+    expect(await options("Reading images")).toEqual([UNSET, "qwen2.5vl:7b"]);
   });
 });

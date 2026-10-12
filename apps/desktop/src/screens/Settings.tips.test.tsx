@@ -52,6 +52,7 @@ const client = {
   baseUrl: "http://127.0.0.1:7830",
   listProviders: async () => PROVIDERS,
   llmModels: async () => ({ models: ["llama3"] }),
+  visionModels: async () => ({ models: [], default: null, local_known: true }),
 };
 
 /** Every pane the dialog can show. */

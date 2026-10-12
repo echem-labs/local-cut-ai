@@ -123,7 +123,8 @@ const BACKEND_NAME_LABELS: Record<string, MessageKey> = {
 /** Tasks whose default names a model on the LLM SERVER (Ollama-style, e.g.
  *  `qwen3:14b`) rather than a manifest entry with weights on disk — so their
  *  choices come from the server's own list, not from what has been
- *  downloaded. Mirrors `_SERVER_TASKS` in `manifest/defaults.py`; the engine
+ *  downloaded (for `vision.llm`, only the part of it the engine says can
+ *  see). Mirrors `_SERVER_TASKS` in `manifest/defaults.py`; the engine
  *  validates against its copy, and a task missing from this one would offer
  *  the user an empty picker for a knob the engine does honor. */
 const SERVER_TASKS = ["text.llm", "vision.llm"];
@@ -152,6 +153,11 @@ function servesModel(names: string[], model: string): boolean {
 function ModelDefaultsPanel() {
   const { models, modelDefaults, refreshModelDefaults, setModelDefault, client } = useApp();
   const [llmNames, setLlmNames] = useState<string[]>([]);
+  // The server names that can SEE, bare, the way a stored default holds
+  // them. Not `llmNames`: that is every model the server has, and a
+  // text-only one picked here turns every image read into a 400 from the
+  // server that the engine can only relay.
+  const [visionNames, setVisionNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // `client` in the deps, not just the (stable) store action: switchEngine
@@ -173,6 +179,33 @@ function ModelDefaultsPanel() {
       })
       .catch(() => {
         /* no LLM server — the text.llm row hides itself below */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    client
+      .visionModels()
+      .then((info) => {
+        if (cancelled) return;
+        // Local names only: a stored `vision.llm` is a name on the LLM
+        // server, and a cloud model is what Auto already falls back to.
+        // `local_known: false` means the server cannot say which of its
+        // models can see, so none of them is offered; a stored pick still
+        // shows, through `current` below.
+        const local = info.local_known
+          ? info.models
+              .filter((name) => name.startsWith("local:"))
+              .map((name) => name.slice("local:".length))
+          : [];
+        setVisionNames(local);
+      })
+      .catch(() => {
+        /* no answer, so the vision.llm row shows only a stored pick */
       });
     return () => {
       cancelled = true;
@@ -222,7 +255,8 @@ function ModelDefaultsPanel() {
       if (SERVER_TASKS.includes(task)) {
         // Ollama-served names, plus the stored one even when the server is
         // down — the picker must show the truth, not silently blank it.
-        const names = current && !llmNames.includes(current) ? [current, ...llmNames] : llmNames;
+        const served = task === "vision.llm" ? visionNames : llmNames;
+        const names = current && !served.includes(current) ? [current, ...served] : served;
         choices = names.map((name) => ({ value: name, label: name }));
       } else {
         const installed = models
