@@ -201,6 +201,35 @@ def serve_engine(tmp_path, token: str, backend: str = "mock"):
         assert not thread.is_alive(), "the test engine did not shut down"
 
 
+def pin_hardware(monkeypatch, vram_gb: float | None) -> None:
+    """Answer the hardware probe with one NVIDIA card of `vram_gb`, or with
+    no GPU at all for None, instead of whatever this machine has.
+
+    What Auto means for the script model follows the hardware (it is the
+    model the recommendation fits to the card), so a test that reads it
+    would otherwise pass on one machine and fail on the next.
+    """
+    from localcut_engine.hardware import probe
+
+    gpu = (
+        None
+        if vram_gb is None
+        else probe.GPU(
+            vendor="nvidia", name=f"test {vram_gb:g} GB card", vram_gb=vram_gb, backend="cuda"
+        )
+    )
+    profile = probe.HardwareProfile(
+        os="windows",
+        arch="AMD64",
+        ram_gb=32.0,
+        disk_free_gb=500.0,
+        gpus=[gpu] if gpu else [],
+        primary_gpu=gpu,
+        tier=probe._tier_for(vram_gb) if vram_gb is not None else probe.Tier.S,
+    )
+    monkeypatch.setattr(probe, "probe_hardware", lambda disk_path="/": profile)
+
+
 def make_spec(
     kind: NodeKind,
     params: dict | None = None,

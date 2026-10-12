@@ -68,7 +68,7 @@ from ..graph.editor import (
 from ..graph.model import NODE_ID_PATTERN, NodeKind
 from ..graph.patch import PatchOp
 from ..graph.template_io import TemplateError, cloud_models, from_template
-from ..hardware.probe import probe_hardware
+from ..hardware.probe import known_profile, machine_profile
 from ..jobs.models import JOB_ID_PATTERN
 from ..jobs.queue import JobQueue
 from ..jobs.scheduler import Scheduler
@@ -83,7 +83,7 @@ from ..manifest.defaults import (
 )
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
-from ..manifest.recommend import recommend_slate
+from ..manifest.recommend import recommend_slate, script_model
 from ..programs.setup import (
     NotEnoughSpace,
     ProgramInUse,
@@ -333,21 +333,6 @@ def _model_dests(config: EngineConfig, model_id: str) -> list[str] | None:
         return None
 
 
-def _llm_default_reader(config: EngineConfig):
-    """The persisted text.llm default as a live read — the picker can change
-    it mid-session and the next script job must see it. A defaults file
-    from a newer build refuses on its own routes; script jobs fall back to
-    the engine-config model instead of failing."""
-
-    def read() -> str | None:
-        try:
-            return load_defaults(config).get("text.llm")
-        except DefaultsTooNew:
-            return None
-
-    return read
-
-
 def _ffmpeg_at_use(config: EngineConfig) -> Callable[[], str]:
     """The engine's ffmpeg as every holder of it takes it: the resolution
     itself rather than its answer at startup. LocalCut's own copy is set up
@@ -376,9 +361,10 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(
                     LLMScriptBackend(
                         base_url=config.llm_url,
-                        model=config.llm_model,
                         timeout_s=config.llm_timeout_s,
-                        default_model=_llm_default_reader(config),
+                        # Read at each use: the picker can change it
+                        # mid-session and the next script job must see it.
+                        default_model=functools.partial(script_model, config),
                     )
                 )
             case "comfy":
@@ -750,12 +736,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.get("/system", dependencies=[Authed])
     async def system() -> dict:
         # Hardware doesn't change at runtime; probe once, off the event loop
-        # (nvidia-smi can block for seconds under GPU load).
-        if not hasattr(app.state, "hardware_profile"):
-            app.state.hardware_profile = await asyncio.to_thread(
-                probe_hardware, str(config.data_dir)
-            )
-        profile = app.state.hardware_profile
+        # (nvidia-smi can block for seconds under GPU load). The same kept
+        # answer Auto's script model is chosen from, so the model the wizard
+        # recommends is the one scripts ask for.
+        profile = await asyncio.to_thread(machine_profile, str(config.data_dir))
         # Whether titles and burned-in captions will draw, found out by
         # drawing one of each with the bundled font. A static FFmpeg 7 build
         # without libharfbuzz lacks drawtext, and the setup surface must say
@@ -798,10 +782,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 return None
             return backend if isinstance(backend, LLMScriptBackend) else None
 
-        llm_default = _llm_default_reader(config)
+        # Off the loop: the first answer for Auto probes the hardware, and
+        # every answer after it reads the kept one.
         unavailable = {
             "available": False,
-            "default": llm_default() or config.llm_model,
+            "default": await asyncio.to_thread(script_model, config),
             "models": [],
         }
         backend = await asyncio.to_thread(script_llm)
@@ -811,7 +796,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             models = await backend.list_models()
         except httpx.HTTPError:
             return unavailable
-        # The effective default (persisted per-task choice, then config) —
+        # The effective default (persisted per-task choice, then Auto):
         # what a job with no explicit model actually renders with.
         return {"available": True, "default": backend.resolve_model(None), "models": models}
 
@@ -1060,7 +1045,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             config,
             programs,
             text_probe,
-            script_model=_llm_default_reader(config)() or config.llm_model,
+            script_model=await asyncio.to_thread(script_model, config),
         )
 
     @app.post("/programs/{program_id}/setup", dependencies=[Authed])
@@ -1111,10 +1096,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         every sibling route maps them rather than degrading into a row that
         blames a missing model for a corrupt file."""
         try:
-            # The hardware profile only if /system already probed it: the
+            # The hardware profile only if something already probed it: the
             # preflight narrows its download suggestion to what this box can
             # run, but must not pay for a probe of its own to do it.
-            profile = getattr(app.state, "hardware_profile", None)
+            profile = known_profile(str(config.data_dir))
             rows = await readiness_rows(
                 config,
                 backends,
@@ -1732,11 +1717,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             pass
         except DefaultsTooNew as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        backend = LLMScriptBackend(
-            base_url=config.llm_url,
-            model=config.llm_model,
-            timeout_s=config.llm_timeout_s,
-        )
+        backend = LLMScriptBackend(base_url=config.llm_url, timeout_s=config.llm_timeout_s)
         try:
             seeing = await backend.list_vision_models()
         except httpx.HTTPError:
@@ -1774,11 +1755,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             return {"loaded": None}
         if not is_server_model_name(model):
             raise HTTPException(status_code=422, detail=f"{model!r} is not a valid model name")
-        backend = LLMScriptBackend(
-            base_url=config.llm_url,
-            model=config.llm_model,
-            timeout_s=config.llm_timeout_s,
-        )
+        backend = LLMScriptBackend(base_url=config.llm_url, timeout_s=config.llm_timeout_s)
         resident = await backend.resident_models()
         # None, not False, when the server cannot say: "not loaded yet" and
         # "I cannot tell" send the client to different sentences, and guessing
@@ -1871,11 +1848,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             # The same interactive path onto the same local server as `/edit`,
             # with the same VRAM-yield discipline afterwards.
             describe = functools.partial(
-                LLMScriptBackend(
-                    base_url=config.llm_url,
-                    model=config.llm_model,
-                    timeout_s=config.llm_timeout_s,
-                ).describe,
+                LLMScriptBackend(base_url=config.llm_url, timeout_s=config.llm_timeout_s).describe,
                 model=model,
             )
         try:
@@ -1943,9 +1916,8 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 # concurrent requests internally).
                 raw = await LLMScriptBackend(
                     base_url=config.llm_url,
-                    model=config.llm_model,
                     timeout_s=config.llm_timeout_s,
-                    default_model=_llm_default_reader(config),
+                    default_model=functools.partial(script_model, config),
                 ).complete(prompt, system=EDIT_SYSTEM_PROMPT, max_tokens=EDIT_MAX_TOKENS)
             plan = parse_edit_plan(raw)
         except (ProviderError, GenerationError, ValueError, httpx.HTTPError) as exc:

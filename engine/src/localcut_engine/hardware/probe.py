@@ -9,6 +9,7 @@ import json
 import platform
 import shutil
 import subprocess
+import threading
 from enum import StrEnum
 
 import psutil
@@ -187,3 +188,29 @@ def probe_hardware(disk_path: str = "/") -> HardwareProfile:
         primary_gpu=primary,
         tier=_tier_for(primary.vram_gb) if primary else Tier.S,
     )
+
+
+# One profile per disk path for the life of the process. The hardware does
+# not change while the engine runs, and the probe shells out to a vendor
+# tool that can take seconds under GPU load. It is also what keeps two
+# surfaces from disagreeing: /system's recommendation, which the first-run
+# wizard shows, and what Auto means for the script model are read off the
+# same answer.
+_profiles: dict[str, HardwareProfile] = {}
+_profiles_lock = threading.Lock()
+
+
+def machine_profile(disk_path: str) -> HardwareProfile:
+    """`probe_hardware(disk_path)`, probed once and kept. Blocks for the
+    probe on the first call for a path, so a caller on the event loop takes
+    it to a thread. Concurrent first calls wait for the one probe rather
+    than each running their own."""
+    with _profiles_lock:
+        if disk_path not in _profiles:
+            _profiles[disk_path] = probe_hardware(disk_path)
+        return _profiles[disk_path]
+
+
+def known_profile(disk_path: str) -> HardwareProfile | None:
+    """The kept profile, or None when nothing has probed yet. Never probes."""
+    return _profiles.get(disk_path)

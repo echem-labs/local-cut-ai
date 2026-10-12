@@ -31,6 +31,19 @@ uv run localcut serve --backend local,mock
 `local:chatterbox` narration, so everything else falls through to the stock
 voices behind it.
 
+## The script model
+
+Scripts are written with the model picked under Settings > Models > Default
+models. Until one is picked, the engine asks the LLM server for the text
+model the first-run screen recommends for this machine, by the name
+`ollama pull` takes: `qwen3:8b` on an 8 GB card, `qwen3:14b` from 10 GB.
+With no GPU that fits either, it asks for `qwen3:14b`. `LOCALCUT_LLM_MODEL`
+names one model for every machine instead.
+
+If the server does not have that model, the readiness report says so by
+name (`llm_model_missing`) rather than writing the script with another
+model it happens to have.
+
 ## ComfyUI
 
 Packaged defaults cover SDXL keyframes and thumbnails, LTX-Video clips, Wan

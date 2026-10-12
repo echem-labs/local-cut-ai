@@ -16,6 +16,7 @@ import shutil
 
 import httpx
 import pytest
+from conftest import pin_hardware
 
 from localcut_engine.api.app import _build_backends, create_app
 from localcut_engine.automation import outstanding_jobs
@@ -280,6 +281,28 @@ async def test_script_rows_check_the_server_for_the_resolved_model(tmp_path, mon
     assert row["reason"] == "llm_server_down"
 
 
+async def test_auto_does_not_settle_for_another_model_the_server_has(tmp_path, monkeypatch):
+    """Auto follows the hardware recommendation and nothing else. A server
+    that lacks that model is reported as lacking it, by name, with the
+    picker as the fix: a list of names says nothing about which of them can
+    write a screenplay (an embedding model is listed like any other), and a
+    script written by a model nobody chose is a surprise the user only
+    finds in the result."""
+    pin_hardware(monkeypatch, 8.0)
+    monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
+
+    async def pulled_something_else(self) -> list[str]:
+        return ["llama3.2:latest", "nomic-embed-text:latest"]
+
+    monkeypatch.setattr(LLMScriptBackend, "list_models", pulled_something_else)
+
+    config = EngineConfig(data_dir=tmp_path, backend="llm,mock")
+    (row,) = await readiness_rows(config, _build_backends(config), [(NodeKind.SCRIPT, None)])
+    assert (row["verdict"], row["reason"]) == ("will_fail", "llm_model_missing")
+    assert row["data"]["model"] == "qwen3:8b"
+    assert row["fix"] == {"type": "pick_model", "task": "text.llm"}
+
+
 async def test_cloud_rows_check_the_key_not_the_chain(tmp_path):
     """cloud:* routes by model regardless of the chain; the row's job is the
     key check (execute fails on it today) and honesty about models no
@@ -376,14 +399,14 @@ def test_auto_answers_with_the_stored_default_ignored(tmp_path):
     weights = tmp_path / "models" / "checkpoints" / "tiny.safetensors"
     weights.parent.mkdir(parents=True)
     weights.write_bytes(b"weights")
-    config = EngineConfig(data_dir=tmp_path, backend="local,mock")
+    config = EngineConfig(data_dir=tmp_path, backend="local,mock", llm_model="qwen3:14b")
 
     assert auto_defaults(config)["video.i2v"] == "tiny-i2v"
-    assert auto_defaults(config)["text.llm"] == config.llm_model
+    assert auto_defaults(config)["text.llm"] == "qwen3:14b"
 
     # A stored pick changes what renders; it must not change this answer.
     set_default(config, "text.llm", "llama3.2")
-    assert auto_defaults(config)["text.llm"] == config.llm_model
+    assert auto_defaults(config)["text.llm"] == "qwen3:14b"
 
 
 def test_auto_for_a_machine_that_cannot_see_is_nothing(tmp_path):
