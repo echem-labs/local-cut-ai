@@ -6,10 +6,11 @@ import { isSettled } from "./status";
  *
  * A checkpoint is the one state where the engine is deliberately holding
  * work: `_checkpoint_open` refuses to enqueue anything past an unapproved
- * gate, so every node behind one reads `queued` with no job to back it —
- * indistinguishable, from the board alone, from a project whose queue was
- * lost. Anything that reasons about "the queue is not delivering" has to ask
- * this first.
+ * gate, so no job backs any node behind one. Current engines say so with
+ * `held`, but an engine that predates it reports those nodes as `queued`,
+ * which from the board alone is indistinguishable from a project whose
+ * queue was lost. Anything that reasons about "the queue is not delivering"
+ * still has to ask this first.
  *
  * A stage appears only once its inputs have settled, which is what makes it
  * a safe answer to that question. Work the gate has already RELEASED that

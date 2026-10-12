@@ -99,6 +99,10 @@ SCENE_NODE_STATUSES = (
     # Distinct from `skipped`: that one reads "not needed", and this node is
     # very much needed — it is waiting on a person, not on the queue.
     "blocked",
+    # Beginner mode: work behind a checkpoint the user has not approved.
+    # Also waiting on a person, but for a different act: the content is
+    # written, and approving the checkpoint is what releases the render.
+    "held",
 )
 
 
@@ -2185,6 +2189,10 @@ class ProjectService:
         # Same contract as `skipped`, different reason: the compiler enqueues
         # neither, so the board must not report either as `queued`.
         blocked = unready_nodes(graph)
+        # Read for the beginner checkpoints: `_enqueue_dirty` asks the same
+        # question of it, so the board and the queue cannot disagree on
+        # which nodes the gate is holding.
+        project = self.store.get(project_id)
         resolve_voice = self._voice_resolver()
 
         def node_state(node_id: str) -> dict | None:
@@ -2236,6 +2244,13 @@ class ProjectService:
                 # and stays exactly as it came in.
                 asset = node.kind is NodeKind.ASSET
                 status = "final" if asset or (job and job.spec.quality == "final") else "draft"
+            elif not self._checkpoint_open(project, node.kind):
+                # No job, and none until the user approves the checkpoint in
+                # front of it. Reporting `queued` here promised work the
+                # engine was refusing to schedule. Ranked below a cached
+                # artifact, because a node that already has its render is not
+                # waiting for anything.
+                status = "held"
             else:
                 status = "queued"
             state = {
