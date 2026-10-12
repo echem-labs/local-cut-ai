@@ -19,9 +19,11 @@ What deliberately does NOT travel:
   own `assets/` keyed by sha256, and the bytes are not in the document. A
   template carrying an asset node would import as a node pointing at a file
   that does not exist, and the scene conditioned on it would render nothing
-  with no error. Export drops them (and the edges that reach them, so the
-  generated keyframe is wired back in), and records how many were dropped so
-  the person exporting is told rather than surprised.
+  with no error. Export drops them and the edges that reach them, puts the
+  generated node back on each port an upload held (see `to_template`), and
+  records how many were dropped so the person exporting is told rather than
+  surprised. A narration cloning a dropped voice sample goes back to a
+  stock voice for the same reason.
 - **Pins and frozen hashes.** A pin freezes one artifact. There is no artifact
   here, so a pin would freeze against a hash that will never exist.
 - **Server-owned params.** `voice_consent` is the affirmation the upload route
@@ -40,9 +42,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .. import __version__, jsondoc
 from ..aspects import EXPORT_RESOLUTIONS
+from ..backends.chatterbox import CLONE_MODEL
 from ..schema import Screenplay
 from .model import (
     GRAPH_VERSION,
+    KEYFRAME_PORT,
+    MUSIC_PORT,
     VOICE_REF_PORT,
     Edge,
     Node,
@@ -129,11 +134,35 @@ def _portable_node(node: Node) -> Node:
         kind=node.kind,
         params=stored_params(node.params, drop=TRANSIENT_PARAMS),
         seed=node.seed,
-        model=node.model,
+        # The cloning model renders only from a sample on the node's
+        # `voice_ref` port, and no template can wire that port (the sample
+        # stays behind, and `from_template` refuses the edge). Left on, every
+        # cloned narration imports as a job the backend refuses on each run,
+        # and the cut that needs its audio is never assembled. Back on the
+        # engine default, it speaks in the stock voice its params name.
+        model=None if node.model == CLONE_MODEL else node.model,
         # Pins freeze one artifact; there is no artifact in a template.
         pinned=False,
         frozen_hash=None,
     )
+
+
+def _generated_source(dst: str, port: str) -> str | None:
+    """The node the graph builders wire into `dst`'s `port`, for the ports an
+    upload can take over: a clip's still, and the timeline's music bed.
+
+    By id, the way the scene board finds them. Every take of a scene
+    (`sN.clip`, `sN.clip2`, ... per `take_node_id`) animates `sN.keyframe`,
+    the Quick Tool clip animates `keyframe`, and the timeline's bed is
+    `music`. None for any other port: nothing to put back.
+    """
+    if dst == "timeline" and port == MUSIC_PORT:
+        return "music"
+    if port == KEYFRAME_PORT:
+        scene, dot, leaf = dst.rpartition(".")
+        if leaf == "clip" or (leaf.startswith("clip") and leaf.removeprefix("clip").isdigit()):
+            return f"{scene}{dot}keyframe"
+    return None
 
 
 def to_template(
@@ -148,11 +177,17 @@ def to_template(
 ) -> GraphTemplate:
     """A project's graph as a reusable template.
 
-    Asset nodes and every edge touching one are dropped: dropping the edge as
-    well is what matters, because a clip whose `keyframe` port was rewired to
-    an uploaded image has its generated keyframe sitting orphaned. Removing
-    the edge puts that keyframe back in the render path, so the template
-    describes a project that can actually produce every scene.
+    Asset nodes and every edge touching one are dropped, and that alone
+    leaves a hole. `connect` REPLACES what held a port, so wiring an uploaded
+    still into a clip's `keyframe` port removed the edge from the scene's
+    generated keyframe, and an uploaded track on the timeline's `music` port
+    removed the one from the generated bed. Drop the asset's edge and the
+    port is empty: the clip has nothing to animate, so it, the timeline, the
+    captions and the export never render, and the generated keyframe feeds
+    nothing. So each port an asset held gets back the node the builder wires
+    there (`_generated_source`), when the template carries that node. A
+    Quick Tool clip with a start frame has none to give back: the desktop
+    removes its keyframe in the same patch that wires the frame in.
     """
     dropped = {nid for nid, node in graph.nodes.items() if node.kind in _UNPORTABLE_KINDS}
     nodes = {nid: _portable_node(node) for nid, node in graph.nodes.items() if nid not in dropped}
@@ -161,6 +196,14 @@ def to_template(
         for e in graph.edges
         if e.src not in dropped and e.dst not in dropped
     ]
+    held = {(e.dst, e.port) for e in edges}
+    for e in graph.edges:
+        if e.src not in dropped or e.dst in dropped or (e.dst, e.port) in held:
+            continue
+        source = _generated_source(e.dst, e.port)
+        if source is not None and source in nodes:
+            edges.append(Edge(src=source, dst=e.dst, port=e.port))
+            held.add((e.dst, e.port))
     return GraphTemplate(
         # The version these nodes were ACTUALLY written against, not this
         # build's — a project on disk may still be at an older one, and a
