@@ -14,6 +14,7 @@ import { StageSummaryRow, type StageStatus } from "../components/StageSummaryRow
 import { Stepper } from "../components/Stepper";
 import { m, plural, t } from "../i18n";
 import { fitFor } from "../lib/fit";
+import { stageStatus } from "../lib/stages";
 import { useApp } from "../store";
 
 /**
@@ -113,29 +114,6 @@ export function FirstRun() {
     return row?.downloaded
       ? t("firstRun.railInstalled", { size })
       : t("firstRun.railToDownload", { size });
-  };
-
-  const summaryStatus = (row: ModelRow | undefined, task: string): StageStatus => {
-    const external = row ? row.files.length === 0 : true;
-    if (external) {
-      return {
-        kind: "external",
-        note:
-          task === OLLAMA_TASK
-            ? t("firstRun.statusExternalOllama")
-            : t("firstRun.statusExternalNone"),
-      };
-    }
-    if (row!.downloaded) return { kind: "installed" };
-    if (row!.downloading && row!.progress && row!.progress.total > 0) {
-      return {
-        kind: "downloading",
-        pct: Math.min(100, Math.round((row!.progress.done / row!.progress.total) * 100)),
-      };
-    }
-    // Unpicked stages read queued too — precise enough for a screen the
-    // user leaves within seconds, and never a lie: nothing is running.
-    return { kind: "queued" };
   };
 
   return (
@@ -287,7 +265,13 @@ export function FirstRun() {
               ? displayModelName(rec.model!.family, rec.model!.version)
               : rec.model!.id,
             id: rec.model!.id,
-            status: summaryStatus(rowById.get(rec.model!.id), rec.task),
+            // Home's strip reads the same rows; only the wizard knows what
+            // it just asked for, before the engine reports it running.
+            status: stageStatus(
+              rowById.get(rec.model!.id),
+              rec.task,
+              watchedIds.has(rec.model!.id),
+            ),
           }))}
           models={models}
           pendingIds={watchedIds}
@@ -396,6 +380,7 @@ function ReadyStep({
   const minutesLeft = rate > 0 ? Math.max(1, Math.round(remaining / rate / 60)) : null;
 
   const anyPending = watched.some((row) => !row.downloaded);
+  const skipped = stages.filter((stage) => stage.status.kind === "notDownloaded").length;
 
   return (
     <div className="wiz-body">
@@ -432,6 +417,10 @@ function ReadyStep({
           <span>{minutesLeft !== null ? t("firstRun.timeLeft", { minutes: minutesLeft }) : ""}</span>
         </div>
       )}
+      {/* No download button for a skipped stage: the user unticked it one
+          step ago. Saying where it lives is enough, and a project that
+          needs it offers the download in its readiness banner. */}
+      {skipped > 0 && <p className="hintline">{plural("firstRun.readySkipped", skipped)}</p>}
       <div className="setup-actions">
         <button className="btn-primary" onClick={onDone}>
           {t("firstRun.startCreating")}

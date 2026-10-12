@@ -10,7 +10,8 @@ export type StageStatus =
   | { kind: "external"; note: string }
   | { kind: "installed" }
   | { kind: "downloading"; pct: number }
-  | { kind: "queued" };
+  | { kind: "queued" }
+  | { kind: "notDownloaded" };
 
 export function StageSummaryRow({
   stage,
@@ -35,6 +36,9 @@ export function StageSummaryRow({
         <div className="st ok">{t("firstRun.statusInstalled")}</div>
       )}
       {status.kind === "queued" && <div className="st dl">{t("firstRun.statusQueued")}</div>}
+      {status.kind === "notDownloaded" && (
+        <div className="st ext">{t("firstRun.statusNotDownloaded")}</div>
+      )}
       {status.kind === "downloading" && (
         <div className="st dl">
           {t("firstRun.statusDownloading", { pct: status.pct })}

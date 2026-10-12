@@ -10,7 +10,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HardwareGPU, ModelEntry, ModelRow, SystemInfo } from "../api/types";
-import { t } from "../i18n";
+import { plural, t } from "../i18n";
 import { useApp } from "../store";
 import { FirstRun } from "./FirstRun";
 
@@ -336,6 +336,37 @@ describe("download & continue → ready", () => {
     expect(screen.getByText(t("firstRun.statusDownloading", { pct: 51 }))).toBeInTheDocument();
     // ace: pending but no progress yet — queued, not a lie.
     expect(screen.getByText(t("firstRun.statusQueued"))).toBeInTheDocument();
+  });
+
+  it("says a stage the user unticked was not downloaded, rather than queued", () => {
+    seedStore(CATALOG());
+    render(<FirstRun />);
+    toStep2();
+    toStep3();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Music" }) }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: t("firstRun.downloadContinue", { size: "11 GB" }) }),
+    );
+    expect(startDownload.mock.calls.map((call) => call[0])).toEqual(["ltx-video-0.9-i2v"]);
+    const statusOf = (stage: string) =>
+      screen.getByText(stage).closest(".srow")!.querySelector(".st")!.textContent;
+    // Nothing will ever download ace: the engine was never asked to.
+    expect(statusOf("Music")).toBe(t("firstRun.statusNotDownloaded"));
+    // ltx was asked for and has no bytes counted yet. That one is queued.
+    expect(statusOf("Video clips")).toBe(t("firstRun.statusQueued"));
+    expect(screen.getByText(plural("firstRun.readySkipped", 1))).toBeInTheDocument();
+  });
+
+  it("says nothing about skipped stages when every stage was kept", () => {
+    seedStore(CATALOG());
+    render(<FirstRun />);
+    toStep2();
+    toStep3();
+    fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
+    expect(screen.queryByText(t("firstRun.statusNotDownloaded"))).toBeNull();
+    expect(screen.queryByText(plural("firstRun.readySkipped", 1))).toBeNull();
   });
 
   it("finishes setup from Start creating", () => {
