@@ -87,6 +87,9 @@ scene that is over before it is seen.
 - Write a complete sentence. Never continue or complete a sentence from an earlier scene.
 - "prompt" describes the shot for a video model that will ANIMATE this exact image. Describe \
 what is in the picture and how it should move; do not invent a different subject.
+- The scene is ONE continuous shot of this picture: one camera movement through it, never a \
+cut, a transition, a split screen or a montage, and never words drawn into the frame. Describe \
+only what is in the frame, never what is absent from it.
 - Match the established visual style of the project's other scenes.
 - Return the two keys and nothing else."""
 
@@ -358,6 +361,10 @@ Rules:
 - params keys must come from the node's own params shown in the view.
 - keyframe/clip "prompt" values are image/video generation prompts; keep the established \
 visual style unless asked to change it. "motion" is a short camera direction.
+- each scene renders as ONE continuous shot: one picture, then animated. A keyframe/clip \
+"prompt" is one moment in one frame, never a split screen, collage, montage, picture-in-picture \
+or sequence of shots, and never words drawn into the picture. "motion" is one camera movement, \
+never a cut or a transition. Describe only what is in the frame, never what is absent from it.
 - narration "text" is spoken aloud. The video's length follows narration length, so to make \
 the video shorter, shorten narration text or remove scenes. narration "speed" is the speech \
 rate (1.0 normal, 0.5-1.5).
