@@ -35,7 +35,7 @@ const APP = read("./app.css");
 
 /** The declarations of the rule whose whole selector is `selector`. */
 const rule = (selector: string): Record<string, string> => {
-  const head = new RegExp(`(^|\\n)${selector.replace(/[.:>]/g, "\\$&")} \\{`).exec(APP);
+  const head = new RegExp(`(^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{`).exec(APP);
   expect(head, `no "${selector}" rule in app.css`).not.toBeNull();
   const open = head!.index + head![0].length;
   return Object.fromEntries(
