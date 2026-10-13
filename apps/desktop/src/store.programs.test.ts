@@ -303,3 +303,46 @@ describe("starting a setup", () => {
     expect(row().setup.job?.done).toBe(20 * MB);
   });
 });
+
+describe("setting up several at once", () => {
+  const big = (id: "ollama" | "comfyui", size: number): ProgramInfo => ({
+    ...ffmpeg({ id }),
+    setup: { ...ffmpeg().setup, download_bytes: size },
+  });
+
+  it("runs them one at a time, smallest first, and keeps the rest queued", async () => {
+    const send = await connected(
+      report([ffmpeg(), big("comfyui", 1900 * MB), big("ollama", 1400 * MB)]),
+    );
+    engine.setupProgram.mockImplementation(async (id: unknown) => ({
+      status: "started",
+      job: `job-${String(id)}`,
+    }));
+    const all = useApp.getState().setupPrograms(["comfyui", "ollama", "ffmpeg"]);
+
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(1));
+    expect(engine.setupProgram).toHaveBeenLastCalledWith("ffmpeg");
+    expect(useApp.getState().programQueue).toEqual(["ollama", "comfyui"]);
+
+    // FFmpeg lands; Ollama, the next smallest, starts, and not before.
+    send({
+      type: "program.setup.done",
+      program: "ffmpeg",
+      version: "8.1.3",
+      location: "/x/ffmpeg",
+      in_use: true,
+      draws_text: true,
+    });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(2));
+    expect(engine.setupProgram).toHaveBeenLastCalledWith("ollama");
+    expect(useApp.getState().programQueue).toEqual(["comfyui"]);
+
+    // One that fails does not stop the queue.
+    send({ type: "program.setup.failed", program: "ollama", reason: "download_failed", error: "x" });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(3));
+    expect(engine.setupProgram).toHaveBeenLastCalledWith("comfyui");
+    send({ type: "program.setup.cancelled", program: "comfyui" });
+    expect(await all).toBeNull();
+    expect(useApp.getState().programQueue).toEqual([]);
+  });
+});

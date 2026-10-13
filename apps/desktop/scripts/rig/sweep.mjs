@@ -242,11 +242,29 @@ const STOPS = [
     `,
   },
   {
-    id: "wizard/models",
+    id: "wizard/programs",
     root: ".setup.wizard",
     column: { selector: ".setup.wizard", max: 660 },
     go: `
       await page.evaluate(() => document.querySelectorAll(".setup-actions button")[0]?.click());
+      return page
+        .waitForSelector(".setup.wizard .pstrip", { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+    `,
+  },
+  {
+    id: "wizard/models",
+    root: ".setup.wizard",
+    column: { selector: ".setup.wizard", max: 660 },
+    // Left by "Skip for now" when the step offers one: its primary is then
+    // "Set up FFmpeg", which on a machine with no FFmpeg starts a real
+    // download, the same hazard the models fixture below guards against.
+    go: `
+      await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll(".setup-actions button")];
+        (buttons.find((b) => b.textContent?.trim() === "Skip for now") ?? buttons[0])?.click();
+      });
       return page
         .waitForSelector(".pipe-rail", { timeout: 20000 })
         .then(() => true)

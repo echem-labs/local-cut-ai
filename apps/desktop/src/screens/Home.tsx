@@ -96,6 +96,7 @@ export function Home() {
     actionError,
     dismissActionError,
     readiness,
+    programs,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
@@ -316,7 +317,10 @@ export function Home() {
   // Setup hands over mid-download (FR1). The rows are the wizard's own; the
   // bytes are what the engine is still moving for THIS pipeline, so a model
   // downloaded from Settings for some other reason doesn't inflate them.
-  const downloadStages = useMemo(() => stageRows(system, models), [system, models]);
+  const downloadStages = useMemo(
+    () => stageRows(system, models, programs),
+    [system, models, programs],
+  );
   const dlReady = readyStages(downloadStages);
   // Only while bytes are actually moving: a stage nobody picked reads
   // "queued" forever, and gating on that would pin this strip to Home for
@@ -784,7 +788,7 @@ export function Home() {
                   key={stage.id}
                   stage={stage.stage}
                   name={stage.name}
-                  id={stage.id}
+                  runner={stage.runner}
                   status={stage.status}
                 />
               ))}
