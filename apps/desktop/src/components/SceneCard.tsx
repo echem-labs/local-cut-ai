@@ -444,11 +444,12 @@ export function SceneCard({
           >
             {t("scene.sceneName", { n: sceneNo })}
           </button>
-          {/* design mock: — while rendering/failed, ~4s while queued */}
+          {/* design mock: — while rendering/failed, ~4s while queued (or
+              held at a checkpoint, which is just as unrendered) */}
           <span className="scene-dur">
             {rendering || failed
               ? t("scene.dash")
-              : clip.status === "queued" && Number.isFinite(duration)
+              : (clip.status === "queued" || clip.status === "held") && Number.isFinite(duration)
                 ? t("scene.durQueued", { d: displaySeconds(duration) })
                 : Number.isFinite(duration)
                   ? t("scene.durValue", { d: displaySeconds(duration) })

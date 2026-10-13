@@ -111,7 +111,8 @@ and whether `localcut serve` is running) - the message names CLI \
 flags, which are not something you can pass.
 
 mode="beginner" projects pause at the script and storyboard checkpoints for \
-the user's review (get_project shows what to review); release each with \
+the user's review (get_project shows what to review, and its board reports \
+the work a checkpoint is holding back as status "held"); release each with \
 approve.
 
 To change a project, prefer edit_project (natural language). It previews by \
