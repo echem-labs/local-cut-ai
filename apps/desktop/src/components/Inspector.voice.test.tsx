@@ -181,7 +181,7 @@ describe("choosing for the whole project", () => {
 
 describe("the voice-cloning control", () => {
   /** As `mount`, but with the pack's cloning answer under the test's control. */
-  function mountWithCloning(cloning: boolean | undefined) {
+  function mountWithCloning(cloning: boolean | undefined, cloning_reason?: string | null) {
     useApp.setState({
       board: {
         scenes: [scene("s1", node("s1.narration", { text: "one", voice: "clear" }))],
@@ -192,7 +192,7 @@ describe("the voice-cloning control", () => {
       setProjectVoice: vi.fn().mockResolvedValue(null),
       applyClonedVoice: vi.fn().mockResolvedValue(null),
       client: {
-        voices: vi.fn().mockResolvedValue({ ...PACK, cloning }),
+        voices: vi.fn().mockResolvedValue({ ...PACK, cloning, cloning_reason }),
         voicePreviewUrl: (id: string) => `http://engine/voices/${id}/preview`,
       },
     } as never);
@@ -219,6 +219,18 @@ describe("the voice-cloning control", () => {
     await openCloneControls();
     await waitFor(() => expect(screen.queryByLabelText(/voice sample/i)).toBeNull());
     expect(screen.getByText(/chatterbox-tts/)).toHaveAttribute("role", "note");
+  });
+
+  it("says why, in the engine's words, when the runtime is there but broken", async () => {
+    // Installed and not importable reads, through the catalog line alone,
+    // like not installed, which is no help to someone who just installed it.
+    // The engine's reason quotes the import error, so it names what to fix.
+    const reason =
+      "chatterbox-tts is installed but does not import (ImportError: tokenizers>=0.22.0,<=0.23.0 is required)";
+    mountWithCloning(false, reason);
+    await openCloneControls();
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/voice sample/i)).toBeNull();
   });
 
   it("is withheld against an engine too old to answer", async () => {
