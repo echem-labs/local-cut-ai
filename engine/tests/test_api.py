@@ -17,7 +17,6 @@ import pytest
 
 from localcut_engine.api.app import create_app
 from localcut_engine.backends.base import GenerationError
-from localcut_engine.backends.chatterbox import ChatterboxBackend
 from localcut_engine.config import EngineConfig
 
 # resolved_ffmpeg_bin discovers <data_dir>/bin/ffmpeg[.exe]; the copy these
@@ -48,12 +47,12 @@ async def client(tmp_path):
 
 
 @pytest.fixture
-async def cloning_client(tmp_path, monkeypatch):
+async def cloning_client(tmp_path, clone_runtime):
     """An engine that can clone a voice: the optional runtime importable and
     the backend that needs it in the chain. Registered behind mock, so every
     kind still renders on the mock backend - what differs from `client` is
     the capability, not what runs."""
-    monkeypatch.setattr(ChatterboxBackend, "package_installed", staticmethod(lambda: True))
+    clone_runtime()
     async with _engine(
         EngineConfig(data_dir=tmp_path, token="test-token", backend="mock,chatterbox")
     ) as http:
@@ -356,6 +355,24 @@ async def test_system_reports_tier_and_recommendations(client):
     # Capability tri-state: True/False when ffmpeg was probed, None when the
     # binary is absent — setup UIs key the titles warning off False alone.
     assert body["ffmpeg_drawtext"] in (True, False, None)
+
+
+async def test_system_reports_free_disk_as_it_is_now(client, monkeypatch):
+    """Free disk is the one hardware figure that moves while the engine
+    runs: it falls by tens of GB as models download, and the first-run
+    wizard shows it next to what it recommends. The GPU probe is kept
+    between calls; this figure is not."""
+    import psutil
+
+    free = {"bytes": 100 * 2**30}
+    measured = psutil.disk_usage
+    monkeypatch.setattr(
+        psutil, "disk_usage", lambda path: measured(path)._replace(free=free["bytes"])
+    )
+    first = (await client.get("/system")).json()["hardware"]["disk_free_gb"]
+    free["bytes"] = 60 * 2**30
+    second = (await client.get("/system")).json()["hardware"]["disk_free_gb"]
+    assert (first, second) == (100.0, 60.0)
 
 
 async def test_manifest_defaults_are_commercial_safe(client):
@@ -1058,6 +1075,62 @@ async def test_a_voice_sample_is_refused_where_nothing_can_clone(client):
     # Audio that is not a voice sample is not the capability's business.
     bed = await client.post(f"/projects/{pid}/assets?filename=bed.wav", content=b"RIFFbed")
     assert bed.status_code == 200
+
+
+# What transformers 5.2.0 (pinned by chatterbox-tts 0.1.7) raises at import
+# when the engine's lockfile has put a newer tokenizers back underneath it.
+_TOKENIZERS_REFUSAL = (
+    "tokenizers>=0.22.0,<=0.23.0 is required for a normal functioning of this module, "
+    "but found tokenizers==0.23.1."
+)
+
+
+async def test_cloning_is_not_offered_when_chatterbox_is_installed_but_will_not_import(
+    tmp_path, clone_runtime
+):
+    """Installed is not the same as working. The capability used to be read
+    off `find_spec` alone, so an environment whose chatterbox raised on
+    import answered `cloning: true`, accepted a consented sample, pointed
+    every narration node at the clone model, and then failed all of them.
+    The answer has to come from the import, and has to say what it was.
+    """
+    runtime = clone_runtime(tts_error=ImportError(_TOKENIZERS_REFUSAL))
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock,chatterbox")
+    async with _engine(config) as http:
+        body = (await http.get("/voices")).json()
+        assert body["cloning"] is False
+        assert _TOKENIZERS_REFUSAL in body["cloning_reason"]
+
+        pid = (await http.post("/projects", json={"prompt": "voice test"})).json()["id"]
+        refused = await http.post(
+            f"/projects/{pid}/assets?filename=me.wav&consent=true", content=b"RIFFdata"
+        )
+        assert refused.status_code == 409
+        assert _TOKENIZERS_REFUSAL in refused.json()["detail"]
+
+        # Importing chatterbox pulls PyTorch in: once per engine, and never
+        # on the event loop, which is the thread this test runs on.
+        assert (await http.get("/voices")).json()["cloning"] is False
+    importers = runtime.imports_of("chatterbox.tts")
+    assert len(importers) == 1, f"chatterbox was imported {len(importers)} times"
+    assert threading.get_ident() not in importers, "chatterbox was imported on the event loop"
+
+
+async def test_cloning_names_setuptools_when_the_watermarker_did_not_load(tmp_path, clone_runtime):
+    """resemble-perth, which chatterbox watermarks its output with, imports
+    `pkg_resources`. setuptools 82 stopped shipping it, perth swallows the
+    ImportError and leaves `PerthImplicitWatermarker` as None, and
+    chatterbox only finds out when it constructs a model: "'NoneType' object
+    is not callable", after the clone was offered and accepted. The engine
+    has to look for that None itself and name the package to pin.
+    """
+    clone_runtime(watermarker=False, pkg_resources=False)
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="mock,chatterbox")
+    async with _engine(config) as http:
+        body = (await http.get("/voices")).json()
+    assert body["cloning"] is False
+    assert "pkg_resources" in body["cloning_reason"]
+    assert "setuptools<81" in body["cloning_reason"]
 
 
 async def test_video_assets_are_accepted(client):
@@ -1849,7 +1922,9 @@ async def test_voices_is_unavailable_when_the_pack_is_not_downloaded(tmp_path):
         body = (await http.get("/voices")).json()
     # `cloning` rides along in both shapes: it is a different backend and a
     # different optional runtime, so an unavailable stock pack says nothing
-    # about whether cloning could run.
+    # about whether cloning could run. Its reason depends on what this
+    # machine has installed, so only its presence is pinned here.
+    assert isinstance(body.pop("cloning_reason"), str)
     assert body == {"available": False, "voices": [], "default": None, "cloning": False}
 
 

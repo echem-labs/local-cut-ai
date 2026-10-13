@@ -321,6 +321,37 @@ async def test_a_complete_partial_resumes_past_a_416_error_page(tmp_path, monkey
     assert not part.exists()  # promoted, not abandoned
 
 
+async def test_a_resume_answered_from_another_byte_is_not_appended(tmp_path, monkeypatch):
+    """A 206 is a resume only when its Content-Range starts where the .part
+    ends. A proxy that answers `bytes=N-` with the file from its first byte,
+    still as a 206, would otherwise have the whole file written after the N
+    bytes already there. The .part goes too, so the next attempt asks for
+    the whole file rather than a resume this server cannot answer."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    part = tmp_path / "models" / "checkpoints" / "weights.bin.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(PAYLOAD[: len(PAYLOAD) // 2])
+    asked = []
+
+    def handler(request):
+        asked.append(request.headers.get("range"))
+        return httpx.Response(
+            206,
+            content=PAYLOAD,
+            headers={"content-range": f"bytes 0-{len(PAYLOAD) - 1}/{len(PAYLOAD)}"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    good = hashlib.sha256(PAYLOAD).hexdigest()
+    with pytest.raises(DownloadError, match="resume from byte"):
+        await download_file(
+            model_file("https://cdn.example.com/w.bin", good), tmp_path / "models", client=client
+        )
+    await client.aclose()
+    assert asked == [f"bytes={len(PAYLOAD) // 2}-"]
+    assert not part.exists()
+
+
 def test_is_downloaded(tmp_path):
     entry = ModelEntry(
         id="m1",

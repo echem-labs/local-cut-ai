@@ -63,13 +63,16 @@ try {
       stepper: document.querySelectorAll(".stepper .step-label").length,
     }));
   `);
-  check("fresh profile shows the wizard's welcome step", setup.welcome && setup.stepper === 4);
+  check("fresh profile shows the wizard's welcome step", setup.welcome && setup.stepper === 5);
   await shoot("01-first-run.png");
 
-  // 2. Walk forward and back: welcome -> machine -> models -> machine.
-  // Button lookup is by accessible order within .setup-actions; the
-  // PRIMARY is index 0 on every step, Skip is LAST (the wizard keeps the
-  // e2e's positional contract).
+  // 2. Walk forward and back: welcome -> machine -> programs -> models ->
+  // programs -> machine. Button lookup is by accessible order within
+  // .setup-actions; the PRIMARY is index 0 on every step, Skip is LAST (the
+  // wizard keeps the e2e's positional contract). The programs step is the
+  // exception for the primary: on a machine with no FFmpeg it reads "Set up
+  // FFmpeg" and would start a real download, so that step is left by its
+  // "Skip for now" when it has one, and by its Continue when it does not.
   const walked = await evalInApp(`
     const primary = async () => (await page.$$(".setup-actions button"))[0].click();
     await primary(); // Get started -> machine
@@ -81,7 +84,14 @@ try {
       .waitForSelector(".spec-chips", { timeout: 15000 })
       .then(() => true)
       .catch(() => false);
-    await primary(); // Continue -> models (rail may need system+models)
+    await primary(); // Continue -> programs
+    const programs = await page
+      .waitForSelector(".pstrip", { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+    const skip = await page.$('.setup-actions button:has-text("Skip for now")');
+    if (skip) await skip.click();
+    else await primary(); // Continue -> models (rail may need system+models)
     const rail = await page
       .waitForSelector(".pipe-rail", { timeout: 15000 })
       .then(() => true)
@@ -111,15 +121,18 @@ try {
       await libActions[1].click(); // back to the recommended rail
       await page.waitForSelector(".pipe-rail", { timeout: 5000 });
       const buttons = await page.$$(".setup-actions button");
-      await buttons[buttons.length - 1].click(); // Back -> machine
+      await buttons[buttons.length - 1].click(); // Back -> programs
+      await page.waitForSelector(".pstrip", { timeout: 5000 });
+      await (await page.$$(".setup-actions button"))[1].click(); // Back -> machine
       back = await page
         .waitForSelector(".setup-machine", { timeout: 5000 })
         .then(() => true)
         .catch(() => false);
     }
-    return { machine, rail, filter, back };
+    return { machine, programs, rail, filter, back };
   `);
   check("machine step shows the hardware chips", walked.machine);
+  check("programs step shows the pipeline strip", walked.programs);
   check("models step shows the pipeline rail", walked.rail);
   check(
     "the library's fit filter hugs its labels, not the card",

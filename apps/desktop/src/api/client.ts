@@ -20,6 +20,8 @@ import type {
   ModelDefaults,
   ModelRow,
   NodePacks,
+  ProgramId,
+  ProgramsReport,
   Project,
   ProjectTemplate,
   Provider,
@@ -517,6 +519,39 @@ export class EngineClient {
    * actually enqueue, per-node model overrides included. */
   projectReadiness(projectId: string): Promise<{ rows: ReadinessRow[] }> {
     return this.request(`/projects/${encodeURIComponent(projectId)}/readiness`);
+  }
+
+  /* ---- programs (Settings > Programs and the first-run step) ----
+     FFmpeg, the LLM server and ComfyUI as the ENGINE's machine finds them.
+     A setup runs there too, so on a paired GPU box these set up that box's
+     programs. Progress and the outcome arrive over /ws. */
+
+  /** Each program, and what a setup of it would take. Cheap: it asks the
+   * servers with a short timeout and never downloads anything. */
+  programs(): Promise<ProgramsReport> {
+    return this.request("/programs");
+  }
+
+  /** Start setting up LocalCut's own copy and return at once. 409 when one
+   * is running, there is no build for that machine, or a render is using
+   * the copy it would replace; 507 when the disk cannot hold it. */
+  setupProgram(
+    programId: ProgramId,
+  ): Promise<{ status: "started"; job: string } | { status: "installed" }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/setup`, { method: "POST" });
+  }
+
+  /** Stop a running setup. 409 when none is running, or it is already
+   * moving the copy into place, which finishes. */
+  cancelProgramSetup(programId: ProgramId): Promise<{ ok: boolean }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/setup`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Remove LocalCut's own copy, never an install of the user's. */
+  removeProgram(programId: ProgramId): Promise<{ ok: boolean; freed_bytes: number }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}`, { method: "DELETE" });
   }
 
   /** Persisted per-task default models (Settings → Models). */

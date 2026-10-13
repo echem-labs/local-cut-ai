@@ -232,8 +232,8 @@ export function NewSceneDialog({
   };
 
   const ready = narration.trim().length > 0 && prompt.trim().length > 0;
-  // ~200 words a minute is the rate the narration backends actually read
-  // at, and the rule this app runs on: the cut is as long as its audio.
+  // The words are counted for the readout; the seconds come from
+  // spokenSeconds, the rule this app runs on: the cut is as long as its audio.
   const words = narration.trim() ? narration.trim().split(/\s+/).length : 0;
 
   return (

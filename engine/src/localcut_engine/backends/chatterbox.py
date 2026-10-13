@@ -15,13 +15,21 @@ lazily like ComfyUI or Ollama: the engine drives it when present and fails
 loudly when it isn't. A cloned narration NEVER falls back to a stock
 voice — the user asked for their speaker and must not silently get
 someone else's.
+
+Present is not the same as working, and `runtime_problem` is the one
+answer to whether it works: the /voices capability, the refusal at the
+consented upload and a render that cannot load the model all read it, so
+what the user is offered and what a render meets cannot disagree.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib
+import logging
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from ..graph.compiler import JobSpec
@@ -29,15 +37,72 @@ from ..graph.model import VOICE_REF_PORT, NodeKind
 from .base import ExecutionBackend, ExecutionContext, GenerationError
 from .ffmpeg import FFmpegBin, resolve_ffmpeg
 
+logger = logging.getLogger(__name__)
+
 CLONE_MODEL = "local:chatterbox"
 _SPEED_MIN, _SPEED_MAX = 0.5, 2.0  # atempo's single-pass range
 
 INSTALL_HINT = (
     "voice cloning requires the chatterbox-tts package (PyTorch) in the engine "
-    "environment — install it with `uv pip install chatterbox-tts`. If it fails to "
-    "build on this Python version, cloning lights up automatically once upstream "
-    "ships compatible wheels."
+    'environment. Install it with `uv pip install chatterbox-tts "setuptools<81"`; '
+    "docs/voices.md has the steps, including how to keep it in a dev checkout."
 )
+
+
+def _has_module(name: str) -> bool:
+    """Whether `name` can be found, without importing it."""
+    from importlib.util import find_spec
+
+    try:
+        return find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _import_problem() -> str | None:
+    """Import chatterbox the way a render will, and say what stopped it.
+
+    `chatterbox.tts` is the module a render loads the model from, and
+    importing it brings in PyTorch, transformers and resemble-perth. Any
+    exception counts, not only ImportError: a torch whose DLLs will not load
+    raises OSError on Windows, and a transformers that dislikes the installed
+    tokenizers raises at import time, not when it is used.
+
+    The watermarker needs its own look. resemble-perth wraps its implicit
+    watermarker's import in `except ImportError` and leaves the name as None,
+    so the package imports cleanly and ChatterboxTTS only finds out when it
+    calls None while constructing a model. The cause seen so far is
+    `pkg_resources`, which perth imports and setuptools 82 stopped shipping.
+
+    Each reason ends by asking for a restart, because `runtime_problem`
+    keeps the answer for the life of the process.
+    """
+    try:
+        importlib.import_module("chatterbox.tts")
+        perth = importlib.import_module("perth")
+    except Exception as exc:  # noqa: BLE001 - whatever the import raised is the answer
+        logger.warning("chatterbox-tts is installed but does not import", exc_info=True)
+        return (
+            f"chatterbox-tts is installed but does not import ({type(exc).__name__}: {exc}). "
+            "Repair the engine environment as docs/voices.md describes, then restart "
+            "the engine."
+        )
+    if getattr(perth, "PerthImplicitWatermarker", None) is not None:
+        return None
+    if not _has_module("pkg_resources"):
+        # setuptools 81 still ships it behind a deprecation warning, and that
+        # warning's own advice is `<81`, so that is the pin to name.
+        return (
+            "chatterbox-tts imports, but its watermarker (resemble-perth) does not: it "
+            "needs pkg_resources, which setuptools 82 and later no longer ship. Run "
+            '`uv pip install "setuptools<81"` in the engine environment, then restart '
+            "the engine."
+        )
+    return (
+        "chatterbox-tts imports, but its watermarker (resemble-perth's "
+        "PerthImplicitWatermarker) does not, so no voice model can load. Check that "
+        "resemble-perth imports in the engine environment, then restart the engine."
+    )
 
 
 class ChatterboxBackend(ExecutionBackend):
@@ -53,6 +118,11 @@ class ChatterboxBackend(ExecutionBackend):
         # narration jobs would otherwise double-load the weights into VRAM and
         # run simultaneous CUDA generate() calls → out-of-memory.
         self._lock = asyncio.Lock()
+        # `runtime_problem` runs on worker threads (a route and a render can
+        # ask at once), and the import it guards should happen once.
+        self._probe_lock = threading.Lock()
+        self._probed = False
+        self._problem: str | None = None
 
     @property
     def ffmpeg_bin(self) -> str:
@@ -68,32 +138,51 @@ class ChatterboxBackend(ExecutionBackend):
 
     @staticmethod
     def package_installed() -> bool:
-        """Whether the optional runtime is importable.
+        """Whether the optional runtime is installed at all.
+
+        `find_spec`, not an import: importing chatterbox pulls PyTorch into
+        the engine process, which is seconds and hundreds of MB, and on most
+        machines the package is simply absent. This is the cheap first
+        question; `runtime_problem` asks the expensive one only past it.
+        """
+        return _has_module("chatterbox")
+
+    def runtime_problem(self) -> str | None:
+        """Why a clone cannot run here, or None when it can. Blocking.
 
         The clone control is the one place a user commits to this before any
         job runs: ticking consent and picking a sample rewrites EVERY
-        narration node to `local:chatterbox`, so an absent package fails all
-        of them at once, and clearing it means editing each node by hand in
-        the advanced inspector. A client that can ask this first can decline
-        the trade instead of discovering it afterwards.
+        narration node to `local:chatterbox`, so a runtime that cannot load
+        fails all of them at once, and clearing it means editing each node by
+        hand in the advanced inspector. A client that can ask this first can
+        decline the trade instead of discovering it afterwards, which only
+        works if the answer comes from the import rather than from the
+        package being on disk: a dev checkout's `uv run` re-syncs the
+        environment to the lockfile underneath an installed chatterbox, and
+        an install that took the latest setuptools never had a watermarker.
 
-        `find_spec`, not an import: importing chatterbox pulls PyTorch into
-        the engine process, which is seconds and hundreds of MB for a
-        question asked on a route that just lists voices.
+        Absence is checked on every call, so a package installed while the
+        engine runs is picked up without a restart. Past that, the import
+        happens once and the answer is kept, failure included: it loads
+        PyTorch, so callers run this off the event loop, and a second try in
+        the same process meets the half-imported modules the first left
+        behind rather than the environment as it now is.
         """
-        from importlib.util import find_spec
-
-        try:
-            return find_spec("chatterbox") is not None
-        except (ImportError, ValueError):
-            return False
+        if not self.package_installed():
+            return INSTALL_HINT
+        with self._probe_lock:
+            if not self._probed:
+                self._problem = _import_problem()
+                self._probed = True
+            return self._problem
 
     def _load(self):
-        try:
-            import torch
-            from chatterbox.tts import ChatterboxTTS
-        except ImportError as exc:
-            raise GenerationError(INSTALL_HINT) from exc
+        problem = self.runtime_problem()
+        if problem is not None:
+            raise GenerationError(problem)
+        import torch
+        from chatterbox.tts import ChatterboxTTS
+
         if self._engine is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if (self.model_dir / "ve.safetensors").exists():

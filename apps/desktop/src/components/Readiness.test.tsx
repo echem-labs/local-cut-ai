@@ -8,7 +8,7 @@
  * and it covers exactly the gap set it was dismissed for, so fixing one
  * model while losing another warns again rather than staying quiet.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,6 +100,9 @@ beforeEach(() => {
     projectReadiness: null,
     readiness: null,
     warnMissingModels: true,
+    settingsOpen: false,
+    settingsTab: "general",
+    defaultPickerFocus: null,
   } as never);
 });
 
@@ -173,6 +176,16 @@ describe("the readiness banner", () => {
     expect(text).not.toMatch(/\bexport\b/);
   });
 
+  it("calls the stage a missing FFmpeg takes down the final video, once", () => {
+    // Timeline and export fail together and are one stage to the person
+    // reading: "Final video" is the name the rest of the app uses for it.
+    seed([{ ...exportFails, kind: "timeline" }, exportFails]);
+    render(<ReadinessBanner />);
+    const text = screen.getByRole("status").textContent ?? "";
+    expect(text.match(/Final video/g)).toHaveLength(1);
+    expect(text).not.toContain("Timeline");
+  });
+
   it("reads worst-first, so stopping after one well is still the worst news", () => {
     // The whole argument of the panel: a reader who takes in one group has
     // taken in the most damaging one. A degraded cause listed first would
@@ -183,7 +196,7 @@ describe("the readiness banner", () => {
       (node) => node.textContent ?? "",
     );
     expect(causes).toHaveLength(2);
-    expect(causes[0]).toMatch(/ffmpeg/);
+    expect(causes[0]).toMatch(/ffmpeg/i);
     expect(causes[1]).toMatch(/No video model/);
   });
 
@@ -541,5 +554,168 @@ describe("folding the banner", () => {
     seed([musicGap, exportFails]);
     render(<ReadinessBanner />);
     expect(screen.getByRole("status").querySelector(".gap-list")).not.toBeNull();
+  });
+});
+
+/**
+ * A program as the cause. The gate and the banner sent every fix to
+ * Settings > Models, where nothing sets a program up: a missing FFmpeg was
+ * explained in three places and fixable in none.
+ */
+describe("a program to set up", () => {
+  it("puts the program's setup in the banner's header", async () => {
+    const setupProgram = vi.fn(async () => null);
+    seed([exportFails], { setupProgram, programs: null });
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: "Set up FFmpeg 163 MB" }));
+    expect(setupProgram).toHaveBeenCalledWith("ffmpeg");
+  });
+
+  it("sends the banner's setup button to Programs when a program is a cause", async () => {
+    const openSettings = vi.fn();
+    seed([musicGap, exportFails], { openSettings, programs: null });
+    render(<ReadinessBanner />);
+    await userEvent.click(
+      screen.getByRole("button", { name: t("readiness.banner.setupPrograms") }),
+    );
+    expect(openSettings).toHaveBeenCalledWith("programs");
+  });
+
+  it("still sends a gap that only a model fixes to Models", async () => {
+    const openSettings = vi.fn();
+    seed([musicGap], { openSettings, programs: null });
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: t("readiness.banner.setup") }));
+    expect(openSettings).toHaveBeenCalledWith("models");
+  });
+
+  it("shows a setup already running instead of offering another", () => {
+    seed([exportFails], {
+      programs: {
+        platform: "linux-x64",
+        programs_dir: "/p",
+        programs_bytes: 0,
+        disk_free_bytes: 1,
+        programs: [
+          {
+            id: "ffmpeg",
+            setup: {
+              job: { id: "j", phase: "downloading", done: 1, total: 4, bytes_per_s: null },
+            },
+          },
+        ],
+      },
+    });
+    render(<ReadinessBanner />);
+    const button = screen.getByRole("button", { name: "Setting up FFmpeg 25%" });
+    expect(button).toBeDisabled();
+  });
+
+  it("runs the setup from the gate's fixes, and routes its footer to Programs", async () => {
+    const setupProgram = vi.fn(async () => null);
+    const openSettings = vi.fn();
+    seed([exportFails], { setupProgram, openSettings, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(t("readiness.dialog.fixes"));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupProgram") }),
+    );
+    expect(setupProgram).toHaveBeenCalledWith("ffmpeg");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupPrograms") }),
+    );
+    expect(openSettings).toHaveBeenCalledWith("programs");
+  });
+
+  it("asks again when a fix lands under it, and lets the render go plainly", async () => {
+    const run = vi.fn();
+    seed([exportFails], { programs: null });
+    render(<Harness onRun={run} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+
+    // FFmpeg landed: the engine has nothing left to say about this render.
+    const client = useApp.getState().client as unknown as {
+      readiness: ReturnType<typeof vi.fn>;
+      projectReadiness: ReturnType<typeof vi.fn>;
+    };
+    client.readiness.mockResolvedValue({ rows: [] });
+    client.projectReadiness.mockResolvedValue({ rows: [] });
+    act(() => useApp.setState({ readinessEpoch: useApp.getState().readinessEpoch + 1 }));
+
+    await screen.findByText(t("readiness.dialog.allClear"));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.render") }),
+    );
+    await waitFor(() => expect(run).toHaveBeenCalled());
+    // Nothing was dismissed, so nothing is remembered as dismissed.
+    expect(localStorage.getItem("localcut.readinessSkip.v1")).toBeNull();
+  });
+});
+
+const scriptModelMissing: ReadinessRow = {
+  kind: "script",
+  model: "qwen3:14b",
+  backend: "llm",
+  verdict: "will_fail",
+  reason: "llm_model_missing",
+  data: { task: "text.llm", model: "qwen3:14b" },
+  fix: { type: "pick_model", task: "text.llm" },
+};
+
+/**
+ * A model to pick. The engine's fix for a script model the LLM server does
+ * not have is a choice under Default models, and "Set up models" landed on
+ * the Models tab with the library in view and nothing pointing at that row.
+ */
+describe("a model to pick", () => {
+  it("opens the picker it names from the gate, closing the gate first", async () => {
+    seed([scriptModelMissing]);
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.fix.pickModel") }),
+    );
+    // Settings is a layer of its own, and a gate left open over it would
+    // keep the focus trap.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const state = useApp.getState();
+    expect([state.settingsOpen, state.settingsTab, state.defaultPickerFocus]).toEqual([
+      true,
+      "models",
+      "text.llm",
+    ]);
+  });
+
+  it("offers the same picker from the banner's well", async () => {
+    seed([scriptModelMissing]);
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: t("readiness.fix.pickModel") }));
+    const state = useApp.getState();
+    expect([state.settingsOpen, state.settingsTab, state.defaultPickerFocus]).toEqual([
+      true,
+      "models",
+      "text.llm",
+    ]);
+  });
+
+  it("leaves a program beside it on Programs", async () => {
+    const openSettings = vi.fn();
+    seed([exportFails, scriptModelMissing], { openSettings, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    // The pick belongs to the script's well alone; FFmpeg's fix is still
+    // its setup, and the footer still goes where that is done.
+    expect(
+      within(dialog).getAllByRole("button", { name: t("readiness.fix.pickModel") }),
+    ).toHaveLength(1);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupPrograms") }),
+    );
+    expect(openSettings).toHaveBeenCalledWith("programs");
   });
 });

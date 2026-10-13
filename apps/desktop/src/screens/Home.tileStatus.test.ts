@@ -24,6 +24,9 @@ const project = (mode: string): Project => ({
 /** A session the engine has recorded an artifact for. */
 const ready = (mode: string): Project => ({ ...project(mode), tool_artifact_hash: "abc123" });
 
+/** A project the engine has recorded a finished cut for. */
+const exported = (mode: string): Project => ({ ...project(mode), export_artifact_hash: "def456" });
+
 const job = (node_id: string, status: Job["status"], created_at = 0): Job => ({
   id: `j-${node_id}-${created_at}`,
   project_id: "p1",
@@ -67,13 +70,43 @@ describe("tileStatus", () => {
   });
 
   it("still reserves final for a project that exported", () => {
-    expect(tileStatus(project("prompt"), [job("export", "done")])).toBe("final");
+    expect(tileStatus(exported("prompt"), [])).toBe("final");
   });
 
   // "ready" belongs to tool sessions alone: a project's export is the only
   // thing that makes it final, however many scene jobs have landed.
   it("does not promote a project on a scene job named after a tool", () => {
     expect(tileStatus(project("prompt"), [job("image", "done")])).toBe("draft");
+  });
+
+  /**
+   * The video half of the aged-out case below. A project that exported
+   * before a few newer renders has no `export` row left in the 200-row
+   * window, and asking the job list called it "Draft" beside a cut that
+   * still played and downloaded.
+   */
+  it("reads a finished cut from the meta when its export has aged out", () => {
+    expect(tileStatus(exported("prompt"), [job("keyframe", "done")])).toBe("final");
+    expect(tileStatus(exported("beginner"), [])).toBe("final");
+  });
+
+  // The same claim as for a tool session: a DONE export row can be a
+  // placeholder the engine has since distrusted, and a cut the project
+  // cannot download is not a final one.
+  it("does not call a project final on an export row alone", () => {
+    expect(tileStatus(project("prompt"), [job("export", "done")])).toBe("draft");
+  });
+
+  // A tool session's artifact is not a cut, and a cut is not a tool's
+  // artifact: each kind of project reads only its own field.
+  it("keeps the two finished records apart", () => {
+    expect(tileStatus(ready("prompt"), [])).toBe("draft");
+    expect(tileStatus(exported("tool:image"), [])).toBe("draft");
+  });
+
+  it("lets a re-render outrank the finished cut", () => {
+    expect(tileStatus(exported("prompt"), [job("export", "rendering", 5)])).toBe("generating");
+    expect(tileStatus(exported("prompt"), [job("timeline", "failed", 5)])).toBe("failed");
   });
 
   it("lets active work and a trailing failure win over readiness", () => {
