@@ -4,16 +4,24 @@ import {
   ChevronUp,
   Clapperboard,
   CircleSlash,
-  Download,
   HardDriveDownload,
   PlugZap,
   ServerOff,
+  Settings as SettingsIcon,
   TriangleAlert,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
-import type { ReadinessRow } from "../api/types";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { ProgramId, ReadinessRow } from "../api/types";
 import { m, plural, t, type MessageKey } from "../i18n";
+import {
+  programFixes,
+  programName,
+  setupFraction,
+  settingsTabFor,
+  shownFailure,
+} from "../lib/programs";
 import { distinctGaps, noteworthyGaps, readinessFingerprint } from "../lib/readiness";
 import { useApp } from "../store";
 import { formatSize, ModelLibrary } from "./ModelLibrary";
@@ -184,23 +192,43 @@ export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
                 <Icon size={14} strokeWidth={1.8} aria-hidden="true" />
                 <span>{group.cause}</span>
               </div>
-              <ul className="plist">
-                {group.items.map((item) => (
-                  <li className="prow" key={item.key}>
-                    <span className={`pdot ${DOT[item.verdict] ?? "deg"}`} aria-hidden="true" />
-                    <span className="pname">{item.stage}</span>
-                    <span className={`price${item.verdict === "will_fail" ? " fail" : ""}`}>
-                      {item.effect}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <StageRows items={group.items} />
             </div>
           );
         })}
       </div>
     </>
   );
+}
+
+/** One lit row per stage: [light] [stage] ... [what it costs]. */
+function StageRows({ items }: { items: readonly GapItem[] }) {
+  return (
+    <ul className="plist">
+      {items.map((item) => (
+        <li className="prow" key={item.key}>
+          <span className={`pdot ${DOT[item.verdict] ?? "deg"}`} aria-hidden="true" />
+          <span className="pname">{item.stage}</span>
+          <span className={`price${item.verdict === "will_fail" ? " fail" : ""}`}>
+            {item.effect}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The same rows without the well around them, for a surface that has its
+ * own: a program's well in Settings > Programs lists what that program
+ * costs the render in exactly the words the gate uses. */
+export function GapRows({ rows }: { rows: readonly ReadinessRow[] }) {
+  const items = distinctGaps(rows).map((row) => ({
+    key: `${row.kind}:${row.model ?? ""}:${row.reason}`,
+    stage: stageOf(row),
+    effect: effectOf(row),
+    verdict: row.verdict,
+  }));
+  return items.length > 0 ? <StageRows items={items} /> : null;
 }
 
 /** How many stages sit at each severity, worst first. Shared by the list
@@ -283,9 +311,12 @@ const writeFolded = (fingerprint: string | null) => {
 export function ReadinessBanner() {
   const projectReadiness = useApp((state) => state.projectReadiness);
   const models = useApp((state) => state.models);
+  const programs = useApp((state) => state.programs);
   const startDownload = useApp((state) => state.startDownload);
+  const setupProgram = useApp((state) => state.setupProgram);
   const openSettings = useApp((state) => state.openSettings);
   const [folded, setFolded] = useState(readFolded);
+  const [error, setError] = useState<string | null>(null);
   const gaps = noteworthyGaps(projectReadiness);
   if (gaps.length === 0) return null;
 
@@ -293,19 +324,27 @@ export function ReadinessBanner() {
   // entirely of reason codes this build has no catalog entry for would
   // otherwise draw an empty warning box.
   if (gapGroups(gaps).length === 0) return null;
-  // One direct shortcut at most: with a single downloadable gap the fix is
-  // one click; anything wider belongs in Settings → Models, whole.
-  // Counted by distinct MODEL, not by row: one missing image model shows
-  // up as both a keyframe gap and a thumbnail gap, and that is still one
-  // download — hiding the button there hides it in the very case it is for.
+  // One direct shortcut at most: with a single fix the fix is one click;
+  // anything wider belongs in Settings, whole. A program comes first,
+  // because while it is missing no model download changes what renders.
+  // Counted by distinct PROGRAM or MODEL, not by row: one missing image
+  // model shows up as both a keyframe gap and a thumbnail gap, and one
+  // missing FFmpeg as a timeline and an export, and each is still one
+  // click — hiding the button there hides it in the very case it is for.
+  const setups = programFixes(gaps);
+  const directProgram = setups.length === 1 ? setups[0] : null;
+  const programJob = directProgram
+    ? (programs?.programs.find((row) => row.id === directProgram.program)?.setup.job ?? null)
+    : null;
   const downloads = gaps.filter((row) => row.fix?.type === "download");
   const singleModel = new Set(
     downloads.map((row) => (row.fix?.type === "download" ? row.fix.model_id : "")),
   ).size === 1;
-  const direct = singleModel ? downloads[0] : null;
+  const direct = singleModel && !directProgram ? downloads[0] : null;
   const directFix = direct?.fix?.type === "download" ? direct.fix : null;
   const downloading =
     directFix != null && models.some((row) => row.id === directFix.model_id && row.downloading);
+  const tab = settingsTabFor(gaps);
 
   // The strip's own edge repeats the worst light inside it, so the board
   // can be read from the corner of the eye without expanding anything.
@@ -341,6 +380,22 @@ export function ReadinessBanner() {
             survive, so the strip never reads as "everything is fine". */}
         {shut && <SeverityChips groups={gapGroups(gaps)} />}
         <span className="spacer" />
+        {directProgram && (
+          <button
+            className="btn-outline"
+            disabled={programJob !== null}
+            onClick={() => void setupProgram(directProgram.program).then(setError)}
+          >
+            {t(programJob ? "readiness.banner.settingUp" : "readiness.banner.setupProgram", {
+              name: programName(directProgram.program),
+            })}{" "}
+            <span className="readout">
+              {programJob
+                ? `${Math.round(setupFraction(programJob) * 100)}%`
+                : formatSize(directProgram.size)}
+            </span>
+          </button>
+        )}
         {directFix && (
           <button
             className="btn-outline"
@@ -354,9 +409,13 @@ export function ReadinessBanner() {
             )}
           </button>
         )}
-        <button className="btn-ghost" onClick={() => openSettings("models")}>
-          <Boxes size={14} strokeWidth={1.8} aria-hidden="true" />
-          {t("readiness.banner.setup")}
+        <button className="btn-ghost" onClick={() => openSettings(tab)}>
+          {tab === "programs" ? (
+            <SettingsIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+          ) : (
+            <Boxes size={14} strokeWidth={1.8} aria-hidden="true" />
+          )}
+          {tab === "programs" ? t("readiness.banner.setupPrograms") : t("readiness.banner.setup")}
         </button>
         <Tip label={t(shut ? "readiness.banner.unfold" : "readiness.banner.fold")}>
           <button
@@ -373,20 +432,104 @@ export function ReadinessBanner() {
           </button>
         </Tip>
       </div>
+      {error && (
+        <p className="banner-error" role="alert">
+          {error}
+        </p>
+      )}
       {!shut && <GapList rows={gaps} />}
     </div>
   );
 }
 
+/** One program the gate can set up where it stands, in the fixes well: its
+ * name, the download's size, and the button. The setup runs on the engine,
+ * so the row shows its progress the way a model row does, and the gate asks
+ * again once it lands. */
+function ProgramFixRow({ program: id, size }: { program: ProgramId; size: number }) {
+  const row = useApp((state) => state.programs?.programs.find((entry) => entry.id === id) ?? null);
+  const setupProgram = useApp((state) => state.setupProgram);
+  const cancelProgramSetup = useApp((state) => state.cancelProgramSetup);
+  const [error, setError] = useState<string | null>(null);
+  const name = programName(id);
+  const job = row?.setup.job ?? null;
+  const failed = row ? shownFailure(row) !== null : false;
+  const pct = job ? Math.round(setupFraction(job) * 100) : 0;
+  return (
+    <li className="prow gate-program">
+      <span className="pname">{name}</span>
+      {job ? (
+        <>
+          <span className="price">
+            {t(`programs.phases.${job.phase}` as MessageKey, { name })}
+            <span className="readout">{pct}%</span>
+          </span>
+          <Tip
+            label={t("programs.setup.cancelTip", { name })}
+            hint={t("programs.setup.cancelTipHint")}
+          >
+            <button
+              className="btn-ghost sm"
+              disabled={job.phase === "installing"}
+              onClick={() => void cancelProgramSetup(id).then(setError)}
+            >
+              {t("common.cancel")}
+            </button>
+          </Tip>
+          <span
+            className="gate-program-bar"
+            role="progressbar"
+            aria-label={t("programs.setup.progressAria", { name })}
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <i style={{ width: `${pct}%` }} />
+          </span>
+        </>
+      ) : (
+        <>
+          <span className={`price${failed ? " fail" : ""}`}>
+            {failed ? (
+              t("readiness.dialog.setupStopped")
+            ) : (
+              <span className="readout">{formatSize(size)}</span>
+            )}
+          </span>
+          <Tip
+            label={t("programs.setup.tip", { name })}
+            hint={t("programs.setup.tipHint", { size: formatSize(size) })}
+          >
+            <button
+              className="btn-outline sm"
+              onClick={() => void setupProgram(id).then(setError)}
+            >
+              {failed ? t("programs.setup.retry") : t("readiness.dialog.setupProgram")}
+            </button>
+          </Tip>
+        </>
+      )}
+      {error && (
+        <span className="gate-program-error" role="alert">
+          {error}
+        </span>
+      )}
+    </li>
+  );
+}
+
 /** The gate at the moment of spend. Fires only from an explicit
  * render-starting click (never from implicit re-renders — doc 09 P5), lists
- * each gap in plain words, embeds the model library filtered to the
- * downloadable fixes, and always leaves "Render anyway" on the table —
- * warning, not paywall. The scope control decides how long this exact set
- * of problems stays quiet. */
+ * each gap in plain words, offers the fixes it can run where it stands (a
+ * program to set up, the model library filtered to the downloads), and
+ * always leaves "Render anyway" on the table — warning, not paywall. The
+ * scope control decides how long this exact set of problems stays quiet.
+ *
+ * A fix that lands while it is open (a program set up, a model downloaded)
+ * makes it ask again, so the rows it shows stay the rows that are true. */
 export function ReadinessDialog({
   scopeKey,
-  rows,
+  rows: asked,
   kinds,
   onProceed,
   onClose,
@@ -400,14 +543,34 @@ export function ReadinessDialog({
   onClose: () => void;
 }) {
   const suppressReadiness = useApp((state) => state.suppressReadiness);
+  const recheckGaps = useApp((state) => state.recheckGaps);
   const openSettings = useApp((state) => state.openSettings);
+  const epoch = useApp((state) => state.readinessEpoch);
+  const [rows, setRows] = useState(asked);
   const [scope, setScope] = useState<"session" | "project" | "always">("session");
   const setupRef = useRef<HTMLButtonElement>(null);
+  const openedAt = useRef(epoch);
+  useEffect(() => {
+    if (epoch === openedAt.current) return;
+    let stale = false;
+    void recheckGaps(scopeKey, kinds).then((now) => {
+      if (!stale && now) setRows(now);
+    });
+    return () => {
+      stale = true;
+    };
+    // `kinds` is the question the gate was opened with and does not change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epoch, recheckGaps, scopeKey]);
   const downloadIds = new Set(
     rows.flatMap((row) => (row.fix?.type === "download" ? [row.fix.model_id] : [])),
   );
+  const setups = programFixes(rows);
   const groups = gapGroups(rows);
   const stages = groups.reduce((count, group) => count + group.items.length, 0);
+  const tab = settingsTabFor(rows);
+  // Everything it was opened about has been fixed from inside it.
+  const clear = rows.length === 0;
   // A segmented toggle, not a checkbox plus a dropdown: that pairing put a
   // button inside a <label> (which then absorbed the menu's value into the
   // checkbox's accessible name), and Modal's capture-phase Escape closed
@@ -433,58 +596,77 @@ export function ReadinessDialog({
             ref={setupRef}
             onClick={() => {
               onClose();
-              openSettings("models");
+              openSettings(tab);
             }}
           >
-            <Boxes size={14} strokeWidth={1.8} aria-hidden="true" />
-            {t("readiness.dialog.setup")}
+            {tab === "programs" ? (
+              <SettingsIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+            ) : (
+              <Boxes size={14} strokeWidth={1.8} aria-hidden="true" />
+            )}
+            {tab === "programs" ? t("readiness.dialog.setupPrograms") : t("readiness.dialog.setup")}
           </button>
           <button
             className="btn-primary"
             onClick={() => {
-              suppressReadiness(scopeKey, rows, scope, kinds);
+              if (!clear) suppressReadiness(scopeKey, rows, scope, kinds);
               onProceed();
             }}
           >
-            {t("readiness.dialog.renderAnyway")}
+            {clear ? t("readiness.dialog.render") : t("readiness.dialog.renderAnyway")}
           </button>
         </>
       }
     >
-      <IntroSentence stages={stages} />
+      {clear ? (
+        <p className="gate-intro" role="status">
+          {t("readiness.dialog.allClear")}
+        </p>
+      ) : (
+        <IntroSentence stages={stages} />
+      )}
       <GapList rows={rows} />
-      {downloadIds.size > 0 && (
+      {(downloadIds.size > 0 || setups.length > 0) && (
         <div className="well gate-downloads">
           <div className="whead label">
-            <Download size={14} strokeWidth={1.8} aria-hidden="true" />
+            <Wrench size={14} strokeWidth={1.8} aria-hidden="true" />
             <span>{t("readiness.dialog.fixes")}</span>
           </div>
-          <ModelLibrary showActions filterIds={downloadIds} />
+          {setups.length > 0 && (
+            <ul className="plist gate-programs">
+              {setups.map((fix) => (
+                <ProgramFixRow key={fix.program} program={fix.program} size={fix.size} />
+              ))}
+            </ul>
+          )}
+          {downloadIds.size > 0 && <ModelLibrary showActions filterIds={downloadIds} />}
         </div>
       )}
-      <div className="gate-scope">
-        <div className="lbl">{t("readiness.dialog.skip")}</div>
-        <div className="sc">
-          <div className="seg-toggle" role="group" aria-label={t("readiness.dialog.skip")}>
-            {scopes.map((option) => (
-              <button
-                key={option.id}
-                className={scope === option.id ? "active" : ""}
-                onClick={() => setScope(option.id)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {/* The hint that used to live in a tooltip on each segment. On
-              screen it costs one line and answers the question the control
-              actually raises ("for how long?") without a hover, which is
-              the only way a pointerless user was ever going to read it. */}
-          <div className="scope-hint" role="status">
-            {t(`readiness.dialog.scopeHint.${scope}` as MessageKey)}
+      {!clear && (
+        <div className="gate-scope">
+          <div className="lbl">{t("readiness.dialog.skip")}</div>
+          <div className="sc">
+            <div className="seg-toggle" role="group" aria-label={t("readiness.dialog.skip")}>
+              {scopes.map((option) => (
+                <button
+                  key={option.id}
+                  className={scope === option.id ? "active" : ""}
+                  onClick={() => setScope(option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {/* The hint that used to live in a tooltip on each segment. On
+                screen it costs one line and answers the question the control
+                actually raises ("for how long?") without a hover, which is
+                the only way a pointerless user was ever going to read it. */}
+            <div className="scope-hint" role="status">
+              {t(`readiness.dialog.scopeHint.${scope}` as MessageKey)}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </Modal>
   );
 }

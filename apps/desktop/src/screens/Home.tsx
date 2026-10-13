@@ -23,6 +23,7 @@ import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS, TOOL_CLIP_SECONDS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
+import { settingsTabFor } from "../lib/programs";
 import { readyStages, stageRows } from "../lib/stages";
 import { STYLE_PRESETS } from "../lib/styles";
 import { tileStatus } from "../lib/tiles";
@@ -447,7 +448,7 @@ export function Home() {
           {promptGap && describeGap(promptGap) && (
             <p className="hint" role="status">
               {describeGap(promptGap)}{" "}
-              <button className="link" onClick={() => openSettings("models")}>
+              <button className="link" onClick={() => openSettings(settingsTabFor([promptGap]))}>
                 {t("home.getIt")}
               </button>
             </p>
@@ -736,7 +737,7 @@ export function Home() {
           {toolGaps.length > 0 && describeGap(toolGaps[0]) && (
             <p className="hint" role="status">
               {describeGap(toolGaps[0])}{" "}
-              <button className="link" onClick={() => openSettings("models")}>
+              <button className="link" onClick={() => openSettings(settingsTabFor([toolGaps[0]]))}>
                 {t("home.getIt")}
               </button>
             </p>

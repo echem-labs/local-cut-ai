@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { EngineClient, EngineTimeoutError } from "./api/client";
-import { t } from "./i18n";
+import { EngineClient, EngineError, EngineTimeoutError } from "./api/client";
+import { t, type MessageKey } from "./i18n";
 import { forgetEditLog } from "./lib/editlog";
 import { messageOf } from "./lib/errors";
 import { forgetPublishDraft } from "./lib/publishDraft";
@@ -8,6 +8,7 @@ import { setEngineEtas } from "./lib/eta";
 import { nextNodeId } from "./lib/graphIds";
 import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom";
 import { blockingGaps, readinessFingerprint } from "./lib/readiness";
+import { formatSize } from "./lib/size";
 import { usePlayback } from "./lib/playback";
 import {
   loadTemplates,
@@ -31,6 +32,8 @@ import type {
   NodePacks,
   NodeState,
   OomFallback,
+  ProgramId,
+  ProgramsReport,
   Project,
   ReadinessRow,
   StorageInfo,
@@ -177,6 +180,12 @@ export interface SeedPatch {
    * way to photograph it. */
   nodeFailures?: Record<string, { error: string; suggestions: string[] }>;
   nodeRetries?: Record<string, { attempt: number; fallback: OomFallback }>;
+  /** The programs report and the machine's readiness behind Settings >
+   * Programs and the first-run step. A setup at 44% or one that failed on a
+   * checksum is a state no real engine holds still for, and the stage rows
+   * under a program read the readiness report. */
+  programs?: ProgramsReport;
+  readiness?: ReadinessRow[];
   freeze?: boolean;
 }
 
@@ -262,6 +271,16 @@ interface AppState {
   /** The open project's readiness, per-node model overrides included.
    * Cleared with the project; the workspace banner reads it. */
   projectReadiness: ReadinessRow[] | null;
+  /** Bumped whenever something lands that can change a readiness verdict:
+   * a program set up or removed, a model download that ended. The render
+   * gate re-checks on it, so a fix run from inside the gate shows there. */
+  readinessEpoch: number;
+  /** GET /programs: FFmpeg, the LLM server and ComfyUI as the engine's
+   * machine finds them. Null until the first answer. A running setup's job
+   * moves with the /ws progress events rather than with a refetch. */
+  programs: ProgramsReport | null;
+  /** Why the last /programs read failed, or null. */
+  programsError: string | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -355,6 +374,11 @@ interface AppState {
    * then checked against the master switch and the session/project
    * suppressions. `scopeKey` is the project id, or "home" for Home. */
   readinessGaps: (scopeKey: string, kinds?: string[]) => Promise<ReadinessRow[] | null>;
+  /** The same question again, for a gate already on screen after a fix
+   * landed under it: the blocking rows as they are now, with no suppression
+   * applied (nothing is dismissed while the dialog is open). Null when the
+   * engine could not answer, so the dialog keeps what it shows. */
+  recheckGaps: (scopeKey: string, kinds?: string[]) => Promise<ReadinessRow[] | null>;
   /** Record a dialog dismissal. "session" dies with the window; "project"
    * persists per scopeKey and re-warns when the gap set changes; "always"
    * flips `warnMissingModels` itself. */
@@ -542,6 +566,16 @@ interface AppState {
   startDownload: (modelId: string) => Promise<void>;
   cancelDownload: (modelId: string) => Promise<void>;
   deleteModel: (modelId: string) => Promise<void>;
+  /** Re-read GET /programs. Never throws: a failure lands in
+   * `programsError`, and the last report stays on screen. */
+  refreshPrograms: () => Promise<void>;
+  /** Start setting up LocalCut's own copy of a program, on the engine's
+   * machine. `null` means it started (or was already in place); anything
+   * else is why not. The outcome arrives later, over /ws. */
+  setupProgram: (programId: ProgramId) => Promise<string | null>;
+  cancelProgramSetup: (programId: ProgramId) => Promise<string | null>;
+  /** Remove LocalCut's own copy. Never touches an install of the user's. */
+  removeProgram: (programId: ProgramId) => Promise<string | null>;
   /** Decode a pairing code for review — nothing is sent, nothing is stored. */
   inspectPairing: (code: string) => Promise<PairingPreview>;
   /** Pair with a remote engine. `armKeys` is a separate, explicit decision:
@@ -816,6 +850,10 @@ const pendingPatches = new Map<string, PendingPatch>();
 // models whose download already ended so a stale row can't resurrect it.
 const wsProgress = new Map<string, { done: number; total: number }>();
 const terminalDownloads = new Set<string>();
+// Bumped by every /programs read and by every setup that ends. A read that
+// left before a setup finished would land after it and bring back a job the
+// engine had already cleared; the bump is what tells that read it is stale.
+let programsGen = 0;
 // True while the rig has injected fixture state (see installSeedHook):
 // live model refreshes and WS progress are dropped so the injected frame
 // holds still. Never true outside a rig-driven dev run.
@@ -856,8 +894,26 @@ const resetEngineScopedState = () => {
   pendingPatches.clear();
   wsProgress.clear();
   terminalDownloads.clear();
+  // The old engine's programs report is about another machine.
+  programsGen++;
   seedFrozen = false;
 };
+
+/** A fresh report, with the progress of a job the /ws stream has already
+ * moved past kept. A read that started a beat before the newest tick would
+ * otherwise pull a bar backwards until the next one. */
+const keepLiveProgress = (
+  report: ProgramsReport,
+  live: ProgramsReport | null,
+): ProgramsReport => ({
+  ...report,
+  programs: report.programs.map((row) => {
+    const job = row.setup?.job;
+    const known = live?.programs.find((other) => other.id === row.id)?.setup?.job;
+    if (!job || !known || known.id !== job.id || known.phase !== job.phase) return row;
+    return known.done > job.done ? { ...row, setup: { ...row.setup, job: known } } : row;
+  }),
+});
 
 export const useApp = create<AppState>((set, get) => {
   // Home's tiles show live status for EVERY project (dots + fresh thumbs),
@@ -980,6 +1036,111 @@ export const useApp = create<AppState>((set, get) => {
         progress: { done: Math.max(ws.done, row.progress?.done ?? 0), total: ws.total },
       };
     });
+
+  // /system after a program came or went: what routes assembly, and
+  // whether the ffmpeg in use draws text, are both read from it.
+  const refreshSystemQuietly = async () => {
+    const { client } = get();
+    if (!client || seedFrozen) return;
+    try {
+      const info = await client.system();
+      if (get().client === client && !seedFrozen) set({ system: info });
+    } catch (err) {
+      console.warn("system refresh failed:", err);
+    }
+  };
+
+  // Everything that reads the machine has to hear about a program that came
+  // or went: which ffmpeg runs, what /system routes, every readiness
+  // verdict, and the gate if it is open. Each screen otherwise kept what it
+  // had until the next reconnect.
+  const afterProgramChange = () => {
+    void get().refreshPrograms();
+    void refreshSystemQuietly();
+    refreshReadinessQuietly();
+    set({ readinessEpoch: get().readinessEpoch + 1 });
+  };
+
+  // A setup's bar moves with the /ws progress events, in place. A tick for a
+  // program whose row holds no job is a setup started somewhere else (the
+  // CLI on a GPU box, a second window), and one read fills in the rest.
+  const applyProgramProgress = (
+    event: Extract<EngineEvent, { type: "program.setup.progress" }>,
+  ) => {
+    if (seedFrozen) return;
+    const report = get().programs;
+    const row = report?.programs.find((program) => program.id === event.program);
+    if (!report || !row) {
+      void get().refreshPrograms();
+      return;
+    }
+    const known = row.setup.job;
+    const job = {
+      id: known?.id ?? "",
+      phase: event.phase,
+      done: event.done,
+      total: event.total,
+      bytes_per_s: event.bytes_per_s,
+    };
+    set({
+      programs: {
+        ...report,
+        programs: report.programs.map((program) =>
+          program.id === event.program
+            ? {
+                ...program,
+                // A new setup clears how the last one ended, as the engine does.
+                setup: { ...program.setup, job, last: known ? program.setup.last : null },
+              }
+            : program,
+        ),
+      },
+    });
+    if (!known) void get().refreshPrograms();
+  };
+
+  // The outcome lands on the row at once, from the event, so the well stops
+  // showing a bar the moment the engine says it is over; the read after it
+  // confirms. A setup that worked changed the machine, so it re-reads
+  // everything that describes it.
+  const settleProgramSetup = (
+    event: Extract<
+      EngineEvent,
+      { type: "program.setup.done" | "program.setup.failed" | "program.setup.cancelled" }
+    >,
+  ) => {
+    programsGen++;
+    const report = get().programs;
+    if (report && !seedFrozen) {
+      const failed = event.type === "program.setup.failed" ? event : null;
+      const outcome =
+        event.type === "program.setup.done" ? "done" : failed ? "failed" : "cancelled";
+      set({
+        programs: {
+          ...report,
+          programs: report.programs.map((program) =>
+            program.id === event.program
+              ? {
+                  ...program,
+                  setup: {
+                    ...program.setup,
+                    job: null,
+                    last: {
+                      job: program.setup.job?.id ?? program.setup.last?.job ?? "",
+                      outcome,
+                      reason: failed?.reason ?? null,
+                      error: failed?.error ?? null,
+                    },
+                  },
+                }
+              : program,
+          ),
+        },
+      });
+    }
+    if (event.type === "program.setup.done") afterProgramChange();
+    else void get().refreshPrograms();
+  };
 
   // Param edits are optimistic: the board updates immediately, the PATCH is
   // debounced per node with changed keys merged, and the WS-driven refresh
@@ -1209,7 +1370,14 @@ export const useApp = create<AppState>((set, get) => {
           const errors = { ...get().downloadErrors };
           if (event.type === "model.download.failed") errors[event.model] = event.error;
           else delete errors[event.model];
-          set({ downloadErrors: errors });
+          set({
+            downloadErrors: errors,
+            // Weights that landed can turn a gap the gate is showing into
+            // a ready stage; it asks again on this.
+            ...(event.type === "model.download.done"
+              ? { readinessEpoch: get().readinessEpoch + 1 }
+              : {}),
+          });
           const refetch = () =>
             Promise.all([
               get().refreshModels(),
@@ -1221,6 +1389,17 @@ export const useApp = create<AppState>((set, get) => {
           // The engine can still report `downloading` for a beat after the
           // terminal event — refetch once more when it has settled.
           setTimeout(() => void refetch(), DOWNLOAD_SETTLE_MS);
+        } else if (event.type === "program.setup.progress") {
+          applyProgramProgress(event);
+        } else if (
+          event.type === "program.setup.done" ||
+          event.type === "program.setup.failed" ||
+          event.type === "program.setup.cancelled"
+        ) {
+          settleProgramSetup(event);
+        } else if (event.type === "program.removed") {
+          programsGen++;
+          afterProgramChange();
         } else if (event.type === "job.failed") {
           // Keep the advice with the node it is about. `suggestions` is
           // absent on ordinary failures — only the exhausted OOM ladder
@@ -1335,6 +1514,10 @@ export const useApp = create<AppState>((set, get) => {
     void get()
       .refreshReadiness()
       .catch((err) => console.warn("readiness refresh failed:", err));
+    // And the programs, which the banner's setup button and the first-run
+    // step read. A setup still running on the engine (started before a
+    // reconnect, or from the CLI) comes back with its job.
+    void get().refreshPrograms();
     if (get().currentProject) {
       try {
         await get().refreshBoard();
@@ -1414,6 +1597,41 @@ export const useApp = create<AppState>((set, get) => {
       .catch((err) => console.warn("readiness refresh failed:", err));
   };
 
+  /** The rows the render gate is about, asked fresh: placeholder and
+   * will_fail only. Throws when the engine cannot answer, and the two
+   * callers decide what that means. */
+  const gapsNow = async (
+    client: EngineClient,
+    scopeKey: string,
+    kinds?: string[],
+  ): Promise<ReadinessRow[]> => {
+    // Fetched fresh at the click, never from the cached slices: the gate
+    // guards a spend, and a stale "ready" is the one lie it must not tell.
+    // A project's own report wins whenever there is one, `kinds` or not: it
+    // is the only one that judges per-node model overrides, and narrowing it
+    // here is a filter, not a reason to ask a different question. (The
+    // engine's project route takes no `kinds`.)
+    const rows =
+      scopeKey === "home"
+        ? (await client.readiness(kinds)).rows
+        : (await client.projectReadiness(scopeKey)).rows.filter(
+            (row) => !kinds || kinds.includes(row.kind),
+          );
+    // A model whose bytes are moving right now is not a gap to warn about:
+    // the engine reports it missing (is_downloaded is a completed-files
+    // check) but the user is already fixing it, and the pre-readiness code
+    // exempted it for exactly this reason — first run hands over
+    // mid-download by design.
+    const arriving = new Set(
+      get()
+        .models.filter((row) => row.downloading)
+        .map((row) => row.id),
+    );
+    return blockingGaps(rows).filter(
+      (row) => !(row.fix?.type === "download" && arriving.has(row.fix.model_id)),
+    );
+  };
+
   const switchEngine = async () => {
     resetEngineScopedState();
     // A dismissal is about one engine's models; the newly paired box has
@@ -1442,6 +1660,9 @@ export const useApp = create<AppState>((set, get) => {
       // another box's report is wrong the moment the switch lands.
       readiness: null,
       projectReadiness: null,
+      // And the programs are that box's programs, on its disk.
+      programs: null,
+      programsError: null,
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1494,6 +1715,9 @@ export const useApp = create<AppState>((set, get) => {
     warnMissingModels: readFlagDefaultOn(WARN_MODELS_KEY),
     readiness: null,
     projectReadiness: null,
+    readinessEpoch: 0,
+    programs: null,
+    programsError: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -1591,44 +1815,30 @@ export const useApp = create<AppState>((set, get) => {
     readinessGaps: async (scopeKey, kinds) => {
       const { client, warnMissingModels } = get();
       if (!client || !warnMissingModels) return null;
-      // Fetched fresh at the click, never from the cached slices: the gate
-      // guards a spend, and a stale "ready" is the one lie it must not tell.
-      let rows: ReadinessRow[];
+      let gaps: ReadinessRow[];
       try {
-        // A project's own report wins whenever there is one, `kinds` or
-        // not: it is the only one that judges per-node model overrides, and
-        // narrowing it here is a filter, not a reason to ask a different
-        // question. (The engine's project route takes no `kinds`.)
-        rows =
-          scopeKey === "home"
-            ? (await client.readiness(kinds)).rows
-            : (await client.projectReadiness(scopeKey)).rows.filter(
-                (row) => !kinds || kinds.includes(row.kind),
-              );
+        gaps = await gapsNow(client, scopeKey, kinds);
       } catch {
         // No report is no reason to block a render the engine may well
         // serve — the gate fails open, the job's own error stays the truth.
         return null;
       }
-      // A model whose bytes are moving right now is not a gap to warn
-      // about: the engine reports it missing (is_downloaded is a
-      // completed-files check) but the user is already fixing it, and the
-      // pre-readiness code exempted it for exactly this reason — first run
-      // hands over mid-download by design.
-      const arriving = new Set(
-        get()
-          .models.filter((row) => row.downloading)
-          .map((row) => row.id),
-      );
-      const gaps = blockingGaps(rows).filter(
-        (row) => !(row.fix?.type === "download" && arriving.has(row.fix.model_id)),
-      );
       if (gaps.length === 0) return null;
       const key = scopeOf(scopeKey, kinds);
       const fingerprint = readinessFingerprint(gaps);
       if (sessionReadinessSkips.get(key) === fingerprint) return null;
       if (readReadinessSkips()[key] === fingerprint) return null;
       return gaps;
+    },
+
+    recheckGaps: async (scopeKey, kinds) => {
+      const { client } = get();
+      if (!client) return null;
+      try {
+        return await gapsNow(client, scopeKey, kinds);
+      } catch {
+        return null;
+      }
     },
 
     suppressReadiness: (scopeKey, rows, scope, kinds) => {
@@ -2738,6 +2948,116 @@ export const useApp = create<AppState>((set, get) => {
       refreshReadinessQuietly();
     },
 
+    refreshPrograms: async () => {
+      const { client } = get();
+      if (!client || seedFrozen) return;
+      const generation = ++programsGen;
+      try {
+        const report = await client.programs();
+        // The engine-switch guard every refresh here makes, plus the
+        // generation: a newer read, or a setup that ended, outranks this one.
+        if (get().client !== client || generation !== programsGen || seedFrozen) return;
+        set({ programs: keepLiveProgress(report, get().programs), programsError: null });
+      } catch (err) {
+        if (get().client !== client || generation !== programsGen) return;
+        // The last report stays: a blank pane says less than one marked
+        // stale, and the error says it is.
+        set({ programsError: messageOf(err) });
+      }
+    },
+
+    setupProgram: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      const row = get().programs?.programs.find((program) => program.id === programId);
+      try {
+        const answer = await client.setupProgram(programId);
+        const live = get().client === client && !seedFrozen;
+        if (answer.status === "started" && get().programs && live) {
+          // The bar appears with the click rather than with the first
+          // progress event, half a second later. The events move it on, and
+          // one that beat this answer here has already: it keeps its bytes
+          // and gains the job's id.
+          const report = get().programs!;
+          set({
+            programs: {
+              ...report,
+              programs: report.programs.map((program) =>
+                program.id === programId
+                  ? {
+                      ...program,
+                      setup: {
+                        ...program.setup,
+                        job: program.setup.job
+                          ? { ...program.setup.job, id: answer.job }
+                          : {
+                              id: answer.job,
+                              phase: "downloading",
+                              done: 0,
+                              total: program.setup.download_bytes ?? 0,
+                              bytes_per_s: null,
+                            },
+                        last: null,
+                      },
+                    }
+                  : program,
+              ),
+            },
+          });
+        }
+        if (answer.status === "installed") await get().refreshPrograms();
+        return null;
+      } catch (err) {
+        if (err instanceof EngineError && err.status === 507 && row) {
+          const report = get().programs;
+          return t("programs.refusals.noSpace", {
+            name: t(`programs.names.${programId}` as MessageKey),
+            size: formatSize((row.setup.download_bytes ?? 0) + (row.setup.install_bytes ?? 0)),
+            dir: report?.programs_dir ?? "",
+          });
+        }
+        // A 409 can mean a setup of it is already running (another window,
+        // the CLI): that is the outcome the click asked for, so show it
+        // rather than refuse.
+        await get().refreshPrograms();
+        const now = get().programs?.programs.find((program) => program.id === programId);
+        if (err instanceof EngineError && err.status === 409 && now?.setup.job) return null;
+        return messageOf(err);
+      }
+    },
+
+    cancelProgramSetup: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.cancelProgramSetup(programId);
+        // `program.setup.cancelled` follows once its files are gone, and
+        // settles the row.
+        return null;
+      } catch (err) {
+        // 409: it finished, or it is moving into place and will. The read
+        // shows which.
+        await get().refreshPrograms();
+        return messageOf(err);
+      }
+    },
+
+    removeProgram: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.removeProgram(programId);
+      } catch (err) {
+        return messageOf(err);
+      }
+      // `program.removed` does this too. Done here as well because the
+      // socket can be down, and a removal the screen never heard about
+      // leaves it offering a copy that is gone.
+      programsGen++;
+      afterProgramChange();
+      return null;
+    },
+
     inspectPairing: (code) => window.localcut.inspectPairing(code),
 
     pairRemote: async (code, armKeys = false) => {
@@ -3141,6 +3461,8 @@ if (typeof window !== "undefined" && window.localcut?.seedHookEnabled) {
     if (patch.selectedNode !== undefined) next.selectedNode = patch.selectedNode;
     if (patch.nodeFailures !== undefined) next.nodeFailures = patch.nodeFailures;
     if (patch.nodeRetries !== undefined) next.nodeRetries = patch.nodeRetries;
+    if (patch.programs !== undefined) next.programs = patch.programs;
+    if (patch.readiness !== undefined) next.readiness = patch.readiness;
     if (Object.keys(next).length > 0) useApp.setState(next);
   };
 }

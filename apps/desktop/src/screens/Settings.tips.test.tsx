@@ -47,11 +47,93 @@ const PROVIDERS = [
   { id: "anthropic", label: "Anthropic", capabilities: ["text.llm"], configured: true },
 ];
 
+/** The programs pane in the states that draw the most buttons: an FFmpeg
+ *  to set up (a setup button, and steps with copy and check buttons), an
+ *  Ollama set up by hand with a gear menu, and a ComfyUI mid-setup with its
+ *  cancel. */
+const PROGRAMS = {
+  platform: "linux-x64",
+  programs_dir: "/home/me/.localcut/programs",
+  programs_bytes: 0,
+  disk_free_bytes: 20_000_000_000,
+  bin_dir: "/home/me/.localcut/bin",
+  models_dir: "/home/me/.localcut/models",
+  programs: [
+    {
+      id: "ffmpeg",
+      state: "missing",
+      problem: "not_found",
+      source: "path",
+      location: "ffmpeg",
+      setting: "LOCALCUT_FFMPEG_BIN",
+      version: null,
+      checks: { draws_text: null },
+      managed: null,
+      setup: {
+        available: true,
+        unavailable_reason: null,
+        takes_effect: true,
+        version: "8.1.3",
+        url: "https://example.test/f.tar.xz",
+        download_bytes: 137_034_436,
+        install_bytes: 283_955_728,
+        job: null,
+        last: null,
+      },
+    },
+    {
+      id: "ollama",
+      state: "ready",
+      problem: null,
+      source: "default",
+      location: "http://127.0.0.1:11434/v1",
+      setting: "LOCALCUT_LLM_URL",
+      version: "0.35.0",
+      checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+      managed: null,
+      setup: {
+        available: false,
+        unavailable_reason: "program_not_supported",
+        takes_effect: false,
+        version: null,
+        url: null,
+        download_bytes: null,
+        install_bytes: null,
+        job: null,
+        last: null,
+      },
+    },
+    {
+      id: "comfyui",
+      state: "missing",
+      problem: "unreachable",
+      source: "default",
+      location: "http://127.0.0.1:8188",
+      setting: "LOCALCUT_COMFYUI_URL",
+      version: null,
+      checks: {},
+      managed: null,
+      setup: {
+        available: true,
+        unavailable_reason: null,
+        takes_effect: true,
+        version: "1",
+        url: "https://example.test/c.7z",
+        download_bytes: 2_000_000_000,
+        install_bytes: 4_000_000_000,
+        job: { id: "j", phase: "downloading", done: 1, total: 2_000_000_000, bytes_per_s: null },
+        last: null,
+      },
+    },
+  ],
+};
+
 /** Enough of a client for the panes that ask one for their rows. */
 const client = {
   baseUrl: "http://127.0.0.1:7830",
   listProviders: async () => PROVIDERS,
   llmModels: async () => ({ models: ["llama3"] }),
+  voices: async () => ({ available: true, voices: [], default: null, cloning: false }),
 };
 
 /** Every pane the dialog can show. */
@@ -59,6 +141,7 @@ const OWN_TABS = [
   "general",
   "defaults",
   "providers",
+  "programs",
   "storage",
   "engine",
   "about",
@@ -188,6 +271,11 @@ async function mount(tab: string, over: Record<string, unknown> = {}) {
     refreshStorage: vi.fn(async () => {}),
     refreshModels: vi.fn(async () => {}),
     refreshComfy: vi.fn(async () => null),
+    programs: PROGRAMS,
+    programsError: null,
+    readiness: [],
+    refreshPrograms: vi.fn(async () => {}),
+    refreshReadiness: vi.fn(async () => {}),
     ...over,
   } as never);
   const view = await act(async () => render(<Settings />));

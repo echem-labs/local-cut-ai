@@ -60,6 +60,8 @@ seconds, and never downloads anything.
   "programs_dir": "/home/me/.localcut/programs",
   "programs_bytes": 283956127,
   "disk_free_bytes": 15032385536,
+  "bin_dir": "/home/me/.localcut/bin",
+  "models_dir": "/home/me/.localcut/models",
   "programs": [
     {
       "id": "ffmpeg",
@@ -131,7 +133,11 @@ Top level: `platform` is the engine machine as a pin names it (`windows-x64`,
 `linux-arm64`, `macos-arm64` and so on, or null for one no pin can name).
 `programs_dir` is where LocalCut's copies live, resolved, and
 `programs_bytes` is everything in it. `disk_free_bytes` is the free space on
-that disk.
+that disk. `bin_dir` is `<data_dir>/bin`, where an FFmpeg you put there
+yourself outranks LocalCut's copy, and `models_dir` is where the engine keeps
+model weights, the folder ComfyUI's `extra_model_paths.yaml` points at. Both
+are resolved paths on the engine's machine, for the steps of setting a
+program up by hand.
 
 Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
 
