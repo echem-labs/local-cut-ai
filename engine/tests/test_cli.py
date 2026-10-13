@@ -134,6 +134,40 @@ def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path,
     assert payload["host"] == "127.0.0.1"
 
 
+def test_serve_logs_the_engine_at_info_but_not_each_outbound_request(tmp_path, monkeypatch, caplog):
+    """`serve` keeps INFO for what the engine says about itself. What it
+    does not want is httpx's line per request: readiness probes, ComfyUI
+    history polls and download hops, enough of them to push a traceback out
+    of the 50 stderr lines the desktop keeps as a crash report."""
+    import logging
+
+    import uvicorn
+
+    from localcut_engine.api import app as app_module
+
+    # What basicConfig gives the root outside pytest. Under pytest it is a
+    # no-op, because the root already has pytest's handlers.
+    caplog.set_level(logging.INFO)
+
+    def serving(self, sockets=None):
+        logging.getLogger("httpx").info(
+            'HTTP Request: GET http://127.0.0.1:8188/queue "HTTP/1.1 200 OK"'
+        )
+        logging.getLogger("localcut_engine.jobs.scheduler").info("job 0123456789ab done")
+
+    monkeypatch.setattr(app_module, "create_app", lambda config=None: None)
+    monkeypatch.setattr(uvicorn.Server, "run", serving)
+
+    code = cli.main(
+        ["serve", "--port", str(free_port()), "--data-dir", str(tmp_path), "--backend", "mock"]
+    )
+
+    assert code == 0
+    logged = {record.name for record in caplog.records}
+    assert "localcut_engine.jobs.scheduler" in logged
+    assert "httpx" not in logged
+
+
 def test_a_network_bind_without_a_token_is_refused(tmp_path, monkeypatch):
     """An empty token counts as unconfigured — `--token ""` would otherwise
     put the engine on the LAN with a secret compare_digest accepts from

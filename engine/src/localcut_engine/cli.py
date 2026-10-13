@@ -96,6 +96,20 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    # httpx logs every request it sends at INFO, which made it the loudest
+    # thing on every client command: a line above `projects`' listing, one
+    # per two-second poll between `render`'s progress lines, one per tool
+    # call in the log an agent host keeps for `mcp`. Neither it nor httpcore
+    # logs anything above INFO, so this drops only those lines; a request
+    # that fails still raises, and the commands turn that into a sentence.
+    #
+    # `serve` too. It already runs uvicorn with access_log=False, so inbound
+    # requests are not a line each, and its outbound ones are readiness
+    # probes, ComfyUI history polls and the hops of every model download.
+    # The desktop keeps the last 50 lines of the engine's stderr as its
+    # crash report, and those lines would push the traceback out of it.
+    for chatty in ("httpx", "httpcore"):
+        logging.getLogger(chatty).setLevel(logging.WARNING)
     _survive_console_encoding()
 
     if args.command == "mcp":
