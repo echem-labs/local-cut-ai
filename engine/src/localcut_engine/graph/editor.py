@@ -173,12 +173,12 @@ def suggest_scene_prompt(view: dict, seconds: float | None = None) -> str:
     # Imported here, not at module scope: `backends.llm` pulls httpx and the
     # ffmpeg timing constants, which a graph module has no business loading
     # to reach one arithmetic helper. The helper is the point — it is the
-    # same words-per-second the script writer is held to, so a scene added
-    # this way is measured the way every other scene is.
+    # same speech rate the script writer is held to, so a scene added this
+    # way is measured the way every other scene is.
     from ..backends.llm import narration_word_budget
 
     # The length the scene needs, floored by what this project actually
-    # writes. A five-second default asks for eighteen words, which next to
+    # writes. A five-second default asks for thirteen words, which next to
     # scenes carrying forty reads as a caption dropped into a script — and
     # narration is what sets a scene's runtime, so matching the project's own
     # density is what makes the new scene sit at the same pace as the rest.
