@@ -346,6 +346,12 @@ interface AppState {
   // Which Settings tab is showing — deep-linkable (engine chip → "engine",
   // the prompt bar's model button → "models").
   settingsTab: string;
+  // The task whose Default models picker a readiness fix sent the user to
+  // (`pick_model`). Settings > Models brings that row into view and gives
+  // its picker the keyboard once the row renders, then clears this. It
+  // waits here rather than being acted on at the click because the row
+  // appears only after the LLM server's model list arrives.
+  defaultPickerFocus: string | null;
   // One natural-language edit at a time — the LLM call is slow and a second
   // plan compiled against the pre-edit view would fight the first.
   editBusy: boolean;
@@ -620,6 +626,11 @@ interface AppState {
    * land as graph nodes and render through the queue like anything else. */
   preparePublish: () => Promise<string | null>;
   setSettingsTab: (tab: string) => void;
+  /** Open Settings on Models with the Default models picker for `task` in
+   * view and focused: where a readiness `pick_model` fix is made. */
+  openDefaultPicker: (task: string) => void;
+  /** The picker took the focus `openDefaultPicker` asked for. */
+  defaultPickerFocused: () => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
   deleteProject: (id: string) => Promise<string | null>;
@@ -1716,6 +1727,7 @@ export const useApp = create<AppState>((set, get) => {
     saveTemplateFor: null,
     settingsOpen: false,
     settingsTab: "general",
+    defaultPickerFocus: null,
     editBusy: false,
     remoteEngine: false,
     remotePaired: false,
@@ -3153,12 +3165,22 @@ export const useApp = create<AppState>((set, get) => {
 
     setLibraryFilter: (filter) => set({ libraryFilter: filter }),
 
+    // A focus request belongs to the one opening it was made for. A picker
+    // that never rendered (the server's list never came) must not grab the
+    // keyboard the next time Settings opens for some other reason, and the
+    // Library and Set up again close Settings without closeSettings, so
+    // every other way in drops it too.
     openSettings: (tab) =>
-      set(tab ? { settingsOpen: true, settingsTab: tab } : { settingsOpen: true }),
+      set({ settingsOpen: true, defaultPickerFocus: null, ...(tab ? { settingsTab: tab } : {}) }),
 
     setSettingsTab: (tab) => set({ settingsTab: tab }),
 
-    closeSettings: () => set({ settingsOpen: false }),
+    openDefaultPicker: (task) =>
+      set({ settingsOpen: true, settingsTab: "models", defaultPickerFocus: task }),
+
+    defaultPickerFocused: () => set({ defaultPickerFocus: null }),
+
+    closeSettings: () => set({ settingsOpen: false, defaultPickerFocus: null }),
 
     // -- project lifecycle (review 4) — optimistic, with rollback ----------
 

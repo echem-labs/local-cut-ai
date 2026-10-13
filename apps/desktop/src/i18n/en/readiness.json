@@ -22,6 +22,9 @@
     "otherModel": "rendered by a different installed model"
   },
   "line": "{stage} — {effect}.",
+  "fix": {
+    "pickModel": "Pick a model"
+  },
   "banner": {
     "title": "Some stages aren't ready",
     "download": "Get {model} · {size}",

@@ -5579,6 +5579,16 @@ button.link:hover {
   margin: 0;
 }
 
+/* A well's own fix when it is a choice rather than a download: the picker
+   a `pick_model` fix names. Inside the well's walls, under the stages it
+   prices, so it reads as the answer to that well and not as one more
+   problem. */
+.well-fix {
+  display: flex;
+  padding: var(--space-2) 0 var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
 /* The readout under the narration field: the app's one non-obvious rule,
    live, at the only moment it can be acted on. */
 .scene-runtime {

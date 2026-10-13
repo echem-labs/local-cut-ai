@@ -116,6 +116,9 @@ export interface GapItem {
 export interface GapGroup {
   cause: string;
   reason: string;
+  /** The task whose Default models picker fixes this cause, when the engine
+   * says the fix is a pick (`pick_model`). */
+  pickTask: string | null;
   items: GapItem[];
   /** The worst verdict inside, which decides both the well's edge colour
    * and where the group sorts. */
@@ -135,7 +138,14 @@ export function gapGroups(rows: readonly ReadinessRow[]): GapGroup[] {
   for (const row of distinctGaps(rows)) {
     const cause = causeOf(row);
     if (cause === null) continue;
-    const group = groups.get(cause) ?? { cause, reason: row.reason, items: [], severity: 0 };
+    const group: GapGroup = groups.get(cause) ?? {
+      cause,
+      reason: row.reason,
+      pickTask: null,
+      items: [],
+      severity: 0,
+    };
+    if (group.pickTask === null && row.fix?.type === "pick_model") group.pickTask = row.fix.task;
     group.items.push({
       key: `${row.kind}:${row.model ?? ""}:${row.reason}`,
       stage: stageOf(row),
@@ -169,8 +179,21 @@ export function describeGap(row: ReadinessRow): string | null {
  *
  * The list is a `ul` of `li`s and reads as one to a screen reader; the
  * dots are decoration, because the row's own words already carry the
- * severity ("a failed job", "a stand-in"). */
-export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
+ * severity ("a failed job", "a stand-in").
+ *
+ * A well whose fix is a pick (`pick_model`) carries the button that opens
+ * that picker. Nothing else on either host reaches it: their own fixes are
+ * downloads and program setups, and neither changes which model a stage
+ * asks for. `onLeave` runs first, so the gate can close rather than sit
+ * over Settings. */
+export function GapList({
+  rows,
+  onLeave,
+}: {
+  rows: readonly ReadinessRow[];
+  onLeave?: () => void;
+}) {
+  const openDefaultPicker = useApp((state) => state.openDefaultPicker);
   const groups = gapGroups(rows);
   if (groups.length === 0) return null;
   const totals = severityTotals(groups);
@@ -183,6 +206,7 @@ export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
       <div className="gap-list">
         {groups.map((group) => {
           const Icon = CAUSE_ICON[group.reason] ?? CircleSlash;
+          const pick = group.pickTask;
           return (
             <div
               className={`well ${group.severity >= SEVERITY.placeholder ? "edge-fail" : "edge-deg"}`}
@@ -193,6 +217,19 @@ export function GapList({ rows }: { rows: readonly ReadinessRow[] }) {
                 <span>{group.cause}</span>
               </div>
               <StageRows items={group.items} />
+              {pick !== null && (
+                <div className="well-fix">
+                  <button
+                    className="btn-outline sm"
+                    onClick={() => {
+                      onLeave?.();
+                      openDefaultPicker(pick);
+                    }}
+                  >
+                    {t("readiness.fix.pickModel")}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -625,7 +662,7 @@ export function ReadinessDialog({
       ) : (
         <IntroSentence stages={stages} />
       )}
-      <GapList rows={rows} />
+      <GapList rows={rows} onLeave={onClose} />
       {(downloadIds.size > 0 || setups.length > 0) && (
         <div className="well gate-downloads">
           <div className="whead label">
