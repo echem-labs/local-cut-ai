@@ -686,6 +686,7 @@ export function Settings() {
                       >
                         <button
                           className={theme === option.value ? "active" : ""}
+                          aria-pressed={theme === option.value}
                           onClick={() => {
                             setTheme(option.value);
                             applyTheme(option.value);
@@ -714,6 +715,7 @@ export function Settings() {
                       >
                         <button
                           className={notifyOnDone === on ? "active" : ""}
+                          aria-pressed={notifyOnDone === on}
                           onClick={() => setNotifyOnDone(on)}
                         >
                           {t(on ? "settings.notify.on" : "settings.notify.off")}
@@ -743,6 +745,7 @@ export function Settings() {
                       >
                         <button
                           className={warnMissingModels === on ? "active" : ""}
+                          aria-pressed={warnMissingModels === on}
                           onClick={() => setWarnMissingModels(on)}
                         >
                           {t(on ? "settings.warnModels.on" : "settings.warnModels.off")}
@@ -770,6 +773,7 @@ export function Settings() {
                       >
                         <button
                           className={zoom === step ? "active" : ""}
+                          aria-pressed={zoom === step}
                           onClick={() => setUserZoom(step)}
                         >
                           {Math.round(step * 100)}%
@@ -859,6 +863,7 @@ export function Settings() {
                     <Tip label={t("home.modeAuto")} hint={t("home.modeAutoTitle")}>
                       <button
                         className={defaults.mode === "prompt" ? "active" : ""}
+                        aria-pressed={defaults.mode === "prompt"}
                         onClick={() => setDefaults({ mode: "prompt" })}
                       >
                         {t("home.modeAuto")}
@@ -867,6 +872,7 @@ export function Settings() {
                     <Tip label={t("home.modeReview")} hint={t("home.modeReviewTitle")}>
                       <button
                         className={defaults.mode === "beginner" ? "active" : ""}
+                        aria-pressed={defaults.mode === "beginner"}
                         onClick={() => setDefaults({ mode: "beginner" })}
                       >
                         {t("home.modeReview")}

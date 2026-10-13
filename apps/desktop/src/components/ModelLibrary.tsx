@@ -152,6 +152,7 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
               <Tip label={t("models.custom.sourceUrlTip")}>
                 <button
                   className={source === "url" ? "active" : ""}
+                  aria-pressed={source === "url"}
                   onClick={() => setSource("url")}
                 >
                   {t("models.custom.sourceUrl")}
@@ -160,6 +161,7 @@ function AddCustomModel({ onDone }: { onDone: () => void }) {
               <Tip label={t("models.custom.sourceFileTip")}>
                 <button
                   className={source === "file" ? "active" : ""}
+                  aria-pressed={source === "file"}
                   onClick={() => setSource("file")}
                 >
                   {t("models.custom.sourceFile")}

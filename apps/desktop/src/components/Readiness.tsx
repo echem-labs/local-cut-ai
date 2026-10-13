@@ -688,6 +688,7 @@ export function ReadinessDialog({
                 <button
                   key={option.id}
                   className={scope === option.id ? "active" : ""}
+                  aria-pressed={scope === option.id}
                   onClick={() => setScope(option.id)}
                 >
                   {option.label}
