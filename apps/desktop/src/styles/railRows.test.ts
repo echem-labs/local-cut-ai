@@ -51,7 +51,7 @@ const declarations = (body: string): Decls =>
 /** The declarations of the rule whose whole selector is `selector`, or an
  *  empty set when there is no such rule. */
 const rule = (selector: string): Decls => {
-  const head = new RegExp(`(^|\\n)${selector.replace(/[.:]/g, "\\$&")} \\{`).exec(APP);
+  const head = new RegExp(`(^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{`).exec(APP);
   if (!head) return {};
   const open = head.index + head[0].length;
   return declarations(APP.slice(open, APP.indexOf("}", open)));
