@@ -363,10 +363,13 @@ class LLMScriptBackend(ExecutionBackend):
         self.root_url = base.removesuffix("/v1")
         self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
-        # Live read of the user's persisted per-task default (Settings →
-        # Models); the ctor `model` stays the engine-config fallback. A
-        # callable, not a value: the default can change mid-session and the
-        # next job must see it without a backend rebuild.
+        # Live read of what a job with no model of its own is written with.
+        # The engine passes recommend.script_model (the user's pick in
+        # Settings > Models, else Auto), and `model` is the fallback for an
+        # instance built without one. A callable, not a value: the pick can
+        # change mid-session and the next job must see it without a backend
+        # rebuild. It can block (Auto's first answer probes the hardware), so
+        # the async paths below ask it from a thread.
         self.default_model = default_model
         self.timeout_s = timeout_s
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
@@ -472,8 +475,8 @@ class LLMScriptBackend(ExecutionBackend):
     def resolve_model(self, requested: str | None) -> str:
         """The Ollama model a node's `model` choice lands on: an explicit
         request wins (with the `local:` routing prefix stripped — the server
-        knows only bare names); otherwise the user's persisted text.llm
-        default, and only then the engine-config model."""
+        knows only bare names); otherwise `default_model`, and only then the
+        constructor's model."""
         if requested:
             return requested.removeprefix("local:")
         if self.default_model is not None and (configured := self.default_model()):
@@ -488,7 +491,7 @@ class LLMScriptBackend(ExecutionBackend):
                 f"cloud model {spec.model!r} requested but no cloud provider is "
                 "configured (BYOK providers arrive in a later phase)"
             )
-        model = self.resolve_model(spec.model)
+        model = await asyncio.to_thread(self.resolve_model, spec.model)
         ctx.record_model(model)
         if spec.params.get("task") == "metadata":
             # Publish kit (title/description/hashtags) from the script — a
@@ -526,7 +529,7 @@ class LLMScriptBackend(ExecutionBackend):
         must release the model for image/video work afterwards."""
         # The one place the configured default is applied — the private
         # helpers below take a resolved name so it cannot drift between them.
-        model = self.resolve_model(model)
+        model = await asyncio.to_thread(self.resolve_model, model)
         raw = await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
         if self.unload_after:
             await self._unload(model)

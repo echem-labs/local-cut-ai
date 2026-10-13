@@ -357,6 +357,24 @@ async def test_system_reports_tier_and_recommendations(client):
     assert body["ffmpeg_drawtext"] in (True, False, None)
 
 
+async def test_system_reports_free_disk_as_it_is_now(client, monkeypatch):
+    """Free disk is the one hardware figure that moves while the engine
+    runs: it falls by tens of GB as models download, and the first-run
+    wizard shows it next to what it recommends. The GPU probe is kept
+    between calls; this figure is not."""
+    import psutil
+
+    free = {"bytes": 100 * 2**30}
+    measured = psutil.disk_usage
+    monkeypatch.setattr(
+        psutil, "disk_usage", lambda path: measured(path)._replace(free=free["bytes"])
+    )
+    first = (await client.get("/system")).json()["hardware"]["disk_free_gb"]
+    free["bytes"] = 60 * 2**30
+    second = (await client.get("/system")).json()["hardware"]["disk_free_gb"]
+    assert (first, second) == (100.0, 60.0)
+
+
 async def test_manifest_defaults_are_commercial_safe(client):
     response = await client.get("/models/manifest")
     assert response.status_code == 200

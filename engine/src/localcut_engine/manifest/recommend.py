@@ -7,11 +7,19 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ..hardware.probe import HardwareProfile
+from ..config import EngineConfig
+from ..hardware.probe import HardwareProfile, machine_profile
 from .capability import COMFY_TASKS, DOWNLOADED_TASKS
+from .defaults import DefaultsTooNew, load_defaults
+from .loader import load_manifest
 from .model import ModelEntry, ModelManifest
 
 TASKS = ["text.llm", "image.gen", "video.i2v", "speech.tts", "music.gen", "transcribe"]
+
+# The script model when nothing names one: no LOCALCUT_LLM_MODEL, no pick in
+# Settings, and no local text model this machine fits (the slate sends its
+# scripts to the cloud).
+FALLBACK_LLM_MODEL = "qwen3:14b"
 
 
 class Recommendation(BaseModel):
@@ -41,7 +49,15 @@ def _fits(model: ModelEntry, profile: HardwareProfile) -> bool:
     return (
         vram >= model.requirements.vram_gb
         and profile.ram_gb >= model.requirements.ram_gb
-        and profile.disk_free_gb >= model.requirements.disk_gb
+        # Free disk is measured on LocalCut's data folder, where the app's
+        # own downloads land, and only those are held to it. A text.llm
+        # model lives in Ollama's store, which the app does not fill. The
+        # figure falls with every video model downloaded, so holding the
+        # script model to it would move Auto (auto_llm_model) off the model
+        # the user pulled, and the wizard's pick along with it.
+        and (
+            model.task not in DOWNLOADED_TASKS or profile.disk_free_gb >= model.requirements.disk_gb
+        )
     )
 
 
@@ -119,3 +135,62 @@ def recommend_slate(manifest: ModelManifest, profile: HardwareProfile) -> list[R
             )
         )
     return slate
+
+
+def server_tag(entry: ModelEntry) -> str | None:
+    """The name the LLM server knows a text.llm entry by: its `ollama`
+    source. The manifest id (`qwen3-8b-q4`) names the entry in the catalog,
+    and no server has heard of it."""
+    return next(
+        (source["ollama"] for source in entry.sources if source.get("ollama")),
+        None,
+    )
+
+
+def auto_llm_model(config: EngineConfig) -> str:
+    """What Auto means for text.llm: the model a script is written with when
+    neither the node nor a Settings pick names one.
+
+    LOCALCUT_LLM_MODEL when the operator set it. Otherwise the text model
+    the slate recommends for this hardware, which is the one the first-run
+    wizard showed and the one a user who followed it has pulled. An engine
+    that asked for a fixed model instead failed that user's first script
+    over a model nothing had told them to get.
+
+    Deliberately not "whatever the server has" when the recommended model
+    is missing. The server's list says nothing about which names can write a
+    screenplay (embedding models are listed like any other), and readiness
+    already names the missing model with the picker as its fix, which is a
+    choice the user makes rather than one made for them.
+
+    Blocking on its first call, while the hardware is probed
+    (machine_profile), so callers on the event loop take it to a thread.
+    """
+    if config.llm_model:
+        return config.llm_model
+    try:
+        manifest = load_manifest(config)
+    except (OSError, ValueError):
+        # The manifest's own routes refuse an unreadable one with a reason;
+        # a script job still has a model to ask for.
+        return FALLBACK_LLM_MODEL
+    profile = machine_profile(str(config.data_dir))
+    recommended = next(
+        (row.model for row in recommend_slate(manifest, profile) if row.task == "text.llm"),
+        None,
+    )
+    return (server_tag(recommended) if recommended else None) or FALLBACK_LLM_MODEL
+
+
+def script_model(config: EngineConfig) -> str:
+    """The model a script with no model of its own is written with: the
+    user's text.llm pick in Settings, else Auto. The one answer readiness,
+    GET /programs, GET /llm/models and the script backend all give.
+
+    A defaults file from a newer build is refused on its own routes; here
+    it reads as no pick, so a script job still runs."""
+    try:
+        picked = load_defaults(config).get("text.llm")
+    except DefaultsTooNew:
+        picked = None
+    return picked or auto_llm_model(config)

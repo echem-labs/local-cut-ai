@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import serve_engine
+from conftest import pin_hardware, serve_engine
 
 from localcut_engine import cli
 from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL, create_app
@@ -553,6 +553,9 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
     engine looked, and FFmpeg says exactly what a setup downloads and keeps.
     The report itself never downloads anything."""
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    # No GPU either, so no local text model is recommended and the script
+    # model is the engine's own default.
+    pin_hardware(monkeypatch, None)
     monkeypatch.setattr(program_manifest, "platform_key", lambda: "linux-x64")
 
     def no_downloads(*args, **kwargs):

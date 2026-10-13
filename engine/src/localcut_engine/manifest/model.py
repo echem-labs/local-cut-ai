@@ -49,6 +49,11 @@ class ModelEntry(BaseModel):
     quality_score: float = 5.0
     speed_score: float = 5.0
     license: LicenseInfo
+    # Where the model comes from, one {kind: ref} per place: "hf" is a
+    # Hugging Face repo, "url" and "file" what a custom entry was added
+    # from, and "ollama" the name `ollama pull` takes and the LLM server then
+    # lists, which is the only name a text.llm entry can be asked for by
+    # (recommend.server_tag).
     sources: list[dict[str, str]] = Field(default_factory=list)
     files: list[ModelFile] = Field(default_factory=list)
     comfy_graph_template: str = ""
