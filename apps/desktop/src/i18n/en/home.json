@@ -19,6 +19,7 @@
   "modelsReady": "ready",
   "manageModels": "Manage models →",
   "getIt": "Get it →",
+  "pickModel": "Pick a model →",
   "generateTool": "Generate {tool}",
   "toolHeadSuffix": "· no project needed — export directly, or turn it into a video later",
   "closeToolAria": "Close tool, back to video prompt",

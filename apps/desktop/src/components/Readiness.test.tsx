@@ -100,6 +100,9 @@ beforeEach(() => {
     projectReadiness: null,
     readiness: null,
     warnMissingModels: true,
+    settingsOpen: false,
+    settingsTab: "general",
+    defaultPickerFocus: null,
   } as never);
 });
 
@@ -633,5 +636,70 @@ describe("a program to set up", () => {
     await waitFor(() => expect(run).toHaveBeenCalled());
     // Nothing was dismissed, so nothing is remembered as dismissed.
     expect(localStorage.getItem("localcut.readinessSkip.v1")).toBeNull();
+  });
+});
+
+const scriptModelMissing: ReadinessRow = {
+  kind: "script",
+  model: "qwen3:14b",
+  backend: "llm",
+  verdict: "will_fail",
+  reason: "llm_model_missing",
+  data: { task: "text.llm", model: "qwen3:14b" },
+  fix: { type: "pick_model", task: "text.llm" },
+};
+
+/**
+ * A model to pick. The engine's fix for a script model the LLM server does
+ * not have is a choice under Default models, and "Set up models" landed on
+ * the Models tab with the library in view and nothing pointing at that row.
+ */
+describe("a model to pick", () => {
+  it("opens the picker it names from the gate, closing the gate first", async () => {
+    seed([scriptModelMissing]);
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.fix.pickModel") }),
+    );
+    // Settings is a layer of its own, and a gate left open over it would
+    // keep the focus trap.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const state = useApp.getState();
+    expect([state.settingsOpen, state.settingsTab, state.defaultPickerFocus]).toEqual([
+      true,
+      "models",
+      "text.llm",
+    ]);
+  });
+
+  it("offers the same picker from the banner's well", async () => {
+    seed([scriptModelMissing]);
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: t("readiness.fix.pickModel") }));
+    const state = useApp.getState();
+    expect([state.settingsOpen, state.settingsTab, state.defaultPickerFocus]).toEqual([
+      true,
+      "models",
+      "text.llm",
+    ]);
+  });
+
+  it("leaves a program beside it on Programs", async () => {
+    const openSettings = vi.fn();
+    seed([exportFails, scriptModelMissing], { openSettings, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    // The pick belongs to the script's well alone; FFmpeg's fix is still
+    // its setup, and the footer still goes where that is done.
+    expect(
+      within(dialog).getAllByRole("button", { name: t("readiness.fix.pickModel") }),
+    ).toHaveLength(1);
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupPrograms") }),
+    );
+    expect(openSettings).toHaveBeenCalledWith("programs");
   });
 });

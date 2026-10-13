@@ -17,7 +17,7 @@ import { StageSummaryRow } from "../components/StageSummaryRow";
 import { StartFromTemplateDialog } from "../components/TemplateDialogs";
 import { ModelsPopover } from "../components/ModelsPopover";
 import { Tip } from "../components/Tooltip";
-import type { Job, LlmModels, Project, ToolKind } from "../api/types";
+import type { Job, LlmModels, Project, ReadinessRow, ToolKind } from "../api/types";
 import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
@@ -72,6 +72,35 @@ const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = TOOL_KINDS.map((kind)
   icon: TOOL_ICONS[kind],
 }));
 
+/** A readiness gap as the standing line under a prompt box, and the link to
+ * where it is fixed: the Default models picker a `pick_model` fix names,
+ * otherwise the Settings tab `settingsTabFor` picks (Programs for a
+ * program, Models for a model). Nothing for a reason this build has no
+ * sentence for. */
+function GapNote({ row }: { row: ReadinessRow }) {
+  const openSettings = useApp((state) => state.openSettings);
+  const openDefaultPicker = useApp((state) => state.openDefaultPicker);
+  const sentence = describeGap(row);
+  if (sentence === null) return null;
+  const pick = row.fix?.type === "pick_model" ? row.fix.task : null;
+  // `status`, not `alert`: this is standing copy, and an assertive live
+  // region re-announces it on every readiness refresh.
+  return (
+    <p className="hint" role="status">
+      {sentence}{" "}
+      {pick !== null ? (
+        <button className="link" onClick={() => openDefaultPicker(pick)}>
+          {t("home.pickModel")}
+        </button>
+      ) : (
+        <button className="link" onClick={() => openSettings(settingsTabFor([row]))}>
+          {t("home.getIt")}
+        </button>
+      )}
+    </p>
+  );
+}
+
 /** Home: one prompt surface — the video prompt, or the active quick tool's
  * panel in its place (never both) — plus the Quick Tools row and a real
  * project browser (review 4): search/sort, status dots, context menus. */
@@ -91,7 +120,6 @@ export function Home() {
     deleteProject,
     renameProject,
     duplicateProject,
-    openSettings,
     openLibrary,
     actionError,
     dismissActionError,
@@ -440,19 +468,10 @@ export function Home() {
               {actionError.message}
             </p>
           )}
-          {/* `status`, not `alert`: this is standing copy, and an
-              assertive live region re-announces it on every readiness
-              refresh. Also gated on the SENTENCE — a reason code this
-              build has no catalog entry for must render as nothing, not
-              as an empty announcement with a link after it. */}
-          {promptGap && describeGap(promptGap) && (
-            <p className="hint" role="status">
-              {describeGap(promptGap)}{" "}
-              <button className="link" onClick={() => openSettings(settingsTabFor([promptGap]))}>
-                {t("home.getIt")}
-              </button>
-            </p>
-          )}
+          {/* Gated on the SENTENCE inside GapNote: a reason code this
+              build has no catalog entry for must render as nothing, not as
+              an empty announcement with a link after it. */}
+          {promptGap && <GapNote row={promptGap} />}
         </div>
       )}
 
@@ -734,14 +753,7 @@ export function Home() {
               {actionError.message}
             </p>
           )}
-          {toolGaps.length > 0 && describeGap(toolGaps[0]) && (
-            <p className="hint" role="status">
-              {describeGap(toolGaps[0])}{" "}
-              <button className="link" onClick={() => openSettings(settingsTabFor([toolGaps[0]]))}>
-                {t("home.getIt")}
-              </button>
-            </p>
-          )}
+          {toolGaps.length > 0 && <GapNote row={toolGaps[0]} />}
         </div>
       )}
       {readinessDialog}
