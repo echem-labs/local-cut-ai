@@ -55,9 +55,10 @@ describe("a clip held by an unapproved checkpoint", () => {
     expect(pill.style.color).not.toBe("");
   });
 
-  it("shows its duration as planned, the way a queued clip does", () => {
+  it("shows its length as an estimate, the way any scene before assembly does", () => {
     mount();
-    expect(screen.getByText(t("scene.durQueued", { d: 4 }))).toBeInTheDocument();
+    // Under the name and on the thumbnail badge.
+    expect(screen.getAllByText(t("scene.durEstimate", { d: 4 }))).toHaveLength(2);
   });
 
   it("is settled but not done", () => {

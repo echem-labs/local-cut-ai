@@ -5,6 +5,7 @@ import { t } from "../i18n";
 import { remainingLabel } from "../lib/eta";
 import { displaySeconds } from "../lib/formats";
 import { useIsDropTarget } from "../lib/dropTarget";
+import { sceneLength } from "../lib/order";
 import { usePlayback } from "../lib/playback";
 import { useApp } from "../store";
 import { StatusPill } from "./StatusRing";
@@ -68,6 +69,7 @@ export function SceneCard({
   onTeachDismiss?: () => void;
 }) {
   const {
+    board,
     client,
     currentProject,
     selectedNode,
@@ -118,7 +120,15 @@ export function SceneCard({
   const failed = clip.status === "failed";
   const rendering = clip.status === "rendering";
   const sceneNo = scene.scene_id.replace(/^s/, "");
-  const duration = Number(clip.params.duration_s);
+  // The scene's length by the rule the timeline strip uses, so the two can
+  // never print different numbers for one scene. `clip.params.duration_s`
+  // is one take's plan: on a split scene it read 7.5 s over a 21 s scene.
+  const length = board ? sceneLength(board, scene) : null;
+  const lengthLabel = length
+    ? t(length.estimate ? "scene.durEstimate" : "scene.durValue", {
+        d: displaySeconds(length.seconds),
+      })
+    : null;
   const hasThumb = keyframeHash && client && currentProject;
   const clipUrl =
     clip.artifact_hash && client && currentProject
@@ -299,9 +309,7 @@ export function SceneCard({
             </span>
           </Tip>
         )}
-        {!rendering && Number.isFinite(duration) && (
-          <span className="dur-badge">{t("scene.durValue", { d: displaySeconds(duration) })}</span>
-        )}
+        {!rendering && lengthLabel && <span className="dur-badge">{lengthLabel}</span>}
         {/* failure ladder lives ON the dimmed frame (design mock): the
             thumb stays the stage, the choices sit at its foot */}
         {failed && (
@@ -444,16 +452,10 @@ export function SceneCard({
           >
             {t("scene.sceneName", { n: sceneNo })}
           </button>
-          {/* design mock: — while rendering/failed, ~4s while queued (or
-              held at a checkpoint, which is just as unrendered) */}
+          {/* design mock: a dash while rendering/failed, ~4s until the cut
+              has measured the scene, 4s once it has */}
           <span className="scene-dur">
-            {rendering || failed
-              ? t("scene.dash")
-              : (clip.status === "queued" || clip.status === "held") && Number.isFinite(duration)
-                ? t("scene.durQueued", { d: displaySeconds(duration) })
-                : Number.isFinite(duration)
-                  ? t("scene.durValue", { d: displaySeconds(duration) })
-                  : t("scene.dash")}
+            {rendering || failed ? t("scene.dash") : (lengthLabel ?? t("scene.dash"))}
           </span>
         </div>
         {editingWords ? (
