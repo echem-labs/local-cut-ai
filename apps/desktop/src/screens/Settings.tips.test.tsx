@@ -134,6 +134,7 @@ const client = {
   listProviders: async () => PROVIDERS,
   llmModels: async () => ({ models: ["llama3"] }),
   voices: async () => ({ available: true, voices: [], default: null, cloning: false }),
+  visionModels: async () => ({ models: [], default: null, local_known: true }),
 };
 
 /** Every pane the dialog can show. */
