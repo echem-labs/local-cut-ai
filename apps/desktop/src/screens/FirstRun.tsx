@@ -264,7 +264,7 @@ export function FirstRun() {
       {step === 5 && (
         <ReadyStep
           stages={[
-            ...stageRows(system, models, programs),
+            ...stageRows(system, models, programs, watchedIds),
             ...(finalVideoRow(programs) ? [finalVideoRow(programs)!] : []),
           ]}
           models={models}
@@ -494,6 +494,7 @@ function ReadyStep({
   const minutesLeft = rate > 0 ? Math.max(1, Math.round(remaining / rate / 60)) : null;
 
   const anyPending = watched.some((row) => !row.downloaded);
+  const skipped = stages.filter((stage) => stage.status.kind === "notDownloaded").length;
 
   return (
     <div className="wiz-body">
@@ -530,6 +531,10 @@ function ReadyStep({
           <span>{minutesLeft !== null ? t("firstRun.timeLeft", { minutes: minutesLeft }) : ""}</span>
         </div>
       )}
+      {/* No download button for a skipped stage: the user unticked it one
+          step ago. Saying where it lives is enough, and a project that
+          needs it offers the download in its readiness banner. */}
+      {skipped > 0 && <p className="hintline">{plural("firstRun.readySkipped", skipped)}</p>}
       <div className="setup-actions">
         <button className="btn-primary" onClick={onDone}>
           {t("firstRun.startCreating")}

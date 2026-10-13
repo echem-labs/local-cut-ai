@@ -391,13 +391,15 @@ export function Home() {
   );
   const dlReady = readyStages(downloadStages);
   // Only while bytes are actually moving: a stage nobody picked reads
-  // "queued" forever, and gating on that would pin this strip to Home for
-  // the life of the install.
+  // "not downloaded" forever, and gating on that would pin this strip to
+  // Home for the life of the install.
   const downloading = models.some((row) => row.downloading);
   const [dlOpen, setDlOpen] = useState(false);
   let dlDone = 0;
   let dlTotal = 0;
   for (const stage of downloadStages) {
+    // A skipped stage's size is not on its way, so it is not in the total.
+    if (stage.status.kind === "notDownloaded") continue;
     const row = models.find((entry) => entry.id === stage.id);
     if (!row || row.files.length === 0) continue;
     dlTotal += row.size_bytes;

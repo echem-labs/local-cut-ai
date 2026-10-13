@@ -9,6 +9,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ModelRow, Project, SystemInfo } from "../api/types";
+import { formatSize } from "../components/ModelLibrary";
 import { t } from "../i18n";
 import { useApp } from "../store";
 import { Home } from "./Home";
@@ -210,6 +211,22 @@ describe("the download bridge", () => {
     // The wizard's rows, in the wizard's order.
     expect(document.querySelectorAll(".srow")).toHaveLength(3);
     expect(screen.getByText(t("firstRun.statusDownloading", { pct: 50 }))).toBeInTheDocument();
+  });
+
+  it("says a stage nobody is downloading is not downloaded, and leaves it out of the bytes", () => {
+    // ace was never started: the engine reports it idle and absent.
+    const withIdle = [...downloading, model("ace", "music.gen", { size_bytes: 7 * 2 ** 30 })];
+    seed({ models: withIdle, system: SYSTEM(withIdle) });
+    render(<Home />);
+    // sdxl's whole gigabyte plus half of ltx's; ace's 7 GB is not on the way.
+    expect(
+      screen.getByText(
+        t("home.dlSummaryBytes", { done: formatSize(1.5 * 2 ** 30), total: formatSize(2 * 2 ** 30) }),
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(t("home.dlExpandAria")));
+    expect(screen.getByText(t("firstRun.statusNotDownloaded"))).toBeInTheDocument();
+    expect(screen.queryByText(t("firstRun.statusQueued"))).toBeNull();
   });
 
   it("is absent entirely when nothing is downloading", () => {

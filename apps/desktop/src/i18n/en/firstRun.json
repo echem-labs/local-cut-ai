@@ -48,6 +48,7 @@
   "statusExternalNone": "External · nothing to download",
   "statusInstalled": "Ready",
   "statusQueued": "Queued",
+  "statusNotDownloaded": "Not downloaded",
   "statusDownloading": "Downloading, {pct}%",
   "statusSettingUp": "Setting up, {pct}%",
   "statusNotFound": "Not found",
@@ -60,6 +61,8 @@
     "setUpByLocalCut": "set up by LocalCut",
     "yourOwn": "your own install"
   },
+  "readySkipped_one": "{count} stage isn't downloaded. Get it any time from Settings > Models.",
+  "readySkipped_other": "{count} stages aren't downloaded. Get them any time from Settings > Models.",
   "overallOf": "{done} of {total}",
   "timeLeft": "about {minutes} min left",
   "startCreating": "Start creating",

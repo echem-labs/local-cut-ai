@@ -43,6 +43,9 @@ export function stageRows(
   system: SystemInfo | null,
   models: ModelRow[],
   programs: ProgramsReport | null = null,
+  /** Models a download was just asked for, which the engine may not report
+   * as running yet (see `stageStatus`). */
+  requested: ReadonlySet<string> = new Set(),
 ): StageRow[] {
   if (!system) return [];
   const byId = new Map(models.map((row) => [row.id, row]));
@@ -63,7 +66,7 @@ export function stageRows(
           (model.family ? displayModelName(model.family, model.version) : model.id),
         runner: RUNNERS[rec.task] ? t(RUNNERS[rec.task]) : "",
         id: model.id,
-        status: script ? scriptStatus(script) : stageStatus(row, rec.task),
+        status: script ? scriptStatus(script) : stageStatus(row, rec.task, requested.has(model.id)),
       };
     });
 }
@@ -79,7 +82,16 @@ function scriptStatus(server: ProgramInfo): StageStatus {
   return { kind: "installed" };
 }
 
-export function stageStatus(row: ModelRow | undefined, task: string): StageStatus {
+/**
+ * `requested` is the caller's word that a download was asked for even if
+ * the row does not show it yet: the wizard's last step mounts before the
+ * start requests return, and those picks are queued, not absent.
+ */
+export function stageStatus(
+  row: ModelRow | undefined,
+  task: string,
+  requested = false,
+): StageStatus {
   const external = row ? row.files.length === 0 : true;
   if (external) {
     return {
@@ -97,9 +109,12 @@ export function stageStatus(row: ModelRow | undefined, task: string): StageStatu
       pct: Math.min(100, Math.round((row!.progress.done / row!.progress.total) * 100)),
     };
   }
-  // Unpicked stages read queued too — precise enough for a screen the user
-  // leaves within seconds, and never a lie: nothing is running.
-  return { kind: "queued" };
+  // Started, with no bytes counted yet.
+  if (row!.downloading || requested) return { kind: "queued" };
+  // Nothing is moving and nobody asked: a stage unticked in setup, or one
+  // whose weights were deleted since. Calling that queued promised a
+  // download the engine was never going to run.
+  return { kind: "notDownloaded" };
 }
 
 /** The final video, which FFmpeg makes rather than a model: its row on the
