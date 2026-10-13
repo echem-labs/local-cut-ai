@@ -147,9 +147,13 @@ async def test_a_screenplay_on_target_emits_no_notice():
     from localcut_engine.schema import Scene, Screenplay
 
     async def ask(prompt: str) -> str:
+        # ~58s: narration is timed by its letters, and five to a word is
+        # what script models write.
         return Screenplay(
             title="t",
-            scenes=[Scene(id="s1", duration_s=6.0, narration=" ".join(["w"] * 230), visual="v")],
+            scenes=[
+                Scene(id="s1", duration_s=6.0, narration=" ".join(["bloom"] * 150), visual="v")
+            ],
         ).model_dump_json()
 
     seen: list[str] = []

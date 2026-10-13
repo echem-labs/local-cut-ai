@@ -10,7 +10,7 @@ import pytest
 from conftest import make_spec
 
 from localcut_engine.backends.base import BackendRegistry, ExecutionContext
-from localcut_engine.backends.llm import SPEECH_WORDS_PER_S
+from localcut_engine.backends.llm import spoken_seconds
 from localcut_engine.backends.mock import MockBackend
 from localcut_engine.events import EventBus
 from localcut_engine.graph.model import NodeKind
@@ -89,7 +89,8 @@ async def test_mock_audio_is_silence_as_long_as_the_node_asks_for(tmp_path):
 
     line = " ".join(["word"] * 35)
     spoken, first = await render(NodeKind.NARRATION, {"text": line}, "1" * 64)
-    assert spoken == pytest.approx(35 / SPEECH_WORDS_PER_S)
+    # To the sample: the wav holds a whole number of frames.
+    assert spoken == pytest.approx(spoken_seconds(line), abs=1e-3)
     brief, _ = await render(NodeKind.NARRATION, {"text": "Hi."}, "2" * 64)
     assert 0 < brief < spoken
     bed, _ = await render(NodeKind.MUSIC, {"target_duration_s": 24}, "3" * 64)

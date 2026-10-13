@@ -10,8 +10,10 @@ assembled to 27.9s with no signal anywhere that the target had been missed.
 import pytest
 
 from localcut_engine.backends.llm import (
-    LENGTH_TOLERANCE,
-    SPEECH_WORDS_PER_S,
+    LENGTH_CEILING,
+    LENGTH_FLOOR,
+    LETTERS_PER_WORD,
+    SPEECH_LETTERS_PER_S,
     _SYSTEM_PROMPT,
     estimated_runtime_s,
     narration_word_budget,
@@ -38,17 +40,72 @@ def screenplay(words_per_scene: int, scenes: int = 9) -> Screenplay:
 
 
 def test_word_budget_scales_with_the_target():
-    assert narration_word_budget(60) == pytest.approx(60 * SPEECH_WORDS_PER_S, abs=1)
+    assert narration_word_budget(60) == pytest.approx(
+        60 * SPEECH_LETTERS_PER_S / LETTERS_PER_WORD, abs=1
+    )
     assert narration_word_budget(30) < narration_word_budget(60) < narration_word_budget(120)
     # A floor, not a zero: the budget reaches a prompt as "about N words".
     assert narration_word_budget(5) >= 1
 
 
-def test_runtime_estimate_matches_the_observed_cut():
-    """The real case: 97 words over 8 scenes assembled to 27.9s. The estimate
-    only has to be close enough to tell that apart from a 60s video."""
-    observed = screenplay(words_per_scene=12, scenes=8)  # 96 words
-    assert estimated_runtime_s(observed) == pytest.approx(27.9, abs=3.0)
+# Two scripts of very different word length, each synthesized by Kokoro
+# (af_sarah, speed 1.0) one line at a time, the way a narration node is.
+# The couplets are the kind of text llama3.2 wrote for the first cut this
+# estimate was checked against (97 words, 27.9s). The explainer is what
+# qwen3:8b wrote for a 60s target; those three lines are a real cut, whose
+# narration measured 20.69 + 22.38 + 18.16s and which assembled to 62.28s.
+_COUPLETS = [
+    "A little cloud went out to play. It drifted up and far away.",
+    "It met a bird who said hello. They flew together, nice and slow.",
+    "The sun came out and made it glow. The wind began to push and blow.",
+    "The cloud got big and dark and round. It rained a bit upon the ground.",
+    "The flowers drank and grew so tall. The cloud was happy after all.",
+    "Then night came down with stars so bright. The little cloud said soft good night.",
+    "It dreamed of rain and wind and sun. Tomorrow there is much more fun.",
+]
+_EXPLAINER = [
+    "Honeybees use a mesmerizing waggle dance to communicate flower locations to their "
+    "hive. When foragers return, they perform this intricate dance on the hive’s "
+    "surface, vibrating their bodies to create a rhythmic signal. This dance isn’t just "
+    "movement—it’s a precise language that encodes critical information about the "
+    "flowers’ direction and distance.",
+    "The dance’s direction reveals the flower’s orientation relative to the sun. Bees "
+    "tilt their bodies during the waggle run, signaling the angle needed to reach the "
+    "bloom. The longer the waggle, the farther the flowers—this duration encodes "
+    "distance in seconds. Meanwhile, the hive’s scout bees decode this information, "
+    "adjusting their flight paths to match the dance’s instructions.",
+    "This dance is a masterpiece of evolution, allowing bees to share complex information "
+    "without words. By decoding the waggle dance, colonies thrive, finding the most "
+    "abundant flowers and ensuring survival. Next time you see bees buzzing, "
+    "remember—they’re sharing a secret map, one dance at a time.",
+]
+
+
+def _scenes_saying(lines: list[str]) -> Screenplay:
+    return Screenplay(
+        title="t",
+        scenes=[
+            Scene(id=f"s{i}", duration_s=6.0, narration=line, visual="a hill")
+            for i, line in enumerate(lines, 1)
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "lines, measured_s",
+    [
+        # Synthesized speech plus the 0.35s pad after each line.
+        pytest.param(_COUPLETS, 27.6 + 7 * 0.35, id="short-words"),
+        pytest.param(_EXPLAINER, 62.28, id="long-words"),
+    ],
+)
+def test_the_estimate_holds_for_short_words_and_long_ones(lines, measured_s):
+    """The same voice read the couplets at 3.5 words a second and the
+    explainer at 2.5, so no words-per-second rate gets both: 3.5 put the
+    explainer's real 62s cut at 45s, and the script model was re-asked to
+    lengthen a draft that was already on target. Per letter, the two read
+    at 13.4 and 13.7 a second."""
+    assert estimated_runtime_s(_scenes_saying(lines)) == pytest.approx(measured_s, rel=0.1)
 
 
 def test_runtime_estimate_counts_padding_per_scene():
@@ -102,13 +159,21 @@ async def test_a_screenplay_that_hits_the_target_is_asked_once():
 
     out = await screenplay_within_target({"target_duration_s": 60}, ask)
     assert len(asked) == 1
-    assert estimated_runtime_s(out) >= 60 * LENGTH_TOLERANCE
+    assert estimated_runtime_s(out) >= 60 * LENGTH_FLOOR
+
+
+def test_the_ask_gives_a_range_with_a_ceiling():
+    """ "About N words" read as a floor: asked for 70 words for a 20s video,
+    qwen3:8b wrote 88, 105 and 108, and those cut to 33, 37 and 42s."""
+    prompt = script_prompt({"prompt": "p", "target_duration_s": 20})
+    low, high = narration_word_budget(20 * 0.9), narration_word_budget(20 * 1.1)
+    assert f"between {low} and {high} words" in prompt
 
 
 async def test_a_short_screenplay_is_re_asked_with_the_shortfall():
     attempts = [
-        screenplay(words_per_scene=11).model_dump_json(),  # ~28s, the real case
-        screenplay(words_per_scene=23).model_dump_json(),  # ~60s
+        screenplay(words_per_scene=11).model_dump_json(),  # ~34s
+        screenplay(words_per_scene=23).model_dump_json(),  # ~67s
     ]
     asked = []
 
@@ -118,14 +183,15 @@ async def test_a_short_screenplay_is_re_asked_with_the_shortfall():
 
     out = await screenplay_within_target({"target_duration_s": 60}, ask)
     assert len(asked) == 2
-    assert estimated_runtime_s(out) >= 60 * LENGTH_TOLERANCE
+    assert estimated_runtime_s(out) >= 60 * LENGTH_FLOOR
     # The re-ask has to carry the measurement, or it is the same blind
     # instruction that produced the short draft in the first place.
     assert "99" in asked[1]  # words it actually wrote
+    assert "too short" in asked[1]
     assert str(narration_word_budget(60)) in asked[1]
 
 
-async def test_an_unfixable_shortfall_renders_the_longest_attempt(caplog):
+async def test_an_unfixable_shortfall_renders_the_closest_attempt(caplog):
     """A model at its ceiling degrades rather than fails — the same call
     `supports()` makes about a missing Ollama. llama3.2 tops out around 150
     words however it is asked, and refusing the project would throw away a
@@ -159,18 +225,45 @@ async def test_a_re_ask_that_comes_back_worse_does_not_lose_the_better_draft():
     assert estimated_runtime_s(out) == estimated_runtime_s(screenplay(words_per_scene=11))
 
 
-async def test_an_over_long_screenplay_is_left_alone():
-    """The check is one-sided. A model that writes generously is not the
-    failure being guarded against, and re-rolling it would throw away a good
-    screenplay over an approximate word rate."""
+async def test_an_over_long_screenplay_is_re_asked_to_come_down():
+    """The check used to be one-sided, and a re-ask that over-corrected was
+    kept for being long. Asked for a 20s video, qwen3:8b wrote 22 words,
+    was told to write more, and came back with 108: a 42s cut."""
+    attempts = [
+        screenplay(words_per_scene=60).model_dump_json(),  # ~170s
+        screenplay(words_per_scene=23).model_dump_json(),  # ~67s
+    ]
     asked = []
 
     async def ask(prompt: str) -> str:
         asked.append(prompt)
-        return screenplay(words_per_scene=60).model_dump_json()
+        return attempts[len(asked) - 1]
 
-    await screenplay_within_target({"target_duration_s": 60}, ask)
-    assert len(asked) == 1
+    out = await screenplay_within_target({"target_duration_s": 60}, ask)
+
+    assert len(asked) == 2
+    assert out.model_dump() == screenplay(words_per_scene=23).model_dump()
+    assert "too long" in asked[1]
+    assert "540" in asked[1]  # words it actually wrote
+    assert estimated_runtime_s(out) <= 60 * LENGTH_CEILING
+
+
+async def test_the_draft_nearest_the_target_wins_not_the_longest(caplog):
+    """When no attempt lands in range, the one to render is the one that
+    misses by least. Preferring the longest shipped the over-correction."""
+    lengths = [40, 8, 30]  # ~114s, ~25s, ~86s against 60s: none in range
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return screenplay(words_per_scene=lengths[len(asked) - 1]).model_dump_json()
+
+    with caplog.at_level("WARNING"):
+        out = await screenplay_within_target({"target_duration_s": 60}, ask)
+
+    assert len(asked) == 3
+    assert out.model_dump() == screenplay(words_per_scene=30).model_dump()
+    assert "longer than its target" in caplog.text
 
 
 async def test_a_screenplay_with_no_scenes_is_refused_not_rendered():
@@ -287,7 +380,7 @@ async def test_a_valid_re_ask_after_an_unparseable_one_still_wins():
         return replies[len(asked) - 1]
 
     out = await screenplay_within_target({"target_duration_s": 60}, ask)
-    assert estimated_runtime_s(out) >= 60 * LENGTH_TOLERANCE
+    assert estimated_runtime_s(out) >= 60 * LENGTH_FLOOR
 
 
 async def test_an_unparseable_first_ask_still_fails():
