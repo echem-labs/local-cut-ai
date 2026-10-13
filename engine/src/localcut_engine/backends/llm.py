@@ -59,6 +59,11 @@ _SCRIPT_TOKENS_MAX = 32000
 METADATA_MAX_TOKENS = 1024
 # A natural-language edit compiles to a short list of ops, not prose.
 EDIT_MAX_TOKENS = 4096
+# Added to any of the caps above for a model that thinks before it answers and
+# cannot be asked not to (LLMScriptBackend._thinking). qwen3:8b spent about
+# 3400 tokens thinking ahead of a 470-token screenplay; this leaves room for
+# twice that before the answer starts.
+THINKING_TOKENS = 8192
 
 
 def script_max_tokens(params: dict) -> int:
@@ -405,13 +410,23 @@ class LLMScriptBackend(ExecutionBackend):
             return ctx.publish_text(
                 spec.output_hash, ".metadata.json", json.dumps(self._parse_metadata(raw), indent=2)
             )
-        screenplay = await screenplay_within_target(
-            spec.params,
-            lambda text: self.complete(
-                text, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params), model=model
-            ),
-            notify=ctx.notify,
-        )
+        try:
+            screenplay = await screenplay_within_target(
+                spec.params,
+                # Straight to the server rather than through `complete`, which
+                # yields the model after every call: a re-ask is the same job
+                # asking again at once, and yielding between asks made each
+                # one load the weights again. A real 60s job spent eight
+                # minutes over three asks. The yield happens once, below,
+                # however the asking ends.
+                lambda text: self._local_complete(
+                    text, model, system=_SYSTEM_PROMPT, max_tokens=script_max_tokens(spec.params)
+                ),
+                notify=ctx.notify,
+            )
+        finally:
+            if self.unload_after:
+                await self._unload(model)
         await ctx.progress(0.9)
         return ctx.publish_text(
             spec.output_hash, ".screenplay.json", screenplay.model_dump_json(indent=2)
@@ -426,14 +441,17 @@ class LLMScriptBackend(ExecutionBackend):
     ) -> str:
         """One-shot completion with the same VRAM-yield discipline as jobs:
         interactive tasks (graph edits) share the server with script jobs and
-        must release the model for image/video work afterwards."""
+        must release the model for image/video work afterwards. A call that
+        fails releases it too, or it stays resident until the server's own
+        keep-alive runs out, with ComfyUI next in line for the GPU."""
         # The one place the configured default is applied — the private
         # helpers below take a resolved name so it cannot drift between them.
         model = self.resolve_model(model)
-        raw = await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
-        if self.unload_after:
-            await self._unload(model)
-        return raw
+        try:
+            return await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
+        finally:
+            if self.unload_after:
+                await self._unload(model)
 
     async def describe(
         self,
@@ -464,18 +482,15 @@ class LLMScriptBackend(ExecutionBackend):
         model = model.removeprefix("local:")
         # Image first, for the same reason the cloud adapters do it: a picture
         # placed after the question is attended to less.
-        raw = await self._local_complete(
-            [
-                {"type": "image_url", "image_url": {"url": await data_url(image)}},
-                {"type": "text", "text": prompt},
-            ],
-            model,
-            system=system,
-            max_tokens=max_tokens,
-        )
-        if self.unload_after:
-            await self._unload(model)
-        return raw
+        content = [
+            {"type": "image_url", "image_url": {"url": await data_url(image)}},
+            {"type": "text", "text": prompt},
+        ]
+        try:
+            return await self._local_complete(content, model, system=system, max_tokens=max_tokens)
+        finally:
+            if self.unload_after:
+                await self._unload(model)
 
     async def _local_complete(
         self,
@@ -484,25 +499,30 @@ class LLMScriptBackend(ExecutionBackend):
         system: str = _SYSTEM_PROMPT,
         max_tokens: int = _SCRIPT_TOKENS_MAX,
     ) -> str:
+        body: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.7,
+            # Explicit, matching the cloud path. Sending no cap left the
+            # server's own default in charge, so an over-long screenplay came
+            # back truncated with no way to tell that apart from a model that
+            # emits bad JSON.
+            "max_tokens": max_tokens,
+        }
+        match await self._thinking(model):
+            case "stoppable":
+                body["reasoning_effort"] = "none"
+            case "unstoppable":
+                # The cap is sized for the answer. Raised by the thinking a
+                # model cannot be talked out of, the answer keeps its room.
+                body["max_tokens"] = max_tokens + THINKING_TOKENS
         async with httpx.AsyncClient(timeout=self.timeout_s) as client:
             try:
-                response = await client.post(
-                    f"{self.chat_base}/chat/completions",
-                    json={
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": content},
-                        ],
-                        "response_format": {"type": "json_object"},
-                        "temperature": 0.7,
-                        # Explicit, matching the cloud path. Sending no cap left
-                        # the server's own default in charge, so an over-long
-                        # screenplay came back truncated with no way to tell that
-                        # apart from a model that emits bad JSON.
-                        "max_tokens": max_tokens,
-                    },
-                )
+                response = await client.post(f"{self.chat_base}/chat/completions", json=body)
             except httpx.TimeoutException as exc:
                 # The ceiling above is generous precisely because a cold load
                 # on a modest GPU is slow, so reaching it means the server
@@ -535,11 +555,50 @@ class LLMScriptBackend(ExecutionBackend):
                 # and the natural-language edit, where "the screenplay" and
                 # "target duration" name nothing the user can act on.
                 raise GenerationError(
-                    f"the local model stopped at the {max_tokens}-token output cap before "
+                    f"the local model stopped at the {body['max_tokens']}-token output cap before "
                     "finishing — the response is incomplete. Try a shorter target duration, "
                     "or a model with a larger output limit."
                 )
             return text
+
+    async def _thinking(self, model: str) -> str | None:
+        """Whether `model` thinks before it answers, and whether it can be
+        asked not to: "stoppable", "unstoppable", or None when it does not
+        think or the server cannot say.
+
+        It matters because the thinking is generated output. Ollama runs
+        thinking models with thinking on by default, on the OpenAI-compatible
+        endpoint too, and passes `max_tokens` to the runner as the limit on
+        everything generated, thinking included, while none of the thinking
+        reaches `content`. qwen3:8b spent 3845 tokens to return 470 of
+        screenplay, and on another ask ran out at the 4096 cap with no
+        screenplay at all. Every caller here wants JSON and nothing else, so
+        none of them needs the thinking.
+
+        Ollama's `/api/show` lists "thinking" among a model's capabilities,
+        and from 0.34.3 says in `thinking.values` whether false is accepted.
+        When it is, `reasoning_effort: "none"` turns thinking off (Ollama maps
+        it to think=false). When it is not, or the server predates the field
+        and so cannot say whether "none" would be accepted, the model thinks
+        and the cap is raised to leave room for the answer. llama.cpp and the
+        other OpenAI-compatible servers serve no `/api/show`, so they get the
+        plain request they already accept.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(f"{self.root_url}/api/show", json={"model": model})
+            if response.status_code != 200:
+                return None
+            shown = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        if not isinstance(shown, dict) or "thinking" not in (shown.get("capabilities") or []):
+            return None
+        controls = shown.get("thinking")
+        values = controls.get("values") if isinstance(controls, dict) else None
+        if isinstance(values, list) and False in values:
+            return "stoppable"
+        return "unstoppable"
 
     async def _unload(self, model: str) -> None:
         """Best-effort VRAM release via Ollama's native API; llama.cpp and
