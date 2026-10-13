@@ -6,7 +6,7 @@
  * it — the wrapper is installed over `console` itself, so an error reported
  * the ordinary way would re-enter the code that just failed.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,6 +24,9 @@ afterEach(() => {
   // installLogSink replaces the real console; put it back or every later
   // test in this file writes into the previous test's temp directory.
   Object.assign(console, original);
+  // After the console, so a removal that throws cannot leave every later
+  // test logging through a sink.
+  rmSync(dir, { recursive: true, force: true });
 });
 
 const logText = (): string => readFileSync(path.join(dir, LOG_NAMES[0]), "utf8");

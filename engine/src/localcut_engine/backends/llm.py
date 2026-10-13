@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -36,7 +37,14 @@ Scenes are 3-8 seconds each for short videos; longer targets may use longer scen
 exceed 60 seconds per scene. "narration" is the words spoken aloud. "visual" describes what is \
 on screen, as a plain description of the picture — never a label, never the words "prompt" or \
 "image", just the scene itself. "motion" is a short camera direction. The first scene must hook \
-the viewer instantly."""
+the viewer instantly.
+Each scene is filmed as ONE continuous shot: a single picture is drawn from "visual" and then \
+animated with "motion", with no editing inside the scene. So "visual" is one moment in one \
+frame, never a split screen, collage, montage, grid of panels, picture-in-picture or sequence of \
+shots, and never words, captions or labels drawn into the picture. "motion" is one camera \
+movement through that shot, such as a slow push-in or a pan, never a cut or a transition. To show \
+something else, start a new scene. Words meant for the screen go in "onscreen_text". Describe \
+only what is in the frame, never what is absent from it."""
 
 _METADATA_PROMPT = """You are a short-form video publisher. Given a video's script, produce a \
 JSON publish kit with this exact shape (no markdown fences, JSON only):
@@ -76,15 +84,33 @@ def script_max_tokens(params: dict) -> int:
 
 # Nominal narration rate, for turning a target duration into a word budget and
 # for measuring a draft against it. The *real* runtime is always the
-# synthesized audio — backends/ffmpeg.py is the timing authority — so this
-# number only ever sizes a prompt and the shortfall check. ~3.5 words/s
-# measured on Kokoro.
-SPEECH_WORDS_PER_S = 3.5
-# How short a draft may come in before it is re-asked, as a fraction of the
-# target. Deliberately wide: narration length varies with voice and phrasing,
-# and this exists to catch a script that is half the requested video rather
-# than to police seconds.
-LENGTH_TOLERANCE = 0.7
+# synthesized audio (backends/ffmpeg.py is the timing authority), so this
+# number only ever sizes a prompt and the length check.
+#
+# Counted in letters, because that is what Kokoro's pace holds steady on. One
+# voice (af_sarah, speed 1.0, one synthesis per line as a narration node is
+# rendered) read short-word children's couplets at 3.54 words/s and explainer
+# narration at 2.52 words/s, but at 13.4 and 13.7 letters/s. A words rate
+# fits one of those and misses the other by a third: 3.5 words/s was right
+# for the couplets and put a real 62s explainer cut at 45s. Nineteen narrated
+# scenes rendered across the voices one machine used averaged 13.2 letters/s;
+# rounding down to 13 errs toward a budget that runs short rather than long.
+SPEECH_LETTERS_PER_S = 13.0
+# Letters in a word of the narration script models write (5.0 across those
+# 758 words). Only used to say a budget in words, the unit a model can count;
+# a draft is always measured by its own letters.
+LETTERS_PER_WORD = 5.0
+# How short or long a draft may come in before it is re-asked, as fractions
+# of the target. Deliberately wide: the rate is one number for every voice,
+# and voices differ by more than a tenth. This exists to catch a script well
+# short of the requested video or well past it, rather than to police
+# seconds.
+LENGTH_FLOOR = 0.7
+LENGTH_CEILING = 1.25
+# What an ask aims for, as a band around the target. Narrower than the
+# window above: a model asked for "about N" writes past N, so the ask names
+# both ends.
+_ASK_BAND = 0.1
 # Total attempts, not extra ones. Each costs a full model round trip (and a
 # VRAM load on the local path), so this buys two corrections, not a loop.
 _LENGTH_ATTEMPTS = 3
@@ -97,20 +123,43 @@ def _target_duration_s(params: dict) -> int:
     return int(params.get("target_duration_s", 60) or 60)
 
 
-def narration_word_budget(target_s: int) -> int:
+def narration_word_budget(target_s: float) -> int:
     """Words of narration a `target_s` video needs, since that is what sets
-    its length. Approximate by construction — it reaches the model as "about
-    N words"."""
-    return max(1, round(target_s * SPEECH_WORDS_PER_S))
+    its length. Approximate by construction: it reaches the model inside a
+    range around this number."""
+    return max(1, round(target_s * SPEECH_LETTERS_PER_S / LETTERS_PER_WORD))
+
+
+def spoken_seconds(text: str) -> float:
+    """How long `text` takes to say, before the pad assembly adds after it.
+
+    Letters by `str.isalpha`, which is Unicode category L: what the
+    desktop's `\\p{L}` matches in lib/formats.ts. Digits, punctuation and
+    the spaces between words are not counted."""
+    return sum(char.isalpha() for char in text) / SPEECH_LETTERS_PER_S
 
 
 def estimated_runtime_s(screenplay: Screenplay) -> float:
     """What this screenplay will actually assemble to: its narration spoken,
     plus the breathing room each scene carries after its line. Compare against
-    `target_duration_s` — the schema's own `duration_s` per scene is what the
-    model *claimed*, and nothing downstream reads it."""
-    words = sum(len(scene.narration.split()) for scene in screenplay.scenes)
-    return words / SPEECH_WORDS_PER_S + NARRATION_PAD_S * len(screenplay.scenes)
+    `target_duration_s`. The schema's own `duration_s` per scene is what the
+    model *claimed*: it sets how long a clip the video model renders (and how
+    many takes), but assembly fits every narrated scene to its narration, so
+    it never sets the length of the cut."""
+    spoken = sum(spoken_seconds(scene.narration) for scene in screenplay.scenes)
+    return spoken + NARRATION_PAD_S * len(screenplay.scenes)
+
+
+def _words(screenplay: Screenplay) -> int:
+    return sum(len(scene.narration.split()) for scene in screenplay.scenes)
+
+
+def _word_range(target_s: float) -> tuple[int, int]:
+    """The fewest and most words an ask names for `target_s`."""
+    return (
+        narration_word_budget(target_s * (1 - _ASK_BAND)),
+        narration_word_budget(target_s * (1 + _ASK_BAND)),
+    )
 
 
 def script_prompt(params: dict) -> str:
@@ -123,17 +172,20 @@ def script_prompt(params: dict) -> str:
     scenes that fail validation outright, on every retry.
 
     The narration budget is stated with its mechanism. A model told only
-    "60s" writes short couplets and pads `duration_s` to reach the number —
-    which produces a 28s video, because `duration_s` is not what anything
-    downstream reads."""
+    "60s" writes short couplets and pads `duration_s` to reach the number,
+    which produces a 28s video, because the cut runs as long as its narration
+    whatever `duration_s` says. And it is stated as a range, because "about
+    N words" reads as a floor: qwen3:8b asked for about 70 wrote 108."""
     target_s = _target_duration_s(params)
+    low, high = _word_range(target_s)
     ask = (
         f"Topic: {params.get('prompt', '')}\n"
         f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
         "no scene may exceed 60 seconds)\n"
         f"Narration: about {narration_word_budget(target_s)} words in total, across all "
-        "scenes. The video's length is how long its narration takes to speak aloud, NOT the "
-        "duration_s you write — write too few words and the video comes out short.\n"
+        f"scenes: between {low} and {high} words, no fewer and no more. The video's length "
+        "is how long its narration takes to speak aloud, NOT the duration_s you write. Too "
+        "few words and the video comes out short; too many and it runs long.\n"
         f"Aspect: {params.get('aspect', '9:16')}\n"
         f"Style preset: {params.get('style_preset', 'cinematic')}"
     )
@@ -152,18 +204,46 @@ def script_prompt(params: dict) -> str:
     return ask
 
 
-def _shortfall_note(screenplay: Screenplay, target_s: int) -> str:
+def _length_note(screenplay: Screenplay, target_s: int) -> str:
     """The re-ask. It carries the measurement: repeating the original
-    instruction is what already produced the short draft."""
-    words = sum(len(scene.narration.split()) for scene in screenplay.scenes)
-    return (
-        f"That screenplay is too short. Its narration is {words} words, which speaks in "
-        f"about {estimated_runtime_s(screenplay):.0f}s — but the target is {target_s}s, "
-        f"which needs about {narration_word_budget(target_s)} words.\n"
-        "Rewrite it with the same story and scenes, giving every scene enough narration to "
-        "fill its time. Do not shorten the narration and raise duration_s instead: "
-        "duration_s does not lengthen the video, only the spoken words do."
+    instruction is what already produced the draft that missed.
+
+    The words it asks for are scaled from the draft's own. A model writing
+    short words needs more of them to fill the same time, and the draft has
+    already shown which kind it writes."""
+    words = _words(screenplay)
+    runtime = estimated_runtime_s(screenplay)
+    if words and runtime:
+        low = max(1, round(words * target_s * (1 - _ASK_BAND) / runtime))
+        high = max(low, round(words * target_s * (1 + _ASK_BAND) / runtime))
+    else:
+        low, high = _word_range(target_s)
+    measured = (
+        f"Its narration is {words} words, which speaks in about {runtime:.0f}s, but the "
+        f"target is {target_s}s."
     )
+    if runtime < target_s:
+        return (
+            f"That screenplay is too short. {measured}\n"
+            f"Rewrite it with the same story and scenes, with between {low} and {high} words "
+            "of narration in total, giving every scene enough to fill its time. Do not "
+            "shorten the narration and raise duration_s instead: duration_s does not lengthen "
+            "the video, only the spoken words do."
+        )
+    return (
+        f"That screenplay is too long. {measured}\n"
+        f"Rewrite it with the same story, cutting the narration to between {low} and {high} "
+        "words in total. Shorter lines or fewer scenes both work. Lowering duration_s does "
+        "not, because only the spoken words set the video's length."
+    )
+
+
+def _miss_s(screenplay: Screenplay, target_s: int) -> float:
+    """How far from the target this draft would cut, in seconds. A draft with
+    no scenes misses by more than any draft that has one."""
+    if not screenplay.scenes:
+        return math.inf
+    return abs(estimated_runtime_s(screenplay) - target_s)
 
 
 async def screenplay_within_target(
@@ -171,25 +251,28 @@ async def screenplay_within_target(
     ask: Callable[[str], Awaitable[str]],
     notify: Callable[..., None] | None = None,
 ) -> Screenplay:
-    """The longest screenplay the model will write for `target_duration_s`.
+    """The screenplay nearest `target_duration_s` the model will write.
 
     Shared by both script backends via an `ask` closure, so the rule holds on
     every provider. Small local models write to a rhythm rather than to a word
-    count and ignore the budget however plainly it is stated, so a short draft
-    is re-asked carrying its own measurement — which measurably works:
-    llama3.2 went 97 words on the old prompt, then 121 -> 122 -> 148 across
-    three attempts here.
+    count and ignore the budget however plainly it is stated, so a draft
+    outside the window is re-asked carrying its own measurement. For a short
+    draft that measurably works: llama3.2 went 97 words on the old prompt,
+    then 121 -> 122 -> 148 across three attempts. It over-corrects too. Told
+    to write more for a 20s video, qwen3:8b went from 22 words to 108, so a
+    long draft is re-asked as well, and when none lands in the window the one
+    kept is the one nearest the target rather than the longest.
 
-    A model that still falls short degrades rather than fails. That is the
-    same call `supports()` makes about a missing Ollama: a limited environment
-    should render what it can, not refuse the project. 148 words is llama3.2's
-    ceiling, not a fault in the request, and failing would reject a usable 45s
-    video over it. The shortfall goes to `notify` (the callers pass
-    ExecutionContext.notify, so it reaches the scene board) and to the log,
-    which is all a headless engine has.
+    A model that still misses degrades rather than fails. That is the same
+    call `supports()` makes about a missing Ollama: a limited environment
+    should render what it can, not refuse the project. 148 words is
+    llama3.2's ceiling, not a fault in the request, and failing would reject
+    a usable 45s video over it. A shortfall goes to `notify` (the callers
+    pass ExecutionContext.notify, so it reaches the scene board) and to the
+    log, which is all a headless engine has.
     """
     target_s = _target_duration_s(params)
-    floor = target_s * LENGTH_TOLERANCE
+    floor, ceiling = target_s * LENGTH_FLOOR, target_s * LENGTH_CEILING
     prompt = script_prompt(params)
     # Unguarded, unlike the re-asks below: a model that cannot produce a
     # valid screenplay at all has nothing to degrade to, and that parse
@@ -201,7 +284,7 @@ async def screenplay_within_target(
             try:
                 candidate = LLMScriptBackend._parse_screenplay(await ask(prompt))
             except GenerationError as exc:
-                # A re-ask exists only to lengthen a draft already in hand,
+                # A re-ask exists only to correct a draft already in hand,
                 # so failing the job on its JSON would make asking again
                 # strictly worse than not asking — and every extra ask is
                 # another chance for a small model to violate the schema.
@@ -214,41 +297,55 @@ async def screenplay_within_target(
                     exc,
                 )
                 continue
-            if estimated_runtime_s(candidate) > estimated_runtime_s(best):
+            if _miss_s(candidate, target_s) < _miss_s(best, target_s):
                 best = candidate
-        if candidate.scenes and estimated_runtime_s(candidate) >= floor:
+        if candidate.scenes and floor <= estimated_runtime_s(candidate) <= ceiling:
             return candidate
         logger.warning(
             "screenplay attempt %d/%d: %d words, ~%.0fs against a %ds target",
             attempt,
             _LENGTH_ATTEMPTS,
-            sum(len(scene.narration.split()) for scene in candidate.scenes),
+            _words(candidate),
             estimated_runtime_s(candidate),
             target_s,
         )
         if attempt < _LENGTH_ATTEMPTS:
-            prompt = f"{script_prompt(params)}\n\n{_shortfall_note(candidate, target_s)}"
+            prompt = f"{script_prompt(params)}\n\n{_length_note(candidate, target_s)}"
     if not best.scenes:
         # Nothing to render, and no amount of padding invents a scene.
         raise GenerationError(
             f"the script model returned a screenplay with no scenes after "
             f"{_LENGTH_ATTEMPTS} attempts"
         )
-    words = sum(len(scene.narration.split()) for scene in best.scenes)
+    words = _words(best)
+    runtime = estimated_runtime_s(best)
+    if runtime > ceiling:
+        # Logged and rendered, with no notice: SCRIPT_SHORT_OF_TARGET says
+        # the opposite, and a cut that runs long shows its own length on
+        # the board.
+        logger.warning(
+            "screenplay stays longer than its target after %d attempts: %d words, ~%.0fs "
+            "against %ds. Rendering the draft nearest the target.",
+            _LENGTH_ATTEMPTS,
+            words,
+            runtime,
+            target_s,
+        )
+        return best
     logger.warning(
         "screenplay stays short of its target after %d attempts: %d words, ~%.0fs against %ds. "
         "Rendering it anyway — lower the target duration, or use a larger script model, "
         "to get the full length.",
         _LENGTH_ATTEMPTS,
         words,
-        estimated_runtime_s(best),
+        runtime,
         target_s,
     )
     if notify is not None:
         notify(
             SCRIPT_SHORT_OF_TARGET,
             target_s=target_s,
-            estimated_s=round(estimated_runtime_s(best)),
+            estimated_s=round(runtime),
             words=words,
         )
     return best
@@ -271,10 +368,13 @@ class LLMScriptBackend(ExecutionBackend):
         self.root_url = base.removesuffix("/v1")
         self.chat_base = base if base.endswith("/v1") else f"{base}/v1"
         self.model = model
-        # Live read of the user's persisted per-task default (Settings →
-        # Models); the ctor `model` stays the engine-config fallback. A
-        # callable, not a value: the default can change mid-session and the
-        # next job must see it without a backend rebuild.
+        # Live read of what a job with no model of its own is written with.
+        # The engine passes recommend.script_model (the user's pick in
+        # Settings > Models, else Auto), and `model` is the fallback for an
+        # instance built without one. A callable, not a value: the pick can
+        # change mid-session and the next job must see it without a backend
+        # rebuild. It can block (Auto's first answer probes the hardware), so
+        # the async paths below ask it from a thread.
         self.default_model = default_model
         self.timeout_s = timeout_s
         # The scheduler owns VRAM: on shared-GPU boxes the LLM must yield
@@ -380,8 +480,8 @@ class LLMScriptBackend(ExecutionBackend):
     def resolve_model(self, requested: str | None) -> str:
         """The Ollama model a node's `model` choice lands on: an explicit
         request wins (with the `local:` routing prefix stripped — the server
-        knows only bare names); otherwise the user's persisted text.llm
-        default, and only then the engine-config model."""
+        knows only bare names); otherwise `default_model`, and only then the
+        constructor's model."""
         if requested:
             return requested.removeprefix("local:")
         if self.default_model is not None and (configured := self.default_model()):
@@ -396,7 +496,7 @@ class LLMScriptBackend(ExecutionBackend):
                 f"cloud model {spec.model!r} requested but no cloud provider is "
                 "configured (BYOK providers arrive in a later phase)"
             )
-        model = self.resolve_model(spec.model)
+        model = await asyncio.to_thread(self.resolve_model, spec.model)
         ctx.record_model(model)
         if spec.params.get("task") == "metadata":
             # Publish kit (title/description/hashtags) from the script — a
@@ -446,7 +546,7 @@ class LLMScriptBackend(ExecutionBackend):
         keep-alive runs out, with ComfyUI next in line for the GPU."""
         # The one place the configured default is applied — the private
         # helpers below take a resolved name so it cannot drift between them.
-        model = self.resolve_model(model)
+        model = await asyncio.to_thread(self.resolve_model, model)
         try:
             return await self._local_complete(prompt, model, system=system, max_tokens=max_tokens)
         finally:

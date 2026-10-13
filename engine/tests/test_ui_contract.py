@@ -63,6 +63,7 @@ _VOICE_ASSETS = _DESKTOP / "src" / "assets" / "voices"
 # The desktop label catalogs this module reconciles against engine ids.
 _CATALOGS = (
     "canvas.json",
+    "drop.json",
     "failure.json",
     "models.json",
     "notices.json",
@@ -355,15 +356,33 @@ def test_each_quick_tools_engine_kinds_match_its_graph():
 
 
 def test_speech_timing_matches_the_narration_authority():
-    """ToolSession shows per-scene lengths computed from narration words —
-    the script model's own duration_s is a claim nothing downstream reads.
-    The UI's copy of the words-per-second rate and the per-scene pad must be
-    the assembly's, or the preview quietly disagrees with the cut."""
+    """ToolSession shows per-scene lengths computed from the narration, not
+    from the script model's duration_s, which sizes the clips but not the
+    cut. The UI's copy of the speech rate and the per-scene pad must be the
+    engine's, or the preview quietly disagrees with the cut."""
     from localcut_engine.backends.ffmpeg import NARRATION_PAD_S
-    from localcut_engine.backends.llm import SPEECH_WORDS_PER_S
+    from localcut_engine.backends.llm import SPEECH_LETTERS_PER_S
 
-    assert _number(r"export const SPEECH_WORDS_PER_S = ([\d.]+)") == SPEECH_WORDS_PER_S
+    assert _number(r"export const SPEECH_LETTERS_PER_S = ([\d.]+)") == SPEECH_LETTERS_PER_S
     assert _number(r"export const NARRATION_PAD_S = ([\d.]+)") == NARRATION_PAD_S
+    # And what counts as a letter: `str.isalpha` is Unicode category L, which
+    # is what `\p{L}` matches. Counting words, or ASCII letters, on one side
+    # would put the two estimates apart on every line of narration.
+    assert r"/\p{L}/gu" in _ts_source(_FORMATS), (
+        "formats.ts no longer counts letters the way the engine does (\\p{L})"
+    )
+
+
+def test_the_new_scene_dialog_states_the_rate_the_engine_budgets():
+    """The empty readout tells the user how many words make a minute. That
+    number is the engine's word budget written down a second time, and it
+    said 200 while the engine asked the script model for 210."""
+    from localcut_engine.backends.llm import narration_word_budget
+
+    catalog = json.loads((_I18N / "drop.json").read_text(encoding="utf-8"))
+    match = re.fullmatch(r"~(\d+) words = 60s", catalog["sceneRuntimeRate"])
+    assert match, f"drop.json sceneRuntimeRate changed shape: {catalog['sceneRuntimeRate']!r}"
+    assert int(match.group(1)) == pytest.approx(narration_word_budget(60), rel=0.1)
 
 
 def test_quick_tool_kinds_agree_across_the_boundary():
@@ -627,6 +646,24 @@ def test_job_statuses_match_the_desktop_union():
     assert union == {status.value for status in JobStatus}
 
 
+def test_the_desktop_project_mirrors_the_engines_meta():
+    """`Project` in types.ts is meta.json retyped by hand, and the tiles read
+    their status straight off it: `tool_artifact_hash` for a quick tool
+    session, `export_artifact_hash` for a video. A field renamed on one side
+    is no type error on either. It arrives as `undefined`, which the tile
+    reads as "Draft", for every finished project at once."""
+    from localcut_engine.project.store import Project
+
+    text = _ts_source(_TYPES)
+    start = text.index("export interface Project {")
+    body = text[start : text.index("\n}", start)]
+    declared = set(re.findall(r"^\s+(\w+)\??:", body, flags=re.M))
+    assert declared == set(Project.model_fields), (
+        f"engine only: {sorted(set(Project.model_fields) - declared)}, "
+        f"desktop only: {sorted(declared - set(Project.model_fields))}"
+    )
+
+
 def test_license_verdicts_match_the_desktop_union():
     """The verdict drives what the model library tells a user they may do
     with a model's output. `ModelLibrary` falls back to "conditions" for an
@@ -789,13 +826,13 @@ def test_the_new_scene_dialog_reads_the_shared_speech_rate():
     shared helper, not re-derive from the constants it is built from.
 
     Naming the constants is not enough to check: a readout that divides by
-    `SPEECH_WORDS_PER_S - 0.5`, or pads by something else, mentions them
+    `SPEECH_LETTERS_PER_S - 0.5`, or pads by something else, mentions them
     both and still disagrees with the cut."""
     source = _NEW_SCENE.read_text(encoding="utf-8")
     assert "spokenSeconds(" in source, (
         "NewSceneDialog derives a runtime without the shared spokenSeconds helper"
     )
-    assert not re.search(r"SPEECH_WORDS_PER_S|NARRATION_PAD_S", source), (
+    assert not re.search(r"SPEECH_LETTERS_PER_S|NARRATION_PAD_S", source), (
         "NewSceneDialog still reaches for the rate constants rather than the helper "
         "that combines them"
     )

@@ -194,6 +194,19 @@ an engine that stopped mid-setup left behind is cleared when it next starts.
 An ffmpeg that runs and draws no text is still installed, and `done` says
 `draws_text: false`.
 
+A download that stops partway picks up where it stopped. When the connection
+is closed or reset before the archive is complete, or nothing arrives for two
+minutes, the setup asks for the rest with a `Range` request starting at the
+first byte it does not have. It adds what comes back only from a `206` whose
+`Content-Range` starts at that byte. A `200` with the whole file starts the
+download over, and a `206` from any other byte is thrown away along with the
+partial download, so the next attempt asks for the whole file. Attempts go on
+for as long as each one brings new bytes. Six in a row that bring none fail
+the setup with `download_failed`, after waits of 1, 2, 4, 8 and 16 seconds
+between them, and it can be cancelled during a wait like at any other point.
+However many attempts it took, the size and the SHA-256 of the whole archive
+are what decide whether it is the pinned build.
+
 ### DELETE /programs/{id}/setup
 
 Cancels the running setup: `200 {"ok": true}`, then `program.setup.cancelled`
@@ -223,8 +236,11 @@ files open (Windows will not move the folder then).
 `installing`, and each phase is announced as it starts. `done` and `total`
 are bytes of the archive while downloading and verifying, and bytes of the
 kept files while unpacking; the other phases report 0 of 0. Progress is
-throttled to one event every half second. `bytes_per_s` is measured over the
-last few seconds of the download and is null in the other phases.
+throttled to one event every half second. `bytes_per_s` is the download's
+speed over its last five seconds, or over all of it in its first five, and is
+null for its first half second and in the other phases. While nothing
+arrives, as when a dropped download waits to try again, `GET /programs`
+reports it as 0.
 
 A failure's `reason` is one of `no_space`, `download_failed`,
 `size_mismatch`, `checksum_mismatch`, `unpack_failed`, `does_not_run`,
@@ -256,4 +272,6 @@ localcut programs remove ffmpeg       # remove LocalCut's copy, never your own
 Each takes `--engine`, `--token`, `--cert` and `--json`, as in
 [agents-and-automation.md](agents-and-automation.md). `setup` exits 0 when
 the copy is in place, 1 when the setup failed or was cancelled, and 2 when no
-engine answered.
+engine answered. It waits up to `--timeout` seconds (1800 by default) and then
+exits 1 too, but only the wait ends there: the setup carries on in the engine,
+and `localcut programs list` shows how far it has got.

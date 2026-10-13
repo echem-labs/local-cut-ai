@@ -28,7 +28,7 @@ from ..graph.model import NodeKind
 from ..graph.templates import GENERATOR_MAX_MUSIC_S
 from ..schema import Scene, Screenplay
 from .base import ExecutionBackend, ExecutionContext
-from .llm import SPEECH_WORDS_PER_S
+from .llm import spoken_seconds
 
 _SUFFIX = {
     NodeKind.SCRIPT: ".screenplay.json",
@@ -99,7 +99,7 @@ def narration_seconds(text: str) -> float:
     """How long `text` takes to say at the rate scripts are budgeted
     against. Assembly gives each scene the length of its narration, so this
     is what makes a placeholder cut run as long as its script."""
-    return max(_MIN_NARRATION_S, len(text.split()) / SPEECH_WORDS_PER_S)
+    return max(_MIN_NARRATION_S, spoken_seconds(text))
 
 
 def music_seconds(params: dict) -> float:

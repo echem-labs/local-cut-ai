@@ -21,6 +21,9 @@ export interface Project {
   // The durable answer to "did this finish?" — /jobs only carries the newest
   // 200 rows across every project, so an old session's are long gone.
   tool_artifact_hash?: string | null;
+  // Video projects: the export's artifact for the graph as it stands. The
+  // same answer for the same reason, and what makes a tile "Final".
+  export_artifact_hash?: string | null;
   // Promotion provenance. Advisory both ways: either side can be deleted and
   // nothing rewrites the survivor, so an id that no longer resolves against
   // the project list means "no link", not "broken".
@@ -62,7 +65,10 @@ export type NodeStatus =
   // Waiting on a person, not on the queue: a scene added from the board has
   // no prompt or narration until someone writes one, and nothing downstream
   // of it can render either. The compiler enqueues none of them.
-  | "blocked";
+  | "blocked"
+  // Beginner mode: behind a checkpoint the user has not approved. The engine
+  // will not enqueue it until they do, so no job exists for it yet.
+  | "held";
 
 /** A non-fatal signal from a job that finished — `error` means it did not.
  * The code is an id (mirrors NOTICE_CODES in the engine's notices.py;
@@ -579,6 +585,11 @@ export type EngineEvent =
       fallback?: OomFallback;
       project_id: string;
     }
+  // The scheduler ended a job without running it because a cancel upstream
+  // took its input (a stopped clip, and the timeline waiting on it). That
+  // can land many renders after the cancel request returned, so nothing
+  // else would refresh the board for it.
+  | { type: "job.cancelled"; job_id: string; node_id: string; project_id: string }
   | { type: "project.compiled"; project_id: string; enqueued: number }
   // A checkpoint was approved — possibly from the CLI or MCP against the same
   // engine, which is why the desktop cannot treat its own approve call as the
@@ -670,10 +681,14 @@ export interface Voices {
   available: boolean;
   voices: Voice[];
   default: string | null;
-  /** Whether voice cloning can run at all — the optional chatterbox runtime
-   * is present AND in the backend chain. Independent of `available`, which
-   * is about the stock-voice pack: the two route to different backends.
-   * Absent from an older engine, which is why callers treat undefined as
-   * "do not offer it" rather than as true. */
+  /** Whether voice cloning can run at all: the optional chatterbox runtime
+   * imports in the engine AND is in the backend chain. Independent of
+   * `available`, which is about the stock-voice pack: the two route to
+   * different backends. Absent from an older engine, which is why callers
+   * treat undefined as "do not offer it" rather than as true. */
   cloning?: boolean;
+  /** Why `cloning` is false, as the engine's own sentence (it can quote an
+   * import error, which no catalog could hold). Null when cloning can run;
+   * absent from an older engine. */
+  cloning_reason?: string | null;
 }

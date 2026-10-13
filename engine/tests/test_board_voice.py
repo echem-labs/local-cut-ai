@@ -171,9 +171,11 @@ def test_the_voices_route_says_whether_cloning_can_run(tmp_path):
         body = http.get("/voices", headers={"Authorization": "Bearer t"}).json()
 
     assert "cloning" in body, "the route no longer reports whether cloning can run"
-    # It is the runtime's presence, not a guess: whatever this machine has,
-    # the route has to agree with it.
-    assert body["cloning"] == ChatterboxBackend.package_installed()
+    # It is the runtime itself, not a guess: whatever this machine has, the
+    # route has to agree with it, and say why when the answer is no.
+    problem = ChatterboxBackend(models_dir=tmp_path).runtime_problem()
+    assert body["cloning"] == (problem is None)
+    assert body["cloning_reason"] == problem
 
 
 def test_cloning_availability_is_not_the_stock_voice_pack(tmp_path):

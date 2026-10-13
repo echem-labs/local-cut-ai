@@ -550,7 +550,22 @@ export function NodeCanvas() {
           </span>
         )}
 
-        {hint && <span className="canvas-hint">{hint}</span>}
+        {/* The legend: the two gestures that have no affordance to discover
+            them by, and what the selection is doing to the rest of the
+            canvas. It takes the bar's slack, not a corner of the graph,
+            where it sat on whatever node the view put there. Each line drops
+            out whole when the slack is too narrow for it (`.canvas-legend`
+            says how), and a message of the moment takes its place. */}
+        {hint ? (
+          <span className="canvas-hint">{hint}</span>
+        ) : (
+          <div className="canvas-legend" role="note">
+            <span>{t("canvas.panHint")}</span>
+            {selectedNode && graph.nodes[selectedNode] && (
+              <b>· {t("canvas.chainOf", { id: selectedNode })}</b>
+            )}
+          </div>
+        )}
 
         <div className="canvas-zoom" role="group" aria-label={t("canvas.title")}>
           <button
@@ -781,15 +796,6 @@ export function NodeCanvas() {
             })}
           </div>
         </div>
-      </div>
-      {/* The legend the v3 mock puts in the corner the graph flows away
-          from: what the selection is doing to the rest of the canvas, and
-          the two gestures that have no affordance to discover them by. */}
-      <div className="canvas-legend" role="note">
-        {selectedNode && graph.nodes[selectedNode] && (
-          <b>{t("canvas.chainOf", { id: selectedNode })} ·</b>
-        )}
-        <span>{t("canvas.panHint")}</span>
       </div>
       {pendingDelete && (
         <ConfirmDialog

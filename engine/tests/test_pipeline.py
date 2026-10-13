@@ -10,7 +10,7 @@ import pytest
 from conftest import make_spec
 
 from localcut_engine.backends.base import BackendRegistry, ExecutionContext
-from localcut_engine.backends.llm import SPEECH_WORDS_PER_S
+from localcut_engine.backends.llm import spoken_seconds
 from localcut_engine.backends.mock import MockBackend
 from localcut_engine.events import EventBus
 from localcut_engine.graph.model import NodeKind
@@ -89,7 +89,8 @@ async def test_mock_audio_is_silence_as_long_as_the_node_asks_for(tmp_path):
 
     line = " ".join(["word"] * 35)
     spoken, first = await render(NodeKind.NARRATION, {"text": line}, "1" * 64)
-    assert spoken == pytest.approx(35 / SPEECH_WORDS_PER_S)
+    # To the sample: the wav holds a whole number of frames.
+    assert spoken == pytest.approx(spoken_seconds(line), abs=1e-3)
     brief, _ = await render(NodeKind.NARRATION, {"text": "Hi."}, "2" * 64)
     assert 0 < brief < spoken
     bed, _ = await render(NodeKind.MUSIC, {"target_duration_s": 24}, "3" * 64)
@@ -470,6 +471,30 @@ async def test_an_unfinished_tool_session_records_no_artifact(rig):
     # create_tool, and meta is written there too.
     meta = store.get(session.id)
     assert meta is not None and meta.tool_artifact_hash is None
+
+
+async def test_a_finished_cut_records_its_export_on_the_meta(rig):
+    """The video half of the rule above, for the same reason. The desktop
+    called a project "Final" when it found a finished `export` row in
+    `GET /jobs`, the newest 200 rows across every project, so a project
+    that exported before a few newer renders read "Draft" while its cut
+    still played and downloaded."""
+    store, _queue, service = rig
+    project = service.create_from_prompt("the secret life of tide pools", target_duration_s=24)
+    # "A cut exists", so empty until one does. Read before the scheduler can
+    # get anywhere near the export.
+    assert store.get(project.id).export_artifact_hash is None
+
+    await wait_for(lambda: bool(store.get(project.id).export_artifact_hash))
+    meta = store.get(project.id)
+    # The same artifact the board offers for download, not a second opinion.
+    assert (
+        meta.export_artifact_hash
+        == service.scene_board(project.id)["aux"]["export"]["artifact_hash"]
+    )
+    assert store.resolve_artifact(project.id, meta.export_artifact_hash) is not None
+    # A video is not a quick tool session, and its tile must not read as one.
+    assert meta.tool_artifact_hash is None
 
 
 async def test_a_tool_session_with_no_still_keeps_its_glyph(rig):
@@ -1061,7 +1086,7 @@ async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
     stale.thumb_hash = None
     store.save_meta(stale)
 
-    assert service.backfill_tool_metas() == 1
+    assert service.backfill_metas() == 1
     healed = store.get(session.id)
     assert healed.tool_artifact_hash
     assert healed.thumb_hash
@@ -1071,9 +1096,44 @@ async def test_backfill_repairs_tool_metas_written_by_an_older_build(rig):
     # old session to "just now" on the first launch after upgrading, which
     # is precisely the ordering the history list is sorted by.
     assert healed.updated_at == was_updated_at
-    # Idempotent, and it leaves real projects alone.
-    assert service.backfill_tool_metas() == 0
+    # Idempotent, and a video never gains a quick tool's field.
+    assert service.backfill_metas() == 0
     assert store.get(video.id).tool_artifact_hash is None
+
+
+async def test_backfill_repairs_a_finished_cut_written_by_an_older_build(rig):
+    """`export_artifact_hash` is written by a refresh, like the quick-tool
+    fields, so a project exported under an older build would never gain it:
+    nothing writes a finished project again. Those are the projects whose
+    export rows have aged out of `GET /jobs`, so without the sweep their
+    tiles would keep reading "Draft" on exactly the population the field
+    exists for."""
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools", target_duration_s=24)
+
+    def settled() -> bool:
+        # Other nodes can still be finishing when the export lands, and each
+        # completion refreshes the meta, which would repair it behind the
+        # sweep's back and leave it nothing to do.
+        jobs = queue.list(project.id, 1000)
+        return bool(store.get(project.id).export_artifact_hash) and not any(
+            j.status in (JobStatus.QUEUED, JobStatus.RENDERING) for j in jobs
+        )
+
+    await wait_for(settled)
+
+    # A meta as an older build left it: the field had not been invented.
+    stale = store.get(project.id)
+    was_updated_at = stale.updated_at
+    stale.export_artifact_hash = None
+    store.save_meta(stale)
+
+    assert service.backfill_metas() == 1
+    healed = store.get(project.id)
+    assert healed.export_artifact_hash
+    assert store.resolve_artifact(project.id, healed.export_artifact_hash) is not None
+    assert healed.updated_at == was_updated_at
+    assert service.backfill_metas() == 0
 
 
 async def test_duplicating_a_project_does_not_inherit_provenance(rig):

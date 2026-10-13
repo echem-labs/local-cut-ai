@@ -57,6 +57,29 @@ class BlockingBackend(ExecutionBackend):
         return out
 
 
+class FirstClipBlocks(ExecutionBackend):
+    """The mock chain, except that the first clip renders until something
+    stops it: the shape of a user pressing Stop on a clip while the
+    timeline, captions and export wait behind it in the queue."""
+
+    name = "mock"
+
+    def __init__(self) -> None:
+        self.mock = MockBackend()
+        self.blocked = asyncio.Event()
+        self.clip: str | None = None
+
+    def supports(self, kind: NodeKind) -> bool:
+        return self.mock.supports(kind)
+
+    async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        if spec.kind is NodeKind.CLIP and self.clip is None:
+            self.clip = spec.node_id
+            self.blocked.set()
+            await asyncio.sleep(30)
+        return await self.mock.execute(spec, ctx)
+
+
 async def wait_for(predicate, timeout=10.0, interval=0.02):
     async with asyncio.timeout(timeout):
         while not predicate():
@@ -267,3 +290,128 @@ async def test_the_cancel_route_stops_the_render_not_just_the_row(tmp_path, monk
 
         # The GPU stopped, not just the bookkeeping.
         await wait_for(lambda: blocking.interrupted == 1)
+
+
+async def test_stopping_a_clip_cancels_the_assembly_it_was_feeding(tmp_path):
+    """Stopping a clip is the user's decision, not a fault in the cut.
+
+    The timeline, captions and export queued behind it can no longer get
+    their input. They used to come up, find it missing and fail with
+    `missing upstream artifacts on ports: [...]`, so the board read three
+    failures for one cancel and the MCP `failed` list carried an internal
+    message about an assembly nothing was wrong with. They end cancelled
+    instead, and the next render picks the whole chain back up.
+    """
+    from localcut_engine.mcp_server import render_status_payload
+
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)
+    backend = FirstClipBlocks()
+    backends = BackendRegistry()
+    backends.register(backend)
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=events,
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+        on_job_done=service.on_job_done,
+    )
+    service.scheduler = scheduler
+    announced = events.subscribe()
+    scheduler.start()
+    try:
+        project = service.create_from_prompt("tide pools", target_duration_s=24)
+        await wait_for(backend.blocked.is_set)
+        clip = next(j for j in queue.active(project.id) if j.status is JobStatus.RENDERING)
+        assert clip.spec.node_id == backend.clip
+
+        assert queue.cancel(clip.id) is True
+        scheduler.cancel_running(clip.id)
+        await wait_for(lambda: not queue.active(project.id))
+
+        jobs = queue.list(project.id, 1000)
+        failed = {j.spec.node_id: j.error for j in jobs if j.status is JobStatus.FAILED}
+        assert failed == {}, "a cancel upstream is not a failure of the assembly"
+
+        board = service.scene_board(project.id)
+        for node_id in ("timeline", "captions", "export"):
+            assert board["aux"][node_id]["status"] == "cancelled", node_id
+            assert board["aux"][node_id]["error"] is None, node_id
+
+        snapshot = [j.model_dump(mode="json") for j in jobs]
+        status = render_status_payload(snapshot, export_hash=None, ignore_job_ids=[])
+        assert status["failed"] == []
+        assert status["done"] is True
+
+        # These end long after the cancel request returned, so a client that
+        # refreshed on its way out of that request has to hear about them.
+        ended = set()
+        while not announced.empty():
+            event = announced.get_nowait()
+            if event["type"] == "job.cancelled":
+                ended.add(event["node_id"])
+        assert {"timeline", "captions", "export"} <= ended
+
+        assert service.render(project.id) > 0
+        await wait_for(lambda: not queue.active(project.id))
+
+        export = service.scene_board(project.id)["aux"]["export"]
+        assert export["status"] == "draft"
+        assert export["artifact_hash"]
+        assert not [j for j in queue.list(project.id, 1000) if j.status is JobStatus.FAILED]
+    finally:
+        await scheduler.stop()
+
+
+async def test_only_inputs_lost_to_a_cancel_cancel_their_consumer(tmp_path):
+    """The other side of the rule above. A missing input whose producer
+    failed is still a failure downstream: the cut cannot be made, and not
+    because anyone asked for that. One failed producer among cancelled ones
+    keeps it a failure."""
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    backends = BackendRegistry()
+    backends.register(MockBackend())
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=EventBus(),
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+    )
+
+    def producer(node_id: str, output_hash: str, status: JobStatus) -> str:
+        job = Job(
+            project_id="p1",
+            spec=make_spec(NodeKind.CLIP, node_id=node_id, output_hash=output_hash),
+            status=status,
+        )
+        queue.put(job)
+        return output_hash
+
+    stopped = producer("s1.clip", "1" * 64, JobStatus.CANCELLED)
+    broken = producer("s2.clip", "2" * 64, JobStatus.FAILED)
+
+    def timeline(output_hash: str, inputs: dict[str, str]) -> Job:
+        job = Job(
+            project_id="p1",
+            spec=make_spec(
+                NodeKind.TIMELINE, node_id="timeline", output_hash=output_hash, input_hashes=inputs
+            ),
+        )
+        return queue.put(job)
+
+    after_cancel = timeline("a" * 64, {"s1": stopped})
+    await scheduler._execute(after_cancel)
+    assert queue.get(after_cancel.id).status is JobStatus.CANCELLED
+    assert queue.get(after_cancel.id).error is None
+
+    after_both = timeline("b" * 64, {"s1": stopped, "s2": broken})
+    await scheduler._execute(after_both)
+    failed = queue.get(after_both.id)
+    assert failed.status is JobStatus.FAILED
+    assert "missing upstream artifacts" in (failed.error or "")
+    queue.close()
