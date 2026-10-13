@@ -26,6 +26,9 @@ export const SETTLED: readonly NodeStatus[] = [
   // for it waits forever. It is pending on a person, not on the queue — and
   // the board says so in the tile, which is where that belongs.
   "blocked",
+  // Held behind an unapproved checkpoint: nothing comes from the queue until
+  // the user approves, so it counts for the same reason `blocked` does.
+  "held",
 ];
 
 export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(status);
@@ -33,12 +36,13 @@ export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(statu
 /**
  * Statuses that mean "this node produced what it was going to produce".
  *
- * SETTLED answers a different question — *is anything still coming from the
- * queue* — and `blocked` is the one status where the two answers differ.
- * `skipped` is settled AND done: the scene is conditioned on an uploaded
- * image, so the storyboard really is finished. `blocked` is settled and NOT
- * done: nothing is coming, but nothing was made either, because the node is
- * waiting on a person.
+ * SETTLED answers a different question (*is anything still coming from the
+ * queue*), and `blocked` and `held` are the statuses where the two answers
+ * differ. `skipped` is settled AND done: the scene is conditioned on an
+ * uploaded image, so the storyboard really is finished. `blocked` and `held`
+ * are settled and NOT done: nothing is coming, but nothing was made either,
+ * because the node is waiting on a person (to write it, or to approve the
+ * checkpoint in front of it).
  *
  * Ask isSettled when a gate must not hang on work that will never arrive.
  * Ask this when the answer is REPORTED as completion — a ✓, a done count, a
@@ -47,4 +51,5 @@ export const isSettled = (status: NodeStatus): boolean => SETTLED.includes(statu
  * cannot be assembled, and offer a primary action that enqueues nothing and
  * so appears to do nothing at all.
  */
-export const isDone = (status: NodeStatus): boolean => isSettled(status) && status !== "blocked";
+export const isDone = (status: NodeStatus): boolean =>
+  isSettled(status) && status !== "blocked" && status !== "held";

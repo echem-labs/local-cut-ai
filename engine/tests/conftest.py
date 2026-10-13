@@ -2,12 +2,17 @@
 
 import asyncio
 import contextlib
+import importlib.abc
+import importlib.util
 import re
 import socket
+import sys
 import textwrap
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 from localcut_engine.graph.compiler import JobSpec
 from localcut_engine.graph.model import NodeKind
@@ -201,6 +206,35 @@ def serve_engine(tmp_path, token: str, backend: str = "mock"):
         assert not thread.is_alive(), "the test engine did not shut down"
 
 
+def pin_hardware(monkeypatch, vram_gb: float | None) -> None:
+    """Answer the hardware probe with one NVIDIA card of `vram_gb`, or with
+    no GPU at all for None, instead of whatever this machine has.
+
+    What Auto means for the script model follows the hardware (it is the
+    model the recommendation fits to the card), so a test that reads it
+    would otherwise pass on one machine and fail on the next.
+    """
+    from localcut_engine.hardware import probe
+
+    gpu = (
+        None
+        if vram_gb is None
+        else probe.GPU(
+            vendor="nvidia", name=f"test {vram_gb:g} GB card", vram_gb=vram_gb, backend="cuda"
+        )
+    )
+    profile = probe.HardwareProfile(
+        os="windows",
+        arch="AMD64",
+        ram_gb=32.0,
+        disk_free_gb=500.0,
+        gpus=[gpu] if gpu else [],
+        primary_gpu=gpu,
+        tier=probe._tier_for(vram_gb) if vram_gb is not None else probe.Tier.S,
+    )
+    monkeypatch.setattr(probe, "probe_hardware", lambda disk_path="/": profile)
+
+
 def make_spec(
     kind: NodeKind,
     params: dict | None = None,
@@ -248,3 +282,90 @@ async def least_stalled(run, attempts: int = 3) -> LoopWatch:
             best = watch
     assert best is not None, "attempts must be at least 1"
     return best
+
+
+class CloneRuntime(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """chatterbox-tts and resemble-perth as the engine meets them on import,
+    with neither installed: the real pair drags in PyTorch and transformers,
+    a heavy install for a test about what the engine says when an import
+    fails.
+
+    It answers on `sys.meta_path` rather than by placing modules in
+    `sys.modules`, so `find_spec` sees an installed package and every import
+    runs `exec_module`, the way a real one does. That is what lets a test
+    count the imports and see which thread ran them.
+
+    `tts_error` is raised from importing `chatterbox.tts`, the way a
+    transformers that rejects the installed tokenizers raises there.
+    `watermarker=False` is resemble-perth after it swallowed its own failed
+    import: the module loads and `PerthImplicitWatermarker` is None.
+    `pkg_resources` says whether setuptools still ships that module.
+    """
+
+    MODULES = ("chatterbox", "chatterbox.tts", "perth", "pkg_resources")
+
+    def __init__(
+        self,
+        *,
+        tts_error: Exception | None = None,
+        watermarker: bool = True,
+        pkg_resources: bool = True,
+    ) -> None:
+        self.tts_error = tts_error
+        self.watermarker = watermarker
+        self.pkg_resources = pkg_resources
+        #: (module name, thread ident) for every import this runtime served.
+        self.imported: list[tuple[str, int]] = []
+
+    def find_spec(self, fullname, path=None, target=None):  # noqa: ANN001, ANN201
+        if fullname not in self.MODULES:
+            return None
+        if fullname == "pkg_resources" and not self.pkg_resources:
+            return None
+        return importlib.util.spec_from_loader(fullname, self, is_package=fullname == "chatterbox")
+
+    def create_module(self, spec):  # noqa: ANN001, ANN201
+        return None  # the default module object
+
+    def exec_module(self, module) -> None:  # noqa: ANN001
+        self.imported.append((module.__name__, threading.get_ident()))
+        if module.__name__ == "chatterbox.tts":
+            if self.tts_error is not None:
+                raise self.tts_error
+            module.ChatterboxTTS = type("ChatterboxTTS", (), {})
+        elif module.__name__ == "perth":
+            module.PerthImplicitWatermarker = (
+                type("PerthImplicitWatermarker", (), {}) if self.watermarker else None
+            )
+
+    def imports_of(self, name: str) -> list[int]:
+        """The threads that imported `name`, one entry per import."""
+        return [thread for module, thread in self.imported if module == name]
+
+
+@pytest.fixture
+def clone_runtime(monkeypatch):
+    """Plants a `CloneRuntime` ahead of the real import system and hands it
+    back. Call it with the faults the test wants.
+
+    Whatever those modules were before the test is put back afterwards. A
+    machine that has the real chatterbox installed must not have it shadowed
+    by a fake left in `sys.modules`, and a fake must not outlive its test.
+    """
+    saved = {name: sys.modules.pop(name, None) for name in CloneRuntime.MODULES}
+
+    def plant(**faults) -> CloneRuntime:
+        runtime = CloneRuntime(**faults)
+        monkeypatch.setattr(sys, "meta_path", [runtime, *sys.meta_path])
+        if not runtime.pkg_resources:
+            # The real setuptools may still ship it. None in sys.modules is
+            # what makes both `find_spec` and an import say it is not there.
+            sys.modules["pkg_resources"] = None
+        return runtime
+
+    yield plant
+    for name, module in saved.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module

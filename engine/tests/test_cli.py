@@ -134,6 +134,40 @@ def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path,
     assert payload["host"] == "127.0.0.1"
 
 
+def test_serve_logs_the_engine_at_info_but_not_each_outbound_request(tmp_path, monkeypatch, caplog):
+    """`serve` keeps INFO for what the engine says about itself. What it
+    does not want is httpx's line per request: readiness probes, ComfyUI
+    history polls and download hops, enough of them to push a traceback out
+    of the 50 stderr lines the desktop keeps as a crash report."""
+    import logging
+
+    import uvicorn
+
+    from localcut_engine.api import app as app_module
+
+    # What basicConfig gives the root outside pytest. Under pytest it is a
+    # no-op, because the root already has pytest's handlers.
+    caplog.set_level(logging.INFO)
+
+    def serving(self, sockets=None):
+        logging.getLogger("httpx").info(
+            'HTTP Request: GET http://127.0.0.1:8188/queue "HTTP/1.1 200 OK"'
+        )
+        logging.getLogger("localcut_engine.jobs.scheduler").info("job 0123456789ab done")
+
+    monkeypatch.setattr(app_module, "create_app", lambda config=None: None)
+    monkeypatch.setattr(uvicorn.Server, "run", serving)
+
+    code = cli.main(
+        ["serve", "--port", str(free_port()), "--data-dir", str(tmp_path), "--backend", "mock"]
+    )
+
+    assert code == 0
+    logged = {record.name for record in caplog.records}
+    assert "localcut_engine.jobs.scheduler" in logged
+    assert "httpx" not in logged
+
+
 def test_a_network_bind_without_a_token_is_refused(tmp_path, monkeypatch):
     """An empty token counts as unconfigured — `--token ""` would otherwise
     put the engine on the LAN with a secret compare_digest accepts from
@@ -428,3 +462,51 @@ def test_the_bind_clash_message_does_not_send_you_to_a_shared_data_dir():
     source = Path(cli.__file__).read_text(encoding="utf-8")
     assert "quit it, or pass a different --port" not in source
     assert "different --data-dir" in source
+
+
+def test_a_model_download_prints_one_line_per_256_mib(tmp_path, monkeypatch, capsys):
+    """`localcut download` says how far a file has got at its start and then
+    once every 256 MiB. The downloader hands the bytes over as they arrive,
+    tens of kilobytes at a time, so a test on where one read lands holds for
+    every read just past each mark, and each of them printed a line."""
+    import json
+
+    from localcut_engine.manifest import downloads
+
+    size = 3 * (256 << 20) + (1 << 20)
+    read = 64 << 10
+    manifest = {
+        "models": [
+            {
+                "id": "big",
+                "task": "image.gen",
+                "family": "test",
+                "requirements": {"vram_gb": 0, "disk_gb": 0},
+                "license": {"id": "mit", "commercial": True},
+                "files": [
+                    {
+                        "url": "https://cdn.example.com/big.bin",
+                        "dest": "checkpoints/big.bin",
+                        "size": size,
+                    }
+                ],
+            }
+        ]
+    }
+    (tmp_path / "model-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setenv("LOCALCUT_DATA_DIR", str(tmp_path))
+
+    async def arriving(entry, models_dir, progress=None):
+        for done in range(read, size + 1, read):
+            await progress("checkpoints/big.bin", done, size)
+        return [models_dir / "checkpoints" / "big.bin"]
+
+    monkeypatch.setattr(downloads, "download_model", arriving)
+    assert cli.main(["download", "big", "--models-dir", str(tmp_path / "models")]) == 0
+    printed = [line for line in capsys.readouterr().out.splitlines() if "GiB" in line]
+    assert printed == [
+        "  checkpoints/big.bin: 0.00 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.25 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.50 / 0.75 GiB",
+        "  checkpoints/big.bin: 0.75 / 0.75 GiB",
+    ], f"{len(printed)} lines"

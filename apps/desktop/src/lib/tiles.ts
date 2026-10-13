@@ -37,6 +37,12 @@ export function tileStatus(project: Project, allJobs: Job[]): TileStatus {
     // thing this field exists to stop.
     return project.tool_artifact_hash ? "ready" : "draft";
   }
-  if (jobs.some((job) => job.spec.node_id === "export" && job.status === "done")) return "final";
-  return "draft";
+  // A video by the same rule, for the same two reasons: the export row of a
+  // project finished before a few newer renders has left the window, and a
+  // DONE row can be a placeholder export the engine no longer trusts.
+  //
+  // "Final" here means a finished cut exists, at whichever quality it was
+  // rendered. It is not the board's `final` node status, which is about
+  // render quality: a first-pass draft export makes this tile "Final" too.
+  return project.export_artifact_hash ? "final" : "draft";
 }

@@ -427,33 +427,73 @@ try {
 
   // The rail draws two kinds of row — destinations, and the open-project
   // tabs under them — and the tabs live in their own scroller, which is
-  // pulled out to the rail's edge so its bar sits against it and then given
-  // back the bar's width. That arithmetic assumed a 6px bar; it measures 5,
-  // and every tab row came out a pixel wider than the destinations above it.
+  // pulled out to the rail's edge so its bar sits against it. Rows that took
+  // their width from that scroller came out as wide as the bar let them: 5px
+  // too wide with no bar, a pixel off at some display scales with one.
   //
-  // A pixel, and invisible until you look for it: a resting tab has no
+  // Invisible until you look for it: a resting tab has no
   // background, so nothing draws at the edge that moved. Only the labels'
   // x differs on purpose here (47 vs 35 in the reference — a tab is a list
   // item under the row above it, not another destination); the row BOX is
-  // the rail's own width in both cases. Nothing in the unit suite can see
-  // this: vitest stubs CSS imports away and jsdom loads no stylesheet.
-  const railRows = await evalInApp(`
-    return page.evaluate(() => {
-      const rail = document.querySelector(".rail");
-      if (!rail) return null;
-      const width = (el) => Math.round(el.getBoundingClientRect().width);
-      const tabs = [...rail.querySelectorAll(".rail-tab")].map(width);
-      const dest = [...rail.querySelectorAll(":scope > button")].map(width);
-      return { tabs, dest };
-    });
-  `);
-  if (railRows && railRows.tabs.length > 0) {
-    const want = railRows.dest[0];
+  // the rail's own width in both cases. `styles/railRows.test.ts` does the
+  // same arithmetic from the stylesheet; this is the running app.
+  //
+  // Both rail widths, because both were wrong. The destinations are found
+  // either way: compact wraps each one in its tooltip (RailEntry, App.tsx),
+  // so ":scope > button" alone matched nothing on a fresh profile, which
+  // starts compact, and the check failed on an empty list.
+  const railRows = () =>
+    evalInApp(`
+      return page.evaluate(() => {
+        const rail = document.querySelector(".rail");
+        if (!rail) return null;
+        const width = (el) => Math.round(el.getBoundingClientRect().width);
+        return {
+          compact: rail.classList.contains("compact"),
+          tabs: [...rail.querySelectorAll(".rail-tab")].map(width),
+          dest: [...rail.querySelectorAll(":scope > button, :scope > .tip-wrap > button")].map(
+            width,
+          ),
+        };
+      });
+    `);
+  // The rail's last button is its toggle (as `measure` assumes), enabled at
+  // 1440. Pressed twice in all, so the stored preference ends where it began.
+  const toggleRail = () =>
+    evalInApp(`
+      const was = await page.evaluate(() => !!document.querySelector(".rail.compact"));
+      await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll("nav.rail button")];
+        buttons[buttons.length - 1].click();
+      });
+      await page
+        .waitForFunction((was) => !!document.querySelector(".rail.compact") !== was, was, {
+          timeout: 5000,
+        })
+        .catch(() => {});
+      return null;
+    `);
+  const checkRailRows = (rows) => {
+    const want = rows.dest[0];
+    const mode = rows.compact ? "compact" : "expanded";
     check(
-      "an open-project tab is the same width as a destination above it",
-      want > 0 && railRows.tabs.every((row) => row === want),
-      JSON.stringify(railRows),
+      `${mode} rail: an open-project tab is the same width as a destination above it`,
+      rows.dest.length > 0 && want > 0 && rows.tabs.every((row) => row === want),
+      JSON.stringify(rows),
     );
+  };
+  const asStored = await railRows();
+  if (asStored && asStored.tabs.length > 0) {
+    checkRailRows(asStored);
+    await toggleRail();
+    const toggled = await railRows();
+    check(
+      "the rail toggle switched width for the second row measurement",
+      toggled?.compact === !asStored.compact,
+      JSON.stringify({ before: asStored.compact, after: toggled?.compact }),
+    );
+    if (toggled) checkRailRows(toggled);
+    await toggleRail();
   } else {
     // Said out loud rather than passed over: with no project open there are
     // no tabs, and the check above measured nothing.

@@ -113,6 +113,46 @@ async def test_chatterbox_requires_sample_and_reports_missing_package(tmp_path):
         await backend.execute(make_spec(NodeKind.NARRATION, {"text": "hi"}), ctx)
 
 
+@pytest.mark.parametrize(
+    ("faults", "cause"),
+    [
+        # transformers refusing the tokenizers a `uv run` re-sync put back.
+        (
+            {"tts_error": ImportError("tokenizers>=0.22.0,<=0.23.0 is required")},
+            "tokenizers>=0.22.0,<=0.23.0 is required",
+        ),
+        # resemble-perth with no pkg_resources to import: setuptools 82+.
+        ({"watermarker": False, "pkg_resources": False}, "setuptools<81"),
+        # resemble-perth's watermarker missing for some other reason. Naming
+        # setuptools there would send the user after the wrong package.
+        ({"watermarker": False, "pkg_resources": True}, "PerthImplicitWatermarker"),
+    ],
+)
+async def test_a_clone_render_fails_with_the_reason_chatterbox_cannot_load(
+    tmp_path, clone_runtime, faults, cause
+):
+    """The package is installed and does not work. A render used to report
+    that as "requires the chatterbox-tts package ... install it", which the
+    user had just done, and threw the real ImportError away; with the
+    watermarker missing it got as far as "'NoneType' object is not
+    callable". The job error is the only place a failed render explains
+    itself, so the cause has to be in it."""
+    clone_runtime(**faults)
+    from localcut_engine.backends.chatterbox import INSTALL_HINT, ChatterboxBackend
+
+    sample = tmp_path / "sample.wav"
+    sample.write_bytes(b"RIFF")
+    ctx = ExecutionContext(output_dir=tmp_path, input_artifacts={"voice_ref": sample})
+    with pytest.raises(GenerationError) as failure:
+        await ChatterboxBackend(models_dir=tmp_path).execute(
+            make_spec(NodeKind.NARRATION, {"text": "hi"}), ctx
+        )
+    assert cause in str(failure.value)
+    assert INSTALL_HINT not in str(failure.value)
+    if faults.get("pkg_resources", True):
+        assert "setuptools" not in str(failure.value)
+
+
 # --- Voice enumeration -------------------------------------------------
 #
 # The installed pack holds an order of magnitude more voices than the

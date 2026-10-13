@@ -129,12 +129,17 @@ textarea {
 }
 
 /* ---- left rail ---- */
+/* Width and horizontal inset are custom properties because the open-project
+   list has to reproduce the row width they give every other row; `.rail-tab`
+   says why its rows cannot simply stretch to it. */
 .rail {
-  width: 200px;
+  --rail-width: 200px;
+  --rail-inset: var(--space-3);
+  width: var(--rail-width);
   flex-shrink: 0;
   background: var(--surface-1);
   border-right: 1px solid var(--border);
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-4) var(--rail-inset);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -225,27 +230,25 @@ textarea {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  /* The bar belongs against the rail's edge, and the column it scrolls has
-     to keep its width. Both come from the same trick: the list reaches out
-     through the rail's horizontal padding (negative margin) and puts back
-     just enough of it (padding) to leave the bar exactly the space that
-     padding used to occupy. Left inside the padding instead, the bar sat
-     7px short of the edge with dead space beside it AND took its width out
-     of the glyph column, which is what clipped the rows.
-     Expanded rail: 12px of padding, 6px bar, 6px put back. */
-  margin-right: calc(-1 * var(--space-3));
-  /* 7, not 6, and measured rather than nudged. The scroller is pulled out to
-     the rail's edge so its bar sits against it, then given back the width
-     the bar takes so its rows land where the rest of the rail draws them.
-     The bar measures 5px, not the 6 its own rule asks for, so 6 here left
-     every tab row 176px wide against a 175px destination — one pixel wider
-     than everything above it, and ending one pixel further right.
+  /* The bar belongs against the rail's edge, so the list reaches out through
+     the rail's horizontal padding (negative margin) and the bar draws in
+     the space that padding used to occupy. Left inside the padding instead,
+     the bar sat 7px short of the edge with dead space beside it AND took
+     its width out of the glyph column, which is what clipped the rows.
 
-     This is NOT the +27px every framed rail carries against the reference:
-     that number is identical before and after. It is its own small
-     disagreement, and the walk now asserts the two row kinds share a width
-     so neither can drift again. */
-  padding-right: 7px;
+     Nothing is put back as padding any more. That used to be the second
+     half of the trick: give back the rail's inset minus the bar's width, so
+     an unsized row came out as wide as a destination. But the bar has no
+     one width to subtract. `overflow-y: auto` draws it only once the list
+     overflows, so with a handful of tabs it is 0 and every row came out
+     5px too wide (180 against 175, 39 against 33 compact). And when it is
+     drawn, Chromium rounds it down to whole device pixels: the 6px it asks
+     for is 6 at 100, 150 and 200% but 5.6 at 125%, which is why 7px of
+     padding once measured right on one screen and left rows a pixel narrow
+     on the next. `scrollbar-gutter: stable` would fix the first and not
+     the second. The rows take their width from the rail instead
+     (`.rail-tab`), and the scroller is simply wider than they are. */
+  margin-right: calc(-1 * var(--rail-inset));
 }
 
 /* 6px, not the app-wide 10px: this is the one scroller inside a 48px strip,
@@ -259,12 +262,6 @@ textarea {
 .rail-tabs::-webkit-scrollbar-thumb,
 .rail-tabs::-webkit-scrollbar-thumb:hover {
   border-width: 1px;
-}
-
-/* Compact rail: 7px of padding rather than 12, so 1px goes back. */
-.rail.compact .rail-tabs {
-  margin-right: -7px;
-  padding-right: 1px;
 }
 
 /* `scrollbar-width` used to sit on the rule above, and it is the one
@@ -288,8 +285,13 @@ textarea {
   background: var(--surface-1);
 }
 
+/* Exactly a destination row's width: the rail's, less its border and its
+   inset on both sides. Stretched instead, a row is as wide as whatever the
+   scroller's bar leaves, and `.rail-tabs` explains why that is never one
+   number. `railRows.test.ts` holds the two row kinds to the same width. */
 .rail-tab {
   position: relative;
+  width: calc(var(--rail-width) - 1px - 2 * var(--rail-inset));
 }
 
 .rail-tab button:not(.rail-tab-close) {
@@ -421,14 +423,15 @@ textarea {
  * VS Code's answer to "where does the navbar go" */
 /* 48, and widening it is the wrong fix for a scrollbar — tried, reverted.
    The destinations above the open list are centred in the RAIL; the glyphs
-   in the list are centred in the SCROLLER, which is narrower by the bar. Any
+   in the list were centred in the SCROLLER, which is narrower by the bar. Any
    width that gives the bar its own room therefore splits the rail into two
    columns that do not line up, and leaves the bar floating short of the
    edge instead of against it. The horizontal bar this was meant to prevent
    is prevented on `.rail-tabs` itself, which costs no geometry at all. */
 .rail.compact {
-  width: 48px;
-  padding: var(--space-3) 7px;
+  --rail-width: 48px;
+  --rail-inset: 7px;
+  padding: var(--space-3) var(--rail-inset);
   align-items: stretch;
 }
 
@@ -2523,7 +2526,7 @@ button.link:hover {
 .tl-block .tick.final, .tl-block .tick.pinned { background: var(--status-final); }
 .tl-block .tick.failed { background: var(--status-failed); }
 .tl-block .tick.rendering, .tl-block .tick.queued { background: var(--accent); }
-.tl-block .tick.cancelled { background: var(--text-tertiary); }
+.tl-block .tick.cancelled, .tl-block .tick.held { background: var(--text-tertiary); }
 
 .tl-playhead {
   position: absolute;
@@ -3521,6 +3524,14 @@ button.link:hover {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   margin-top: var(--space-1);
+}
+
+/* The engine's reason cloning is off. It can quote an import error, whose
+   version specifiers ("tokenizers>=0.22.0,<=0.23.0") have nowhere to wrap. */
+.inspector .clone-reason {
+  display: block;
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
 }
 
 /* ---- queue tray ---- */
@@ -7472,26 +7483,46 @@ a.icon-btn-sm {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* The legend below floats over the surface rather than scrolling with it. */
-  position: relative;
 }
 
-/* What the canvas is doing and how to move around it, in the corner the
-   graph flows away from. The gestures have no affordance of their own —
-   ctrl+wheel and drag-to-pan are invisible until tried — and Help is a
-   different question from "what am I looking at". */
-.canvas-legend {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
+/* What the canvas is doing and how to move around it. The gestures have no
+   affordance of their own (ctrl+wheel and drag-to-pan are invisible until
+   tried), and Help is a different question from "what am I looking at".
+
+   In the bar, in the slack beside the zoom cluster. It used to float in
+   the graph's bottom-left corner, where it sat on whatever node the view
+   put there; at the default zoom that was the title of the first column's
+   third node. A strip of its own under the graph would have cost a quarter
+   of the 120px a 1440x900 window gives this panel.
+
+   It grows into the slack from nothing (flex 1 1 0, min-width 0), so no
+   control in the row moves for it, and each of its lines shows whole or
+   not at all. The zero-width ::before opens the first flex line; a line of
+   text that does not fit beside it wraps to a second, and the box is one
+   line tall with its overflow hidden. In that 1440x900 window the slack is
+   under 50px and nothing shows (the hint needs about 240): the panel's ?
+   popover carries the same two gestures, and a narrow bar leaves them
+   there. */
+.canvas-bar > .canvas-legend {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
-  gap: var(--space-1);
-  max-width: calc(100% - var(--space-6));
-  font-size: 11px;
-  color: var(--text-tertiary);
-  /* Over the surface, never in the way of it: every pointer gesture below
-     belongs to the canvas. */
-  pointer-events: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  height: 16px;
+  line-height: 16px;
+  overflow: hidden;
+  /* Already true of everything in the bar; said here because a line that
+     could break inside itself would never be too wide to fit. */
+  white-space: nowrap;
+}
+
+.canvas-legend::before {
+  content: "";
+}
+
+.canvas-legend > * + * {
+  margin-left: var(--space-1);
 }
 
 .canvas-legend b {
