@@ -357,6 +357,9 @@ class Scheduler:
                     job.created_at = time.time()  # back of the FIFO
                     await asyncio.to_thread(self.queue.update_unless_cancelled, job)
                     return
+                if await asyncio.to_thread(self._lost_to_cancel, job.project_id, missing_hashes):
+                    await self._cancel_dependent(job)
+                    return
                 raise RuntimeError(f"missing upstream artifacts on ports: {missing}")
             backend = self.backends.resolve(job.spec.kind, job.spec.model)
             artifact = await backend.execute(job.spec, ctx)
@@ -457,6 +460,49 @@ class Scheduler:
                 node_id=job.spec.node_id,
                 error=str(exc),
             )
+
+    def _lost_to_cancel(self, project_id: str, missing: set[str]) -> bool:
+        """Whether every missing input is missing because its producer was
+        cancelled: the newest job for each hash ended CANCELLED.
+
+        A user stopping a clip is not a fault in the timeline that needed it,
+        and failing the timeline said it was, with an internal message, on
+        the board and in every client's list of failures. Any other answer
+        stays a failure: a producer that failed, or a hash no job in the
+        history ever produced (an artifact deleted out from under the cache),
+        is a cut that cannot be made for reasons nobody asked for.
+        """
+        newest: dict[str, JobStatus] = {}
+        # Newest first, so the first job seen for a hash is the one that
+        # decides it: a cancelled draft followed by a failed retry failed.
+        for other in self.queue.list(project_id, 1000):
+            newest.setdefault(other.spec.output_hash, other.status)
+        return all(newest.get(output_hash) is JobStatus.CANCELLED for output_hash in missing)
+
+    async def _cancel_dependent(self, job: Job) -> None:
+        """End a job as CANCELLED because a cancel upstream took its input.
+
+        Published, unlike a cancel through the route: that request answers
+        the client that made it, while this lands whenever the job reaches
+        the front of the queue, which can be many renders later. A board
+        that refreshed on the way out of the cancel would otherwise show the
+        assembly queued for good.
+
+        Not requeued: nothing in flight will produce the input, so it would
+        only come round to the same answer again. The next render plans it
+        afresh along with the producer it was waiting on.
+        """
+        job.status = JobStatus.CANCELLED
+        job.finished_at = time.time()
+        if not await asyncio.to_thread(self.queue.update_unless_cancelled, job):
+            return  # cancelled directly in the meantime, by a request that answered for it
+        logger.info("job %s cancelled: its input was cancelled upstream", job.id)
+        self.events.publish(
+            "job.cancelled",
+            job_id=job.id,
+            node_id=job.spec.node_id,
+            project_id=job.project_id,
+        )
 
     def _requeue_quietly(self, job: Job) -> None:
         """Put a cancelled-by-shutdown job back on the queue. Best effort: a

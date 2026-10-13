@@ -108,9 +108,10 @@ async def test_execute_completes_with_the_resolved_model(monkeypatch, requested,
     from localcut_engine.graph.compiler import JobSpec
     from localcut_engine.schema import Scene, Screenplay
 
+    # On target for 60s, so the job asks once.
     body = Screenplay(
         title="t",
-        scenes=[Scene(id="s1", duration_s=6.0, narration=" ".join(["w"] * 230), visual="v")],
+        scenes=[Scene(id="s1", duration_s=6.0, narration=" ".join(["bloom"] * 150), visual="v")],
     ).model_dump_json()
     calls: list[dict] = []
 

@@ -33,7 +33,13 @@ class EngineConfig(BaseModel):
     # of failing. An explicit list is a static override for power users.
     comfy_kinds: str = "auto"
     llm_url: str = "http://127.0.0.1:11434/v1"
-    llm_model: str = "qwen3:14b"
+    # The script model, when Settings holds no pick of the user's. None is
+    # Auto: the text model the hardware recommendation fits to this machine,
+    # by the name the server lists it under (recommend.auto_llm_model).
+    # LOCALCUT_LLM_MODEL pins one instead. None rather than a model name for
+    # models_dir's reason: a name here would survive model_dump() into the
+    # CLI's rebuild and come back as a choice somebody made.
+    llm_model: str | None = None
     # Ceiling for one local completion. Thinking models on modest GPUs can
     # spend many minutes on a long screenplay (cold load + reasoning), so
     # this must be generous — and tunable (LOCALCUT_LLM_TIMEOUT_S) for

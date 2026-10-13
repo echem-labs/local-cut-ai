@@ -47,7 +47,7 @@
   "replaceConfirm": "Use the new image",
   "stillApplied": "{name} is now the still for scene {n}.",
   "sceneRuntimeLabel": "Narration sets the scene's length",
-  "sceneRuntimeRate": "~200 words = 60s",
+  "sceneRuntimeRate": "~150 words = 60s",
   "sceneRuntimeCount": "{words} words · ~{seconds}s",
   "sceneNeedsNarration": "Write the narration first — it becomes the voice track",
   "sceneNeedsPrompt": "Say how the shot should move to add the scene"

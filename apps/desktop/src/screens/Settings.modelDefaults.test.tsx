@@ -17,7 +17,7 @@
  */
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Settings } from "./Settings";
 import { useApp } from "../store";
@@ -54,6 +54,7 @@ async function mount(over: Record<string, unknown> = {}) {
     setModelDefault: vi.fn(async () => null),
     refreshModels: vi.fn(async () => {}),
     refreshComfy: vi.fn(async () => null),
+    defaultPickerFocus: null,
     ...over,
   } as never);
   return act(async () => render(<Settings />));
@@ -127,5 +128,43 @@ describe("the Auto option", () => {
     });
     expect(shown()).toContain("Auto");
     expect(shown()).not.toContain("nothing installed");
+  });
+});
+
+describe("a readiness fix that names a picker", () => {
+  afterEach(() => {
+    // jsdom implements no scrolling; the stub below is this file's alone.
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
+  it("lands on that picker, in view and focused", async () => {
+    // `pick_model` is the engine saying the fix is a choice in this list.
+    // The Models tab opens on the library, and the one row that matters
+    // sits above it with nothing pointing at it.
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    await mount({
+      modelDefaults: {
+        tasks: ["image.gen", "text.llm"],
+        defaults: {},
+        auto: { "image.gen": "sdxl-base-1.0", "text.llm": "qwen3:14b" },
+      },
+      defaultPickerFocus: "text.llm",
+    });
+    const picker = screen.getByRole("button", { name: "Script writing" });
+    expect(document.activeElement).toBe(picker);
+    expect(scrolled.mock.contexts[0]).toContainElement(picker);
+    // Asked once: the next time Settings renders, the keyboard stays put.
+    expect(useApp.getState().defaultPickerFocus).toBeNull();
+  });
+
+  it("drops a request whose picker never showed once Settings opens again", () => {
+    // With no model list from the server the row stays hidden, and opening
+    // the Library closes Settings without going through closeSettings.
+    // Opened later for anything else, Settings must leave the keyboard be.
+    useApp.getState().openDefaultPicker("text.llm");
+    useApp.getState().openLibrary();
+    useApp.getState().openSettings("engine");
+    expect(useApp.getState().defaultPickerFocus).toBeNull();
   });
 });

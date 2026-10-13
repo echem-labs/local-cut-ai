@@ -653,7 +653,7 @@ async def test_killing_an_already_dead_child_does_not_mask_the_cancellation():
 
 
 def test_a_project_from_a_newer_build_does_not_stop_the_sweep(tmp_path):
-    """`backfill_tool_metas` runs inside the app's lifespan, where an
+    """`backfill_metas` runs inside the app's lifespan, where an
     escaping exception is "Application startup failed. Exiting."
 
     The store's own refusals are RuntimeError subclasses, not ValueError, so
@@ -682,7 +682,7 @@ def test_a_project_from_a_newer_build_does_not_stop_the_sweep(tmp_path):
     path.write_text(json.dumps(raw), encoding="utf-8")
 
     # The sweep completes and reports on the projects it could read.
-    service.backfill_tool_metas()
+    service.backfill_metas()
     assert store.get(healthy.id) is not None
 
 

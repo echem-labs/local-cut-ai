@@ -18,6 +18,7 @@ import argparse
 import json
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -134,6 +135,54 @@ def test_render_reports_nothing_left_outstanding(engine, capsys):
     assert run(engine, "render", project_id, "--no-wait", "--json") == 0
 
     assert "pending" in json_out(capsys)
+
+
+# -- what reaches the terminal -----------------------------------------------
+
+
+def localcut(engine_url: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """`localcut <args>` as its own process, the way a shell runs it.
+
+    In-process calls cannot see this: main() configures logging with
+    basicConfig, which does nothing once a root handler exists, and pytest
+    installs one before any test runs."""
+    return subprocess.run(
+        [sys.executable, "-m", "localcut_engine.cli", *args, "--engine", engine_url]
+        + ["--token", TOKEN],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+
+
+def test_a_client_command_prints_no_request_log(engine):
+    """httpx logs every request it sends at INFO, and main() set the root
+    logger to INFO for every command, so `projects` printed
+
+        ... httpx HTTP Request: GET http://127.0.0.1:.../projects "HTTP/1.1 200 OK"
+
+    to stderr above its own listing."""
+    listed = localcut(engine, "projects")
+
+    assert listed.returncode == 0, listed.stderr
+    assert listed.stdout == "no projects\n"
+    assert "HTTP Request" not in listed.stderr
+
+
+def test_render_progress_is_not_interleaved_with_request_logs(engine, capsys):
+    """`render` polls /jobs every two seconds, and each poll added a request
+    line to the progress it prints, so a long render's log was mostly
+    those."""
+    run(engine, "create", "a quiet render", "--json")
+    project_id = json_out(capsys)["id"]
+
+    rendered = localcut(engine, "render", project_id, "--timeout", "120")
+
+    assert rendered.returncode == 0, rendered.stderr
+    assert "render finished" in rendered.stdout
+    assert "HTTP Request" not in rendered.stderr
 
 
 # -- the exit statuses a script branches on ----------------------------------

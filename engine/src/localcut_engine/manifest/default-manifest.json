@@ -203,6 +203,9 @@
       "sources": [
         {
           "hf": "Qwen/Qwen3-14B-GGUF"
+        },
+        {
+          "ollama": "qwen3:14b"
         }
       ]
     },
@@ -232,6 +235,9 @@
       "sources": [
         {
           "hf": "Qwen/Qwen3-8B-GGUF"
+        },
+        {
+          "ollama": "qwen3:8b"
         }
       ]
     },
