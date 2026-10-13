@@ -55,5 +55,54 @@ Routing is strict: a clone request never silently falls back to a stock voice.
 If Chatterbox cannot serve it, the render fails rather than quietly producing
 someone else's voice.
 
-The `chatterbox-tts` package is an optional runtime, like ComfyUI — install it
-into the engine environment when its wheels support your Python.
+## Installing Chatterbox
+
+`chatterbox-tts` is an optional runtime, like ComfyUI. It is not in the
+engine's lockfile, because it brings PyTorch with it and most installs never
+clone a voice. Install it into the engine's environment, from `engine/`:
+
+```bash
+uv pip install chatterbox-tts "setuptools<81"
+```
+
+Don't drop the setuptools pin. Chatterbox watermarks everything it generates
+with resemble-perth, which imports `pkg_resources`, and setuptools stopped
+shipping that module in 82 (81 still has it, behind a warning that recommends
+`<81`). perth hides its failed import, so without the pin the package installs
+and imports, and then every clone fails to load its model with
+`TypeError: 'NoneType' object is not callable`.
+
+On Windows, the torch you get from PyPI is CPU-only. Cloning works on it, but
+slowly: one narration line took 17 minutes on a test machine. Using a GPU means
+replacing it with a CUDA build of torch from PyTorch's own package index.
+
+The install also moves tokenizers back a release, since the transformers
+version chatterbox-tts pins refuses anything newer than 0.23.0. The rest of the
+engine is fine with that. It is also the change a dev checkout keeps undoing.
+
+### Keeping it in a dev checkout
+
+`uv run` syncs the environment to `uv.lock` before it runs anything, which puts
+the locked tokenizers and setuptools back over the ones chatterbox needs. The
+desktop's dev shell starts the engine with `uv run localcut serve`, so every
+launch breaks cloning again. Turn the sync off while you use it:
+
+```bash
+UV_NO_SYNC=1 npm run dev           # the desktop dev shell
+uv run --no-sync localcut serve    # an engine you start yourself
+```
+
+In PowerShell the first one is `$env:UV_NO_SYNC = "1"; npm run dev`.
+
+`uv sync` goes further and uninstalls chatterbox-tts, because the lockfile
+doesn't list it. That includes the `uv sync --all-groups` from the setup
+steps, so install it again after one. `uv run pytest` re-syncs too.
+
+### Checking it
+
+`GET /voices` answers `"cloning": true` only once chatterbox has imported
+inside the engine. When it is false, `cloning_reason` says why: the package
+is missing, the backend chain has no `chatterbox`, or the import failed, in
+which case the reason quotes the error. The desktop's inspector shows the same
+text where the clone control would be. The engine tries the import once per run
+(it loads PyTorch), so restart the engine after you fix the environment.

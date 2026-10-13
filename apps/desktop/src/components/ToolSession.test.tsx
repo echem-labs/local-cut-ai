@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { Board, Job, NodeState, Project, Screenplay } from "../api/types";
-import { NARRATION_PAD_S, SPEECH_WORDS_PER_S, spokenSeconds } from "../lib/formats";
+import { NARRATION_PAD_S, SPEECH_LETTERS_PER_S, spokenSeconds } from "../lib/formats";
 import { useApp } from "../store";
 import { ScriptTable, ToolSession, screenplayMarkdown } from "./ToolSession";
 
@@ -15,13 +15,14 @@ import { ScriptTable, ToolSession, screenplayMarkdown } from "./ToolSession";
  * to apply the same rule or the preview disagrees with the assembled video.
  */
 
-const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
+// Five letters a word, about what a script model writes.
+const words = (n: number) => Array.from({ length: n }, () => "walls").join(" ");
 
 const screenplay: Screenplay = {
   title: "The Fall of Istanbul",
   hook: "The empire's final breath.",
   scenes: [
-    // The model's claim says 60s; 35 words actually speak in ~10s.
+    // The model's claim says 60s; 35 words actually speak in ~14s.
     { id: "s1", duration_s: 60, narration: words(35), visual: "aerial view", motion: "", onscreen_text: null },
     { id: "s2", duration_s: 60, narration: words(70), visual: "the walls", motion: "", onscreen_text: null },
   ],
@@ -29,23 +30,25 @@ const screenplay: Screenplay = {
 
 describe("spokenSeconds", () => {
   it("applies the engine's narration timing rule", () => {
-    expect(spokenSeconds(words(35))).toBeCloseTo(35 / SPEECH_WORDS_PER_S + NARRATION_PAD_S);
-    // Whitespace runs are not words.
-    expect(spokenSeconds("  one   two  ")).toBeCloseTo(2 / SPEECH_WORDS_PER_S + NARRATION_PAD_S);
+    expect(spokenSeconds(words(35))).toBeCloseTo((35 * 5) / SPEECH_LETTERS_PER_S + NARRATION_PAD_S);
+    // Spaces, digits and punctuation are not letters.
+    expect(spokenSeconds("  one,   two 2! ")).toBeCloseTo(6 / SPEECH_LETTERS_PER_S + NARRATION_PAD_S);
+    // Letters outside ASCII count like any other, as Python's isalpha does.
+    expect(spokenSeconds("café")).toBeCloseTo(4 / SPEECH_LETTERS_PER_S + NARRATION_PAD_S);
   });
 });
 
 describe("ScriptTable", () => {
   it("shows spoken time per scene, never the model's duration_s claim", () => {
     render(<ScriptTable screenplay={screenplay} targetS={60} />);
-    expect(screen.getByText("~10s")).toBeInTheDocument();
-    expect(screen.getByText("~20s")).toBeInTheDocument();
+    expect(screen.getByText("~14s")).toBeInTheDocument();
+    expect(screen.getByText("~27s")).toBeInTheDocument();
     expect(screen.queryByText("~60s")).not.toBeInTheDocument();
   });
 
   it("totals the spoken time against the requested target", () => {
     render(<ScriptTable screenplay={screenplay} targetS={60} />);
-    expect(screen.getByText("~31s spoken · target 60s")).toBeInTheDocument();
+    expect(screen.getByText("~41s spoken · target 60s")).toBeInTheDocument();
   });
 });
 
@@ -54,7 +57,7 @@ describe("screenplayMarkdown", () => {
     const md = screenplayMarkdown(screenplay);
     expect(md).toContain("# The Fall of Istanbul");
     expect(md).toContain("> The empire's final breath.");
-    expect(md).toContain("## s1 · ~10s");
+    expect(md).toContain("## s1 · ~14s");
     expect(md).toContain("*Visual:* aerial view");
     expect(md.endsWith("\n")).toBe(true);
   });

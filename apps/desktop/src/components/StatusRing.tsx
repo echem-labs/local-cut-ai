@@ -15,6 +15,9 @@ const COLORS: Record<NodeStatus, string> = {
   // Not muted and not red: nothing is broken, but this one is asking for
   // something. The draft tone reads as "unfinished", which is what it is.
   blocked: "var(--status-draft)",
+  // Muted, unlike blocked: the card has nothing to ask for. The checkpoint
+  // banner above the board carries the approve button.
+  held: "var(--text-tertiary)",
 };
 
 /** The status word in the reserved colors, translated. */

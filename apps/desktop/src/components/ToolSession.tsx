@@ -142,9 +142,9 @@ export function ScriptTable({
    * twice at heading weight read as a rendering bug, not emphasis. */
   hideTitle?: boolean;
 }) {
-  // Spoken time, not the script model's per-scene duration_s claim — nothing
-  // downstream reads that field, and the assembled video will not either
-  // (see SPEECH_WORDS_PER_S in lib/formats.ts).
+  // Spoken time, not the script model's per-scene duration_s claim — that
+  // field sizes the clips, but the assembled video runs as long as its
+  // narration (see SPEECH_LETTERS_PER_S in lib/formats.ts).
   const totalS = screenplay.scenes.reduce(
     (sum, scene) => sum + spokenSeconds(scene.narration),
     0,

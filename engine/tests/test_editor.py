@@ -4,6 +4,8 @@ compiler that turns its untrusted edit plan into validated PatchOps."""
 import pytest
 
 from localcut_engine.graph.editor import (
+    EDIT_SYSTEM_PROMPT,
+    SUGGEST_SCENE_SYSTEM_PROMPT,
     EditPlan,
     compile_edits,
     graph_view,
@@ -206,6 +208,22 @@ def test_cannot_remove_the_last_scene_or_remove_at_scene_scope():
         make_graph(), plan({"action": "remove_scene", "scene_id": "s1"}), scope="s1"
     )
     assert ops == [] and any("project scope" in w for w in warnings)
+
+
+# -- prompts ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "prompt", [EDIT_SYSTEM_PROMPT, SUGGEST_SCENE_SYSTEM_PROMPT], ids=["edit", "suggest-scene"]
+)
+def test_a_prompt_that_writes_a_shot_keeps_it_one_continuous_shot(prompt):
+    """The editor rewrites keyframe and clip prompts, and the suggest-scene
+    route writes the clip prompt for a dropped photo. Both feed the same
+    one-picture, one-clip render the screenplay does, so a split screen or a
+    cut asked for there is drawn just as literally."""
+    assert "ONE continuous shot" in prompt
+    assert "split screen" in prompt
+    assert "never a cut" in prompt
 
 
 # -- parsing ----------------------------------------------------------------

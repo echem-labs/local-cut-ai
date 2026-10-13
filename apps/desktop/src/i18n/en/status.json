@@ -8,6 +8,7 @@
   "pinned": "pinned",
   "skipped": "not needed",
   "blocked": "needs a prompt",
+  "held": "waiting for approval",
   "renderingPct": "rendering · {pct}%",
   "renderingLong": "rendering, {pct}%"
 }

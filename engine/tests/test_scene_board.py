@@ -18,7 +18,7 @@ from localcut_engine.service import SCENE_NODE_STATUSES, ProjectService
 from localcut_engine.events import EventBus
 
 
-def _service(tmp_path) -> tuple[ProjectService, str]:
+def _service(tmp_path, mode: str = "prompt") -> tuple[ProjectService, str]:
     store = ProjectStore(tmp_path / "projects")
     service = ProjectService(store, JobQueue(tmp_path / "queue.db"), EventBus())
     screenplay = Screenplay(
@@ -26,7 +26,7 @@ def _service(tmp_path) -> tuple[ProjectService, str]:
         scenes=[Scene(id="s1", duration_s=4.0, narration="hi", visual="v", motion="m")],
     )
     graph = expand_screenplay(prompt_template_graph("p"), screenplay)
-    project = store.create(title="t", graph=graph)
+    project = store.create(title="t", graph=graph, mode=mode)
     return service, project.id
 
 
@@ -222,3 +222,49 @@ def test_an_abandoned_job_does_not_demote_the_final_that_matches(tmp_path):
     assert state["status"] == "final", state
     assert state["error"] is None
     assert state["artifact_hash"] == current
+
+
+def test_work_behind_an_unapproved_checkpoint_reads_held(tmp_path):
+    """Beginner mode: `_enqueue_dirty` refuses a stage until its checkpoint
+    is approved, so no job exists for it and none will until the user acts.
+    The board's fallback for "no job, no artifact" is `queued`, so every
+    scene card said that under a banner asking the user to approve."""
+    service, project_id = _service(tmp_path, mode="beginner")
+
+    board = service.scene_board(project_id)
+    scene = board["scenes"][0]
+    # Before the script is approved, everything after it is held.
+    assert scene["keyframe"]["status"] == "held"
+    assert scene["narration"]["status"] == "held"
+    assert scene["clip"]["status"] == "held"
+    # The script itself is never gated.
+    assert board["aux"]["script"]["status"] == "queued"
+
+    service.approve(project_id, "script")
+    board = service.scene_board(project_id)
+    scene = board["scenes"][0]
+    # Released: these now have real jobs behind them.
+    assert scene["keyframe"]["status"] == "queued"
+    assert scene["narration"]["status"] == "queued"
+    # Still behind the storyboard checkpoint.
+    assert scene["clip"]["status"] == "held"
+    assert board["aux"]["timeline"]["status"] == "held"
+    assert board["aux"]["export"]["status"] == "held"
+
+    service.approve(project_id, "storyboard")
+    board = service.scene_board(project_id)
+    assert board["scenes"][0]["clip"]["status"] == "queued"
+    assert board["aux"]["export"]["status"] == "queued"
+
+
+def test_a_held_node_with_its_render_cached_reads_from_the_cache(tmp_path):
+    """Held means waiting for a render the gate will not release. A node
+    whose artifact is already on disk is not waiting for anything."""
+    service, project_id = _service(tmp_path, mode="beginner")
+    graph = service.store.load_graph(project_id)
+    current = graph.output_hash("s1.keyframe", {})
+    generated = service.store.generated_dir(project_id)
+    generated.mkdir(parents=True, exist_ok=True)
+    (generated / f"{current}.keyframe.png").write_bytes(b"x")
+
+    assert _keyframe(service.scene_board(project_id))["status"] == "draft"

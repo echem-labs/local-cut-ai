@@ -10,12 +10,17 @@ moment a template arrives from someone else.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
+from localcut_engine.backends.base import BackendRegistry
+from localcut_engine.backends.mock import MockBackend
 from localcut_engine.events import EventBus
+from localcut_engine.graph.compiler import orphaned_nodes, unready_nodes
 from localcut_engine.graph.model import GRAPH_VERSION, Edge, Node, NodeKind, StoryGraph
+from localcut_engine.graph.patch import PatchOp, apply_patch
 from localcut_engine.graph.template_io import (
     MAX_NODES,
     TEMPLATE_VERSION,
@@ -25,8 +30,12 @@ from localcut_engine.graph.template_io import (
     from_template,
     to_template,
 )
+from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph, tool_graph
+from localcut_engine.jobs.models import JobStatus
 from localcut_engine.jobs.queue import JobQueue
+from localcut_engine.jobs.scheduler import Scheduler
 from localcut_engine.project.store import ProjectStore
+from localcut_engine.schema import Scene, Screenplay
 from localcut_engine.service import ProjectService
 
 
@@ -67,8 +76,10 @@ def test_an_upload_does_not_travel_and_neither_does_the_edge_that_used_it():
     """The half that matters. A scene conditioned on the user's own photo has
     its generated keyframe displaced from the clip's `keyframe` port — drop
     the asset but keep the edge and the template describes a clip wired to a
-    node that isn't there. Dropping the edge too puts the keyframe back in
-    the render path, so the template produces every scene."""
+    node that isn't there. Drop only the edge and the port is empty, because
+    `connect` REPLACED the generated keyframe's edge rather than adding a
+    second one: the clip imports with nothing to animate and never renders.
+    The generated keyframe has to go back on the port the asset held."""
     graph = _graph()
     graph.add_node(Node(id="asset-1", kind=NodeKind.ASSET, params={"sha256": "a" * 64}))
     # Conditioning: the asset displaces the generated keyframe.
@@ -80,8 +91,116 @@ def test_an_upload_does_not_travel_and_neither_does_the_edge_that_used_it():
     assert "asset-1" not in template.nodes
     assert template.dropped_assets == 1, "the export has to say something was left behind"
     assert not [e for e in template.edges if "asset-1" in (e.src, e.dst)]
+    assert ("s1.keyframe", "s1.clip", "keyframe") in {
+        (e.src, e.dst, e.port) for e in template.edges
+    }
     # And the graph it builds is renderable: nothing points at the missing node.
     build_graph(template).topological_order()
+
+
+def _conditioned_on_uploads() -> StoryGraph:
+    """What the app leaves behind when a project uses the user's own media: a
+    screenplay expanded into scenes, the first long enough to split into two
+    takes, then an uploaded still wired into both takes and an uploaded track
+    into the timeline's music port. Wired through `apply_patch`, so each
+    `connect` displaces what held the port exactly as a real edit does."""
+    graph = prompt_template_graph("a hummingbird", target_duration_s=20)
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="Conditioned",
+            hook="",
+            scenes=[
+                Scene(id="s1", narration="line 1", visual="shot 1", duration_s=12.0),
+                Scene(id="s2", narration="line 2", visual="shot 2", duration_s=5.0),
+            ],
+        ),
+    )
+    graph.add_node(Node(id="asset-still", kind=NodeKind.ASSET, params={"sha256": "a" * 64}))
+    graph.add_node(Node(id="asset-track", kind=NodeKind.ASSET, params={"sha256": "b" * 64}))
+    apply_patch(
+        graph,
+        [
+            PatchOp(op="connect", node_id="s1.clip", src="asset-still", port="keyframe"),
+            PatchOp(op="connect", node_id="s1.clip2", src="asset-still", port="keyframe"),
+            PatchOp(op="connect", node_id="timeline", src="asset-track", port="music"),
+        ],
+    )
+    return graph
+
+
+def test_an_export_gives_back_every_port_an_upload_held():
+    """Each take of the conditioned scene draws from the scene's generated
+    keyframe again, and the timeline from the generated music bed. Without
+    that, the clips import with an empty `keyframe` port and wait forever;
+    the timeline, the captions and the export wait on them."""
+    template = to_template(_conditioned_on_uploads(), name="Conditioned")
+
+    held = {(e.dst, e.port): e.src for e in template.edges}
+    clips = sorted(nid for nid, node in template.nodes.items() if node.kind is NodeKind.CLIP)
+    assert {clip: held.get((clip, "keyframe")) for clip in clips} == {
+        "s1.clip": "s1.keyframe",
+        "s1.clip2": "s1.keyframe",
+        "s2.clip": "s2.keyframe",
+    }
+    assert held.get(("timeline", "music")) == "music"
+
+    imported = build_graph(from_template(template.model_dump(mode="json")))
+    assert unready_nodes(imported) == set(), "a node in the imported graph can never render"
+    assert orphaned_nodes(imported) == set(), "a generated node imports feeding nothing"
+
+
+def test_an_export_puts_back_only_a_node_the_template_has():
+    """The Quick Tool clip with a start frame wires the frame in and removes
+    the generated keyframe in the same patch, so there is nothing to give
+    the port back to. An edge invented from `keyframe` would point at a node
+    the document does not carry, and import refuses that outright."""
+    graph = tool_graph("clip", {"prompt": "a wave"})
+    graph.add_node(Node(id="asset-1", kind=NodeKind.ASSET, params={"sha256": "a" * 64}))
+    apply_patch(
+        graph,
+        [
+            PatchOp(op="connect", node_id="clip", src="asset-1", port="keyframe"),
+            PatchOp(op="remove_node", node_id="keyframe"),
+        ],
+    )
+
+    template = to_template(graph, name="Start frame")
+
+    assert template.edges == []
+    assert set(from_template(template.model_dump(mode="json")).nodes) == {"clip"}
+
+
+def test_an_export_takes_a_narration_off_the_voice_it_cannot_carry():
+    """Cloning puts every narration on `local:chatterbox` and wires the
+    consented sample into its `voice_ref` port. The sample stays behind and
+    no template may wire that port, so a narration still set to clone
+    imports as one the cloning backend refuses on every render ("cloned
+    narration needs a consented voice sample"), and nothing it feeds is ever
+    assembled. Exported, it speaks in the stock voice its params name."""
+    graph = _graph()
+    graph.add_node(
+        Node(
+            id="s1.narration",
+            kind=NodeKind.NARRATION,
+            params={"text": "hello", "voice": "warm"},
+            model="local:chatterbox",
+        )
+    )
+    graph.add_node(
+        Node(
+            id="asset-voice",
+            kind=NodeKind.ASSET,
+            params={"sha256": "c" * 64, "voice_consent": True},
+        )
+    )
+    graph.connect("script", "s1.narration")
+    graph.connect("asset-voice", "s1.narration", port="voice_ref")
+
+    template = to_template(graph, name="Cloned")
+
+    assert template.nodes["s1.narration"].model is None
+    assert template.nodes["s1.narration"].params["voice"] == "warm"
 
 
 def test_a_pin_does_not_travel():
@@ -605,3 +724,80 @@ def test_a_template_without_a_screenplay_still_imports(tmp_path):
 
     imported = service.create_from_template(from_template(document), title="copy")
     assert "script" in store.load_graph(imported.id).nodes
+
+
+@pytest.fixture
+async def mock_rig(tmp_path):
+    """A service with a scheduler on the mock chain, so a project renders."""
+    events = EventBus()
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    service = ProjectService(store, queue, events)
+    backends = BackendRegistry()
+    backends.register(MockBackend())
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=events,
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+        on_job_done=service.on_job_done,
+    )
+    service.scheduler = scheduler
+    scheduler.start()
+    yield store, queue, service
+    await scheduler.stop()
+
+
+async def _until_exported(service: ProjectService, project_id: str) -> dict:
+    async with asyncio.timeout(15.0):
+        while True:
+            board = service.scene_board(project_id)
+            if (board["aux"].get("export") or {}).get("artifact_hash"):
+                return board
+            await asyncio.sleep(0.05)
+
+
+async def test_a_project_made_with_uploads_exports_a_template_that_renders(mock_rig):
+    """The round trip through the service, on a rendered project: its
+    screenplay travels, so the imported script arrives cached and nothing
+    re-expands the scenes to repair the wiring. Whatever the export wrote is
+    the graph the importer gets."""
+    store, queue, service = mock_rig
+    # 20s on the mock is two 10s scenes, and 10s splits into two takes.
+    source = service.create_from_prompt("tide pools", target_duration_s=20)
+    await _until_exported(service, source.id)
+    still = service.add_asset(source.id, "still.png", b"\x89PNG\r\n\x1a\n" + b"x" * 32)
+    track = service.add_asset(source.id, "track.wav", b"RIFF" + b"x" * 32)
+    service.patch(
+        source.id,
+        [
+            PatchOp(op="connect", node_id="s1.clip", src=still["node_id"], port="keyframe"),
+            PatchOp(op="connect", node_id="s1.clip2", src=still["node_id"], port="keyframe"),
+            PatchOp(op="connect", node_id="timeline", src=track["node_id"], port="music"),
+        ],
+    )
+
+    document = service.export_template(source.id)
+    assert document["screenplay"] is not None
+    copy = service.create_from_template(from_template(document))
+
+    board = service.scene_board(copy.id)
+    states = [
+        state
+        for card in board["scenes"]
+        for state in (
+            card["keyframe"],
+            card["clip"],
+            card["narration"],
+            *card.get("clip_takes", []),
+        )
+    ] + list(board["aux"].values())
+    assert {
+        s["node_id"]: s["status"] for s in states if s["status"] in ("blocked", "skipped")
+    } == {}
+
+    board = await _until_exported(service, copy.id)
+    assert not [job for job in queue.list(copy.id, 1000) if job.status is JobStatus.FAILED]
+    timeline = store.resolve_artifact(copy.id, board["aux"]["timeline"]["artifact_hash"])
+    assert "music" in json.loads(timeline.read_text(encoding="utf-8"))["inputs"]

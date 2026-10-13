@@ -50,7 +50,7 @@ from .manifest.capability import COMFY_TASKS, installed_by_task, installed_comfy
 from .manifest.defaults import DEFAULTABLE_TASKS, load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
-from .manifest.recommend import _fits
+from .manifest.recommend import _fits, auto_llm_model
 from .programs.setup import setup_fix
 from .providers.registry import (
     PROVIDERS,
@@ -170,17 +170,17 @@ def auto_defaults(config: EngineConfig) -> dict[str, str | None]:
     is ever produced for it and its picker read "Auto" forever.
 
     Each branch mirrors the resolution it describes: text.llm is
-    LLMBackend.resolve_model's last resort, vision.llm is
-    default_vision_model minus its local branch (the stored pick), and the
-    ComfyUI tasks are the head of the un-jumped installed queue that
-    `_template_for_installed` renders from.
+    `auto_llm_model`, what `script_model` falls back to without a stored
+    pick, vision.llm is default_vision_model minus its local branch (the
+    stored pick), and the ComfyUI tasks are the head of the un-jumped
+    installed queue that `_template_for_installed` renders from.
     """
     installed = installed_by_task(config)
     configured = {row["id"]: row["configured"] for row in configured_providers(config)}
     auto: dict[str, str | None] = {}
     for task in DEFAULTABLE_TASKS:
         if task == "text.llm":
-            auto[task] = config.llm_model
+            auto[task] = auto_llm_model(config)
         elif task == "vision.llm":
             auto[task] = None
             for info in PROVIDERS:

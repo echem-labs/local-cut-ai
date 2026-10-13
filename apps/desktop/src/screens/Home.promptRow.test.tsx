@@ -14,7 +14,7 @@
  * before this: a 9:16 thumbnail experiment must not silently re-aim the
  * next full video.
  */
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { t } from "../i18n";
@@ -106,5 +106,74 @@ describe("what the prompt row keeps", () => {
     unmount();
     render(<Home />);
     expect(screen.getByLabelText(t("home.styleAria")).textContent).toContain("Anime");
+  });
+});
+
+/**
+ * The note under the prompt names the first thing a video would hit, and its
+ * link goes where that thing is fixed: a missing FFmpeg is set up in
+ * Settings > Programs, which nothing in Settings > Models can do.
+ */
+describe("where the prompt row's readiness note leads", () => {
+  const exportFails = {
+    kind: "export",
+    model: null,
+    backend: null,
+    verdict: "will_fail",
+    reason: "no_ffmpeg",
+    data: {},
+    fix: { type: "setup_program", program: "ffmpeg", size_bytes: 137_034_436 },
+  };
+  const musicGap = {
+    kind: "music",
+    model: null,
+    backend: "mock",
+    verdict: "placeholder",
+    reason: "no_model_installed",
+    data: { task: "music.gen" },
+    fix: null,
+  };
+
+  it("opens Programs for a program", () => {
+    const openSettings = vi.fn();
+    useApp.setState({ readiness: [exportFails], openSettings } as never);
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: t("home.getIt") }));
+    expect(openSettings).toHaveBeenCalledWith("programs");
+  });
+
+  it("opens Models for a model", () => {
+    const openSettings = vi.fn();
+    useApp.setState({ readiness: [musicGap], openSettings } as never);
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: t("home.getIt") }));
+    expect(openSettings).toHaveBeenCalledWith("models");
+  });
+
+  it("opens the Script writing picker for a model to pick", () => {
+    // The fix is one row under Default models. The Models tab on its own
+    // opens on the library, where a script model has nothing to click.
+    const scriptModelMissing = {
+      kind: "script",
+      model: "qwen3:14b",
+      backend: "llm",
+      verdict: "will_fail",
+      reason: "llm_model_missing",
+      data: { task: "text.llm", model: "qwen3:14b" },
+      fix: { type: "pick_model", task: "text.llm" },
+    };
+    const openSettings = vi.fn();
+    const openDefaultPicker = vi.fn();
+    useApp.setState({
+      readiness: [scriptModelMissing],
+      openSettings,
+      openDefaultPicker,
+    } as never);
+    render(<Home />);
+    const note = screen.getByText(/doesn't have "qwen3:14b"/);
+    fireEvent.click(within(note).getByRole("button"));
+    expect(openDefaultPicker).toHaveBeenCalledWith("text.llm");
+    expect(openSettings).not.toHaveBeenCalled();
+    expect(within(note).getByRole("button")).toHaveTextContent(t("home.pickModel"));
   });
 });

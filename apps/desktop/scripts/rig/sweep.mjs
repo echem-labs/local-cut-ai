@@ -242,11 +242,29 @@ const STOPS = [
     `,
   },
   {
-    id: "wizard/models",
+    id: "wizard/programs",
     root: ".setup.wizard",
     column: { selector: ".setup.wizard", max: 660 },
     go: `
       await page.evaluate(() => document.querySelectorAll(".setup-actions button")[0]?.click());
+      return page
+        .waitForSelector(".setup.wizard .pstrip", { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+    `,
+  },
+  {
+    id: "wizard/models",
+    root: ".setup.wizard",
+    column: { selector: ".setup.wizard", max: 660 },
+    // Left by "Skip for now" when the step offers one: its primary is then
+    // "Set up FFmpeg", which on a machine with no FFmpeg starts a real
+    // download, the same hazard the models fixture below guards against.
+    go: `
+      await page.evaluate(() => {
+        const buttons = [...document.querySelectorAll(".setup-actions button")];
+        (buttons.find((b) => b.textContent?.trim() === "Skip for now") ?? buttons[0])?.click();
+      });
       return page
         .waitForSelector(".pipe-rail", { timeout: 20000 })
         .then(() => true)
@@ -452,7 +470,7 @@ const STOPS = [
   },
 ];
 
-/** The eight Settings panes, appended to STOPS as one shape. Each is a
+/** The nine Settings panes, appended to STOPS as one shape. Each is a
  * reading surface in the same shell, so they differ only in what they
  * contain — which is the point: the shell is shared, the content is not,
  * and it is the content that overflows. */
@@ -460,6 +478,7 @@ for (const [id, label] of [
   ["general", "General"],
   ["defaults", "Defaults"],
   ["providers", "Providers"],
+  ["programs", "Programs"],
   ["models", "Models"],
   ["storage", "Storage"],
   ["engine", "Engine"],
@@ -486,6 +505,13 @@ const probe = (stop) => `
   return page.evaluate((stop) => {
     const round = (n) => Math.round(n);
     const visible = (el) => {
+      // Inside a closed <details>, and not its summary: not drawn at all.
+      // Chromium still lays such content out when asked for a rect (the
+      // slot is content-visibility: hidden), so the size test alone counts
+      // a copy button in a folded "Do it myself" as on screen, and its hit
+      // test lands on whatever is painted where it would be.
+      const folded = el.closest("details:not([open])");
+      if (folded && !el.closest("summary")) return false;
       const r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) return false;
       const s = getComputedStyle(el);

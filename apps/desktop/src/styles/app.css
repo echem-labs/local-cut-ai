@@ -129,12 +129,17 @@ textarea {
 }
 
 /* ---- left rail ---- */
+/* Width and horizontal inset are custom properties because the open-project
+   list has to reproduce the row width they give every other row; `.rail-tab`
+   says why its rows cannot simply stretch to it. */
 .rail {
-  width: 200px;
+  --rail-width: 200px;
+  --rail-inset: var(--space-3);
+  width: var(--rail-width);
   flex-shrink: 0;
   background: var(--surface-1);
   border-right: 1px solid var(--border);
-  padding: var(--space-4) var(--space-3);
+  padding: var(--space-4) var(--rail-inset);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -225,27 +230,25 @@ textarea {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  /* The bar belongs against the rail's edge, and the column it scrolls has
-     to keep its width. Both come from the same trick: the list reaches out
-     through the rail's horizontal padding (negative margin) and puts back
-     just enough of it (padding) to leave the bar exactly the space that
-     padding used to occupy. Left inside the padding instead, the bar sat
-     7px short of the edge with dead space beside it AND took its width out
-     of the glyph column, which is what clipped the rows.
-     Expanded rail: 12px of padding, 6px bar, 6px put back. */
-  margin-right: calc(-1 * var(--space-3));
-  /* 7, not 6, and measured rather than nudged. The scroller is pulled out to
-     the rail's edge so its bar sits against it, then given back the width
-     the bar takes so its rows land where the rest of the rail draws them.
-     The bar measures 5px, not the 6 its own rule asks for, so 6 here left
-     every tab row 176px wide against a 175px destination — one pixel wider
-     than everything above it, and ending one pixel further right.
+  /* The bar belongs against the rail's edge, so the list reaches out through
+     the rail's horizontal padding (negative margin) and the bar draws in
+     the space that padding used to occupy. Left inside the padding instead,
+     the bar sat 7px short of the edge with dead space beside it AND took
+     its width out of the glyph column, which is what clipped the rows.
 
-     This is NOT the +27px every framed rail carries against the reference:
-     that number is identical before and after. It is its own small
-     disagreement, and the walk now asserts the two row kinds share a width
-     so neither can drift again. */
-  padding-right: 7px;
+     Nothing is put back as padding any more. That used to be the second
+     half of the trick: give back the rail's inset minus the bar's width, so
+     an unsized row came out as wide as a destination. But the bar has no
+     one width to subtract. `overflow-y: auto` draws it only once the list
+     overflows, so with a handful of tabs it is 0 and every row came out
+     5px too wide (180 against 175, 39 against 33 compact). And when it is
+     drawn, Chromium rounds it down to whole device pixels: the 6px it asks
+     for is 6 at 100, 150 and 200% but 5.6 at 125%, which is why 7px of
+     padding once measured right on one screen and left rows a pixel narrow
+     on the next. `scrollbar-gutter: stable` would fix the first and not
+     the second. The rows take their width from the rail instead
+     (`.rail-tab`), and the scroller is simply wider than they are. */
+  margin-right: calc(-1 * var(--rail-inset));
 }
 
 /* 6px, not the app-wide 10px: this is the one scroller inside a 48px strip,
@@ -259,12 +262,6 @@ textarea {
 .rail-tabs::-webkit-scrollbar-thumb,
 .rail-tabs::-webkit-scrollbar-thumb:hover {
   border-width: 1px;
-}
-
-/* Compact rail: 7px of padding rather than 12, so 1px goes back. */
-.rail.compact .rail-tabs {
-  margin-right: -7px;
-  padding-right: 1px;
 }
 
 /* `scrollbar-width` used to sit on the rule above, and it is the one
@@ -288,8 +285,13 @@ textarea {
   background: var(--surface-1);
 }
 
+/* Exactly a destination row's width: the rail's, less its border and its
+   inset on both sides. Stretched instead, a row is as wide as whatever the
+   scroller's bar leaves, and `.rail-tabs` explains why that is never one
+   number. `railRows.test.ts` holds the two row kinds to the same width. */
 .rail-tab {
   position: relative;
+  width: calc(var(--rail-width) - 1px - 2 * var(--rail-inset));
 }
 
 .rail-tab button:not(.rail-tab-close) {
@@ -421,14 +423,15 @@ textarea {
  * VS Code's answer to "where does the navbar go" */
 /* 48, and widening it is the wrong fix for a scrollbar — tried, reverted.
    The destinations above the open list are centred in the RAIL; the glyphs
-   in the list are centred in the SCROLLER, which is narrower by the bar. Any
+   in the list were centred in the SCROLLER, which is narrower by the bar. Any
    width that gives the bar its own room therefore splits the rail into two
    columns that do not line up, and leaves the bar floating short of the
    edge instead of against it. The horizontal bar this was meant to prevent
    is prevented on `.rail-tabs` itself, which costs no geometry at all. */
 .rail.compact {
-  width: 48px;
-  padding: var(--space-3) 7px;
+  --rail-width: 48px;
+  --rail-inset: 7px;
+  padding: var(--space-3) var(--rail-inset);
   align-items: stretch;
 }
 
@@ -2523,7 +2526,7 @@ button.link:hover {
 .tl-block .tick.final, .tl-block .tick.pinned { background: var(--status-final); }
 .tl-block .tick.failed { background: var(--status-failed); }
 .tl-block .tick.rendering, .tl-block .tick.queued { background: var(--accent); }
-.tl-block .tick.cancelled { background: var(--text-tertiary); }
+.tl-block .tick.cancelled, .tl-block .tick.held { background: var(--text-tertiary); }
 
 .tl-playhead {
   position: absolute;
@@ -3521,6 +3524,14 @@ button.link:hover {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
   margin-top: var(--space-1);
+}
+
+/* The engine's reason cloning is off. It can quote an import error, whose
+   version specifiers ("tokenizers>=0.22.0,<=0.23.0") have nowhere to wrap. */
+.inspector .clone-reason {
+  display: block;
+  margin-top: var(--space-1);
+  overflow-wrap: anywhere;
 }
 
 /* ---- queue tray ---- */
@@ -5568,6 +5579,16 @@ button.link:hover {
   margin: 0;
 }
 
+/* A well's own fix when it is a choice rather than a download: the picker
+   a `pick_model` fix names. Inside the well's walls, under the stages it
+   prices, so it reads as the answer to that well and not as one more
+   problem. */
+.well-fix {
+  display: flex;
+  padding: var(--space-2) 0 var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
 /* The readout under the narration field: the app's one non-obvious rule,
    live, at the only moment it can be acted on. */
 .scene-runtime {
@@ -5669,6 +5690,554 @@ a.icon-btn-sm {
 
 .gate-downloads .model-group + .model-group {
   margin-top: 0;
+}
+
+/* ---- programs: Settings > Programs and the first-run step ----
+   Each program is a well from the instrument panel. Its left edge carries
+   the worst light in it (red for a failure or a missing program in
+   Settings, amber for one that renders worse, the accent while a setup
+   runs); a program that is fine goes quiet, with no edge and no rows. The
+   body indents to the name's column, 44px, so the icon tile stands alone. */
+.pw-list {
+  margin-top: var(--space-4);
+}
+
+.pw {
+  background: var(--inset-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  padding: 14px var(--space-4) var(--space-1);
+}
+
+.pw + .pw {
+  margin-top: var(--space-3);
+}
+
+.pw.edge-fail {
+  border-left: 2px solid var(--status-failed);
+}
+
+.pw.edge-deg {
+  border-left: 2px solid var(--status-draft);
+}
+
+.pw.edge-busy {
+  border-left: 2px solid var(--accent);
+}
+
+.pw.quiet {
+  padding-bottom: 14px;
+}
+
+/* Not needed, and not there: present, but out of the way. */
+.pw.off {
+  opacity: 0.62;
+}
+
+.pw-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+.pw-ico {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.pw-id {
+  flex: 1;
+  min-width: 0;
+}
+
+.pw-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: var(--text-s);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pw-does {
+  margin-top: 1px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.pw-act {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex: none;
+}
+
+.pw-status {
+  margin: 10px 0 0 44px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.pw-status .readout {
+  margin-left: 6px;
+}
+
+.pw-status span > .readout,
+.pw-detail .readout,
+.pw-alt .readout,
+.pw-diy .readout,
+.programs-foot .readout {
+  margin-left: 0;
+}
+
+/* The one place a status colour reaches prose here: a setup that stopped. */
+.pw-status.fail {
+  color: var(--status-failed);
+  font-weight: 500;
+}
+
+.pw-detail {
+  margin: var(--space-1) 0 0 44px;
+  max-width: 60ch;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.pw-bar {
+  height: 2px;
+  margin: var(--space-2) 0 0 44px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.pw-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--motion-slow);
+}
+
+/* The stages a program costs, in the gate's own row anatomy. */
+.pw-rows {
+  margin: 10px 0 0 44px;
+  border-top: 1px solid var(--border);
+}
+
+.pw-alt {
+  margin: 0 0 0 44px;
+  padding: 6px 0 10px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.pw-alt button.link {
+  font-size: inherit;
+}
+
+/* A failure's actions sit under its explanation, not in the header. */
+.pw-fix {
+  display: flex;
+  gap: var(--space-2);
+  margin: 10px 0 2px 44px;
+}
+
+.pw-error {
+  margin: 6px 0 0 44px;
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+.pw-diy {
+  margin: 10px 0 0 44px;
+  border-top: 1px solid var(--border);
+}
+
+.pw-diy summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: var(--space-2) 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pw-diy summary::-webkit-details-marker {
+  display: none;
+}
+
+.pw-diy summary svg {
+  color: var(--text-tertiary);
+  transition: transform var(--motion-fast);
+}
+
+.pw-diy[open] summary svg {
+  transform: rotate(90deg);
+}
+
+.pw-diy summary:hover {
+  color: var(--text-primary);
+}
+
+.pw-diy summary:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--accent-glow);
+}
+
+/* Numbered, because these are a sequence. */
+.pw-diy ol {
+  margin: 0 0 var(--space-3);
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pw-diy li {
+  margin: 0 0 10px;
+  padding-left: var(--space-1);
+}
+
+.pw-diy .pw-alt {
+  margin-left: 0;
+  padding-top: 0;
+}
+
+.pw-step-action {
+  margin-top: 6px;
+}
+
+/* A command to paste, recessed one step further than the well. */
+.pw-cmd {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 6px;
+  padding: 5px 6px 5px 10px;
+  background: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.pw-cmd .t {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.pw-cmd.block {
+  align-items: flex-start;
+}
+
+.pw-cmd.block .t {
+  margin: 0;
+  padding: 2px 0;
+  white-space: pre;
+}
+
+.link-out {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.link-out:hover {
+  text-decoration: underline;
+}
+
+.ok-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--status-final);
+}
+
+/* One step down the control scale, for actions inside a well's header. */
+.btn-outline.sm,
+.btn-ghost.sm {
+  min-height: 28px;
+  padding: var(--space-1) 10px;
+  font-size: 13px;
+}
+
+.pw-menu {
+  position: relative;
+}
+
+.pw-gear {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+}
+
+.programs-where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.programs-where svg {
+  color: var(--text-tertiary);
+  flex: none;
+}
+
+.programs-where b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.programs-where .spacer {
+  flex: 1;
+}
+
+.settings section > .hint.programs-remote {
+  margin: var(--space-1) 0 0;
+}
+
+.programs-group {
+  margin: var(--space-6) 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.programs-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.programs-foot svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.programs-foot button.link {
+  font-size: inherit;
+}
+
+/* Said to a screen reader, drawn nowhere. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A program set up from inside the gate: the model rows' anatomy, with a
+   bar under the row while it runs. */
+.gate-programs .prow {
+  flex-wrap: wrap;
+  min-height: 36px;
+}
+
+.gate-programs .price {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gate-program-bar {
+  flex-basis: 100%;
+  height: 2px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.gate-program-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.gate-program-error {
+  flex-basis: 100%;
+  padding-bottom: 6px;
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+.gate-programs + .model-groups {
+  margin-top: var(--space-2);
+}
+
+.banner.readiness .banner-error {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--status-failed);
+}
+
+/* ---- the pipeline strip ----
+   Seven lights in the order a video gets made, joined by a rule, each with
+   its stage and what the next render would make of it. The lights are the
+   wells' row dots one size up, with the same meaning: filled green ready,
+   accent breathing while a program is set up, a red ring for a stand-in,
+   filled red for a job that fails, amber for a lower-quality result, and a
+   grey ring for a stage that waits on the next step's models. */
+.pstrip {
+  margin-top: 20px;
+  padding: 14px 6px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+}
+
+.pstrip ol {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pstrip li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+  text-align: center;
+}
+
+/* The rule runs from each light back to the one before it. */
+.pstrip li + li::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--border-hi);
+}
+
+.light {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface-1);
+  box-shadow: 0 0 0 3px var(--surface-1);
+}
+
+.light.ok {
+  background: var(--status-final);
+}
+
+.light.ph {
+  border: 2px solid var(--status-failed);
+}
+
+.light.fail {
+  background: var(--status-failed);
+}
+
+.light.deg {
+  background: var(--status-draft);
+}
+
+.light.wait,
+.light.unknown {
+  border: 2px solid var(--border-hi);
+}
+
+.light.busy {
+  background: var(--accent);
+  animation: light-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes light-breathe {
+  50% {
+    box-shadow:
+      0 0 0 3px var(--surface-1),
+      0 0 0 7px var(--accent-muted);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .light.busy {
+    animation: none;
+  }
+}
+
+.pstrip .lbl {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.pstrip .eff {
+  font-size: var(--text-xs);
+  line-height: 1.25;
+  color: var(--text-tertiary);
+}
+
+.pstrip .eff.ok {
+  color: var(--status-final);
+}
+
+.pstrip .eff.fail {
+  color: var(--status-failed);
+}
+
+.pstrip .eff.busy {
+  color: var(--accent-hover);
+}
+
+.pnarr {
+  margin: 10px 2px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pnarr button.link {
+  font-size: inherit;
+}
+
+/* The wells under the strip on the first-run step. */
+.wiz-body .pw-list {
+  margin-top: 20px;
+}
+
+/* A size on the gradient button reads as part of the label, one step
+   quieter. */
+.btn-primary .readout {
+  color: rgba(255, 255, 255, 0.82);
 }
 
 /* ---- first-run setup ---- */
@@ -5939,13 +6508,13 @@ a.icon-btn-sm {
 
 .srow {
   display: grid;
-  grid-template-columns: 110px 1fr 175px;
+  grid-template-columns: 10px 104px 1fr auto;
   gap: var(--space-3);
   align-items: center;
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-m);
-  padding: 10px 14px;
+  padding: 9px 14px;
 }
 
 .srow + .srow {
@@ -5953,11 +6522,9 @@ a.icon-btn-sm {
 }
 
 .srow .stage {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 .srow .model {
@@ -5967,7 +6534,6 @@ a.icon-btn-sm {
 
 .srow .model small {
   display: block;
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 400;
   color: var(--text-tertiary);
@@ -5990,6 +6556,28 @@ a.icon-btn-sm {
 
 .srow .st.dl {
   color: var(--text-secondary);
+}
+
+.srow .st.fail {
+  color: var(--status-failed);
+}
+
+/* The row lights the strip's lights shrink to: ready, moving, waiting, a
+   program that is not there, and a model that runs outside the engine. */
+.srow .pdot.ok {
+  background: var(--status-final);
+}
+
+.srow .pdot.busy {
+  background: var(--accent);
+}
+
+.srow .pdot.wait {
+  border: 1.5px solid var(--border-hi);
+}
+
+.srow .pdot.ext {
+  background: var(--text-tertiary);
 }
 
 .st .bar {
@@ -7472,26 +8060,46 @@ a.icon-btn-sm {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* The legend below floats over the surface rather than scrolling with it. */
-  position: relative;
 }
 
-/* What the canvas is doing and how to move around it, in the corner the
-   graph flows away from. The gestures have no affordance of their own —
-   ctrl+wheel and drag-to-pan are invisible until tried — and Help is a
-   different question from "what am I looking at". */
-.canvas-legend {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
+/* What the canvas is doing and how to move around it. The gestures have no
+   affordance of their own (ctrl+wheel and drag-to-pan are invisible until
+   tried), and Help is a different question from "what am I looking at".
+
+   In the bar, in the slack beside the zoom cluster. It used to float in
+   the graph's bottom-left corner, where it sat on whatever node the view
+   put there; at the default zoom that was the title of the first column's
+   third node. A strip of its own under the graph would have cost a quarter
+   of the 120px a 1440x900 window gives this panel.
+
+   It grows into the slack from nothing (flex 1 1 0, min-width 0), so no
+   control in the row moves for it, and each of its lines shows whole or
+   not at all. The zero-width ::before opens the first flex line; a line of
+   text that does not fit beside it wraps to a second, and the box is one
+   line tall with its overflow hidden. In that 1440x900 window the slack is
+   under 50px and nothing shows (the hint needs about 240): the panel's ?
+   popover carries the same two gestures, and a narrow bar leaves them
+   there. */
+.canvas-bar > .canvas-legend {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
-  gap: var(--space-1);
-  max-width: calc(100% - var(--space-6));
-  font-size: 11px;
-  color: var(--text-tertiary);
-  /* Over the surface, never in the way of it: every pointer gesture below
-     belongs to the canvas. */
-  pointer-events: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  height: 16px;
+  line-height: 16px;
+  overflow: hidden;
+  /* Already true of everything in the bar; said here because a line that
+     could break inside itself would never be too wide to fit. */
+  white-space: nowrap;
+}
+
+.canvas-legend::before {
+  content: "";
+}
+
+.canvas-legend > * + * {
+  margin-left: var(--space-1);
 }
 
 .canvas-legend b {
