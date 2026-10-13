@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import ipaddress
 import logging
+import re
 import socket
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -68,6 +69,16 @@ class SizeMismatch(DownloadError):
 
 class UnsafeURL(DownloadError):
     """A catalog URL that resolves somewhere the engine must not fetch."""
+
+
+class RangeMismatch(DownloadError):
+    """A server answered a resume with a 206 that does not start where the
+    `.part` ends. Nothing of it was written, and the `.part` is gone, so the
+    next attempt asks for the whole file."""
+
+
+# A 206's Content-Range for one range: `bytes <first>-<last>/<length or *>`.
+_CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(?:\d+|\*)", re.IGNORECASE)
 
 
 def _is_public(ip: str) -> bool:
@@ -211,7 +222,9 @@ async def download_file(
 
     Already-complete files (existing + checksum ok when a checksum is
     known) are skipped. A `<dest>.part` file is resumed with a Range
-    request; servers that ignore Range restart cleanly.
+    request; servers that ignore Range restart cleanly, and a 206 that
+    starts anywhere but the end of the `.part` is refused as RangeMismatch.
+    Progress is reported as the bytes arrive.
 
     `exact_size` holds the download to `file.size` to the byte, checked
     before the digest: a stream that runs past it is cut off there, and one
@@ -240,7 +253,18 @@ async def download_file(
             if response.status_code == 416:
                 pass  # already fully downloaded, fall through to verify
             elif response.status_code == 206:
-                pass  # resuming at offset
+                # Resuming, from exactly where the .part ends or not at all:
+                # bytes from anywhere else would be appended at the wrong
+                # place. The .part goes with them, because keeping it would
+                # only put the same question to the same server again.
+                answered = response.headers.get("content-range", "")
+                resumed = _CONTENT_RANGE.fullmatch(answered.strip())
+                if resumed is None or int(resumed.group(1)) != offset:
+                    part.unlink(missing_ok=True)
+                    raise RangeMismatch(
+                        f"{file.dest}: asked to resume from byte {offset}, and the server "
+                        f"answered with {answered or 'no Content-Range'}"
+                    )
             elif response.status_code == 200:
                 offset = 0  # server ignored Range (or fresh download): restart
             else:
@@ -268,7 +292,11 @@ async def download_file(
                 done = offset
                 oversized = False
                 with part.open(mode) as out:
-                    async for chunk in response.aiter_bytes(_CHUNK):
+                    # As the bytes arrive, not in fixed chunks: httpx holds a
+                    # chunk back until all of it is in, which on a slow link
+                    # is half a minute with no progress reported, and lost
+                    # with the connection when it drops before the chunk fills.
+                    async for chunk in response.aiter_bytes():
                         out.write(chunk)
                         done += len(chunk)
                         if done > limit:

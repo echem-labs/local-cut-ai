@@ -456,8 +456,15 @@ def _models_command(args: argparse.Namespace) -> int:
         print(f"unknown model id: {args.model_id}", file=sys.stderr)
         return 1
 
+    # The 256 MiB mark each file last printed at. The bytes arrive in reads
+    # of tens of kilobytes, so where one read lands says nothing about
+    # whether the read before it already printed this mark.
+    printed: dict[str, int] = {}
+
     async def report(dest: str, done: int, total: int) -> None:
-        if total and done % (256 << 20) < (1 << 20):  # ~every 256 MB
+        mark = done // (256 << 20)
+        if total and printed.get(dest) != mark:
+            printed[dest] = mark
             print(f"  {dest}: {done / 2**30:.2f} / {total / 2**30:.2f} GiB", flush=True)
 
     try:
@@ -1028,9 +1035,13 @@ def _programs_command(args: argparse.Namespace, client) -> int:
                 shown = line
                 print(line, flush=True)
         if time.monotonic() >= deadline:
+            # Only the wait ends here. The setup is the engine's, and a slow
+            # link is the usual reason it is still going.
             raise automation.EngineError(
-                f"{args.program} was still being set up after {args.timeout_s:.0f}s - raise "
-                "--timeout, or check the engine logs"
+                f"stopped waiting after {args.timeout_s:.0f}s; the engine is still setting up "
+                f"{args.program}, and the setup carries on there. `localcut programs list` "
+                f"shows how far it has got, and `localcut programs cancel {args.program}` "
+                "stops it"
             )
         time.sleep(min(_SETUP_POLL_S, max(0.0, deadline - time.monotonic())))
 
