@@ -181,6 +181,26 @@ async def test_the_console_command_serves_a_real_agent_over_stdio(engine):
     assert listing == {"projects": []}
 
 
+async def test_the_console_command_does_not_log_each_request_it_sends(engine, tmp_path):
+    """Every tool call is an HTTP request to the engine, and httpx logs each
+    one at INFO. stdout is the protocol, so they went to stderr, which an
+    agent host keeps as the server's log: one line per call, burying the
+    errors that log is there to show. Only a real subprocess has the
+    logging main() configures (see test_automation_cli.py::localcut)."""
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "localcut_engine.cli", "mcp", "--engine", engine, "--token", TOKEN],
+    )
+    stderr = tmp_path / "mcp-stderr.log"
+    with stderr.open("w", encoding="utf-8") as errlog:
+        async with Client(stdio_client(params, errlog=errlog)) as client:
+            assert await call(client, "list_projects") == {"projects": []}
+
+    assert "HTTP Request" not in stderr.read_text(encoding="utf-8", errors="replace")
+
+
 async def test_a_project_is_listed_once_it_exists(engine):
     async with Client(build(engine)) as client:
         project = await call(client, "create_project", {"prompt": "listed"})

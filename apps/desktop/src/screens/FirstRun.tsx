@@ -2,25 +2,32 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelRow } from "../api/types";
 import { BrandMark } from "../components/BrandMark";
 import { FilterTabs } from "../components/FilterTabs";
-import {
-  displayModelName,
-  formatSize,
-  ModelLibrary,
-  OLLAMA_TASK,
-} from "../components/ModelLibrary";
+import { formatSize, ModelLibrary, OLLAMA_TASK } from "../components/ModelLibrary";
 import { PipelineRail } from "../components/PipelineRail";
+import { PipelineStrip } from "../components/PipelineStrip";
+import { ChatterboxWell, ProgramWell } from "../components/ProgramWell";
 import { SpecChips } from "../components/SpecChips";
-import { StageSummaryRow, type StageStatus } from "../components/StageSummaryRow";
+import { StageSummaryRow } from "../components/StageSummaryRow";
 import { Stepper } from "../components/Stepper";
 import { m, plural, t } from "../i18n";
 import { fitFor } from "../lib/fit";
-import { stageStatus } from "../lib/stages";
+import {
+  hostOf,
+  isKnownProgram,
+  needsAttention,
+  PROGRAM_ORDER,
+  programName,
+  setupOffer,
+} from "../lib/programs";
+import { finalVideoRow, stageRows, type StageRow } from "../lib/stages";
+import { useVoices } from "../lib/useVoices";
 import { useApp } from "../store";
 
 /**
- * First launch as a four-step wizard: welcome → machine → models → ready
- * (design review v3, reference/v3/wiz-1..4). Each step makes one claim
- * and asks one question; the stepper header is the only "N of M".
+ * First launch as a five-step wizard: welcome, machine, programs, models,
+ * ready (design review v3, reference/v3/wiz-1..4, with the programs step
+ * from design review 14). Each step makes one claim and asks one
+ * question; the stepper header is the only "N of M".
  *
  * The state machine lives here, not in the store: steps and the model
  * selection are conversation state, meaningless once setup finishes —
@@ -29,7 +36,7 @@ import { useApp } from "../store";
  * Settings, the wizard starts at the machine step, because the welcome
  * promise is a once-only moment.
  */
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 
 export function FirstRun() {
   const {
@@ -40,6 +47,7 @@ export function FirstRun() {
     startDownload,
     finishFirstRun,
     firstRunReturning,
+    programs,
   } = useApp();
   const [step, setStep] = useState<Step>(firstRunReturning ? 2 : 1);
   const [library, setLibrary] = useState(false);
@@ -83,13 +91,14 @@ export function FirstRun() {
     }
     setWatchedIds(new Set(pending.map((row) => row.id)));
     setLibrary(false);
-    setStep(4);
+    setStep(5);
   };
 
   const taskLabels = m().models.taskLabels as Record<string, string>;
   const stepLabels = [
     t("firstRun.stepWelcome"),
     t("firstRun.stepMachine"),
+    t("firstRun.stepPrograms"),
     t("firstRun.stepModels"),
     t("firstRun.stepReady"),
   ];
@@ -186,7 +195,9 @@ export function FirstRun() {
         </div>
       )}
 
-      {step === 3 && !library && (
+      {step === 3 && <ProgramsStep onBack={() => setStep(2)} onNext={() => setStep(4)} />}
+
+      {step === 4 && !library && (
         <div className="wiz-body">
           <h2>{t("firstRun.modelsTitle")}</h2>
           <p className="sub">{t("firstRun.modelsSub")}</p>
@@ -222,7 +233,7 @@ export function FirstRun() {
               {t("firstRun.openLibrary")}
             </button>
             <span className="spacer" />
-            <button className="btn-ghost" onClick={() => setStep(2)}>
+            <button className="btn-ghost" onClick={() => setStep(3)}>
               {t("common.back")}
             </button>
           </div>
@@ -234,7 +245,7 @@ export function FirstRun() {
         </div>
       )}
 
-      {step === 3 && library && (
+      {step === 4 && library && (
         <LibraryStep
           picked={picked}
           onToggle={toggle}
@@ -245,34 +256,17 @@ export function FirstRun() {
           onBackToRail={() => setLibrary(false)}
           onBack={() => {
             setLibrary(false);
-            setStep(2);
+            setStep(3);
           }}
         />
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <ReadyStep
-          stages={stages.map((rec) => ({
-            task: rec.task,
-            // Short stage names (SCRIPT, not SCRIPT WRITING): the summary's
-            // stage column is a 110px gutter, not a heading.
-            stage:
-              (m().firstRun.stages as Record<string, string>)[rec.task] ??
-              taskLabels[rec.task] ??
-              rec.task,
-            row: rowById.get(rec.model!.id),
-            name: rec.model!.family
-              ? displayModelName(rec.model!.family, rec.model!.version)
-              : rec.model!.id,
-            id: rec.model!.id,
-            // Home's strip reads the same rows; only the wizard knows what
-            // it just asked for, before the engine reports it running.
-            status: stageStatus(
-              rowById.get(rec.model!.id),
-              rec.task,
-              watchedIds.has(rec.model!.id),
-            ),
-          }))}
+          stages={[
+            ...stageRows(system, models, programs, watchedIds),
+            ...(finalVideoRow(programs) ? [finalVideoRow(programs)!] : []),
+          ]}
           models={models}
           pendingIds={watchedIds}
           onDone={finishFirstRun}
@@ -342,20 +336,140 @@ function LibraryStep({
   );
 }
 
+/**
+ * The programs step: FFmpeg, Ollama and ComfyUI, found or not, with the
+ * strip above them saying what a render would make right now.
+ *
+ * Nothing has gone wrong yet on a first run, so a program that is not
+ * there yet is a to-do rather than a failure (the wells carry no red edge
+ * and no stage rows until a setup fails). The setups run in the engine,
+ * one at a time, and carry on when this step is left, which is why its
+ * button turns into Continue the moment one starts.
+ */
+function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => void }) {
+  const client = useApp((state) => state.client);
+  const programs = useApp((state) => state.programs);
+  const programsError = useApp((state) => state.programsError);
+  const queue = useApp((state) => state.programQueue);
+  const remoteEngine = useApp((state) => state.remoteEngine);
+  const refreshPrograms = useApp((state) => state.refreshPrograms);
+  const refreshReadiness = useApp((state) => state.refreshReadiness);
+  const setupPrograms = useApp((state) => state.setupPrograms);
+  const voices = useVoices();
+  const [error, setError] = useState<string | null>(null);
+
+  // Asked again on arrival: this is the screen a person reads to decide
+  // whether to set something up, so what it shows has to be now.
+  useEffect(() => {
+    if (!client) return;
+    void refreshPrograms();
+    refreshReadiness().catch((err) => console.warn("readiness refresh failed:", err));
+  }, [client, refreshPrograms, refreshReadiness]);
+
+  const host = remoteEngine ? hostOf(client?.baseUrl) : null;
+  const rows = (programs?.programs ?? [])
+    .filter((row) => isKnownProgram(row.id))
+    .sort((a, b) => PROGRAM_ORDER.indexOf(a.id) - PROGRAM_ORDER.indexOf(b.id));
+  const running = rows.find((row) => row.setup.job) ?? null;
+  const busy = running !== null || queue.length > 0;
+  const settable = rows.filter((row) => {
+    const offer = setupOffer(row);
+    return offer?.kind === "setup" || offer?.kind === "retry";
+  });
+  const total = settable.reduce((sum, row) => sum + (row.setup.download_bytes ?? 0), 0);
+  // A program LocalCut cannot set up here has only its manual steps, and
+  // the sentence that promises "for you" must not cover it.
+  const someByHand = rows.some((row) => needsAttention(row) && !row.setup.available);
+
+  const start = () => {
+    void setupPrograms(settable.map((row) => row.id)).then(setError);
+  };
+  const action = busy || settable.length === 0
+    ? null
+    : settable.length === 1
+      ? t("programs.setup.action", { name: programName(settable[0].id) })
+      : settable.length === 2
+        ? t("programs.wizard.setupBoth")
+        : t("programs.wizard.setupAll");
+
+  return (
+    <div className="wiz-body">
+      <h2>{t("programs.wizard.title")}</h2>
+      <p className="sub">{someByHand ? t("programs.wizard.subSome") : t("programs.wizard.sub")}</p>
+      <PipelineStrip context="wizard" />
+      {programsError && (
+        <p className="banner error" role="alert">
+          {t("programs.pane.failed", { error: programsError })}
+        </p>
+      )}
+      {programs ? (
+        <div className="pw-list">
+          {rows.map((row) => {
+            const place = queue.indexOf(row.id);
+            const behind = place < 0 ? null : place === 0 ? (running?.id ?? null) : queue[place - 1];
+            return (
+              <ProgramWell
+                key={row.id}
+                program={row}
+                report={programs}
+                context="wizard"
+                host={host}
+                queuedBehind={behind}
+              />
+            );
+          })}
+          <p className="programs-group">{t("programs.pane.optional")}</p>
+          <ChatterboxWell cloning={voices?.cloning === true} remote={host !== null} />
+        </div>
+      ) : (
+        !programsError && <p className="hint">{t("programs.pane.loading")}</p>
+      )}
+      <div className="setup-actions">
+        {action ? (
+          <button className="btn-primary" onClick={start}>
+            {action}
+            {total > 0 && (
+              <>
+                {" "}
+                <span className="readout">{formatSize(total)}</span>
+              </>
+            )}
+          </button>
+        ) : (
+          <button className="btn-primary" onClick={onNext}>
+            {t("common.continue")}
+          </button>
+        )}
+        <button className="btn-ghost" onClick={onBack}>
+          {t("common.back")}
+        </button>
+        {action && (
+          <>
+            <span className="spacer" />
+            <button className="btn-ghost" onClick={onNext}>
+              {t("programs.wizard.skip")}
+            </button>
+          </>
+        )}
+      </div>
+      {error && (
+        <p className="hint error-text" role="alert">
+          {error}
+        </p>
+      )}
+      {action && <p className="hintline">{t("programs.wizard.hintSetup")}</p>}
+      {busy && <p className="hintline">{t("programs.wizard.hintRunning")}</p>}
+    </div>
+  );
+}
+
 function ReadyStep({
   stages,
   models,
   pendingIds,
   onDone,
 }: {
-  stages: {
-    task: string;
-    stage: string;
-    row: ModelRow | undefined;
-    name: string;
-    id: string;
-    status: StageStatus;
-  }[];
+  stages: StageRow[];
   models: ModelRow[];
   pendingIds: Set<string>;
   onDone: () => void;
@@ -385,14 +499,14 @@ function ReadyStep({
   return (
     <div className="wiz-body">
       <h2>{t("firstRun.readyTitle")}</h2>
-      <p className="sub">{plural("firstRun.readySub", stages.length)}</p>
+      <p className="sub">{t("firstRun.readySub")}</p>
       <div className="sumrail">
         {stages.map((stage) => (
           <StageSummaryRow
             key={stage.task}
             stage={stage.stage}
             name={stage.name}
-            id={stage.id}
+            runner={stage.runner}
             status={stage.status}
           />
         ))}

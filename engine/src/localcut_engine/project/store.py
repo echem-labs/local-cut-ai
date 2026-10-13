@@ -147,6 +147,12 @@ class Project(BaseModel):
     # session's rows age out behind a couple of full renders and its tile
     # would fall back to "draft" while its download link still worked.
     tool_artifact_hash: str | None = None
+    # Video projects only: the export node's artifact for the graph as it
+    # stands, or None until there is one. The same question for the same
+    # reason: a project that exported before a few newer renders has no
+    # export row left in GET /jobs, and its tile read "Draft" beside a cut
+    # that still played and downloaded.
+    export_artifact_hash: str | None = None
     # Promotion provenance, so a script session and the video it became can
     # name each other. A session can be promoted more than once, hence a
     # list; a video comes from exactly one session.

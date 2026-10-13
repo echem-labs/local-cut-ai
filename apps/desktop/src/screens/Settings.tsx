@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Boxes,
   Cpu,
   Database,
@@ -30,6 +31,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Modal } from "../components/Modal";
 import { Dropdown } from "../components/Dropdown";
 import { displayModelName, formatSize, ModelLibrary } from "../components/ModelLibrary";
+import { ProgramsPane } from "../components/ProgramsPane";
 import { InfoDot, Tip } from "../components/Tooltip";
 import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
@@ -65,6 +67,7 @@ const TAB_ICONS: Record<SettingsTab, typeof SunMoon> = {
   general: SunMoon,
   defaults: SlidersHorizontal,
   providers: KeyRound,
+  programs: AppWindow,
   models: Boxes,
   storage: HardDrive,
   engine: Server,
@@ -150,9 +153,32 @@ function servesModel(names: string[], model: string): boolean {
  * defaultable tasks, so a task the engine cannot honor never grows a knob;
  * a task with nothing installed to choose stays hidden too. */
 function ModelDefaultsPanel() {
-  const { models, modelDefaults, refreshModelDefaults, setModelDefault, client } = useApp();
+  const {
+    models,
+    modelDefaults,
+    refreshModelDefaults,
+    setModelDefault,
+    client,
+    defaultPickerFocus,
+    defaultPickerFocused,
+  } = useApp();
   const [llmNames, setLlmNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+
+  // A readiness fix sent the user here for one task's picker. Checked after
+  // every render rather than once: the row exists only after the defaults
+  // and the server's model list have arrived (a row offering nothing but
+  // Auto stays hidden).
+  useEffect(() => {
+    if (!defaultPickerFocus) return;
+    const row = rowRefs.current.get(defaultPickerFocus);
+    if (!row) return;
+    // Optional: jsdom implements no scrolling.
+    row.scrollIntoView?.({ block: "center" });
+    row.querySelector<HTMLButtonElement>(".dropdown-trigger")?.focus();
+    defaultPickerFocused();
+  });
 
   // `client` in the deps, not just the (stable) store action: switchEngine
   // blanks modelDefaults on a pair/unpair, and a zustand action identity never
@@ -249,7 +275,14 @@ function ModelDefaultsPanel() {
       <h3>{t("settings.models.defaultsHeading")}</h3>
       <p className="hint">{t("settings.models.defaultsHint")}</p>
       {rows.map(({ task, current, options }) => (
-        <div className="model-default-row" key={task}>
+        <div
+          className="model-default-row"
+          key={task}
+          ref={(node) => {
+            if (node) rowRefs.current.set(task, node);
+            else rowRefs.current.delete(task);
+          }}
+        >
           {/* The label says WHICH stage; the dot says what that stage does.
               "Keyframes" and "Video clips" are the app's own vocabulary, and
               a row that only names them tells someone choosing a model
@@ -965,6 +998,8 @@ export function Settings() {
               })}
             </section>
           )}
+
+          {tab === "programs" && <ProgramsPane />}
 
           {tab === "models" && (
             <section>

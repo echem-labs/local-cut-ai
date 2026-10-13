@@ -30,9 +30,12 @@ from localcut_engine.api.app import create_app
 from localcut_engine.backends.base import GenerationError
 from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
+from localcut_engine.graph.templates import expand_screenplay, prompt_template_graph
 from localcut_engine.manifest.defaults import DEFAULTS_VERSION, set_default
 from localcut_engine.manifest.defaults import _path as _defaults_path
+from localcut_engine.project.store import ProjectStore
 from localcut_engine.providers.textgen import AnthropicTextGen, ProviderError
+from localcut_engine.schema import Scene, Screenplay
 
 TOKEN = "test-token"
 PNG = b"\x89PNG\r\n\x1a\n" + b"pixels"
@@ -66,6 +69,33 @@ def _asset(client, project_id: str) -> str:
 def _suggest(client, project_id: str, node_id: str, **over) -> dict:
     body = {"node_id": node_id, "model": "cloud:claude-sonnet-5", **over}
     return client.post(f"/projects/{project_id}/suggest-scene", json=body)
+
+
+def _project_saying(config: EngineConfig, *lines: str) -> str:
+    """A project whose scenes already speak `lines`.
+
+    Written to disk before the engine starts, so the app is the only writer
+    once it runs, and without a script job: the mock pipeline would have to
+    run to the end just to put words on the scenes.
+    """
+    screenplay = Screenplay(
+        title="t",
+        scenes=[
+            Scene(id=f"s{i}", duration_s=5.0, narration=line, visual="v", motion="m")
+            for i, line in enumerate(lines, 1)
+        ],
+    )
+    graph = expand_screenplay(prompt_template_graph("how bees find flowers"), screenplay)
+    return ProjectStore(config.projects_dir).create(title="t", graph=graph).id
+
+
+# What a local vision model wrote for an English project: English until the
+# last clause, then Chinese. Kokoro, reading English, said "Chinese letter"
+# for each of those characters, and the captions burned them onto the cut.
+_SWITCHED = (
+    "Bees weave between golden flowers, their wings a blur of motion as they "
+    "communicate the dance of的方向和距离。"
+)
 
 
 def test_it_writes_the_two_fields_a_new_scene_needs(client, monkeypatch):
@@ -596,3 +626,176 @@ def test_a_project_with_no_narration_yet_is_told_so():
 
     assert "first scene with words" in prompt
     assert "The scenes before this one say" not in prompt
+
+
+def test_a_suggestion_that_switches_writing_system_is_refused_for_another_try(
+    tmp_path, monkeypatch
+):
+    """The line above, at HTTP 200, went straight into `add_scene`.
+
+    A 502 is the route's answer for model output it cannot use, and the
+    dialog already lets the user ask again after one. The reason quotes the
+    letters, so the user sees what the model did instead of a bare failure.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock", anthropic_key="k")
+    project_id = _project_saying(
+        config,
+        "Every hive sends out scouts at first light.",
+        "A scout that finds nectar flies home to tell the others.",
+    )
+
+    async def fake_describe(self, system, prompt, image, max_tokens=4096):
+        return json.dumps({"narration": _SWITCHED, "prompt": "a bee on a sunflower"})
+
+    monkeypatch.setattr(AnthropicTextGen, "describe", fake_describe)
+
+    with TestClient(create_app(config)) as client:
+        client.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        response = _suggest(client, project_id, _asset(client, project_id))
+
+    assert response.status_code == 502, response.text
+    detail = response.json()["detail"]
+    assert "的方向和距离" in detail
+    assert "narration" in detail
+
+
+def test_a_project_written_in_japanese_keeps_its_own_letters(tmp_path, monkeypatch):
+    """The check is against the project, not against English.
+
+    Kanji and both kana mix freely in one Japanese sentence, so a line using
+    katakana the earlier ones happened not to is the same language. Latin
+    inside it ("AI") is how Japanese prose writes the acronym, and the shot
+    description is English because that is what the video model reads.
+    """
+    config = EngineConfig(data_dir=tmp_path, token=TOKEN, backend="mock", anthropic_key="k")
+    project_id = _project_saying(config, "朝の光の中で、蜂たちは花を探しに出かけます。")
+    line = "AIが分析したダンスは、方角と距離を仲間に伝えるメッセージです。"
+
+    async def fake_describe(self, system, prompt, image, max_tokens=4096):
+        return json.dumps({"narration": line, "prompt": "a bee dancing on a honeycomb"})
+
+    monkeypatch.setattr(AnthropicTextGen, "describe", fake_describe)
+
+    with TestClient(create_app(config)) as client:
+        client.headers.update({"Authorization": f"Bearer {TOKEN}"})
+        response = _suggest(client, project_id, _asset(client, project_id))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["narration"] == line
+
+
+def _suggestion(narration: str, prompt: str = "a bee on a sunflower") -> str:
+    return json.dumps({"narration": narration, "prompt": prompt})
+
+
+def test_what_is_not_a_letter_never_counts_as_a_switch():
+    """Only letters carry a language. Punctuation, numbers, symbols and emoji
+    are not a switch, however far from ASCII they sit. (The first line's
+    dashes are U+2014, the one a model writes most.)"""
+    from localcut_engine.graph.editor import parse_scene_suggestion
+
+    english = "Every hive sends out scouts at first light."
+    for line in [
+        "A scout dances — a figure eight, 45° off the sun — for 3 seconds.",
+        "「Waggle」, they call it。 ✨🐝🌻 ½ km → home!",
+        "The naïve café owner in Zürich keeps Æsir hives © 2026.",
+        "ＡＩ counts every 𝐛𝐞𝐞: ①②③ ™ №",
+    ]:
+        assert parse_scene_suggestion(_suggestion(line), english)["narration"] == line
+
+
+def test_greek_letters_written_as_symbols_are_not_a_switch():
+    """π and Δ are maths in any language, and µ is the micro sign, which
+    folds onto Greek mu. Refusing them would refuse a line about a 5 µm
+    pollen grain for no reason a user could act on."""
+    from localcut_engine.graph.editor import parse_scene_suggestion
+
+    line = "Each pollen grain is 5 µm across, and π sets the curve of the comb."
+    english = "Every hive sends out scouts at first light."
+
+    assert parse_scene_suggestion(_suggestion(line), english)["narration"] == line
+
+
+def test_the_shot_description_is_held_to_the_same_rule():
+    from localcut_engine.graph.editor import parse_scene_suggestion
+
+    with pytest.raises(ValueError, match="蜜蜂"):
+        parse_scene_suggestion(
+            _suggestion("A scout flies home.", "a 蜜蜂 on a sunflower"),
+            "Every hive sends out scouts at first light.",
+        )
+
+
+def test_any_writing_system_the_project_does_not_use_is_a_switch():
+    from localcut_engine.graph.editor import parse_scene_suggestion
+
+    english = "Every hive sends out scouts at first light."
+    for stray in ["Пчёлы", "ผึ้ง", "꿀벌", "النحل", "मधुमक्खी"]:
+        with pytest.raises(ValueError, match=stray[0]):
+            parse_scene_suggestion(_suggestion(f"The scouts fly home, {stray}."), english)
+
+
+def test_with_no_narration_yet_the_brief_is_what_the_project_is_written_in():
+    """The first scene with words has no lines to match, but the user did type
+    one thing: what the video is about. A project described in English takes
+    an English first line and refuses a Chinese one; a project described in
+    Chinese takes Chinese."""
+    from localcut_engine.graph.editor import language_sample, parse_scene_suggestion
+
+    english = language_sample({"brief": {"prompt": "how bees find flowers"}})
+    chinese = language_sample({"brief": {"prompt": "蜜蜂如何找到花朵"}})
+
+    with pytest.raises(ValueError):
+        parse_scene_suggestion(_suggestion("蜜蜂跳舞。"), english)
+    assert parse_scene_suggestion(_suggestion("蜜蜂跳舞。"), chinese)["narration"] == "蜜蜂跳舞。"
+
+
+def test_narration_outranks_the_brief_once_there_is_some():
+    """The script writes English narration whatever language the brief was
+    typed in, and the new line has to sit beside that narration."""
+    from localcut_engine.graph.editor import language_sample
+
+    view = {
+        "brief": {"prompt": "蜜蜂如何找到花朵"},
+        "scenes": [
+            {
+                "scene_id": "s1",
+                "nodes": [{"kind": "narration", "params": {"text": "Scouts leave at dawn."}}],
+            }
+        ],
+    }
+
+    assert language_sample(view) == "Scouts leave at dawn."
+
+
+def test_with_nothing_written_at_all_nothing_is_refused():
+    """No narration and no letter in the brief: there is no language to hold
+    a suggestion to, and assuming one would refuse the user's own."""
+    from localcut_engine.graph.editor import language_sample, parse_scene_suggestion
+
+    sample = language_sample({"brief": {"prompt": "🐝🌻"}})
+
+    assert parse_scene_suggestion(_suggestion("蜜蜂跳舞。"), sample)["narration"] == "蜜蜂跳舞。"
+
+
+def test_the_ask_names_the_language_to_write_in():
+    """Told nothing about language, a model that leans Chinese finished an
+    English sentence in Chinese. The ask names the language the only way it
+    can without guessing one: by pointing at the lines the model was shown."""
+    from localcut_engine.graph.editor import SUGGEST_SCENE_SYSTEM_PROMPT, suggest_scene_prompt
+
+    view = {
+        "brief": {"prompt": "how bees find flowers"},
+        "scenes": [
+            {
+                "scene_id": "s1",
+                "nodes": [{"kind": "narration", "params": {"text": "Scouts leave at dawn."}}],
+            }
+        ],
+    }
+
+    assert "same language as those lines" in suggest_scene_prompt(view, 5.0)
+    assert "language the description" in suggest_scene_prompt(
+        {"brief": {"prompt": "how bees find flowers"}}, 5.0
+    )
+    assert "Never switch language" in SUGGEST_SCENE_SYSTEM_PROMPT

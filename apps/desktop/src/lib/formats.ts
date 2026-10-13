@@ -47,17 +47,23 @@ export const EXPORT_FPS_CHOICES = [24, 25, 30, 50, 60] as const;
 export const EXPORT_SHORT_SIDE_CHOICES = [480, 720, 1080] as const;
 
 /** The engine's narration timing model — backends/llm.py
- * `SPEECH_WORDS_PER_S` and backends/ffmpeg.py `NARRATION_PAD_S`. A scene
+ * `SPEECH_LETTERS_PER_S` and backends/ffmpeg.py `NARRATION_PAD_S`. A scene
  * lasts as long as its narration takes to speak (plus breathing room), NOT
- * the `duration_s` the script model wrote — nothing downstream reads that
- * claim, so neither may the UI. */
-export const SPEECH_WORDS_PER_S = 3.5;
+ * the `duration_s` the script model wrote. That sizes the clips the video
+ * model renders, but assembly fits every narrated scene to its narration,
+ * so the UI may not read it as the scene's length either.
+ *
+ * Timed per letter, not per word: the narration voice holds its pace per
+ * letter whatever the words, while short words and long ones read at very
+ * different words per second. */
+export const SPEECH_LETTERS_PER_S = 13;
 export const NARRATION_PAD_S = 0.35;
 
-/** Seconds a scene's narration actually takes to speak, engine-rule. */
+/** Seconds a scene's narration actually takes to speak, engine-rule. Letters
+ * are Unicode category L, the same set Python's `str.isalpha` counts. */
 export const spokenSeconds = (narration: string): number => {
-  const words = narration.split(/\s+/).filter(Boolean).length;
-  return words / SPEECH_WORDS_PER_S + NARRATION_PAD_S;
+  const letters = narration.match(/\p{L}/gu)?.length ?? 0;
+  return letters / SPEECH_LETTERS_PER_S + NARRATION_PAD_S;
 };
 
 /** Seconds for a label, at most one decimal. Planned durations come out of
