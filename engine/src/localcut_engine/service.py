@@ -2002,6 +2002,16 @@ class ProjectService:
                 project.tool_artifact_hash = self._tool_output(graph, project.mode, memo, cached)
                 if thumb is None:
                     thumb = self._tool_still(graph, memo, cached)
+            else:
+                # The finished cut, by the same rule as a tool's artifact:
+                # the export's CURRENT identity, and only once the trusted
+                # cache holds it. So an edit that moves the export past its
+                # last render empties this until the re-render lands, which
+                # is the answer the board gives the download button too, and
+                # a placeholder export from a tier since replaced never
+                # counts as a cut.
+                export = graph.output_hash("export", memo) if "export" in graph.nodes else None
+                project.export_artifact_hash = export if export in cached else None
             project.thumb_hash = thumb
             if duration > 0:
                 project.duration_s = round(duration, 1)
@@ -2047,25 +2057,26 @@ class ProjectService:
                 return still
         return None
 
-    def backfill_tool_metas(self) -> int:
-        """Fill in the quick-tool fields for sessions written by an older
-        build, returning how many gained an artifact.
+    def backfill_metas(self) -> int:
+        """Fill in the finished-output fields for projects written by an
+        older build, returning how many gained an artifact.
 
-        `tool_artifact_hash` and a tool session's `thumb_hash` are only ever
-        written by a meta refresh, and a refresh only happens on a WRITE. A
-        session that finished before this build existed is never written
-        again, so without this it would report "draft" behind a working
-        download, and a generic glyph in place of the image it made, forever.
-        History is made of precisely those old sessions.
+        `tool_artifact_hash`, a tool session's `thumb_hash` and a video's
+        `export_artifact_hash` are only ever written by a meta refresh, and a
+        refresh only happens on a WRITE. A project that finished before this
+        build existed is never written again, so without this it would
+        report "draft" behind a working download, and a tool session a
+        generic glyph in place of the image it made, forever. History is
+        made of precisely those old projects.
 
-        One pass at startup. A session that legitimately has no artifact is
+        One pass at startup. A project that legitimately has no artifact is
         re-examined on each start -- a graph load apiece, and they are the
         minority -- which is cheaper and less brittle than persisting a
         "swept" marker that could itself fall out of date.
         """
         filled = 0
         for project in self.store.list():
-            if not project.mode.startswith("tool:") or project.tool_artifact_hash:
+            if self._finished_record(project):
                 continue
             with self._lock:
                 try:
@@ -2085,11 +2096,20 @@ class ProjectService:
                     # encoding, therefore stopped the whole engine from
                     # starting, with every other project perfectly healthy
                     # and nothing naming the one at fault.
-                    logger.warning("could not backfill tool meta for %s", project.id)
+                    logger.warning("could not backfill meta for %s", project.id)
                     continue
-            if healed is not None and healed.tool_artifact_hash:
+            if healed is not None and self._finished_record(healed):
                 filled += 1
         return filled
+
+    @staticmethod
+    def _finished_record(project: Project) -> str | None:
+        """The meta's record of a finished output: a quick tool session's
+        artifact, or a video's exported cut. Each kind reads only its own
+        field, so a video can never look finished through a tool's."""
+        if project.mode.startswith("tool:"):
+            return project.tool_artifact_hash
+        return project.export_artifact_hash
 
     def _assembled_edl(
         self, project_id: str, graph: StoryGraph, memo: dict[str, str], cached: set[str]

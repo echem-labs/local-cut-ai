@@ -627,6 +627,24 @@ def test_job_statuses_match_the_desktop_union():
     assert union == {status.value for status in JobStatus}
 
 
+def test_the_desktop_project_mirrors_the_engines_meta():
+    """`Project` in types.ts is meta.json retyped by hand, and the tiles read
+    their status straight off it: `tool_artifact_hash` for a quick tool
+    session, `export_artifact_hash` for a video. A field renamed on one side
+    is no type error on either. It arrives as `undefined`, which the tile
+    reads as "Draft", for every finished project at once."""
+    from localcut_engine.project.store import Project
+
+    text = _ts_source(_TYPES)
+    start = text.index("export interface Project {")
+    body = text[start : text.index("\n}", start)]
+    declared = set(re.findall(r"^\s+(\w+)\??:", body, flags=re.M))
+    assert declared == set(Project.model_fields), (
+        f"engine only: {sorted(set(Project.model_fields) - declared)}, "
+        f"desktop only: {sorted(declared - set(Project.model_fields))}"
+    )
+
+
 def test_license_verdicts_match_the_desktop_union():
     """The verdict drives what the model library tells a user they may do
     with a model's output. `ModelLibrary` falls back to "conditions" for an
