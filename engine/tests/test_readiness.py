@@ -29,6 +29,7 @@ from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
 from localcut_engine.graph.model import NodeKind
 from localcut_engine.manifest.defaults import set_default
+from localcut_engine.programs import ollama as ollama_program
 from localcut_engine.readiness import readiness_rows
 
 _FFMPEG_EXE = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
@@ -249,11 +250,24 @@ async def test_a_named_model_that_is_not_downloaded_will_fail(tmp_path, monkeypa
     assert row["verdict"] == "ready"
 
 
+def _not_an_ollama(monkeypatch) -> None:
+    """The LLM server these tests stand in for is not an Ollama. Asked, not
+    assumed: the default address is where a developer's own Ollama runs."""
+
+    async def other(url: str) -> str:
+        return "other"
+
+    monkeypatch.setattr(ollama_program, "identify", other)
+
+
 async def test_script_rows_check_the_server_for_the_resolved_model(tmp_path, monkeypatch):
     """Auto for text.llm means the engine-config model, which the Ollama
     server may simply not have - the one place Auto points at a missing
-    model and the job fails loudly. The row names the resolved model."""
+    model and the job fails loudly. The row names the resolved model. The
+    server here is not an Ollama, so it cannot pull the model, and the fix
+    is the picker (test_programs_ollama.py has an Ollama's pull)."""
     monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
+    _not_an_ollama(monkeypatch)
 
     async def fake_list_models(self) -> list[str]:
         return ["llama3.2"]
@@ -293,6 +307,7 @@ async def test_auto_does_not_settle_for_another_model_the_server_has(tmp_path, m
     finds in the result."""
     pin_hardware(monkeypatch, 8.0)
     monkeypatch.setattr(ServiceProbe, "available", lambda self: True)
+    _not_an_ollama(monkeypatch)
 
     async def pulled_something_else(self) -> list[str]:
         return ["llama3.2:latest", "nomic-embed-text:latest"]

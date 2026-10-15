@@ -72,8 +72,24 @@ class KeptFile(_Strict):
     #: of them joined by "/" for a program that finds its libraries beside
     #: its binary (Ollama's lib/ollama). Never absolute and never "..".
     path: str
-    #: Its size unpacked, in bytes.
-    size: int = Field(gt=0)
+    #: Its size unpacked, in bytes. 0 for a link.
+    size: int = Field(ge=0)
+    #: Set for a symbolic link (a tar member only): the name of the kept
+    #: file it points at, in the same folder. A Linux library is loaded by
+    #: its soname (libggml.so.0), which the archive ships as a link to the
+    #: versioned file, and a copy in its place would double the disk it takes.
+    link: str | None = None
+
+    @model_validator(mode="after")
+    def _a_file_or_a_link(self) -> KeptFile:
+        if self.link is None and self.size <= 0:
+            raise ValueError(f"{self.path} is a file of no size")
+        if self.link is not None:
+            if self.size != 0:
+                raise ValueError(f"{self.path} is a link, and a link has no size")
+            if not _BARE_NAME.fullmatch(self.link) or self.link in (".", ".."):
+                raise ValueError(f"{self.path} links outside its own folder")
+        return self
 
     @field_validator("path")
     @classmethod
@@ -112,6 +128,22 @@ class ProgramAsset(_Strict):
         if not _DIGEST.fullmatch(value):
             raise ValueError("sha256 is 64 lowercase hex digits")
         return value
+
+    @model_validator(mode="after")
+    def _links_point_at_kept_files(self) -> ProgramAsset:
+        """A link is followed only to another file kept beside it, never out
+        of the program's folder, and only an archive that can hold one has
+        one."""
+        paths = {kept.path for kept in self.files}
+        for kept in self.files:
+            if kept.link is None:
+                continue
+            if self.format == "zip":
+                raise ValueError(f"{self.url} is a zip, and a zip keeps no links")
+            folder = kept.path.rpartition("/")[0]
+            if (f"{folder}/{kept.link}" if folder else kept.link) not in paths:
+                raise ValueError(f"{kept.path} links to {kept.link}, which is not kept")
+        return self
 
     @model_validator(mode="after")
     def _each_file_once(self) -> ProgramAsset:

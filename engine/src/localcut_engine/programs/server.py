@@ -200,7 +200,7 @@ class ManagedServer:
         task = self._task
         run = self._run
         if run is not None:
-            await asyncio.to_thread(_stop_tree, run.process.pid)
+            await stop_child(run.process)
         if task is not None:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
@@ -244,7 +244,7 @@ class ManagedServer:
             self._set("crashed", "cannot_start", str(exc) or type(exc).__name__)
         finally:
             if self._run is not None and self._run.process.returncode is None:
-                await asyncio.to_thread(_stop_tree, self._run.process.pid)
+                await stop_child(self._run.process)
             self._run = None
             await asyncio.to_thread(self._forget_run)
 
@@ -283,7 +283,7 @@ class ManagedServer:
             elif timed_out and not self._stopping:
                 logger.warning("LocalCut's %s did not answer in %gs", self.id, START_TIMEOUT_S)
             if not answered:
-                await asyncio.to_thread(_stop_tree, run.process.pid)
+                await stop_child(run.process)
             code = await run.process.wait()
             self._run = None
             await asyncio.to_thread(self._forget_run)
@@ -435,31 +435,67 @@ def _same_binary(running: str, recorded: str) -> bool:
 
 
 def _stop_tree(pid: int) -> None:
-    """Stop a process and everything it started. On POSIX it is asked first
-    (SIGTERM), which lets a server unload what it holds, and killed if it is
-    still there after the grace period. Windows has no such request for a
-    process without a console, so there the tree is ended outright."""
+    """Stop a process this engine did not start (an orphan an earlier one
+    left) and everything it started. On POSIX it is asked first (SIGTERM),
+    which lets a server unload what it holds, and killed if it is still
+    there after the grace period. Windows has no such request for a process
+    without a console, so there the tree is ended outright."""
     try:
         root = psutil.Process(pid)
         children = root.children(recursive=True)
     except psutil.Error:
         return
     if os.name == "nt":
-        everyone = [*children, root]
-        for process in everyone:
-            with contextlib.suppress(psutil.Error):
-                process.kill()
-        psutil.wait_procs(everyone, timeout=_STOP_GRACE_S)
+        _kill(children)
+        _kill([root])
         return
     with contextlib.suppress(psutil.Error):
         root.terminate()
     _, alive = psutil.wait_procs([root], timeout=_STOP_GRACE_S)
-    # Whatever the server started and did not stop on its way out.
-    leftover = [process for process in children if process.is_running()]
-    for process in [*alive, *leftover]:
-        with contextlib.suppress(psutil.Error):
+    _kill([*alive, *children])
+
+
+async def stop_child(process: asyncio.subprocess.Process) -> None:
+    """Stop a process this engine started, and everything it started. The
+    same as `_stop_tree`, except that the process itself is waited for
+    through asyncio, which reaps it: psutil waiting on a child of this
+    process would reap it first, and asyncio's wait would then never end."""
+    if process.returncode is not None:
+        return
+    try:
+        children = await asyncio.to_thread(
+            lambda: psutil.Process(process.pid).children(recursive=True)
+        )
+    except psutil.Error:
+        children = []
+    if os.name == "nt":
+        await asyncio.to_thread(_kill, children)
+        with contextlib.suppress(ProcessLookupError):
             process.kill()
-    psutil.wait_procs([*alive, *leftover], timeout=_STOP_GRACE_S)
+        await process.wait()
+        return
+    with contextlib.suppress(ProcessLookupError):
+        process.terminate()
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_STOP_GRACE_S)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+    # Whatever it started and did not stop on its way out.
+    await asyncio.to_thread(_kill, children)
+
+
+def _kill(processes: list) -> None:
+    """Kill these processes, none of them a child of this one, and wait for
+    them to go."""
+    alive = []
+    for process in processes:
+        with contextlib.suppress(psutil.Error):
+            if process.is_running():
+                process.kill()
+                alive.append(process)
+    psutil.wait_procs(alive, timeout=_STOP_GRACE_S)
 
 
 def _port_taken(host: str, port: int) -> bool:

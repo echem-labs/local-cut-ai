@@ -197,18 +197,26 @@ async def _server_answer(
     kind: str,
     url: str,
     ask,  # noqa: ANN001 - a coroutine function
-    managed: str | None = None,
+    changed: tuple = (),
 ) -> dict:
-    # Keyed by what LocalCut's own copy is doing too: the answer from before
-    # it started or stopped says nothing about the address now, and a screen
-    # asks again the moment it hears the copy changed.
-    key = (kind, url, managed)
+    # Keyed by what changes the answer too: LocalCut's own copy starting or
+    # stopping, and a setup or pull ending. The answer from before says
+    # nothing about the server now, and a screen asks again the moment it
+    # hears of either.
+    key = (kind, url, changed)
     kept = _server_answers.get(key)
     if kept is not None and time.monotonic() - kept[0] < _SERVER_TTL_S:
         return kept[1]
     answer = await ask()
     _server_answers[key] = (time.monotonic(), answer)
     return answer
+
+
+def _changes(setup: ProgramSetup, program_id: str) -> tuple:
+    """What has happened to a server program since an answer was kept."""
+    running = setup.servers.get(program_id) if setup.servers is not None else None
+    last = setup.state(program_id)["last"]
+    return (running.state if running else None, last["job"] if last else None)
 
 
 async def _get_json(client: httpx.AsyncClient, url: str) -> tuple[int, object]:
@@ -236,8 +244,7 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
             )
         return {"version": version, "models": models}
 
-    running = setup.servers.get("ollama") if setup.servers is not None else None
-    answer = await _server_answer("llm", url, ask, running.state if running else None)
+    answer = await _server_answer("llm", url, ask, _changes(setup, "ollama"))
     ours = INSTALLERS["ollama"].in_use(config)
     # The address is the same either way; who answers there is not.
     source = "managed" if ours else _source_of(config, "llm_url")
@@ -259,8 +266,10 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
         ]
         # An empty list is a server that does not list its models, which
         # says nothing about whether this one is there (readiness reads it
-        # the same way).
-        row["checks"]["model_present"] = _lists_model(names, script_model) if names else None
+        # the same way), unless the server is an Ollama: it lists every
+        # model it has, and an empty list is none.
+        listed = names or row["checks"]["server"] == "ollama"
+        row["checks"]["model_present"] = _lists_model(names, script_model) if listed else None
     else:
         row.update(state="broken", problem="unexpected_response")
     row["managed"] = await asyncio.to_thread(_managed, config, setup, "ollama")
@@ -278,8 +287,7 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
             except Exception as exc:  # noqa: BLE001 - an address nothing answers at, however it fails
                 return {"stats": exc}
 
-    running = setup.servers.get("comfyui") if setup.servers is not None else None
-    answer = await _server_answer("comfyui", url, ask, running.state if running else None)
+    answer = await _server_answer("comfyui", url, ask, _changes(setup, "comfyui"))
     row = _row("comfyui", _source_of(config, "comfyui_url"), url, "LOCALCUT_COMFYUI_URL")
     stats = answer["stats"]
     system = (

@@ -628,8 +628,21 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
     assert ollama["location"] == "http://127.0.0.1:9/v1"
     assert ollama["setting"] == "LOCALCUT_LLM_URL"
     assert ollama["checks"] == {"server": None, "model": "qwen3:14b", "model_present": None}
-    assert ollama["setup"]["available"] is False
-    assert ollama["setup"]["unavailable_reason"] == "program_not_supported"
+    # LocalCut's own Ollama would listen at that loopback address, and pull
+    # the script model into its store, which the catalog sizes.
+    ollama_pin = program_manifest.load_programs_manifest().asset("ollama", "linux-x64")
+    assert ollama["setup"] == {
+        "available": True,
+        "unavailable_reason": None,
+        "takes_effect": True,
+        "version": program_manifest.load_programs_manifest().program("ollama").version,
+        "url": ollama_pin.url,
+        "download_bytes": ollama_pin.size,
+        "install_bytes": ollama_pin.install_bytes,
+        "pull": {"model": "qwen3:14b", "bytes": 9 * 2**30},
+        "job": None,
+        "last": None,
+    }
 
     comfyui = _row(report, "comfyui")
     assert (comfyui["state"], comfyui["problem"]) == ("missing", "unreachable")

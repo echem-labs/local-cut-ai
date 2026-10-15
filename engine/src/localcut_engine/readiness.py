@@ -53,6 +53,7 @@ from .manifest.defaults import DEFAULTABLE_TASKS, load_defaults
 from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
 from .manifest.recommend import _fits, auto_llm_model
+from .programs import ollama as ollama_program
 from .programs.setup import setup_fix
 from .providers.registry import (
     PROVIDERS,
@@ -99,8 +100,15 @@ READINESS_REASONS = (
 
 # `setup_program` sets up LocalCut's own copy of a program
 # (programs/setup.py), and is offered only where that copy would become the
-# one the engine runs.
-READINESS_FIX_TYPES = ("download", "pick_model", "configure_provider", "setup_program")
+# one the engine runs. `pull_model` pulls the model a row lacks through the
+# Ollama that answers at the address, the user's own or LocalCut's.
+READINESS_FIX_TYPES = (
+    "download",
+    "pick_model",
+    "configure_provider",
+    "setup_program",
+    "pull_model",
+)
 
 # Kinds that assemble the deliverable. Mock declines these in any hybrid
 # chain (a placeholder MP4 named "your export" is worse than a failure), so
@@ -281,6 +289,8 @@ class _Snapshot:
     installed: dict[NodeKind, list[str]] = field(default_factory=dict)
     llm_names: list[str] | None = None
     llm_listed: bool = False
+    # Whether the LLM server is an Ollama, which can pull a missing model.
+    llm_pulls: bool | None = None
     # This machine, when the caller already has it. Only used to keep the
     # offered download to something the box can actually run; None means
     # "not probed", and the fix is then offered unfiltered rather than the
@@ -581,12 +591,7 @@ def _local_row(
                 kind, verdict="will_fail", reason="no_ffmpeg", fix=setup_fix(config, "ffmpeg")
             )
         if kind is NodeKind.SCRIPT:
-            return _row(
-                kind,
-                verdict="will_fail",
-                reason=("llm_server_down" if backends.find("llm") else "backend_not_configured"),
-                model=model,
-            )
+            return _script_down_row(config, backends, verdict="will_fail", model=model)
         return _missing_model_row(
             snap, backends, kind, verdict="will_fail", backend=None, model=model
         )
@@ -615,12 +620,8 @@ def _local_row(
             # configuration): no real assembly backend is configured.
             return _row(kind, verdict="placeholder", reason="backend_not_configured", backend=name)
         if kind is NodeKind.SCRIPT:
-            return _row(
-                kind,
-                verdict="placeholder",
-                reason=("llm_server_down" if backends.find("llm") else "backend_not_configured"),
-                backend=name,
-                model=model,
+            return _script_down_row(
+                config, backends, verdict="placeholder", model=model, backend=name
             )
         if (
             kind is NodeKind.CAPTIONS
@@ -654,6 +655,35 @@ def _local_row(
     # align, ffmpeg assembly, and any future tier that claimed the kind for
     # real.
     return _row(kind, verdict="ready", reason="ok", backend=name, model=model)
+
+
+def _script_down_row(
+    config: EngineConfig,
+    backends: BackendRegistry,
+    *,
+    verdict: str,
+    model: str | None,
+    backend: str | None = None,
+) -> dict:
+    """Nothing wrote the script because no LLM server answers, or because
+    the chain has no `llm` backend to ask one. Where LocalCut's own Ollama
+    would be the server at the address, setting it up is the fix."""
+    if not backends.find("llm"):
+        return _row(
+            NodeKind.SCRIPT,
+            verdict=verdict,
+            reason="backend_not_configured",
+            backend=backend,
+            model=model,
+        )
+    return _row(
+        NodeKind.SCRIPT,
+        verdict=verdict,
+        reason="llm_server_down",
+        backend=backend,
+        model=model,
+        fix=setup_fix(config, "ollama"),
+    )
 
 
 def _kokoro_row(kind: NodeKind, model: str | None) -> dict:
@@ -712,7 +742,9 @@ def _lists_model(names: list[str], resolved: str) -> bool:
     return any(name.removesuffix(":latest") == wanted for name in names)
 
 
-async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: str) -> dict:  # noqa: ANN001
+async def _finish_llm_row(  # noqa: ANN001 - backend is an LLMScriptBackend
+    snap: _Snapshot, config: EngineConfig, kind: NodeKind, backend, resolved: str
+) -> dict:
     if not snap.llm_listed:
         snap.llm_listed = True
         try:
@@ -726,14 +758,32 @@ async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: st
         # The server answered the probe and then could not be listed. At
         # execute time supports() would decline and mock would serve.
         return _row(kind, verdict="placeholder", reason="llm_server_down", backend="mock")
-    if not snap.llm_names:
+    if snap.llm_pulls is None and not _lists_model(snap.llm_names, resolved):
+        snap.llm_pulls = await ollama_program.identify(backend.root_url) == "self"
+    if not snap.llm_names and not snap.llm_pulls:
         # `list_models` flattens any non-200 to an empty list, and plenty of
         # OpenAI-compatible servers serve chat completions without serving
         # /v1/models at all (llama.cpp builds, anything behind an auth
         # proxy). "I could not enumerate" is not "the model is absent", and
-        # blocking a render that would have worked is the worse error.
+        # blocking a render that would have worked is the worse error. An
+        # Ollama lists every model it has, so its empty list is no models,
+        # which is what LocalCut's own copy has before its first pull.
         return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
     if not _lists_model(snap.llm_names, resolved):
+        # An Ollama pulls the model itself, which is the shorter way to a
+        # script than picking another; any other server is told what to
+        # use through the picker.
+        pullable = snap.llm_pulls and ollama_program.MODEL_NAME.fullmatch(resolved)
+        fix = (
+            {
+                "type": "pull_model",
+                "program": "ollama",
+                "model": resolved,
+                "size_bytes": await asyncio.to_thread(ollama_program.model_bytes, config, resolved),
+            }
+            if pullable
+            else {"type": "pick_model", "task": "text.llm"}
+        )
         return _row(
             kind,
             verdict="will_fail",
@@ -741,7 +791,7 @@ async def _finish_llm_row(snap: _Snapshot, kind: NodeKind, backend, resolved: st
             backend=backend.name,
             model=resolved,
             extra={"model": resolved},
-            fix={"type": "pick_model", "task": "text.llm"},
+            fix=fix,
         )
     return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=resolved)
 
@@ -803,7 +853,7 @@ async def readiness_rows(
         result = await asyncio.to_thread(_local_row, snap, config, backends, kind, model)
         if isinstance(result, tuple):
             backend, resolved_model = result
-            result = await _finish_llm_row(snap, kind, backend, resolved_model)
+            result = await _finish_llm_row(snap, config, kind, backend, resolved_model)
         elif kind is NodeKind.EXPORT and (burns_captions or draws_titles):
             result = await _finish_export_row(config, backends, result)
         rows.append(result)

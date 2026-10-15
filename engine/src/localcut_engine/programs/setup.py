@@ -267,6 +267,10 @@ class OllamaInstaller:
         name = "ollama.exe" if os.name == "nt" else "bin/ollama"
         return config.programs_dir / self.program / name
 
+    def command(self, binary: Path) -> list[str]:
+        """How the server is run from `binary`."""
+        return [str(binary), "serve"]
+
     def _environment(self, config: EngineConfig, host: str, port: int, models: Path) -> dict:
         # Ollama keeps a key pair in ~/.ollama, made the first time it
         # serves. Its home is a folder of LocalCut's, so nothing is written
@@ -291,7 +295,7 @@ class OllamaInstaller:
         environment = self._environment(config, host, port, models)
         Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
         return ServerLaunch(
-            argv=[str(binary), "serve"],
+            argv=self.command(binary),
             env=environment,
             cwd=binary.parent,
             url=f"http://{host if ':' not in host else f'[{host}]'}:{port}",
@@ -322,8 +326,7 @@ class OllamaInstaller:
         with (scratch / "serve.log").open("wb") as log:
             try:
                 process = await asyncio.create_subprocess_exec(
-                    str(binary),
-                    "serve",
+                    *self.command(binary),
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=log,
                     stderr=asyncio.subprocess.STDOUT,
@@ -343,8 +346,7 @@ class OllamaInstaller:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(process.wait(), timeout=0.25)
         finally:
-            await asyncio.to_thread(managed_server._stop_tree, process.pid)
-            await process.wait()
+            await managed_server.stop_child(process)
         said = (scratch / "serve.log").read_text("utf-8", "replace").strip().splitlines()[-3:]
         raise SetupFailed(
             "does_not_run",
@@ -438,8 +440,12 @@ def is_current(folder: Path, asset: ProgramAsset | None) -> bool:
     if record is None or record.get("sha256") != asset.sha256:
         return False
     for kept in asset.files:
+        target = folder.joinpath(*kept.path.split("/"))
         try:
-            if (folder / kept.path).stat().st_size != kept.size:
+            if kept.link is not None:
+                if os.readlink(target) != kept.link:
+                    return False
+            elif target.stat().st_size != kept.size:
                 return False
         except OSError:
             return False
@@ -1169,6 +1175,15 @@ def _unpack_files(
         if os.name != "nt":
             target.chmod(0o755)
 
+    def link(member: tarfile.TarInfo, kept: KeptFile) -> None:
+        # Made from the pin, never from the archive: the member has to be a
+        # link saying the same, and the pin only names a file kept beside it.
+        if not member.issym() or member.linkname != kept.link:
+            raise SetupFailed("unpack_failed", f"{member.name} is not the link the pin names")
+        target = folder.joinpath(*kept.path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(kept.link, target)
+
     try:
         if asset.format == "zip":
             with zipfile.ZipFile(archive) as unzipped:
@@ -1195,6 +1210,10 @@ def _unpack_files(
                     raise _Stopped
                 kept = wanted.get(member.name)
                 if kept is None or member.name in found:
+                    continue
+                if kept.link is not None:
+                    link(member, kept)
+                    found.add(member.name)
                     continue
                 if not member.isreg():
                     raise SetupFailed("unpack_failed", f"{member.name} is not a plain file")
