@@ -38,6 +38,7 @@ import {
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { describeGap, useReadinessGuard } from "../components/Readiness";
 import { blockingGaps, distinctGaps } from "../lib/readiness";
+import { useReadinessRefresh } from "../lib/useReadinessRefresh";
 
 /** The engine kinds a full video renders. Everything but the thumbnail,
  * which only the publish kit and the thumbnail tool ever build — warning
@@ -100,12 +101,6 @@ function GapNote({ row }: { row: ReadinessRow }) {
     </p>
   );
 }
-
-/** How often Home asks the engine for its readiness report again while the
- *  window can be seen. Every report probes the LLM server and ComfyUI, so
- *  this is slow on purpose: the note it feeds is standing copy, and half a
- *  minute late is fine where ten minutes was not. */
-export const READINESS_POLL_MS = 30_000;
 
 /** Home: one prompt surface — the video prompt, or the active quick tool's
  * panel in its place (never both) — plus the Quick Tools row and a real
@@ -202,39 +197,10 @@ export function Home() {
       .catch((err) => console.warn("home refresh failed:", err));
   }, []);
 
-  // The readiness report behind the note under the prompt changes with
-  // nothing in the app happening: an LLM server started from a terminal, a
-  // model pulled with `ollama pull`, ComfyUI launched by hand. None of those
-  // is an engine event, and the engine only finds out when it is asked, so
-  // the store's refetches (on connect, on a finished download) never fire
-  // for them. Home asks again itself: on mount, when the window regains
-  // focus (the usual way back from that terminal), and on a slow timer while
-  // the window can be seen. One ask at a time, since a slow report means a
-  // slow LLM server and stacking probes on it helps nobody.
-  useEffect(() => {
-    let asking = false;
-    const ask = () => {
-      if (asking) return;
-      asking = true;
-      void useApp
-        .getState()
-        .refreshReadiness()
-        .catch((err) => console.warn("readiness refresh failed:", err))
-        .finally(() => {
-          asking = false;
-        });
-    };
-    const tick = () => {
-      if (document.visibilityState === "visible") ask();
-    };
-    ask();
-    window.addEventListener("focus", ask);
-    const timer = setInterval(tick, READINESS_POLL_MS);
-    return () => {
-      window.removeEventListener("focus", ask);
-      clearInterval(timer);
-    };
-  }, []);
+  // The note under the prompt reads the readiness report, which changes
+  // with nothing in the app happening. Asked for on mount too: coming back
+  // from a project re-mounts Home, and nothing else refreshes for that.
+  useReadinessRefresh({ askOnMount: true });
 
   // "/" searches the library — Home has no box of its own to focus now, and
   // a shelf of four tiles is not what anyone is searching (review v5, Q3).

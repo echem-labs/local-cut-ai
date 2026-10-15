@@ -13,7 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReadinessRow } from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
-import { Home, READINESS_POLL_MS } from "./Home";
+import { READINESS_POLL_MS } from "../lib/useReadinessRefresh";
+import { Home } from "./Home";
 
 /** The store's own refresh, captured before any test swaps in a spy. */
 const storeRefresh = useApp.getState().refreshReadiness;

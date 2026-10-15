@@ -23,6 +23,7 @@ import {
   shownFailure,
 } from "../lib/programs";
 import { distinctGaps, noteworthyGaps, readinessFingerprint } from "../lib/readiness";
+import { useReadinessRefresh } from "../lib/useReadinessRefresh";
 import { useApp } from "../store";
 import { formatSize, ModelLibrary } from "./ModelLibrary";
 import { Modal } from "./Modal";
@@ -333,6 +334,8 @@ const writeFolded = (fingerprint: string | null) => {
  * fixing it. Never suppressed — dismissing the DIALOG must not take the
  * facts off the screen — and it clears itself the moment a download lands,
  * because the store refetches readiness on every terminal download event.
+ * What changes outside the app, a server started or a model pulled from a
+ * terminal, it asks about itself, on focus and on Home's timer.
  *
  * It FOLDS rather than closes, and that is the whole answer to "should this
  * be dismissable": the sentence and the severity chips stay, so the board
@@ -346,6 +349,7 @@ const writeFolded = (fingerprint: string | null) => {
  * scenes will be stills" is a fact worth having, even though it is never
  * worth a dialog. */
 export function ReadinessBanner() {
+  useReadinessRefresh({ askOnMount: false });
   const projectReadiness = useApp((state) => state.projectReadiness);
   const models = useApp((state) => state.models);
   const programs = useApp((state) => state.programs);
