@@ -58,11 +58,13 @@ someone else's voice.
 ## Installing Chatterbox
 
 `chatterbox-tts` is an optional runtime, like ComfyUI. It is not in the
-engine's lockfile, because it brings PyTorch with it and most installs never
-clone a voice. Install it into the engine's environment, from `engine/`:
+engine's lockfile, because it brings PyTorch and its own transformers with it
+and most installs never clone a voice. `engine/clone-requirements.txt` lists
+what it needs:
 
-```bash
-uv pip install chatterbox-tts "setuptools<81"
+```
+chatterbox-tts
+setuptools<81
 ```
 
 Don't drop the setuptools pin. Chatterbox watermarks everything it generates
@@ -73,30 +75,60 @@ and imports, and then every clone fails to load its model with
 `TypeError: 'NoneType' object is not callable`.
 
 On Windows, the torch you get from PyPI is CPU-only. Cloning works on it, but
-slowly: one narration line took 17 minutes on a test machine. Using a GPU means
-replacing it with a CUDA build of torch from PyTorch's own package index.
+slowly: one narration line took 17 minutes on a test machine. Using a GPU there
+means a CUDA build of torch from PyTorch's own package index, which these steps
+don't set up. On Linux the PyPI build is the CUDA one.
 
-The install also moves tokenizers back a release, since the transformers
-version chatterbox-tts pins refuses anything newer than 0.23.0. The rest of the
-engine is fine with that. It is also the change a dev checkout keeps undoing.
+### In a dev checkout
 
-### Keeping it in a dev checkout
-
-`uv run` syncs the environment to `uv.lock` before it runs anything, which puts
-the locked tokenizers and setuptools back over the ones chatterbox needs. The
-desktop's dev shell starts the engine with `uv run localcut serve`, so every
-launch breaks cloning again. Turn the sync off while you use it:
+Don't install it into the engine's `.venv`. Let uv layer it on top instead, from
+`engine/`:
 
 ```bash
-UV_NO_SYNC=1 npm run dev           # the desktop dev shell
-uv run --no-sync localcut serve    # an engine you start yourself
+uv run --with-requirements clone-requirements.txt localcut serve
 ```
 
-In PowerShell the first one is `$env:UV_NO_SYNC = "1"; npm run dev`.
+uv resolves the file on its own, builds a separate environment from it on
+top of `.venv`, caches that environment and reuses it on later runs. Packages in
+the layer win over the same packages in `.venv`, so this engine sees the older
+tokenizers and setuptools chatterbox needs while `.venv` keeps the locked ones.
+With chatterbox-tts 0.1.7 the layer also brings starlette 0.52.1 in place of
+the locked 1.x, because gradio, which chatterbox depends on, wants starlette
+below 1.0. `uv sync`, `uv run pytest` and a pull that changes `uv.lock` leave
+cloning alone.
 
-`uv sync` goes further and uninstalls chatterbox-tts, because the lockfile
-doesn't list it. That includes the `uv sync --all-groups` from the setup
-steps, so install it again after one. `uv run pytest` re-syncs too.
+The desktop dev shell runs that command when you ask for it:
+
+```bash
+LOCALCUT_DEV_CLONE=1 npm run dev     # from apps/desktop
+```
+
+In PowerShell that is `$env:LOCALCUT_DEV_CLONE = "1"; npm run dev`.
+
+The first run downloads PyTorch and the rest (the layer is about 6 GB on
+Linux, most of it CUDA libraries), and the dev shell gives the engine 30
+seconds to come up. Build the layer once from a terminal before the first
+`npm run dev` with it, so the app doesn't give up on an engine that is still
+downloading:
+
+```bash
+uv run --with-requirements clone-requirements.txt python -c "import chatterbox.tts"
+```
+
+Installing into `.venv` with `uv pip install -r clone-requirements.txt` works
+until the next `uv run`, which syncs `.venv` to `uv.lock` before it runs
+anything. That sync leaves alone the packages the lock doesn't list (so
+`--inexact` adds nothing), but it puts back the locked version of every
+package the lock does list: tokenizers 0.23.1 and setuptools 83 return and the
+import fails. `UV_NO_SYNC=1` or `uv run --no-sync` keeps the install, but then
+`.venv` stops following the lockfile, and the next `uv sync` uninstalls
+chatterbox-tts outright.
+
+### In an environment you manage
+
+For an engine installed into an environment no `uv run` touches, install the
+same file into it, e.g. `uv pip install -r engine/clone-requirements.txt` with
+that environment active.
 
 ### Checking it
 

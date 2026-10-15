@@ -1,0 +1,14 @@
+# Voice cloning's runtime, kept out of pyproject.toml and uv.lock on purpose:
+# it brings PyTorch and a transformers that needs an older tokenizers than
+# the engine locks, and most installs never clone a voice. A dev checkout
+# layers it over the engine's environment instead of installing into it:
+#
+#   uv run --with-requirements clone-requirements.txt localcut serve
+#
+# which is what the desktop dev shell runs with LOCALCUT_DEV_CLONE=1.
+# docs/voices.md has the steps.
+chatterbox-tts
+# resemble-perth, which watermarks everything chatterbox generates, imports
+# pkg_resources. setuptools 82 dropped it, and the deprecation warning 81
+# prints with it asks for <81.
+setuptools<81

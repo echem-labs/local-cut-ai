@@ -31,11 +31,14 @@ from conftest import (
     matches_a_path_filter,
 )
 
+from localcut_engine.backends.chatterbox import INSTALL_HINT
 from localcut_engine.config import EngineConfig
 
 _RUNNING = REPO_ROOT / "docs" / "running-real-models.md"
+_VOICES = REPO_ROOT / "docs" / "voices.md"
 _README = REPO_ROOT / "README.md"
 _PACKAGE_JSON = REPO_ROOT / "apps" / "desktop" / "package.json"
+_ENGINE_TS = REPO_ROOT / "apps" / "desktop" / "electron" / "engine.ts"
 _WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 #: What a runner label is called in prose. Keyed on the vendor half alone,
@@ -56,7 +59,9 @@ _RUNNER_PLATFORM = {"ubuntu": "Linux", "macos": "macOS", "windows": "Windows"}
 _DOCUMENT_INPUTS = (
     "README.md",
     "docs/running-real-models.md",
+    "docs/voices.md",
     "apps/desktop/package.json",
+    "apps/desktop/electron/engine.ts",
     ".github/workflows/ci-engine.yml",
     ".github/workflows/ci-desktop.yml",
 )
@@ -236,6 +241,38 @@ def test_the_readme_names_the_platforms_ci_actually_runs_on() -> None:
             f"the README says the {suite} suite runs on {named}, but {workflow}'s "
             f"matrix runs it on {runs_on}"
         )
+
+
+def test_the_documented_clone_setup_is_the_one_the_dev_shell_runs() -> None:
+    """Voice cloning's runtime stays out of uv.lock, so a dev checkout gets
+    it by layering a requirements file over `uv run`, and three places spell
+    that out: the desktop dev shell's engine command, docs/voices.md and the
+    engine's own hint when the package is missing. An opt-in renamed in one
+    of them reads as correct in the other two, and the reader following the
+    stale one starts an engine without cloning and is told nothing.
+    """
+    shell = _ENGINE_TS.read_text(encoding="utf-8")
+    opt_in = re.search(r'process\.env\.(LOCALCUT_\w+) === "1"', shell)
+    layered = re.search(r'"--with-requirements",\s*path\.join\(engineDir, "([^"]+)"\)', shell)
+    assert opt_in and layered, (
+        "engine.ts no longer layers a requirements file over `uv run` behind an "
+        "opt-in - update this test with it"
+    )
+    variable, requirements = opt_in.group(1), layered.group(1)
+
+    listed = (REPO_ROOT / "engine" / requirements).read_text(encoding="utf-8")
+    pins = [
+        line.strip() for line in listed.splitlines() if line.strip() and not line.startswith("#")
+    ]
+    assert "chatterbox-tts" in pins
+
+    doc = _VOICES.read_text(encoding="utf-8")
+    assert f"{variable}=1" in doc, f"docs/voices.md does not tell you to set {variable}=1"
+    assert f"uv run --with-requirements {requirements}" in doc
+    for pin in pins:
+        assert pin in doc, f"docs/voices.md does not say what {requirements} pins: {pin}"
+
+    assert requirements in INSTALL_HINT and variable in INSTALL_HINT
 
 
 def test_the_entry_points_hold_links_to_check() -> None:

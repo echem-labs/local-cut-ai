@@ -309,7 +309,23 @@ export class EngineManager {
       return { cmd: bundled, args, env, connection };
     }
     const engineDir = path.resolve(__dirname, "..", "..", "..", "..", "engine");
-    return { cmd: "uv", args: ["run", "localcut", ...args], cwd: engineDir, env, connection };
+    // Voice cloning's runtime (chatterbox-tts, PyTorch, and a transformers
+    // that wants an older tokenizers than uv.lock has) is not in the lock,
+    // and `uv run` syncs the environment back to the lock before every
+    // start, so an install made into it does not survive the next launch.
+    // Asked for, uv layers it on top instead, as a separate environment it
+    // builds from the requirements file and caches. docs/voices.md.
+    const clone =
+      process.env.LOCALCUT_DEV_CLONE === "1"
+        ? ["--with-requirements", path.join(engineDir, "clone-requirements.txt")]
+        : [];
+    return {
+      cmd: "uv",
+      args: ["run", ...clone, "localcut", ...args],
+      cwd: engineDir,
+      env,
+      connection,
+    };
   }
 
   private starting: Promise<EngineConnection> | null = null;
