@@ -237,7 +237,7 @@ def _start_fake(port: int, models: Path, **behaviour) -> subprocess.Popen:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
             if httpx.get(f"http://127.0.0.1:{port}/api/version", timeout=1).status_code == 200:
@@ -396,7 +396,7 @@ def test_setup_runs_ollama_and_pulls_the_script_model(tmp_path, monkeypatch, arc
     assert not (data / "run" / "ollama.json").exists()
 
     with _live(config) as (_, http):
-        row = _wait_for(http, lambda row: _server_state(row)[0] == "running", timeout_s=30)
+        row = _wait_for(http, lambda row: _server_state(row)[0] == "running", timeout_s=90)
         assert (row["state"], row["source"]) == ("ready", "managed")
         again = row["managed"]["server"]["pid"]
     assert _gone(again)

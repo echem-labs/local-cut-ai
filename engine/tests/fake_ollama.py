@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import socketserver
 import sys
 import threading
 import time
@@ -121,12 +122,21 @@ def main() -> int:
         def log_message(self, format: str, *args) -> None:  # noqa: A002 - the stdlib's name
             print(f"[fake ollama] {format % args}", flush=True)
 
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def server_bind(self) -> None:
+            # HTTPServer's own looks the address up with socket.getfqdn,
+            # which on a macOS runner can stall for longer than a test waits
+            # for a server to answer. Ollama does no such lookup.
+            socketserver.TCPServer.server_bind(self)
+            self.server_name, self.server_port = self.server_address[:2]
+
     try:
-        server = ThreadingHTTPServer((host, int(port)), Handler)
+        server = Server((host, int(port)), Handler)
     except OSError:
         print(f"Error: listen tcp {host}:{port}: bind: address already in use", flush=True)
         return 1
-    server.daemon_threads = True
     print(f"Listening on {host}:{port} (version {VERSION})", flush=True)
     if "exit" in behaviour:
 
