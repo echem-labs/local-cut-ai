@@ -20,10 +20,11 @@ What deliberately does NOT travel:
   template carrying an asset node would import as a node pointing at a file
   that does not exist, and the scene conditioned on it would render nothing
   with no error. Export drops them and the edges that reach them, puts the
-  generated node back on each port an upload held (see `to_template`), and
-  records how many were dropped so the person exporting is told rather than
-  surprised. A narration cloning a dropped voice sample goes back to a
-  stock voice for the same reason.
+  generated node back on each port an upload held, making a clip's keyframe
+  again where it is gone (see `to_template`), and records how many were
+  dropped so the person exporting is told rather than surprised. A
+  narration cloning a dropped voice sample goes back to a stock voice for
+  the same reason.
 - **Pins and frozen hashes.** A pin freezes one artifact. There is no artifact
   here, so a pin would freeze against a hash that will never exist.
 - **Server-owned params.** `voice_consent` is the affirmation the upload route
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -48,6 +50,7 @@ from .model import (
     GRAPH_VERSION,
     KEYFRAME_PORT,
     MUSIC_PORT,
+    SCENE_AUDIO_SUFFIX,
     VOICE_REF_PORT,
     Edge,
     Node,
@@ -56,6 +59,7 @@ from .model import (
     migrate_graph,
 )
 from .patch import TRANSIENT_PARAMS, stored_params
+from .templates import take_node_id
 
 # The template wire format. Same contract as GRAPH_VERSION: a document from a
 # newer engine is refused rather than silently reduced by pydantic's
@@ -147,22 +151,52 @@ def _portable_node(node: Node) -> Node:
     )
 
 
+# A scene's slots on the timeline, as `expand_screenplay` names them: `sN`
+# for its first take, `sN.pK` for each later take K, and `sN.audio` for its
+# narration.
+_SCENE_SLOT = re.compile(
+    rf"(?P<scene>s\d+)(?:\.p(?P<take>[2-9]|[1-9]\d+)|(?P<audio>{re.escape(SCENE_AUDIO_SUFFIX)}))?"
+)
+
+
 def _generated_source(dst: str, port: str) -> str | None:
     """The node the graph builders wire into `dst`'s `port`, for the ports an
-    upload can take over: a clip's still, and the timeline's music bed.
+    upload can take over: a clip's still, and the timeline's music bed and
+    scene slots.
 
     By id, the way the scene board finds them. Every take of a scene
     (`sN.clip`, `sN.clip2`, ... per `take_node_id`) animates `sN.keyframe`,
-    the Quick Tool clip animates `keyframe`, and the timeline's bed is
-    `music`. None for any other port: nothing to put back.
+    and the Quick Tool clip animates `keyframe`. The timeline takes its bed
+    from `music`, slot `sN` from `sN.clip`, slot `sN.pK` from take K, and
+    slot `sN.audio` from `sN.narration`. None for any other port: nothing
+    to put back.
     """
-    if dst == "timeline" and port == MUSIC_PORT:
-        return "music"
+    if dst == "timeline":
+        if port == MUSIC_PORT:
+            return "music"
+        slot = _SCENE_SLOT.fullmatch(port)
+        if slot is None:
+            return None
+        if slot["audio"]:
+            return f"{slot['scene']}.narration"
+        return take_node_id(f"{slot['scene']}.clip", int(slot["take"] or 1))
     if port == KEYFRAME_PORT:
         scene, dot, leaf = dst.rpartition(".")
         if leaf == "clip" or (leaf.startswith("clip") and leaf.removeprefix("clip").isdigit()):
             return f"{scene}{dot}keyframe"
     return None
+
+
+def _made_keyframe(node_id: str, clip: Node) -> Node | None:
+    """A keyframe for a clip whose still was an upload and whose generated
+    keyframe is gone, made the way `tool_graph` makes the Quick Tool's: the
+    clip's own prompt, at its aspect. None for any node but a clip."""
+    if clip.kind is not NodeKind.CLIP:
+        return None
+    params = {"prompt": str(clip.params.get("prompt", ""))}
+    if clip.params.get("aspect"):
+        params["aspect"] = str(clip.params["aspect"])
+    return Node(id=node_id, kind=NodeKind.KEYFRAME, params=params)
 
 
 def to_template(
@@ -184,10 +218,17 @@ def to_template(
     removed the one from the generated bed. Drop the asset's edge and the
     port is empty: the clip has nothing to animate, so it, the timeline, the
     captions and the export never render, and the generated keyframe feeds
-    nothing. So each port an asset held gets back the node the builder wires
-    there (`_generated_source`), when the template carries that node. A
-    Quick Tool clip with a start frame has none to give back: the desktop
-    removes its keyframe in the same patch that wires the frame in.
+    nothing. An upload in one of the timeline's scene slots leaves that
+    scene out of the cut, or silent, the same way. So each port an asset
+    held gets back the node the builder wires there (`_generated_source`),
+    when the template carries that node.
+
+    A clip's still is the one port with nothing to give back that can be
+    made again: the Quick Tool clip with a start frame lost its keyframe in
+    the same patch that wired the frame in, and the canvas can remove a
+    scene's. That clip gets a keyframe made from its own prompt
+    (`_made_keyframe`). Nothing else is made up: a narration the canvas
+    removed has no text to make it from, and its slot stays empty.
     """
     dropped = {nid for nid, node in graph.nodes.items() if node.kind in _UNPORTABLE_KINDS}
     nodes = {nid: _portable_node(node) for nid, node in graph.nodes.items() if nid not in dropped}
@@ -201,7 +242,13 @@ def to_template(
         if e.src not in dropped or e.dst in dropped or (e.dst, e.port) in held:
             continue
         source = _generated_source(e.dst, e.port)
-        if source is not None and source in nodes:
+        if source is None:
+            continue
+        if source not in nodes and e.port == KEYFRAME_PORT:
+            made = _made_keyframe(source, nodes[e.dst])
+            if made is not None:
+                nodes[source] = made
+        if source in nodes:
             edges.append(Edge(src=source, dst=e.dst, port=e.port))
             held.add((e.dst, e.port))
     return GraphTemplate(
