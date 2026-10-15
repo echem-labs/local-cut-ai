@@ -17,6 +17,7 @@ import type { ProgramId, ReadinessRow } from "../api/types";
 import { m, plural, t, type MessageKey } from "../i18n";
 import {
   programFixes,
+  pullFixes,
   programName,
   setupFraction,
   settingsTabFor,
@@ -370,6 +371,7 @@ export function ReadinessBanner() {
   const programs = useApp((state) => state.programs);
   const startDownload = useApp((state) => state.startDownload);
   const setupProgram = useApp((state) => state.setupProgram);
+  const pullModel = useApp((state) => state.pullModel);
   const openSettings = useApp((state) => state.openSettings);
   const [folded, setFolded] = useState(readFolded);
   const [error, setError] = useState<string | null>(null);
@@ -389,14 +391,19 @@ export function ReadinessBanner() {
   // click — hiding the button there hides it in the very case it is for.
   const setups = programFixes(gaps);
   const directProgram = setups.length === 1 ? setups[0] : null;
-  const programJob = directProgram
-    ? (programs?.programs.find((row) => row.id === directProgram.program)?.setup.job ?? null)
-    : null;
+  // A model a running program lacks is the same one click, when it is the
+  // only fix of its kind and no program needs setting up first.
+  const pulls = pullFixes(gaps);
+  const directPull = !directProgram && pulls.length === 1 ? pulls[0] : null;
+  const jobOf = (id: ProgramId) =>
+    programs?.programs.find((row) => row.id === id)?.setup.job ?? null;
+  const programJob = directProgram ? jobOf(directProgram.program) : null;
+  const pullJob = directPull ? jobOf(directPull.program) : null;
   const downloads = gaps.filter((row) => row.fix?.type === "download");
   const singleModel = new Set(
     downloads.map((row) => (row.fix?.type === "download" ? row.fix.model_id : "")),
   ).size === 1;
-  const direct = singleModel && !directProgram ? downloads[0] : null;
+  const direct = singleModel && !directProgram && !directPull ? downloads[0] : null;
   const directFix = direct?.fix?.type === "download" ? direct.fix : null;
   const downloading =
     directFix != null && models.some((row) => row.id === directFix.model_id && row.downloading);
@@ -452,6 +459,23 @@ export function ReadinessBanner() {
             </span>
           </button>
         )}
+        {directPull && (
+          <button
+            className="btn-outline"
+            disabled={pullJob !== null}
+            onClick={() => void pullModel(directPull.program, directPull.model).then(setError)}
+          >
+            <HardDriveDownload size={14} strokeWidth={1.8} aria-hidden="true" />
+            {t("readiness.banner.downloadPlain", { model: directPull.model })}{" "}
+            {pullJob ? (
+              <span className="readout">{`${Math.round(setupFraction(pullJob) * 100)}%`}</span>
+            ) : (
+              directPull.size !== null && (
+                <span className="readout">{formatSize(directPull.size)}</span>
+              )
+            )}
+          </button>
+        )}
         {directFix && (
           <button
             className="btn-outline"
@@ -502,22 +526,48 @@ export function ReadinessBanner() {
  * name, the download's size, and the button. The setup runs on the engine,
  * so the row shows its progress the way a model row does, and the gate asks
  * again once it lands. */
-function ProgramFixRow({ program: id, size }: { program: ProgramId; size: number }) {
+function ProgramFixRow({
+  program: id,
+  size,
+  model = null,
+}: {
+  program: ProgramId;
+  size: number | null;
+  /** Set for a pull: the model the program lacks, which the row fetches. */
+  model?: string | null;
+}) {
   const row = useApp((state) => state.programs?.programs.find((entry) => entry.id === id) ?? null);
   const setupProgram = useApp((state) => state.setupProgram);
+  const pullModel = useApp((state) => state.pullModel);
   const cancelProgramSetup = useApp((state) => state.cancelProgramSetup);
   const [error, setError] = useState<string | null>(null);
   const name = programName(id);
   const job = row?.setup.job ?? null;
   const failed = row ? shownFailure(row) !== null : false;
   const pct = job ? Math.round(setupFraction(job) * 100) : 0;
+  const fix = model
+    ? {
+        run: () => pullModel(id, model),
+        label: t("programs.setup.pull", { model }),
+        tip: t("programs.setup.pullTip", { model, name }),
+        hint:
+          size !== null
+            ? t("programs.setup.pullTipHintSize", { size: formatSize(size) })
+            : t("programs.setup.pullTipHint"),
+      }
+    : {
+        run: () => setupProgram(id),
+        label: t("readiness.dialog.setupProgram"),
+        tip: t("programs.setup.tip", { name }),
+        hint: t("programs.setup.tipHint", { size: formatSize(size ?? 0) }),
+      };
   return (
     <li className="prow gate-program">
-      <span className="pname">{name}</span>
+      <span className="pname">{model ?? name}</span>
       {job ? (
         <>
           <span className="price">
-            {t(`programs.phases.${job.phase}` as MessageKey, { name })}
+            {t(`programs.phases.${job.phase}` as MessageKey, { name, model: model ?? name })}
             <span className="readout">{pct}%</span>
           </span>
           <Tip
@@ -549,18 +599,12 @@ function ProgramFixRow({ program: id, size }: { program: ProgramId; size: number
             {failed ? (
               t("readiness.dialog.setupStopped")
             ) : (
-              <span className="readout">{formatSize(size)}</span>
+              size !== null && <span className="readout">{formatSize(size)}</span>
             )}
           </span>
-          <Tip
-            label={t("programs.setup.tip", { name })}
-            hint={t("programs.setup.tipHint", { size: formatSize(size) })}
-          >
-            <button
-              className="btn-outline sm"
-              onClick={() => void setupProgram(id).then(setError)}
-            >
-              {failed ? t("programs.setup.retry") : t("readiness.dialog.setupProgram")}
+          <Tip label={fix.tip} hint={fix.hint}>
+            <button className="btn-outline sm" onClick={() => void fix.run().then(setError)}>
+              {failed ? t("programs.setup.retry") : fix.label}
             </button>
           </Tip>
         </>
@@ -622,6 +666,7 @@ export function ReadinessDialog({
     rows.flatMap((row) => (row.fix?.type === "download" ? [row.fix.model_id] : [])),
   );
   const setups = programFixes(rows);
+  const pulls = pullFixes(rows);
   const groups = gapGroups(rows);
   const stages = groups.reduce((count, group) => count + group.items.length, 0);
   const tab = settingsTabFor(rows);
@@ -682,16 +727,24 @@ export function ReadinessDialog({
         <IntroSentence stages={stages} />
       )}
       <GapList rows={rows} onLeave={onClose} />
-      {(downloadIds.size > 0 || setups.length > 0) && (
+      {(downloadIds.size > 0 || setups.length > 0 || pulls.length > 0) && (
         <div className="well gate-downloads">
           <div className="whead label">
             <Wrench size={14} strokeWidth={1.8} aria-hidden="true" />
             <span>{t("readiness.dialog.fixes")}</span>
           </div>
-          {setups.length > 0 && (
+          {(setups.length > 0 || pulls.length > 0) && (
             <ul className="plist gate-programs">
               {setups.map((fix) => (
                 <ProgramFixRow key={fix.program} program={fix.program} size={fix.size} />
+              ))}
+              {pulls.map((fix) => (
+                <ProgramFixRow
+                  key={`${fix.program}:${fix.model}`}
+                  program={fix.program}
+                  size={fix.size}
+                  model={fix.model}
+                />
               ))}
             </ul>
           )}

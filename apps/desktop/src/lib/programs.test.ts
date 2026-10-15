@@ -12,9 +12,12 @@ import {
   manualSteps,
   osOf,
   programCause,
+  pullFixes,
   rowsCostBy,
   settingsTabFor,
+  setupFraction,
   setupOffer,
+  statusOf,
   type ManualContext,
 } from "./programs";
 
@@ -98,8 +101,8 @@ describe("which program a readiness row blames", () => {
   });
 
   it("leaves model gaps to the models", () => {
-    // A missing script model is fixed by picking one, which is what the
-    // engine's own fix for it says.
+    // On a server that cannot pull it, a missing script model is fixed by
+    // picking one, which is what the engine's own fix for it says there.
     expect(programCause(gap({ reason: "llm_model_missing", kind: "script" }))).toBeNull();
     expect(programCause(gap({ reason: "no_model_installed", kind: "music" }))).toBeNull();
   });
@@ -162,6 +165,134 @@ describe("what a well offers to do", () => {
       managed: { location: "/x", bytes: 1, version: "8.0.1", current: false, in_use: true },
     });
     expect(setupOffer(old)?.kind).toBe("update");
+  });
+});
+
+/** Ollama as an engine with its pin reports it: settable here, and a setup
+ * that pulls the script model into LocalCut's copy. */
+function ollama(over: Partial<ProgramInfo> = {}): ProgramInfo {
+  const base = program("ollama");
+  return {
+    ...base,
+    setup: {
+      ...base.setup,
+      available: true,
+      unavailable_reason: null,
+      takes_effect: true,
+      version: "0.40.4",
+      url: "https://example.test/ollama.tar.zst",
+      download_bytes: 1370 * MB,
+      install_bytes: 2150 * MB,
+      pull: { model: "qwen3:14b", bytes: 9216 * MB },
+    },
+    ...over,
+  };
+}
+
+const server = (
+  state: "stopped" | "starting" | "running" | "crashed",
+  reason: string | null = null,
+) =>
+  ({
+    location: "/x/programs/ollama",
+    bytes: 1,
+    version: "0.40.4",
+    current: true,
+    in_use: state === "running" || state === "starting",
+    server: {
+      state,
+      reason,
+      error: null,
+      pid: null,
+      url: "http://127.0.0.1:11434",
+      restarts: 0,
+      log: "/x/logs/ollama.log",
+    },
+  }) as ProgramInfo["managed"];
+
+describe("Ollama's well", () => {
+  it("sets Ollama up with the program and the model it pulls, counted together", () => {
+    expect(setupOffer(ollama())).toEqual({ kind: "setup", size: (1370 + 9216) * MB });
+  });
+
+  it("pulls the model into an Ollama that runs without it, the user's own or LocalCut's", () => {
+    const theirs = ollama({
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+      setup: { ...ollama().setup, takes_effect: false, pull: null },
+    });
+    expect(setupOffer(theirs)).toEqual({ kind: "pull", model: "qwen3:14b", size: null });
+    // A server that is not Ollama cannot pull; its well has the steps.
+    const other = { ...theirs, checks: { ...theirs.checks, server: "other" as const } };
+    expect(setupOffer(other)).toBeNull();
+  });
+
+  it("starts LocalCut's copy when it stopped or gave up, and never over the user's own", () => {
+    const stopped = ollama({ managed: server("stopped", "stopped") });
+    expect(setupOffer(stopped)).toEqual({ kind: "start" });
+    expect(setupOffer(ollama({ managed: server("crashed", "exited") }))).toEqual({
+      kind: "start",
+    });
+    const theirs = ollama({
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: true },
+      managed: server("stopped", "own_server"),
+    });
+    expect(setupOffer(theirs)).toBeNull();
+  });
+
+  it("says what LocalCut's copy is doing instead of that nothing answers", () => {
+    const say = (row: ProgramInfo) =>
+      statusOf(row, { host: null, offer: setupOffer(row) }).map((line) => line.text);
+    expect(say(ollama({ managed: server("starting") }))).toContain(
+      "Starting LocalCut's copy of Ollama…",
+    );
+    expect(say(ollama({ managed: server("crashed", "port_in_use") }))).toContain(
+      "Something else is using 127.0.0.1:11434, so LocalCut's copy can't start there.",
+    );
+    const theirs = ollama({
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: true },
+      managed: server("stopped", "own_server"),
+    });
+    expect(say(theirs)).toEqual([
+      "Your own Ollama, at 127.0.0.1:11434.",
+      "LocalCut's own copy is here too, and stays stopped while yours runs.",
+    ]);
+  });
+
+  it("says a copy here would not serve an address on another machine", () => {
+    const remote = ollama({
+      location: "http://gpu-box:11434/v1",
+      source: "configured",
+      setup: { ...ollama().setup, takes_effect: false },
+    });
+    const lines = statusOf(remote, { host: null, offer: setupOffer(remote) });
+    expect(lines.map((line) => line.text)).toContain(
+      "LOCALCUT_LLM_URL points at another machine, so a copy LocalCut sets up here wouldn't be used.",
+    );
+  });
+
+  it("blames Ollama for a model it can pull, once per model", () => {
+    const pull = gap({
+      kind: "script",
+      reason: "llm_model_missing",
+      fix: { type: "pull_model", program: "ollama", model: "qwen3:8b", size_bytes: 5 * MB },
+    });
+    expect(programCause(pull)).toBe("ollama");
+    expect(settingsTabFor([pull])).toBe("programs");
+    expect(pullFixes([pull, { ...pull, kind: "script" }])).toEqual([
+      { program: "ollama", model: "qwen3:8b", size: 5 * MB },
+    ]);
+  });
+
+  it("reads a pull that has not named its layers yet as not started", () => {
+    const job = { id: "j", phase: "pulling" as const, done: 0, total: 0, bytes_per_s: null };
+    expect(setupFraction(job)).toBe(0);
+    expect(setupFraction({ ...job, phase: "starting" })).toBe(1);
   });
 });
 

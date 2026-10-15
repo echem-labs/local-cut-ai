@@ -398,7 +398,12 @@ export type ReadinessFix =
   /** Set up LocalCut's own copy of a program (POST /programs/:id/setup).
    * Offered only where that copy would become the one the engine runs;
    * `size_bytes` is the download. `program` is a GET /programs id. */
-  | { type: "setup_program"; program: string; size_bytes: number };
+  | { type: "setup_program"; program: string; size_bytes: number }
+  /** Pull the model a row lacks through the Ollama that answers at the
+   * engine's address, the user's own or LocalCut's (POST
+   * /programs/:id/pull). `size_bytes` is the catalog's estimate, null for a
+   * model it does not hold. */
+  | { type: "pull_model"; program: string; model: string; size_bytes: number | null };
 
 export interface ReadinessRow {
   kind: string;

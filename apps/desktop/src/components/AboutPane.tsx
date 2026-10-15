@@ -298,6 +298,7 @@ function SupportActions() {
   const system = useApp((state) => state.system);
   const engineVersions = useApp((state) => state.engineVersions);
   const client = useApp((state) => state.client);
+  const programs = useApp((state) => state.programs);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -334,15 +335,41 @@ function SupportActions() {
     void navigator.clipboard.writeText(lines.join("\n")).then(() => setCopied(true));
   };
 
+  /** What LocalCut's own servers printed, which only the engine can read.
+   * A log that cannot be fetched is left out; the bundle is still worth
+   * having without it. */
+  const programLogs = async (): Promise<Record<string, string>> => {
+    const logs: Record<string, string> = {};
+    const serving = (programs?.programs ?? []).filter((row) => row.managed?.server);
+    await Promise.all(
+      serving.map(async (row) => {
+        try {
+          const text = await client?.programLog(row.id);
+          if (text) logs[row.id] = text;
+        } catch {
+          // Left out, as above.
+        }
+      }),
+    );
+    return logs;
+  };
+
   const exportBundle = () => {
     setError(null);
     setSaved(null);
     setBusy(true);
     // The renderer contributes what only it has — these reach it over
     // HTTP — and the shell adds its own logs and asks where to save.
-    void window.localcut
-      ?.exportSupportBundle({ versions: { app: __APP_VERSION__, ...engineVersions }, system })
+    void programLogs()
+      .then((logs) =>
+        window.localcut?.exportSupportBundle({
+          versions: { app: __APP_VERSION__, ...engineVersions },
+          system,
+          ...(Object.keys(logs).length > 0 ? { programLogs: logs } : {}),
+        }),
+      )
       .then((result) => {
+        if (!result) return;
         if (result.error) setError(result.error);
         else if (result.path) setSaved(result.path);
       })

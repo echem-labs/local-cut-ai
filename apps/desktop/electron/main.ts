@@ -26,7 +26,7 @@ import {
 import { installLogSink, readLogFiles } from "./logfile";
 import { parsePairingCode, type RemotePairing, RemoteEngineStore } from "./remote";
 import { capturePinnedCert, engineRequest } from "./request";
-import { bundleEntries, zipEntries } from "./support";
+import { bundleEntries, programLogEntries, zipEntries } from "./support";
 import { readAnswer, readHomepage, resolveUpdateFeed, UPDATE_CHECK_SWITCH } from "./updates";
 
 // Dev-only: the test rig points userData at a temp dir so a run starts from
@@ -903,7 +903,11 @@ ipcMain.handle("support:export-bundle", async (event, report: unknown) => {
   if (!trustedSender(event)) return { path: null, error: "untrusted sender" };
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) return { path: null, error: "no window" };
-  const input = (report ?? {}) as { versions?: unknown; system?: unknown };
+  const input = (report ?? {}) as {
+    versions?: unknown;
+    system?: unknown;
+    programLogs?: unknown;
+  };
 
   const { canceled, filePath } = await dialog.showSaveDialog(window, {
     defaultPath: `localcut-support-${new Date().toISOString().slice(0, 10)}.zip`,
@@ -919,7 +923,9 @@ ipcMain.handle("support:export-bundle", async (event, report: unknown) => {
       bundleEntries({
         versions: bounded(input.versions),
         system: bounded(input.system),
-        logs: readLogFiles(LOGS_DIR),
+        // The shell's own logs, then what LocalCut's own servers printed,
+        // which only the engine can read and the renderer fetched from it.
+        logs: [...readLogFiles(LOGS_DIR), ...programLogEntries(input.programLogs)],
       }),
     );
     writeFileSync(filePath, zip);

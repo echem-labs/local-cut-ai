@@ -101,7 +101,9 @@
     "notUsedDataDir": "LocalCut's own copy is here too, but the one in {location} comes first.",
     "outdated": "LocalCut's copy is {version}, and it now sets up {pinned}.",
     "wouldNotBeUsedConfigured": "{setting} points here, so LocalCut's own copy wouldn't be used.",
-    "wouldNotBeUsedDataDir": "The one in {location} comes first, so LocalCut's own copy wouldn't be used."
+    "wouldNotBeUsedDataDir": "The one in {location} comes first, so LocalCut's own copy wouldn't be used.",
+    "wouldNotBeUsedRemote": "{setting} points at another machine, so a copy LocalCut sets up here wouldn't be used.",
+    "notUsedServer": "LocalCut's own copy is here too, and stays stopped while yours runs."
   },
   "setup": {
     "action": "Set up {name}",
@@ -123,7 +125,17 @@
     "progressEta": "{done} of {total}, {eta}",
     "etaMinutes": "about {minutes} min",
     "etaUnderMinute": "less than a minute",
-    "progressAria": "Setting up {name}"
+    "progressAria": "Setting up {name}",
+    "pull": "Get {model}",
+    "pullTip": "Download {model} into {name}",
+    "pullTipHint": "The model LocalCut writes scripts with",
+    "pullTipHintSize": "About {size}. The model LocalCut writes scripts with",
+    "start": "Start",
+    "startTip": "Start LocalCut's copy of {name}",
+    "startTipHint": "It runs while LocalCut is open",
+    "tipHintPull": "Downloads {size} into LocalCut's folder: {name} from its own release, and {model}",
+    "tipHintPullOn": "Downloads {size} on {host}, into LocalCut's folder there: {name}, and {model}",
+    "startNamed": "Start {name}"
   },
   "menu": {
     "aria": "More for {name}",
@@ -132,7 +144,9 @@
     "site": "Open {name}'s site",
     "remove": "Remove LocalCut's copy",
     "cloud": "Use a cloud model instead",
-    "workflows": "Node packs and workflows"
+    "workflows": "Node packs and workflows",
+    "stop": "Stop LocalCut's copy",
+    "start": "Start LocalCut's copy"
   },
   "remove": {
     "title": "Remove LocalCut's copy of {name}?",
@@ -218,7 +232,8 @@
     "manageStorageTipHint": "What else is using the disk"
   },
   "refusals": {
-    "noSpace": "Not enough room. Setting up {name} needs {size} free on the disk that holds {dir}."
+    "noSpace": "Not enough room. Setting up {name} needs {size} free on the disk that holds {dir}.",
+    "noSpaceModel": "Not enough room for {model}. Free some space on the disk that holds LocalCut's models, then try again."
   },
   "strip": {
     "aria": "What a render would make right now",
@@ -282,5 +297,9 @@
     "skip": "Skip for now",
     "hintSetup": "Each download comes from that project's own releases and stays in LocalCut's folder. Nothing asks for admin rights.",
     "hintRunning": "Setup keeps going in the background. The Ready step shows where each one has got to."
+  },
+  "server": {
+    "starting": "Starting LocalCut's copy of {name}…",
+    "notStarted": "LocalCut's copy didn't start."
   }
 }

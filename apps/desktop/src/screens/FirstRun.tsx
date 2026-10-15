@@ -372,11 +372,16 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
     .sort((a, b) => PROGRAM_ORDER.indexOf(a.id) - PROGRAM_ORDER.indexOf(b.id));
   const running = rows.find((row) => row.setup.job) ?? null;
   const busy = running !== null || queue.length > 0;
+  // What the button does for each program: set it up, or for an Ollama
+  // that runs without the script model, pull it, or start LocalCut's copy.
   const settable = rows.filter((row) => {
     const offer = setupOffer(row);
-    return offer?.kind === "setup" || offer?.kind === "retry";
+    return offer !== null && offer.kind !== "update";
   });
-  const total = settable.reduce((sum, row) => sum + (row.setup.download_bytes ?? 0), 0);
+  const total = settable.reduce((sum, row) => {
+    const offer = setupOffer(row);
+    return sum + (offer && "size" in offer ? (offer.size ?? 0) : 0);
+  }, 0);
   // A program LocalCut cannot set up here has only its manual steps, and
   // the sentence that promises "for you" must not cover it.
   const someByHand = rows.some((row) => needsAttention(row) && !row.setup.available);
@@ -384,10 +389,15 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
   const start = () => {
     void setupPrograms(settable.map((row) => row.id)).then(setError);
   };
+  const only = settable.length === 1 ? setupOffer(settable[0]) : null;
   const action = busy || settable.length === 0
     ? null
     : settable.length === 1
-      ? t("programs.setup.action", { name: programName(settable[0].id) })
+      ? only?.kind === "pull"
+        ? t("programs.setup.pull", { model: only.model })
+        : only?.kind === "start"
+          ? t("programs.setup.startNamed", { name: programName(settable[0].id) })
+          : t("programs.setup.action", { name: programName(settable[0].id) })
       : settable.length === 2
         ? t("programs.wizard.setupBoth")
         : t("programs.wizard.setupAll");

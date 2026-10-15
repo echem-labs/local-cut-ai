@@ -40,9 +40,10 @@ const PROGRAM_OF_REASON: Readonly<Record<string, ProgramId>> = {
 };
 
 /** The program a readiness row needs fixed, or null when its cause is not a
- * program. A `setup_program` fix names it outright. */
+ * program. A `setup_program` fix names it outright, and so does a
+ * `pull_model` one: the model goes into that program, from its well. */
 export function programCause(row: ReadinessRow): ProgramId | null {
-  if (row.fix?.type === "setup_program") {
+  if (row.fix?.type === "setup_program" || row.fix?.type === "pull_model") {
     return isKnownProgram(row.fix.program) ? row.fix.program : null;
   }
   return PROGRAM_OF_REASON[row.reason] ?? null;
@@ -72,6 +73,27 @@ export function programFixes(
     program: id,
     size: sizes.get(id)!,
   }));
+}
+
+/** The distinct models `rows` offer to pull, each with the program that
+ * pulls it and the catalog's estimate of its size (null when it has none),
+ * in the engine's order. */
+export function pullFixes(
+  rows: readonly ReadinessRow[],
+): { program: ProgramId; model: string; size: number | null }[] {
+  const seen = new Map<string, { program: ProgramId; model: string; size: number | null }>();
+  for (const row of rows) {
+    const fix = row.fix;
+    if (fix?.type !== "pull_model" || !isKnownProgram(fix.program)) continue;
+    seen.set(`${fix.program}\u0000${fix.model}`, {
+      program: fix.program,
+      model: fix.model,
+      size: fix.size_bytes,
+    });
+  }
+  return [...seen.values()].sort(
+    (a, b) => PROGRAM_ORDER.indexOf(a.program) - PROGRAM_ORDER.indexOf(b.program),
+  );
 }
 
 /** The node kinds each program makes, for the stage rows under its well.
@@ -118,16 +140,50 @@ export function rowsCostBy(
   return distinctGaps(own);
 }
 
-/** What the well's button would do, or null for no button. */
+/** What the well's button would do, or null for no button. A setup's size
+ * is everything it downloads: the program, and for Ollama the model it
+ * pulls into LocalCut's copy. A pull's is the catalog's estimate. */
 export type SetupOffer =
   | { kind: "setup"; size: number | null }
   | { kind: "retry"; size: number | null }
-  | { kind: "update"; size: number | null };
+  | { kind: "update"; size: number | null }
+  | { kind: "pull"; model: string; size: number | null }
+  | { kind: "start" };
+
+/** What a setup of the program downloads, all told, or null when it is not
+ * known. */
+export function setupSize(program: ProgramInfo): number | null {
+  const download = program.setup.download_bytes;
+  if (download === null) return null;
+  return download + (program.setup.pull?.bytes ?? 0);
+}
 
 export function setupOffer(program: ProgramInfo): SetupOffer | null {
-  const { setup } = program;
-  if (setup.job || !setup.available || !setup.takes_effect) return null;
-  const size = setup.download_bytes;
+  const { setup, checks } = program;
+  if (setup.job) return null;
+  // An Ollama that runs, the user's own or LocalCut's, and lacks the model:
+  // pulling it is the whole fix, whoever set the server up.
+  if (
+    program.state === "ready" &&
+    checks.server === "ollama" &&
+    checks.model_present === false &&
+    checks.model
+  ) {
+    return { kind: "pull", model: checks.model, size: setup.pull?.bytes ?? null };
+  }
+  // LocalCut's copy is there and not serving: stopped, or given up on.
+  // Starting it again is the fix; it is already the build a setup fetches.
+  const server = program.managed?.server;
+  if (
+    server &&
+    program.state !== "ready" &&
+    setup.takes_effect &&
+    (server.state === "crashed" || (server.state === "stopped" && server.reason !== "own_server"))
+  ) {
+    return { kind: "start" };
+  }
+  if (!setup.available || !setup.takes_effect) return null;
+  const size = setupSize(program);
   if (setup.last?.outcome === "failed" && needsAttention(program)) return { kind: "retry", size };
   if (program.state !== "ready") return { kind: "setup", size };
   // A working FFmpeg of the user's own that cannot draw text: LocalCut's
@@ -149,17 +205,21 @@ export function shownFailure(program: ProgramInfo): SetupFailure | null {
   return last.reason ?? "install_failed";
 }
 
-/** How far a running setup has got, 0..1. Checking and installing report 0
- * of 0 and come after every byte is in, so they read as full. */
+/** The phases whose bytes arrive over the network, and so have a speed: a
+ * download, and a pull, whose total grows as Ollama finds its layers. */
+const TRANSFERS: readonly string[] = ["downloading", "pulling"];
+
+/** How far a running setup has got, 0..1. Checking, installing and starting
+ * report 0 of 0 and come after every byte is in, so they read as full. */
 export function setupFraction(job: ProgramJob): number {
-  if (job.total <= 0) return job.phase === "downloading" ? 0 : 1;
+  if (job.total <= 0) return TRANSFERS.includes(job.phase) ? 0 : 1;
   return Math.min(1, Math.max(0, job.done / job.total));
 }
 
-/** About how long a download has left, in words, or null before there is a
- * rate to say it from. */
+/** About how long a download or a pull has left, in words, or null before
+ * there is a rate to say it from. */
 export function setupEta(job: ProgramJob): string | null {
-  if (job.phase !== "downloading" || !job.bytes_per_s || job.bytes_per_s <= 0) return null;
+  if (!TRANSFERS.includes(job.phase) || !job.bytes_per_s || job.bytes_per_s <= 0) return null;
   const seconds = Math.max(0, job.total - job.done) / job.bytes_per_s;
   if (seconds < 60) return t("programs.setup.etaUnderMinute");
   return t("programs.setup.etaMinutes", { minutes: Math.round(seconds / 60) });
@@ -182,6 +242,9 @@ export function binDirOf(report: ProgramsReport): string {
   const cut = dir.lastIndexOf(separator);
   return `${cut > 0 ? dir.slice(0, cut) : dir}${separator}bin`;
 }
+
+/** Whether a location is a server's address rather than a path. */
+const isAddress = (location: string): boolean => /^https?:\/\//.test(location);
 
 /** A server's address without the scheme and the API path, as a person
  * would type it: "127.0.0.1:11434" for "http://127.0.0.1:11434/v1". */
@@ -500,11 +563,29 @@ export function statusOf(
         ? "not_found"
         : (program.problem ?? "not_found");
     const location = program.location;
-    lines.push({
-      text: t(`programs.problems.${problem}`, { where, name, location, address }),
-      code: problem === "does_not_run" ? [location] : problem === "not_found" ? [] : [address],
-    });
-    if (program.setup.available && !program.setup.takes_effect) {
+    const server = program.managed?.server;
+    if (server?.state === "starting") {
+      // LocalCut's own copy is on its way up: that is the news, not that
+      // nothing answers yet.
+      lines.push({ text: t("programs.server.starting", { name }) });
+    } else if (server?.reason && server.reason !== "own_server") {
+      lines.push({
+        text: t(`programs.serverReasons.${server.reason}`, { name, address }),
+        code: [address],
+      });
+    } else {
+      lines.push({
+        text: t(`programs.problems.${problem}`, { where, name, location, address }),
+        code: problem === "does_not_run" ? [location] : problem === "not_found" ? [] : [address],
+      });
+    }
+    if (program.setup.available && !program.setup.takes_effect && isAddress(location)) {
+      // A server LocalCut's copy cannot be: one on another machine.
+      lines.push({
+        text: t("programs.checks.wouldNotBeUsedRemote", { setting: program.setting }),
+        code: [program.setting],
+      });
+    } else if (program.setup.available && !program.setup.takes_effect) {
       lines.push(
         program.source === "configured"
           ? {
@@ -521,7 +602,15 @@ export function statusOf(
     }
   }
   const managed = program.managed;
-  if (managed && !managed.in_use && program.state === "ready" && program.source !== "managed") {
+  if (managed?.server && program.state === "ready" && program.source !== "managed") {
+    // A server of the user's own answers where LocalCut's copy would.
+    lines.push({ text: t("programs.checks.notUsedServer") });
+  } else if (
+    managed &&
+    !managed.in_use &&
+    program.state === "ready" &&
+    program.source !== "managed"
+  ) {
     lines.push(
       program.source === "configured"
         ? {

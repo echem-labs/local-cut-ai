@@ -528,6 +528,46 @@ describe("the programs step", () => {
     );
   });
 
+  it("counts an Ollama that runs without the script model as one to set up", () => {
+    // Its fix is a pull, which the same button starts after FFmpeg's setup.
+    const setupPrograms = vi.fn(async () => null);
+    const theirs = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+    });
+    seedStore(CATALOG(), {
+      setupPrograms,
+      programs: report([program("ffmpeg"), theirs, program("comfyui")]),
+    });
+    render(<FirstRun />);
+    toPrograms();
+    const primary = document.querySelector(".setup-actions .btn-primary")!;
+    expect(primary).toHaveTextContent(t("programs.wizard.setupBoth"));
+    fireEvent.click(primary);
+    expect(setupPrograms).toHaveBeenCalledWith(["ffmpeg", "ollama"]);
+  });
+
+  it("names the model when getting it is all that is left", () => {
+    const ready = program("ffmpeg", {
+      state: "ready",
+      problem: null,
+      source: "managed",
+      checks: { draws_text: true },
+    });
+    const theirs = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+    });
+    seedStore(CATALOG(), { programs: report([ready, theirs, program("comfyui")]) });
+    render(<FirstRun />);
+    toPrograms();
+    expect(document.querySelector(".setup-actions .btn-primary")).toHaveTextContent(
+      "Get qwen3:14b",
+    );
+  });
+
   it("can be skipped, which goes on to the models", () => {
     seedStore(CATALOG(), { programs: FRESH() });
     render(<FirstRun />);

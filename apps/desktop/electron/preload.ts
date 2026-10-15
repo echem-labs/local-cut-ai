@@ -59,7 +59,11 @@ contextBridge.exposeInMainWorld("localcut", {
   // The renderer contributes what only it has — the engine's versions and
   // system report, which reach it over HTTP — and main adds the logs and
   // asks the user where to save.
-  exportSupportBundle: (report: { versions: unknown; system: unknown }) =>
+  exportSupportBundle: (report: {
+    versions: unknown;
+    system: unknown;
+    programLogs?: Record<string, string>;
+  }) =>
     ipcRenderer.invoke("support:export-bundle", report),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),
   // Whether the shell has a release feed at all. Data, not a call: About

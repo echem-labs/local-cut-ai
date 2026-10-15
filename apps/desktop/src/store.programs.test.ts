@@ -25,6 +25,7 @@ const engine = vi.hoisted(() => ({
   readiness: null as unknown as Call,
   setupProgram: null as unknown as Call,
   removeProgram: null as unknown as Call,
+  pullModel: null as unknown as Call,
 }));
 
 vi.mock("./api/client", async (importOriginal) => {
@@ -48,6 +49,7 @@ vi.mock("./api/client", async (importOriginal) => {
       readiness = (...args: unknown[]) => engine.readiness(...args);
       setupProgram = (...args: unknown[]) => engine.setupProgram(...args);
       removeProgram = (...args: unknown[]) => engine.removeProgram(...args);
+      pullModel = (...args: unknown[]) => engine.pullModel(...args);
       cancelProgramSetup = vi.fn().mockResolvedValue({ ok: true });
     },
   };
@@ -111,6 +113,9 @@ async function connected(initial: ProgramsReport) {
   engine.readiness = vi.fn().mockResolvedValue({ rows: [] });
   engine.setupProgram = vi.fn().mockResolvedValue({ status: "started", job: "j1" });
   engine.removeProgram = vi.fn().mockResolvedValue({ ok: true, freed_bytes: 270 * MB });
+  engine.pullModel = vi
+    .fn()
+    .mockResolvedValue({ status: "started", job: "p1", model: "qwen3:8b" });
   window.localcut.getEngineConnection = vi.fn().mockResolvedValue({
     connection: { url: "http://127.0.0.1:7830", token: "t" },
     error: null,
@@ -344,5 +349,70 @@ describe("setting up several at once", () => {
     send({ type: "program.setup.cancelled", program: "comfyui" });
     expect(await all).toBeNull();
     expect(useApp.getState().programQueue).toEqual([]);
+  });
+});
+
+/** An Ollama of the user's own, running without the script model. */
+const ollamaWithout = (): ProgramInfo => ({
+  ...ffmpeg({ id: "ollama" }),
+  state: "ready",
+  problem: null,
+  source: "default",
+  location: "http://127.0.0.1:11434/v1",
+  checks: { server: "ollama", model: "qwen3:8b", model_present: false },
+  setup: { ...ffmpeg().setup, takes_effect: false, pull: null },
+});
+
+const ollamaRow = () =>
+  useApp.getState().programs!.programs.find((program) => program.id === "ollama")!;
+
+describe("LocalCut's own server", () => {
+  it("re-reads everything that says where scripts go when its copy starts or stops", async () => {
+    const send = await connected(report([ffmpeg()]));
+    const epoch = useApp.getState().readinessEpoch;
+    send({ type: "program.server", program: "ollama", state: "starting", reason: null });
+    await vi.waitFor(() => expect(engine.programs).toHaveBeenCalledTimes(1));
+    // Starting changes nothing yet; running does.
+    expect(engine.readiness).not.toHaveBeenCalled();
+    send({ type: "program.server", program: "ollama", state: "running", reason: null });
+    await vi.waitFor(() => expect(engine.readiness).toHaveBeenCalled());
+    expect(engine.system).toHaveBeenCalled();
+    expect(useApp.getState().readinessEpoch).toBe(epoch + 1);
+  });
+
+  it("puts a pull on the row with the click, and moves it with the events", async () => {
+    const send = await connected(report([ffmpeg(), ollamaWithout()]));
+    expect(await useApp.getState().pullModel("ollama", "qwen3:8b")).toBeNull();
+    expect(engine.pullModel).toHaveBeenCalledWith("ollama", "qwen3:8b");
+    expect(ollamaRow().setup.job).toMatchObject({ id: "p1", phase: "pulling", done: 0 });
+    send({
+      type: "program.setup.progress",
+      program: "ollama",
+      phase: "pulling",
+      done: 2048 * MB,
+      total: 4096 * MB,
+      bytes_per_s: 20 * MB,
+    });
+    expect(ollamaRow().setup.job).toMatchObject({ id: "p1", done: 2048 * MB, total: 4096 * MB });
+  });
+
+  it("pulls into a running Ollama while it sets FFmpeg up, as one button asked", async () => {
+    const send = await connected(report([ffmpeg(), ollamaWithout()]));
+    const all = useApp.getState().setupPrograms(["ffmpeg", "ollama"]);
+    // The pull has no size the catalog knows, so it goes first.
+    await vi.waitFor(() => expect(engine.pullModel).toHaveBeenCalledWith("ollama", "qwen3:8b"));
+    expect(engine.setupProgram).not.toHaveBeenCalled();
+    send({
+      type: "program.setup.done",
+      program: "ollama",
+      version: null,
+      location: "http://127.0.0.1:11434/v1",
+      in_use: false,
+      draws_text: null,
+      model: "qwen3:8b",
+    });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledWith("ffmpeg"));
+    send({ type: "program.setup.cancelled", program: "ffmpeg" });
+    expect(await all).toBeNull();
   });
 });
