@@ -186,15 +186,26 @@ def request_in_flight(port: int):
 
 
 def stored(data_dir: Path, job_id: str) -> tuple[str, dict]:
-    """A job's row as the next start will find it, read with the engine down."""
-    db = sqlite3.connect(data_dir / "queue.db")
-    try:
-        status, payload = db.execute(
-            "SELECT status, payload FROM jobs WHERE id = ?", (job_id,)
-        ).fetchone()
-    finally:
-        db.close()
-    return status, json.loads(payload)
+    """A job's row as the next start will find it, read with the engine down.
+
+    Retried for a moment: on windows-latest the first read straight after
+    TerminateProcess has failed with "disk I/O error", as if the killed
+    engine's hold on the WAL's shared-memory file outlived the process.
+    """
+    deadline = time.monotonic() + 10
+    while True:
+        db = sqlite3.connect(data_dir / "queue.db")
+        try:
+            status, payload = db.execute(
+                "SELECT status, payload FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            return status, json.loads(payload)
+        except sqlite3.OperationalError:
+            if time.monotonic() > deadline:
+                raise
+        finally:
+            db.close()
+        time.sleep(0.2)
 
 
 # -- a crash, a stop and what the next start makes of each --------------------
