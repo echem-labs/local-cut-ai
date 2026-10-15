@@ -17,6 +17,13 @@ LOCALCUT_TOKEN="$(openssl rand -base64 32)" \
   docker compose -f deploy/docker-compose.yml up -d
 ```
 
+Both containers get the NVIDIA GPU, so the box needs the NVIDIA Container
+Toolkit. The engine renders nothing on it. It reads the card to pick the
+script model and what the first-run screen recommends, the way it does on a
+desktop: `qwen3:8b` on an 8 GB card, `qwen3:14b` from 10 GB. To use one
+model whatever the card, set `LOCALCUT_LLM_MODEL` in the shell you run
+`docker compose up` from, and pull that model into the Ollama container.
+
 `LOCALCUT_ADVERTISE` (or `serve --advertise`) is the address the pairing code
 tells the laptop to dial. Set it wherever that is not the address the engine
 binds: in a container the engine's own outbound address is the Docker bridge
