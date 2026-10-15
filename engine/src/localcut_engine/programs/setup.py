@@ -9,7 +9,8 @@ phases, each announced as it starts:
    folders, through the model downloader, so every redirect hop passes the
    same guard and the size has to match the pin to the byte. A connection
    that drops or stalls partway is asked for the rest, with a Range request
-   from the bytes already written;
+   from the bytes already written, and a server error is waited out, by the
+   retry policy model downloads use (`downloads.download_file_retrying`);
 2. verifying: the download's SHA-256 against the pin;
 3. unpacking: only the files the pin names, each taken by its exact member
    name and written under the bare name the pin gives it, so no member of
@@ -84,29 +85,14 @@ _RATE_WINDOW_S = 5.0  # bytes_per_s is measured over the last few seconds
 _RATE_MIN_S = 0.5  # and not over less than this
 _SAMPLE_EVERY_S = 0.1  # as fine as a window of seconds needs
 _CHUNK = 1 << 20
-# A download that stops partway (the connection drops or is reset, or no
-# bytes arrive for _READ_TIMEOUT_S) asks for the rest and carries on, for as
-# long as each attempt brings bytes. Attempts that bring none are a link that
-# is down: it tries again _DOWNLOAD_RETRIES times in a row, waiting twice as
-# long before each (1, 2, 4, 8, 16s), and then gives up.
+# No bytes for this long is a stalled download, which asks for the rest the
+# way a dropped one does (downloads.download_file_retrying).
 _READ_TIMEOUT_S = 120.0
-_DOWNLOAD_RETRIES = 5
-_RETRY_PAUSE_S = 1.0
 # How long a rename keeps trying while another process holds a file in the
 # folder. On Windows a virus scanner opens a new executable to look at it,
 # and a folder holding an open file cannot be renamed until it lets go.
 _RENAME_BUDGET_S = 30.0
 _REMOVE_BUDGET_S = 5.0
-# How a download stops partway: no bytes for the read timeout, a connection
-# reset or refused, one closed before the body was complete. A resume the
-# server answered from the wrong byte is one too: its .part is gone, so the
-# next attempt asks for the whole file.
-_RESUMABLE = (
-    httpx.TimeoutException,
-    httpx.NetworkError,
-    httpx.RemoteProtocolError,
-    downloads.RangeMismatch,
-)
 # What failed, by the phase it failed in, for an error nothing else names.
 _REASON_BY_PHASE = {
     "downloading": "download_failed",
@@ -602,11 +588,8 @@ class ProgramSetup:
         if not name or name.startswith(".") or not all(c.isalnum() or c in "._-" for c in name):
             name = f"{job.program}-download"
         target = ModelFile(url=asset.url, dest=name, sha256=asset.sha256, size=asset.size)
-        brought = False
 
         async def progress(dest: str, done: int, total: int) -> None:
-            nonlocal brought
-            brought = True
             self._progress(job, done)
             if done >= asset.size and job.phase == "downloading":
                 # The whole download is in; hashing it is what comes next.
@@ -616,31 +599,9 @@ class ProgramSetup:
         # the guard sees every hop (GitHub hands a release asset to its CDN).
         timeout = httpx.Timeout(30, read=_READ_TIMEOUT_S)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            misses = 0
-            while True:
-                brought = False
-                try:
-                    return await downloads.download_file(
-                        target, scratch, progress, client, exact_size=True
-                    )
-                except _RESUMABLE as exc:
-                    # The .part keeps what arrived, and the next attempt asks
-                    # for the rest of it (download_file resumes from there).
-                    # The size and the SHA-256 still decide at the end.
-                    misses = 0 if brought else misses + 1
-                    if misses > _DOWNLOAD_RETRIES:
-                        raise
-                    pause = _RETRY_PAUSE_S * 2 ** max(0, misses - 1)
-                    logger.warning(
-                        "the download of %s stopped at %d of %d bytes (%s); trying again in %gs",
-                        job.program,
-                        job.done,
-                        asset.size,
-                        str(exc) or type(exc).__name__,
-                        pause,
-                    )
-                    # Cancelling lands here as it would mid-download.
-                    await asyncio.sleep(pause)
+            return await downloads.download_file_retrying(
+                target, scratch, progress, client, exact_size=True
+            )
 
     async def _unpack(self, job: _Job, asset: ProgramAsset, archive: Path, staged: Path) -> None:
         loop = asyncio.get_running_loop()
@@ -683,6 +644,12 @@ def _failure(exc: BaseException, phase: str, pin: ProgramPin) -> tuple[str, str]
             "checksum_mismatch",
             f"the download's SHA-256 is {exc.actual}, and the pin for {pin.id} {pin.version} "
             f"is {exc.expected}",
+        )
+    if isinstance(exc, downloads.UnexpectedStatus) and exc.gone:
+        return (
+            "download_gone",
+            f"the build pinned for {pin.id} {pin.version} is no longer at {exc.url} "
+            f"(HTTP {exc.status})",
         )
     if isinstance(exc, OSError) and exc.errno in (errno.ENOSPC, getattr(errno, "EDQUOT", -1)):
         return "no_space", f"the disk filled up while setting up {pin.id}: {exc}"

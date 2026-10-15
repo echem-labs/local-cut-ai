@@ -446,6 +446,7 @@ export type SetupOutcome = "done" | "failed" | "cancelled";
 export type SetupFailure =
   | "no_space"
   | "download_failed"
+  | "download_gone"
   | "size_mismatch"
   | "checksum_mismatch"
   | "unpack_failed"

@@ -72,6 +72,9 @@ SETUP_FAILURES = (
     # The download itself did not finish: network, HTTP status, a refused
     # redirect.
     "download_failed",
+    # The server says the pinned build is not at its address any more (404
+    # or 410), so asking again will not fetch it.
+    "download_gone",
     # The download's length is not the pinned length.
     "size_mismatch",
     # The download's SHA-256 is not the pinned digest.

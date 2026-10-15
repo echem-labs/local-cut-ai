@@ -206,12 +206,18 @@ minutes, the setup asks for the rest with a `Range` request starting at the
 first byte it does not have. It adds what comes back only from a `206` whose
 `Content-Range` starts at that byte. A `200` with the whole file starts the
 download over, and a `206` from any other byte is thrown away along with the
-partial download, so the next attempt asks for the whole file. Attempts go on
-for as long as each one brings new bytes. Six in a row that bring none fail
-the setup with `download_failed`, after waits of 1, 2, 4, 8 and 16 seconds
-between them, and it can be cancelled during a wait like at any other point.
-However many attempts it took, the size and the SHA-256 of the whole archive
-are what decide whether it is the pinned build.
+partial download, so the next attempt asks for the whole file. A server that
+answers `429`, `500`, `502`, `503` or `504`, or a host name that does not
+resolve, is asked again the same way, after the wait a `Retry-After` names
+(up to a minute) where the server sends one. Attempts go on for as long as
+each one brings new bytes. Six in a row that bring none fail the setup with
+`download_failed`, after waits of 1, 2, 4, 8 and 16 seconds between them, and
+it can be cancelled during a wait like at any other point. Any other status
+fails it on the first answer: `404` or `410` with `download_gone`, because the
+pinned build is no longer where it was published, and the rest with
+`download_failed`. However many attempts it took, the size and the SHA-256 of
+the whole archive are what decide whether it is the pinned build. Model
+downloads ask again by the same rules.
 
 ### DELETE /programs/{id}/setup
 
@@ -249,9 +255,9 @@ arrives, as when a dropped download waits to try again, `GET /programs`
 reports it as 0.
 
 A failure's `reason` is one of `no_space`, `download_failed`,
-`size_mismatch`, `checksum_mismatch`, `unpack_failed`, `does_not_run`,
-`in_use` and `install_failed`. `error` is the same failure in English, for
-logs and the CLI.
+`download_gone`, `size_mismatch`, `checksum_mismatch`, `unpack_failed`,
+`does_not_run`, `in_use` and `install_failed`. `error` is the same failure in
+English, for logs and the CLI.
 
 ### In the readiness report
 

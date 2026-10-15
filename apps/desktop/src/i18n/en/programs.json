@@ -47,6 +47,7 @@
   "failures": {
     "no_space": "Setup stopped: the disk filled up.",
     "download_failed": "Setup stopped: the download didn't finish.",
+    "download_gone": "Setup stopped: the build LocalCut pins for {name} is no longer where it was published.",
     "size_mismatch": "Setup stopped: the download wasn't the size LocalCut expected.",
     "checksum_mismatch": "Setup stopped: the download didn't match its checksum.",
     "unpack_failed": "Setup stopped: the download couldn't be unpacked.",
@@ -57,6 +58,7 @@
   "advice": {
     "no_space": "It needs {size} free on the disk that holds {dir}. Free some space, then try again.",
     "download_failed": "Nothing was kept. Check the connection, then try again.",
+    "download_gone": "Nothing was kept, and trying again won't bring it back. Set {name} up yourself with the steps below, or update LocalCut to a version that pins a build still online.",
     "size_mismatch": "Nothing from it was kept or run. Try again in a while.",
     "checksum_mismatch": "Nothing from it was kept or run. Try again in a while, or set {name} up yourself with the steps below.",
     "unpack_failed": "Nothing was kept. Try again, or set {name} up yourself with the steps below.",
