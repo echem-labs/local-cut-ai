@@ -466,14 +466,17 @@ def test_an_orphan_of_localcuts_copy_is_stopped_not_taken_for_the_users(
     _install_from(archives.root, data)
     port = free_port()
     orphan = _start_fake(port, data / "models" / "ollama")
+    # Written the way the engine writes it: the binary as the system names
+    # the running process, which for a Python script is the interpreter.
+    planted = psutil.Process(orphan.pid)
     (data / "run").mkdir(parents=True)
     (data / "run" / "ollama.json").write_text(
         json.dumps(
             {
                 "format": 1,
                 "pid": orphan.pid,
-                "create_time": psutil.Process(orphan.pid).create_time(),
-                "binary": sys.executable,
+                "create_time": planted.create_time(),
+                "binary": planted.exe(),
             }
         )
     )

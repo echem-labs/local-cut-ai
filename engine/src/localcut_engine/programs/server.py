@@ -387,10 +387,19 @@ class ManagedServer:
 
     def _remember_run(self, pid: int, launch: ServerLaunch) -> None:
         try:
-            created = psutil.Process(pid).create_time()
+            process = psutil.Process(pid)
+            created = process.create_time()
         except psutil.Error:
             return
-        record = {"format": 1, "pid": pid, "create_time": created, "binary": launch.argv[0]}
+        try:
+            # The binary as the system names it, which is what an engine
+            # after this one compares against: argv[0] can be a launcher
+            # that runs something else (a macOS framework Python re-executes
+            # its app bundle, a venv's python is a link).
+            binary = process.exe()
+        except psutil.Error:
+            binary = launch.argv[0]
+        record = {"format": 1, "pid": pid, "create_time": created, "binary": binary}
         self.run_path.parent.mkdir(parents=True, exist_ok=True)
         _write_atomic(self.run_path, json.dumps(record))
 
