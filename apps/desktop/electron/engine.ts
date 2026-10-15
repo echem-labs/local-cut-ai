@@ -13,6 +13,21 @@ import type { EngineConnection, EngineCrash } from "../src/api/types";
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_INTERVAL_MS = 250;
+/**
+ * How long an engine that has been asked to stop gets to go on its own before
+ * it is killed.
+ *
+ * Its own stop takes, at most: waiting on open requests (SHUTDOWN_DRAIN_S in
+ * api/app.py), letting the render in flight finish (SHUTDOWN_GRACE_S in
+ * jobs/scheduler.py), then cancelling it (CANCEL_GRACE_S). This covers all
+ * three. `test_ui_contract.py` holds it to their sum. The kill after it
+ * costs the render nothing, because the engine records the stop before its
+ * 202 (see `askToStop`). What the grace buys is the engine requeueing the
+ * render itself and stopping the programs it runs.
+ */
+export const STOP_GRACE_MS = 10_000;
+/** How long the stop request itself gets to be answered. */
+const STOP_REQUEST_MS = 2_000;
 /** How long a terminated process group gets before it is SIGKILLed. */
 const TERM_GRACE_MS = 3_000;
 /** How long SIGKILL gets to land before the app stops waiting on it. The
@@ -246,6 +261,13 @@ export class EngineManager {
    * doing by the time it lands.
    */
   private readonly asked = new WeakSet<ChildProcess>();
+  /**
+   * Engines on their way out, each with the stop `endChild` is making of it:
+   * asked first, then killed if it does not go. Settled once the engine has exited
+   * or been killed. A start waits for these, because until it exits a
+   * stopping engine still holds the data directory.
+   */
+  private readonly ending = new Map<ChildProcess, Promise<void>>();
   private readonly crashListeners: ((crash: EngineCrash) => void)[] = [];
   // Published to the renderer over IPC only once the engine proves healthy;
   // a failed startup must read as "no connection", not a dead url.
@@ -394,6 +416,12 @@ export class EngineManager {
     // Windows) while every sentence about it — the log line, the banner's
     // hint, u7's 180s budget — promises one wait, not two.
     const deadline = Date.now() + (waitForPort ? REBIND_TIMEOUT_MS : 0);
+    // An engine still stopping holds the data directory until it exits, and
+    // one started beside it exits on startup saying another engine is using
+    // it. After the generation is read, so a stop that lands during this
+    // wait cancels the start like any other; and only when there is one, so
+    // a start with nothing to wait for still spawns in the caller's tick.
+    if (this.ending.size > 0) await Promise.all(this.ending.values());
     try {
       return await this.spawnUntilThePortIsFree(waitForPort, generation, deadline);
     } catch (error) {
@@ -839,9 +867,11 @@ export class EngineManager {
   }
 
   /**
-   * Kill a child, without cancelling a start that is in progress — a failed
+   * End a child, without cancelling a start that is in progress — a failed
    * attempt cleans up after itself through this, and must not read as the app
-   * having asked for the engine to go away.
+   * having asked for the engine to go away. An engine in service is asked to
+   * stop first and killed only if it does not (`endChild`); anything else is
+   * killed at once.
    *
    * @param only The child to kill, when the caller means a particular one.
    * `stop()` means "whatever is current" and passes nothing; an attempt
@@ -857,7 +887,13 @@ export class EngineManager {
       // Before the kill, not after: the exit can land in the same tick, and
       // an unmarked child reads as a crash to everything downstream.
       this.asked.add(child);
-      killTree(child);
+      // Only an engine in service has a connection to be asked over. One
+      // that is still starting, or a straggler, is killed at once.
+      const connection = this.child === child ? this.connection : null;
+      const ending = endChild(child, connection).finally(() => {
+        if (this.ending.get(child) === ending) this.ending.delete(child);
+      });
+      this.ending.set(child, ending);
     }
     // The manager's own fields only when the child named IS the current one.
     // Otherwise this is a straggler being cleaned up and the connection on
@@ -887,16 +923,19 @@ export class EngineManager {
     // starts that read an older generation; a start arriving after the bump
     // reads the new one and passes every check in the loop. So an
     // `engine:restart` or `engine:unpair` landing inside the teardown (which
-    // preventDefaults the quit and can run for TERM_GRACE_MS + KILL_GRACE_MS,
-    // with the windows open and the IPC handlers live the whole time) would
-    // spawn an engine, and `engineTornDown` sends the re-issued quit through
-    // without a second teardown. That child outlives the app holding the data
-    // dir and the port — seeding exactly the orphan the rest of this file
-    // exists to dig out of.
+    // preventDefaults the quit and can run for STOP_GRACE_MS + TERM_GRACE_MS
+    // + KILL_GRACE_MS, with the windows open and the IPC handlers live the
+    // whole time) would spawn an engine. `engineTornDown` then sends the
+    // re-issued quit through without a second teardown. That child outlives
+    // the app holding the data dir and the port — seeding exactly the orphan
+    // the rest of this file exists to dig out of.
     this.quitting = true;
     const child = this.child;
     this.stop();
     if (!child || child.pid === undefined) return;
+    // The stop `stop()` began: the engine asked and given STOP_GRACE_MS, then
+    // killed if it is still there. Settled by the exit or by the kill.
+    await this.ending.get(child);
     if (await exited(child, TERM_GRACE_MS)) return;
     console.warn(`${LOG_PREFIX}did not exit on SIGTERM; killing the process group`);
     forceKillTree(child);
@@ -1095,6 +1134,54 @@ async function refusesOurToken(
     signal: AbortSignal.timeout(timeoutMs),
   });
   return authed.status === 401;
+}
+
+/**
+ * End an engine: ask it to stop, then kill it if it does not.
+ *
+ * A kill alone reads as a crash to the next start. A render in flight when
+ * the engine dies stays `rendering`. The next start counts a crash against
+ * it unless the engine put the stop on record first. Two fail the job.
+ * On Windows `killTree` is `taskkill /F`, which gives the engine no chance to
+ * do that. So the engine is asked over HTTP, which reaches it on every
+ * platform (on Windows this console child shares no console with the app, so
+ * no console control event can reach it either). The kill is the fallback.
+ *
+ * @param connection The engine's url and token, or null for a child that was
+ * never in service, which is killed at once.
+ */
+async function endChild(child: ChildProcess, connection: EngineConnection | null): Promise<void> {
+  if (connection && (await askToStop(connection)) && (await exited(child, STOP_GRACE_MS))) return;
+  killTree(child);
+}
+
+/**
+ * Ask the engine to stop: `POST /shutdown`, with our token.
+ *
+ * True only for the engine's 202, which it sends once the render in flight is
+ * on record as stopped, so a kill any time after it is a stop to the next
+ * start rather than a crash. Anything else (refused, unanswered, an engine
+ * older than the route) is false. The caller then kills at once, since
+ * there is nobody to wait for.
+ *
+ * Raced against a timer as well as aborted by one: a request that is never
+ * answered must not hold a quit open, whatever the fetch underneath does with
+ * its signal.
+ */
+async function askToStop(connection: EngineConnection): Promise<boolean> {
+  try {
+    const answer = await Promise.race([
+      fetch(`${connection.url}/shutdown`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${connection.token}` },
+        signal: AbortSignal.timeout(STOP_REQUEST_MS),
+      }),
+      delay(STOP_REQUEST_MS).then(() => null),
+    ]);
+    return answer?.status === 202;
+  } catch {
+    return false;
+  }
 }
 
 /**

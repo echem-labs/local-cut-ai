@@ -95,11 +95,70 @@ class Scheduler:
         # Set by cancel_job just before it cancels the task above, so the
         # loop can tell a cancel aimed at one job from one aimed at itself.
         self._cancelled_job: str | None = None
+        # The write that puts a stop on record, once a stop has begun. One
+        # per scheduler: every later call to begin_stop waits on it.
+        self._marking: asyncio.Future | None = None
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         self.events.bind_to_running_loop()
         self._task = self._loop.create_task(self._run(), name="scheduler")
+
+    async def begin_stop(self) -> None:
+        """Take no more work and put on record that the render in flight is
+        being stopped rather than crashing.
+
+        The first thing a stop does, before anything that can take time:
+        uvicorn waits on open connections before it runs the lifespan's
+        shutdown, while the desktop kills an engine that has not exited in
+        time. The job stays `rendering` and keeps its chance to finish within
+        stop()'s grace; if the engine dies first, the next start reads the
+        mark and requeues it without counting a crash (JobQueue).
+
+        Returns once the mark is written, so a caller that answers "stopping"
+        afterwards is answering for a kill too. Idempotent.
+        """
+        await asyncio.shield(self._start_marking())
+
+    def request_stop(self) -> None:
+        """begin_stop, for a signal handler: it only schedules the work, on
+        the loop the scheduler runs on. A no-op before start()."""
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(self._start_marking)
+        except RuntimeError:
+            pass  # the loop has already closed; there is nothing left to mark
+
+    def _start_marking(self) -> asyncio.Future:
+        self._stopping = True
+        self._wakeup.set()
+        if self._marking is None:
+            job = self._running_job
+            if job is not None:
+                # On the scheduler's own copy first, synchronously, so every
+                # write the render makes from here on carries the mark too. A
+                # progress write landing after the row was marked rewrites
+                # the whole payload from this object.
+                job.engine_stopping = True
+            self._marking = asyncio.ensure_future(self._persist_stopping(job))
+        return self._marking
+
+    async def _persist_stopping(self, job: Job | None) -> None:
+        if job is None:
+            return
+        try:
+            marked = await asyncio.to_thread(self.queue.mark_engine_stopping, job.id)
+        except Exception:  # noqa: BLE001 - the stop goes ahead regardless
+            logger.exception(
+                "could not record the stop on job %s; if the engine is killed before it "
+                "requeues the job, the next start counts a crash against it",
+                job.id,
+            )
+            return
+        if marked:
+            logger.info("stopping with job %s rendering; recorded as a stop", job.id)
 
     async def stop(self, grace_s: float = SHUTDOWN_GRACE_S) -> None:
         """Stop the loop, cancelling an in-flight render if it does not wind
@@ -114,8 +173,7 @@ class Scheduler:
         cancel has to come from in here, where the backends can still clean
         up after themselves.
         """
-        self._stopping = True
-        self._wakeup.set()
+        await self.begin_stop()
         task = self._task
         if task is None:
             return
@@ -226,6 +284,13 @@ class Scheduler:
                 except TimeoutError:
                     pass
                 continue
+            if self._stopping:
+                # A stop began while the claim was on its thread. It found
+                # nothing rendering, so it recorded nothing. Started now, this
+                # render would run with no stop on record and a kill would
+                # count against it.
+                await asyncio.shield(asyncio.to_thread(self._requeue_quietly, job))
+                return
             # Its own task, so one job can be interrupted without taking the
             # loop down with it: `_execute` awaited inline could only be
             # cancelled by cancelling this whole coroutine.
@@ -513,6 +578,9 @@ class Scheduler:
             job.status = JobStatus.QUEUED
             job.progress = 0.0
             job.started_at = None
+            # Requeued is the stop's own outcome, so there is nothing left
+            # for the next start to read the mark for.
+            job.engine_stopping = False
             self.queue.update_unless_cancelled(job)
         except Exception:  # noqa: BLE001
             logger.exception("could not requeue job %s during shutdown", job.id)

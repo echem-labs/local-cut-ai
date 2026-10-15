@@ -1,6 +1,7 @@
 """SQLite-persisted job queue — long overnight batches must survive app
-restarts and driver hiccups. Jobs found `rendering` on startup
-are requeued (the render was interrupted).
+restarts and driver hiccups. Jobs found `rendering` on startup were
+interrupted. One a stop interrupted is requeued. Any other counts a crash
+and is requeued until CRASH_LIMIT of those fails it.
 """
 
 from __future__ import annotations
@@ -29,6 +30,18 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_project ON jobs(project_id, created_at);
 """
 
+# How many starts may find one job mid-render with no stop on record before
+# it is failed instead of claimed again. A render that takes the engine down
+# would otherwise be retried by every start, which under a restart policy
+# (deploy/docker-compose.yml) is a crash loop.
+CRASH_LIMIT = 2
+# What the board and the CLI show for it, beside their own way to render it
+# again. Written for CRASH_LIMIT = 2.
+CRASHED_TOO_OFTEN = (
+    "The engine stopped unexpectedly twice while rendering this, so it was not "
+    "started a third time."
+)
+
 
 class JobQueue:
     def __init__(self, db_path: Path | str) -> None:
@@ -52,6 +65,13 @@ class JobQueue:
         self._recover_interrupted()
 
     def _recover_interrupted(self) -> None:
+        """Settle every job the last engine left `rendering`.
+
+        A stop records itself on the job as it begins (`mark_engine_stopping`),
+        so a row without that mark is one the engine went down under without
+        being asked to. That counts as a crash. The CRASH_LIMIT-th fails the
+        job here rather than handing it to the scheduler again.
+        """
         with self._lock, self._db:
             rows = self._db.execute(
                 "SELECT id, payload FROM jobs WHERE status = ?", (JobStatus.RENDERING,)
@@ -62,8 +82,32 @@ class JobQueue:
                 except ValidationError:
                     self._poison(job_id)
                     continue
-                job.status = JobStatus.QUEUED
                 job.progress = 0.0
+                if job.engine_stopping:
+                    job.engine_stopping = False
+                    job.status = JobStatus.QUEUED
+                    logger.info("job %s was rendering when the engine stopped; requeued", job_id)
+                else:
+                    job.crashes += 1
+                    if job.crashes >= CRASH_LIMIT:
+                        job.status = JobStatus.FAILED
+                        job.error = CRASHED_TOO_OFTEN
+                        job.finished_at = time.time()
+                        logger.error(
+                            "the engine has gone down unexpectedly %d times while rendering "
+                            "job %s; failed it instead of starting it again",
+                            job.crashes,
+                            job_id,
+                        )
+                    else:
+                        job.status = JobStatus.QUEUED
+                        logger.warning(
+                            "job %s was rendering when the engine went down unexpectedly "
+                            "(%d of %d before it is failed); requeued",
+                            job_id,
+                            job.crashes,
+                            CRASH_LIMIT,
+                        )
                 self._write(job)
 
     def _poison(self, job_id: str) -> None:
@@ -152,8 +196,37 @@ class JobQueue:
                 job.status = JobStatus.RENDERING
                 job.progress = 0.0
                 job.started_at = time.time()
+                # A stop recorded against an earlier claim says nothing about
+                # this one: if this render takes the engine down, it counts.
+                job.engine_stopping = False
                 self._write(job)
                 return job
+
+    def mark_engine_stopping(self, job_id: str) -> bool:
+        """Record on a `rendering` job that the engine has begun a requested
+        stop, so a start that still finds it `rendering` requeues it instead
+        of counting a crash. Returns whether the mark was written.
+
+        Writes the stored payload with only the mark changed, never a
+        caller's in-memory Job: the scheduler's copy of a job that is about
+        to finish already says DONE before the work it plans is queued, and
+        persisting that early is what `Scheduler._execute` orders its writes
+        to avoid. The scheduler sets the same mark on its copy, so the
+        writes it makes from there on carry it too.
+        """
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT status, payload FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None or row[0] != JobStatus.RENDERING:
+                return False
+            try:
+                job = Job.model_validate_json(row[1])
+            except ValidationError:
+                return False  # the next start poisons it, as it would anyway
+            job.engine_stopping = True
+            self._write(job)
+            return True
 
     @staticmethod
     def _hydrate(rows: list[tuple]) -> list[Job]:

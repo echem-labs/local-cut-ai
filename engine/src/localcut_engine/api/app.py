@@ -22,6 +22,7 @@ from typing import Annotated, Literal
 from urllib.parse import unquote
 
 import httpx
+import uvicorn
 from fastapi import (
     Depends,
     FastAPI,
@@ -239,6 +240,47 @@ def install_log_redaction() -> None:
             attach(handler)
     for handler in logging.getLogger().handlers:
         attach(handler)
+
+
+# How long uvicorn's graceful exit waits on open requests before it cancels
+# them and runs the lifespan's shutdown. Unbounded, one long request (an LLM
+# edit, a vision suggestion) would hold the lifespan back past the desktop's
+# grace: the scheduler would never requeue its render and nothing the
+# lifespan stops would be stopped. The desktop's STOP_GRACE_MS covers this
+# plus the scheduler's own graces (test_ui_contract.py).
+SHUTDOWN_DRAIN_S = 1.0
+
+
+class EngineServer(uvicorn.Server):
+    """uvicorn's server, with the start of every stop passed to the app.
+
+    A stop begins one of two ways: a signal (SIGTERM from a service manager
+    or the desktop's fallback, Ctrl+C at a terminal) or POST /shutdown. The
+    request is how the desktop asks. On Windows it is the only way there is:
+    the desktop's engine shares no console with the app, so no console
+    control event reaches it. The kills Windows offers (TerminateProcess,
+    `taskkill /F`) give it no warning. Both end in uvicorn's own graceful
+    exit, so the lifespan's shutdown runs either way.
+
+    The scheduler hears first (`request_stop`), before uvicorn waits on a
+    single connection, so a stop that is killed partway through is already
+    on record as a stop.
+    """
+
+    def __init__(self, config: uvicorn.Config) -> None:
+        super().__init__(config)
+        state = getattr(config.app, "state", None)
+        if state is not None:
+            state.exit_server = self._exit
+
+    def _exit(self) -> None:
+        self.should_exit = True
+
+    def handle_exit(self, sig: int, frame) -> None:  # noqa: ANN001 - a signal frame
+        request_stop = getattr(getattr(self.config.app, "state", None), "request_stop", None)
+        if request_stop is not None:
+            request_stop()
+        super().handle_exit(sig, frame)
 
 
 # Path params are identifiers, never paths: reject anything that could act
@@ -519,6 +561,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         queue.close()
 
     app = FastAPI(title="LocalCut Engine", version=__version__, lifespan=lifespan)
+    # What EngineServer calls when a signal begins a stop. `exit_server` is
+    # its to set: only a server that can end itself gives the app one.
+    app.state.request_stop = scheduler.request_stop
 
     # -- body cap (must run BEFORE auth) --------------------------------------
     #
@@ -728,6 +773,30 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             "engine_version": __version__,
             "api_version": ENGINE_API_VERSION,
         }
+
+    @app.post("/shutdown", status_code=202, dependencies=[Authed])
+    async def shutdown(request: Request) -> dict:
+        """Stop the engine the way SIGTERM does. The desktop asks this way on
+        every platform. On Windows there is no signal it could send, and
+        elsewhere a request carries the token where a signal carries nothing.
+
+        Answers once the render in flight is on record as stopped, so the
+        caller may kill the engine any time after the 202 without the next
+        start counting it as a crash. The rest of the stop (requeueing that
+        render, the lifespan's shutdown) happens after the answer, in
+        uvicorn's own graceful exit.
+        """
+        exit_server = getattr(request.app.state, "exit_server", None)
+        if exit_server is None:
+            # Before any side effect: a stop recorded with no exit to follow
+            # would only leave the scheduler refusing work.
+            raise HTTPException(
+                status_code=503,
+                detail="this engine cannot stop itself; it was not started by `localcut serve`",
+            )
+        await scheduler.begin_stop()
+        exit_server()
+        return {"stopping": True}
 
     # One probe for the life of the app, because its answers are kept per
     # binary (backends/ffmpeg.py): asking about an unchanged binary runs no
