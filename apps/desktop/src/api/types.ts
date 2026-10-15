@@ -440,8 +440,17 @@ export type ProgramSource = "managed" | "configured" | "data_dir" | "path" | "de
 /** Why the engine cannot set a program up itself. */
 export type SetupUnavailableReason = "platform_not_supported" | "program_not_supported";
 
-/** What a running setup is doing, in the order it does it. */
-export type SetupPhase = "downloading" | "verifying" | "unpacking" | "checking" | "installing";
+/** What a running setup is doing, in the order it does it. A program that
+ * runs as a server goes on to `starting` it and `pulling` its model, and a
+ * pull asked for on its own is a job of `pulling` alone. */
+export type SetupPhase =
+  | "downloading"
+  | "verifying"
+  | "unpacking"
+  | "checking"
+  | "installing"
+  | "starting"
+  | "pulling";
 
 /** How a setup ended. */
 export type SetupOutcome = "done" | "failed" | "cancelled";
@@ -456,7 +465,35 @@ export type SetupFailure =
   | "unpack_failed"
   | "does_not_run"
   | "in_use"
-  | "install_failed";
+  | "install_failed"
+  | "did_not_start"
+  | "pull_failed";
+
+/** What LocalCut's own copy of a server is doing. */
+export type ServerState = "stopped" | "starting" | "running" | "crashed";
+
+/** Why LocalCut's own copy of a server is stopped or crashed. */
+export type ServerReason =
+  | "own_server"
+  | "stopped"
+  | "port_in_use"
+  | "cannot_start"
+  | "no_answer"
+  | "exited";
+
+/** LocalCut's copy of a server program, as the engine supervises it. */
+export interface ProgramServer {
+  state: ServerState;
+  reason: ServerReason | null;
+  /** The same reason in English, with what the program printed last. */
+  error: string | null;
+  pid: number | null;
+  /** Where it answers, once it has been started. */
+  url: string | null;
+  restarts: number;
+  /** Its log on the engine's machine (GET /programs/:id/log serves it). */
+  log: string;
+}
 
 /** The setup running now. `done` and `total` are bytes while downloading,
  * verifying and unpacking, and 0 of 0 in the other phases. */
@@ -486,8 +523,10 @@ export interface ProgramManagedCopy {
   /** Whether it is the build pinned now, whole. */
   current: boolean;
   /** Whether the engine runs it: a configured path or <data_dir>/bin
-   * outranks it. */
+   * outranks it. For a server, whether it is the one answering. */
   in_use: boolean;
+  /** A program that runs as a server (Ollama): what LocalCut's copy is doing. */
+  server?: ProgramServer;
 }
 
 /** What a setup would do on the engine's machine. The sizes are exact,
@@ -502,6 +541,10 @@ export interface ProgramSetupInfo {
   url: string | null;
   download_bytes: number | null;
   install_bytes: number | null;
+  /** A program that serves a model: the one a setup would pull into
+   * LocalCut's copy and about how much it adds (null when the catalog does
+   * not know it), or null when the copy has it. */
+  pull?: { model: string; bytes: number | null } | null;
   job: ProgramJob | null;
   last: ProgramLastSetup | null;
 }
@@ -765,14 +808,20 @@ export type EngineEvent =
   | {
       type: "program.setup.done";
       program: ProgramId;
-      version: string;
+      /** Null for a pull on its own. */
+      version: string | null;
+      /** A path for FFmpeg; the server's address for a pull. */
       location: string;
       in_use: boolean;
       draws_text: boolean | null;
+      /** A program that serves a model: the one it pulled, or null. */
+      model?: string | null;
     }
   | { type: "program.setup.failed"; program: ProgramId; reason: SetupFailure; error: string }
   | { type: "program.setup.cancelled"; program: ProgramId }
-  | { type: "program.removed"; program: ProgramId; freed_bytes: number };
+  | { type: "program.removed"; program: ProgramId; freed_bytes: number }
+  // LocalCut's copy of a server started, stopped or crashed.
+  | { type: "program.server"; program: ProgramId; state: ServerState; reason: ServerReason | null };
 
 /** A project's shape, portable — the engine writes and validates it; the
  * desktop only carries the document between the two routes and never reads

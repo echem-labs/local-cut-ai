@@ -351,6 +351,8 @@ def test_program_vocabulary_matches_the_desktop():
         PROGRAM_PROBLEMS,
         PROGRAM_SOURCES,
         PROGRAM_STATES,
+        SERVER_REASONS,
+        SERVER_STATES,
         SETUP_FAILURES,
         SETUP_OUTCOMES,
         SETUP_PHASES,
@@ -377,6 +379,10 @@ def test_program_vocabulary_matches_the_desktop():
         ("SetupFailure", "failures", SETUP_FAILURES),
         # A failure is said twice: what happened, then what to do about it.
         ("SetupFailure", "advice", SETUP_FAILURES),
+        # LocalCut's copy of a server: its state as a word, and why it is
+        # stopped or crashed as a sentence.
+        ("ServerState", "serverStates", SERVER_STATES),
+        ("ServerReason", "serverReasons", SERVER_REASONS),
     )
     for declaration, section, engine in pairs:
         assert union(declaration) == set(engine), (

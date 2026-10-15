@@ -37,12 +37,28 @@
     "verifying": "Checking the download",
     "unpacking": "Unpacking {name}",
     "checking": "Making sure {name} runs",
-    "installing": "Moving {name} into place"
+    "installing": "Moving {name} into place",
+    "starting": "Starting {name}",
+    "pulling": "Downloading {model}"
   },
   "outcomes": {
     "done": "{name} is set up.",
     "failed": "Setting up {name} stopped.",
     "cancelled": "Setting up {name} was cancelled."
+  },
+  "serverStates": {
+    "stopped": "Stopped",
+    "starting": "Starting",
+    "running": "Running",
+    "crashed": "Stopped working"
+  },
+  "serverReasons": {
+    "own_server": "Your own {name} answers at {address}, so LocalCut uses it.",
+    "stopped": "LocalCut's copy is stopped.",
+    "port_in_use": "Something else is using {address}, so LocalCut's copy can't start there.",
+    "cannot_start": "LocalCut's copy won't start on this system.",
+    "no_answer": "LocalCut's copy started and never answered.",
+    "exited": "LocalCut's copy kept stopping, so LocalCut stopped restarting it."
   },
   "failures": {
     "no_space": "Setup stopped: the disk filled up.",
@@ -53,7 +69,9 @@
     "unpack_failed": "Setup stopped: the download couldn't be unpacked.",
     "does_not_run": "Setup stopped: the {name} it downloaded doesn't run on this system.",
     "in_use": "Setup stopped: another program has LocalCut's copy of {name} open.",
-    "install_failed": "Setup stopped: it couldn't be moved into place."
+    "install_failed": "Setup stopped: it couldn't be moved into place.",
+    "did_not_start": "Setup stopped: {name} is set up, and didn't start.",
+    "pull_failed": "Setup stopped: the model didn't download."
   },
   "advice": {
     "no_space": "It needs {size} free on the disk that holds {dir}. Free some space, then try again.",
@@ -64,7 +82,9 @@
     "unpack_failed": "Nothing was kept. Try again, or set {name} up yourself with the steps below.",
     "does_not_run": "Nothing was kept. Set {name} up yourself with the steps below.",
     "in_use": "Close whatever is using it, then try again.",
-    "install_failed": "Nothing changed. Try again."
+    "install_failed": "Nothing changed. Try again.",
+    "did_not_start": "LocalCut's copy is in place. Try again, or set {name} up yourself with the steps below.",
+    "pull_failed": "{name} itself is set up. Check the connection, then try again."
   },
   "here": "this computer",
   "on": "On {where}",
