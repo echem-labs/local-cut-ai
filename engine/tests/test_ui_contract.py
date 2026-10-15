@@ -43,6 +43,7 @@ _FORMATS = _desktop("src", "lib", "formats.ts")
 _TOOLS_TS = _desktop("src", "lib", "tools.ts")
 _ETA = _desktop("src", "lib", "eta.ts")
 _OOM = _desktop("src", "lib", "oom.ts")
+_PROGRAMS_TS = _desktop("src", "lib", "programs.ts")
 _CLIENT = _desktop("src", "api", "client.ts")
 _TYPES = _desktop("src", "api", "types.ts")
 _HOME = _desktop("src", "screens", "Home.tsx")
@@ -362,6 +363,7 @@ def test_program_vocabulary_matches_the_desktop():
         SETUP_PHASES,
         SETUP_UNAVAILABLE,
     )
+    from localcut_engine.programs import BUILDS as PROGRAM_BUILDS
 
     text = _ts_source(_TYPES)
 
@@ -387,6 +389,8 @@ def test_program_vocabulary_matches_the_desktop():
         # stopped or crashed as a sentence.
         ("ServerState", "serverStates", SERVER_STATES),
         ("ServerReason", "serverReasons", SERVER_REASONS),
+        # The builds a setup can be asked for by name, each with its button.
+        ("ProgramBuild", "builds", PROGRAM_BUILDS),
     )
     for declaration, section, engine in pairs:
         assert union(declaration) == set(engine), (
@@ -400,6 +404,37 @@ def test_program_vocabulary_matches_the_desktop():
             f"only in catalog {sorted(labelled - set(engine))}, "
             f"only in engine {sorted(set(engine) - labelled)}"
         )
+
+
+def test_every_gpu_vendor_a_build_is_pinned_for_has_a_name():
+    """A program pinned per GPU vendor (ComfyUI) reports the vendor whose
+    build a machine gets and the well names it: "LocalCut picks the build
+    for NVIDIA graphics cards". A vendor with no name there says nothing."""
+    from localcut_engine.programs.manifest import GPU_VENDORS, load_programs_manifest
+
+    catalog = json.loads((_I18N / "programs.json").read_text("utf-8"))
+    named = set(catalog["diy"]["vendors"])
+    assert set(GPU_VENDORS) <= named, sorted(set(GPU_VENDORS) - named)
+    pinned = {
+        asset.gpu
+        for pin in load_programs_manifest().programs
+        for asset in pin.assets
+        if asset.gpu is not None
+    }
+    assert pinned <= named
+
+
+def test_the_comfyui_model_folders_are_the_same_on_both_sides():
+    """The engine writes extra_model_paths.yaml for its own ComfyUI and the
+    desktop writes the same file into the steps for setting ComfyUI up by
+    hand. Both have to name every folder the engine downloads weights into,
+    or a hand-made install cannot find a model LocalCut's own can."""
+    from localcut_engine.programs.comfyui import MODEL_FOLDERS
+
+    text = _ts_source(_PROGRAMS_TS)
+    match = re.search(r"const COMFY_MODEL_FOLDERS = \[(.*?)\];", text, re.S)
+    assert match, "lib/programs.ts no longer declares COMFY_MODEL_FOLDERS"
+    assert tuple(re.findall(r'"([^"]+)"', match.group(1))) == MODEL_FOLDERS
 
 
 def test_the_video_kinds_home_warns_about_match_the_pipeline():

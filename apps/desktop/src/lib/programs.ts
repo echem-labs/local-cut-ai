@@ -9,6 +9,8 @@
  * paired GPU box the program goes on that box.
  */
 import type {
+  ProgramBuild,
+  ProgramBuildChoice,
   ProgramId,
   ProgramInfo,
   ProgramJob,
@@ -197,6 +199,24 @@ export function setupOffer(program: ProgramInfo): SetupOffer | null {
   return null;
 }
 
+/** The other build to offer after one whose PyTorch could not use the card:
+ * the vendor's build for older drivers, when that is not the build that
+ * just failed. Never the usual build, which a machine that was given
+ * another one has a driver too old for. Null when there is nothing else to
+ * try. */
+export function otherBuildOffer(
+  program: ProgramInfo,
+): (ProgramBuildChoice & { build: ProgramBuild }) | null {
+  const { setup } = program;
+  const last = setup.last;
+  if (setup.job || last?.outcome !== "failed" || last.reason !== "gpu_not_usable") return null;
+  if (!needsAttention(program) || !setup.available || !setup.takes_effect) return null;
+  const other = (setup.builds ?? []).find(
+    (choice) => choice.build !== null && choice.build !== (last.build ?? null),
+  );
+  return other && other.build !== null ? { ...other, build: other.build } : null;
+}
+
 /** The failure to show, while it still matters: the last setup failed and
  * the program still needs attention. A failure the user has since fixed by
  * hand is history, not news. */
@@ -206,9 +226,11 @@ export function shownFailure(program: ProgramInfo): SetupFailure | null {
   return last.reason ?? "install_failed";
 }
 
-/** The phases whose bytes arrive over the network, and so have a speed: a
- * download, and a pull, whose total grows as Ollama finds its layers. */
-const TRANSFERS: readonly string[] = ["downloading", "pulling"];
+/** The phases whose progress is bytes moving and so have a speed: a
+ * download, a pull, whose total grows as Ollama finds its layers and an
+ * unpack, which for ComfyUI is tens of thousands of files and takes minutes
+ * of its own. */
+const TRANSFERS: readonly string[] = ["downloading", "unpacking", "pulling"];
 
 /** How far a running setup has got, 0..1. Checking, installing and starting
  * report 0 of 0 and come after every byte is in, so they read as full. */
@@ -217,8 +239,8 @@ export function setupFraction(job: ProgramJob): number {
   return Math.min(1, Math.max(0, job.done / job.total));
 }
 
-/** About how long a download or a pull has left, in words, or null before
- * there is a rate to say it from. */
+/** About how long a download, an unpack or a pull has left, in words, or
+ * null before there is a rate to say it from. */
 export function setupEta(job: ProgramJob): string | null {
   if (!TRANSFERS.includes(job.phase) || !job.bytes_per_s || job.bytes_per_s <= 0) return null;
   const seconds = Math.max(0, job.total - job.done) / job.bytes_per_s;
@@ -517,6 +539,21 @@ export function manualSteps(program: ProgramInfo, ctx: ManualContext): ManualSte
 
 /* ---- what a well says ---- */
 
+/** Which build a setup would fetch, in a sentence, for a program pinned per
+ * GPU vendor: "LocalCut picks the build for NVIDIA graphics cards." Null for
+ * a program with one build for every card, or a vendor this build has no
+ * name for. */
+export function buildPicked(program: ProgramInfo): string | null {
+  const vendor = program.setup.gpu;
+  if (!vendor) return null;
+  const vendors = m().programs.diy.vendors as Record<string, string>;
+  const named = vendors[vendor];
+  if (!named) return null;
+  return program.setup.build === "older_drivers"
+    ? t("programs.build.picksOlder", { vendor: named })
+    : t("programs.build.picks", { vendor: named });
+}
+
 /** The sentences under a program's name, for every state but a running
  * setup and a failed one, which the well words itself (a phase and a bar;
  * the failure and what to do about it). */
@@ -604,6 +641,8 @@ export function statusOf(
     } else if (!program.setup.available && program.setup.unavailable_reason) {
       lines.push({ text: t(`programs.unavailable.${program.setup.unavailable_reason}`, { name }) });
     }
+    const picked = buildPicked(program);
+    if (picked && ctx.offer?.kind === "setup") lines.push({ text: picked });
   }
   const managed = program.managed;
   if (managed?.server && program.state === "ready" && program.source !== "managed") {

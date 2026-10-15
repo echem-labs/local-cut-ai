@@ -94,7 +94,7 @@ repos:
         files: |
           (?x)^apps/desktop/(
             src/(
-              lib/(formats|tools|eta|oom)\.ts
+              lib/(formats|tools|eta|oom|programs)\.ts
               |api/(client|types)\.ts
               |screens/(Home|Settings)\.tsx
               |components/(NewSceneDialog|TimelineStrip)\.tsx

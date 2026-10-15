@@ -170,7 +170,7 @@ def free_port() -> int:
 
 
 @contextlib.contextmanager
-def serve_engine(tmp_path, token: str, backend: str = "mock"):
+def serve_engine(tmp_path, token: str, backend: str = "mock", **overrides):
     """A live engine on loopback, with the scheduler actually running
     (uvicorn drives the lifespan, which is what starts it). Yields the url.
 
@@ -186,7 +186,7 @@ def serve_engine(tmp_path, token: str, backend: str = "mock"):
     from localcut_engine.api.app import create_app
     from localcut_engine.config import EngineConfig
 
-    config = EngineConfig(data_dir=tmp_path, token=token, backend=backend)
+    config = EngineConfig(data_dir=tmp_path, token=token, backend=backend, **overrides)
     server = uvicorn.Server(
         uvicorn.Config(create_app(config), host="127.0.0.1", port=free_port(), log_level="error")
     )

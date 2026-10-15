@@ -8,7 +8,7 @@
  * and no stage rows. In Settings, or after a setup that failed, it is a
  * problem with the machine, and the well says what it costs.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProgramInfo, ProgramsReport, ReadinessRow, ServerReason } from "../api/types";
@@ -453,5 +453,132 @@ describe("a paired engine", () => {
     mount(ffmpeg(), { host: "render-pc", platform: "windows-x64" });
     expect(within(well()).getByText("winget install Gyan.FFmpeg")).toBeInTheDocument();
     expect(well()).toHaveTextContent("Restart the engine on render-pc");
+  });
+});
+
+describe("ComfyUI, built for the machine's graphics card", () => {
+  const GB = 2 ** 30;
+  const comfyui = (over: Partial<ProgramInfo["setup"]> = {}): ProgramInfo => ({
+    id: "comfyui",
+    state: "missing",
+    problem: "unreachable",
+    source: "default",
+    location: "http://127.0.0.1:8188",
+    setting: "LOCALCUT_COMFYUI_URL",
+    version: null,
+    checks: {},
+    managed: null,
+    setup: {
+      available: true,
+      unavailable_reason: null,
+      takes_effect: true,
+      version: "0.40.0",
+      url: "https://example.test/ComfyUI_windows_portable_nvidia.7z",
+      download_bytes: 2_010_504_119,
+      install_bytes: 4_421_748_361,
+      gpu: "nvidia",
+      build: null,
+      builds: [
+        { build: "older_drivers", download_bytes: 1_902_221_251, install_bytes: 5_596_292_364 },
+      ],
+      job: null,
+      last: null,
+      ...over,
+    },
+  });
+  const notUsable = {
+    job: "j9",
+    outcome: "failed" as const,
+    reason: "gpu_not_usable" as const,
+    error: "PyTorch finds no cuda device",
+    build: null,
+  };
+  const withCard = (driver: string | null) =>
+    useApp.setState({
+      system: {
+        hardware: {
+          primary_gpu: {
+            vendor: "nvidia",
+            name: "NVIDIA GeForce RTX 3080 Laptop GPU",
+            vram_gb: 8,
+            backend: "cuda",
+            driver_version: driver,
+          },
+          gpus: [],
+        },
+      },
+    } as never);
+
+  it("says which vendor's build it picks and what it downloads", () => {
+    mount(comfyui(), { context: "wizard", platform: "windows-x64" });
+    expect(well()).toHaveTextContent(
+      "Not found on this computer. LocalCut picks the build for NVIDIA graphics cards.",
+    );
+    const button = screen.getByRole("button", { name: /Set up ComfyUI/ });
+    expect(button).toHaveTextContent("1.9 GB");
+    fireEvent.click(button);
+    expect(actions.setupProgram).toHaveBeenCalledWith("comfyui");
+  });
+
+  it("says when the card's driver got it the build for older drivers", () => {
+    mount(comfyui({ build: "older_drivers", builds: [] }), { platform: "windows-x64" });
+    expect(well()).toHaveTextContent(
+      "LocalCut picks the build for NVIDIA graphics cards on older drivers.",
+    );
+  });
+
+  it("offers the build for older drivers when PyTorch could not use the card", async () => {
+    withCard("551.86");
+    mount(comfyui({ last: notUsable }), { context: "wizard", platform: "windows-x64" });
+    expect(well().className).toContain("edge-fail");
+    expect(well()).toHaveTextContent("Setup stopped: PyTorch couldn't use your graphics card.");
+    expect(well()).toHaveTextContent(
+      "Your NVIDIA driver is 551.86. Update it, or use the build made for older drivers.",
+    );
+    expect(screen.getByRole("link", { name: /NVIDIA's drivers/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("nvidia.com"),
+    );
+    const older = screen.getByRole("button", { name: /Use the build for older drivers/ });
+    expect(older).toHaveTextContent("1.8 GB");
+    fireEvent.click(older);
+    expect(actions.setupProgram).toHaveBeenCalledWith("comfyui", "older_drivers");
+    const again = screen.getByRole("button", { name: /Try again/ });
+    await waitFor(() => expect(again).toBeEnabled());
+    fireEvent.click(again);
+    expect(actions.setupProgram).toHaveBeenLastCalledWith("comfyui");
+  });
+
+  it("does not offer the build that just failed, or the usual one, again", () => {
+    withCard(null);
+    mount(
+      comfyui({
+        build: "older_drivers",
+        builds: [{ build: null, download_bytes: 2 * GB, install_bytes: 4 * GB }],
+        last: { ...notUsable, build: "older_drivers" },
+      }),
+      { platform: "windows-x64" },
+    );
+    expect(screen.queryByRole("button", { name: /Use the build/ })).toBeNull();
+    expect(well()).toHaveTextContent(t("programs.advice.gpu_not_usable", { name: "ComfyUI" }));
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeInTheDocument();
+  });
+
+  it("counts the unpack down, which takes minutes of its own", () => {
+    mount(
+      comfyui({
+        job: {
+          id: "j1",
+          phase: "unpacking",
+          done: 1 * GB,
+          total: 4_421_748_361,
+          bytes_per_s: 20 * MB,
+          build: null,
+        },
+      }),
+      { platform: "windows-x64" },
+    );
+    expect(well()).toHaveTextContent("Unpacking ComfyUI");
+    expect(well()).toHaveTextContent("1.0 GB of 4.1 GB, about 3 min");
   });
 });

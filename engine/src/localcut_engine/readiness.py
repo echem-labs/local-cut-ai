@@ -100,8 +100,10 @@ READINESS_REASONS = (
 
 # `setup_program` sets up LocalCut's own copy of a program
 # (programs/setup.py), and is offered only where that copy would become the
-# one the engine runs. `pull_model` pulls the model a row lacks through the
-# Ollama that answers at the address, the user's own or LocalCut's.
+# one the engine runs: FFmpeg for `no_ffmpeg` and an FFmpeg that cannot draw
+# text, Ollama for `llm_server_down`, ComfyUI for `comfyui_down`. `pull_model`
+# pulls the model a row lacks through the Ollama that answers at the address,
+# the user's own or LocalCut's.
 READINESS_FIX_TYPES = (
     "download",
     "pick_model",
@@ -296,6 +298,10 @@ class _Snapshot:
     # "not probed", and the fix is then offered unfiltered rather than the
     # preflight paying for a hardware probe of its own.
     profile: object | None = None
+    # The fix every `comfyui_down` row carries: setting up LocalCut's own
+    # ComfyUI, where that copy would be the one the engine renders with.
+    # Worked out once per report rather than once per row.
+    comfy_fix: dict | None = None
 
 
 def _load_snapshot(config: EngineConfig, profile: object | None = None) -> _Snapshot:
@@ -308,6 +314,7 @@ def _load_snapshot(config: EngineConfig, profile: object | None = None) -> _Snap
     snap.entries = list(load_manifest(config).models)
     snap.defaults = load_defaults(config)
     snap.installed = installed_comfy_models(config)
+    snap.comfy_fix = setup_fix(config, "comfyui")
     return snap
 
 
@@ -460,7 +467,14 @@ def _missing_model_row(
         # Weights are installed and ComfyUI is configured for this kind, so
         # the only thing left that can have declined it is the server probe.
         if snap.installed.get(kind) and _comfy_claims(backends, kind):
-            return _row(kind, verdict=verdict, reason="comfyui_down", backend=backend, model=model)
+            return _row(
+                kind,
+                verdict=verdict,
+                reason="comfyui_down",
+                backend=backend,
+                model=model,
+                fix=snap.comfy_fix,
+            )
         in_chain = in_chain and _comfy_claims(backends, kind)
     if not in_chain:
         return _row(
@@ -498,6 +512,14 @@ def _transcribe_weights_installed(snap: _Snapshot, config: EngineConfig) -> bool
 _COMFY_PROBES: dict[str, ServiceProbe] = {}
 
 
+def comfy_answered(config: EngineConfig) -> None:
+    """LocalCut's own ComfyUI just answered at the configured address: the
+    kept verdict, from before it started, is out of date."""
+    probe = _COMFY_PROBES.get(f"{config.comfyui_url.rstrip('/')}/queue")
+    if probe is not None:
+        probe.mark_alive()
+
+
 def _comfy_alive(config: EngineConfig) -> bool:
     url = f"{config.comfyui_url.rstrip('/')}/queue"
     probe = _COMFY_PROBES.get(url)
@@ -526,6 +548,7 @@ def _comfy_row(snap: _Snapshot, config: EngineConfig, kind: NodeKind, model: str
             reason="comfyui_down",
             backend="comfyui",
             model=bare or (installed[0] if installed else None),
+            fix=snap.comfy_fix,
         )
     if not bare:
         if not installed:
@@ -605,7 +628,14 @@ def _local_row(
         # The still-clip tier: a real render, one tier down. Which is only
         # the *interesting* answer when a video model could have served it.
         if snap.installed.get(kind) and _comfy_claims(backends, kind):
-            return _row(kind, verdict="degraded", reason="comfyui_down", backend=name, model=model)
+            return _row(
+                kind,
+                verdict="degraded",
+                reason="comfyui_down",
+                backend=name,
+                model=model,
+                fix=snap.comfy_fix,
+            )
         return _row(
             kind,
             verdict="degraded",

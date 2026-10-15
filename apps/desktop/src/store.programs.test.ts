@@ -289,6 +289,34 @@ describe("starting a setup", () => {
     expect(row().setup.job).toMatchObject({ id: "j1", phase: "downloading", done: 0 });
   });
 
+  it("asks for another build by name and counts that build's bytes", async () => {
+    const GB = 2 ** 30;
+    const comfyui: ProgramInfo = {
+      ...ffmpeg(),
+      id: "comfyui",
+      location: "http://127.0.0.1:8188",
+      setting: "LOCALCUT_COMFYUI_URL",
+      checks: {},
+      setup: {
+        ...ffmpeg().setup,
+        download_bytes: 2 * GB,
+        install_bytes: 4 * GB,
+        gpu: "nvidia",
+        build: null,
+        builds: [{ build: "older_drivers", download_bytes: GB, install_bytes: 5 * GB }],
+      },
+    };
+    await connected(report([ffmpeg(), comfyui]));
+    expect(await useApp.getState().setupProgram("comfyui", "older_drivers")).toBeNull();
+    expect(engine.setupProgram).toHaveBeenCalledWith("comfyui", "older_drivers");
+    const job = useApp.getState().programs!.programs.find((p) => p.id === "comfyui")!.setup.job;
+    expect(job).toMatchObject({ total: GB, build: "older_drivers" });
+
+    engine.setupProgram.mockRejectedValue(new EngineError(507, "engine 507: needs bytes"));
+    const message = await useApp.getState().setupProgram("comfyui", "older_drivers");
+    expect(message).toContain("6.0 GB");
+  });
+
   it("says how much room it needs when the disk cannot hold it", async () => {
     await connected(report([ffmpeg()]));
     engine.setupProgram.mockRejectedValue(new EngineError(507, "engine 507: needs bytes"));

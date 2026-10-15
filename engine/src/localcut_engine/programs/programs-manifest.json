@@ -808,6 +808,84 @@
           ]
         }
       ]
+    },
+    {
+      "id": "comfyui",
+      "version": "0.40.0",
+      "license": "GPL-3.0-only",
+      "assets": [
+        {
+          "platform": "windows-x64",
+          "gpu": "nvidia",
+          "requires": {
+            "nvidia_driver": "580",
+            "compute_capability": "7.5"
+          },
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia.7z",
+          "size": 2009901495,
+          "sha256": "bc4dd972b7134347128579a34b1910f19a59d8a4c9fea7d8e4bae586bad68b0c",
+          "format": "7z",
+          "tree": {
+            "root": "ComfyUI_windows_portable",
+            "files": 61925,
+            "bytes": 4421748361
+          }
+        },
+        {
+          "platform": "windows-x64",
+          "gpu": "nvidia",
+          "build": "older_drivers",
+          "requires": {
+            "nvidia_driver": "525"
+          },
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia_cu126.7z",
+          "size": 1901618627,
+          "sha256": "23d789979f523d90daae27da94a78769c17093cff1684e1e2d166b5148334c59",
+          "format": "7z",
+          "tree": {
+            "root": "ComfyUI_windows_portable",
+            "files": 61925,
+            "bytes": 5596292364
+          }
+        },
+        {
+          "platform": "windows-x64",
+          "gpu": "amd",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_amd.7z",
+          "size": 1627644722,
+          "sha256": "f3a58381de51872815f38dbd092ad2c829e3c8d528e03600e760514ae44d45fb",
+          "format": "7z",
+          "tree": {
+            "root": "ComfyUI_windows_portable",
+            "files": 67121,
+            "bytes": 6168889156
+          }
+        },
+        {
+          "platform": "windows-x64",
+          "gpu": "intel",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_intel.7z",
+          "size": 1442756969,
+          "sha256": "50ba3114a7b2119c35a1755c5749e2aad3d5da618278670555f80c392de0cc58",
+          "format": "7z",
+          "tree": {
+            "root": "ComfyUI_windows_portable",
+            "files": 64388,
+            "bytes": 5328789984
+          }
+        }
+      ]
+    }
+  ],
+  "extractors": [
+    {
+      "format": "7z",
+      "platform": "windows-x64",
+      "version": "26.04",
+      "license": "LGPL-2.1-or-later",
+      "url": "https://github.com/ip7z/7zip/releases/download/26.04/7zr.exe",
+      "size": 602624,
+      "sha256": "256feca8e274e5da655e2a284fabafd9f554365eb164862089dacd4e8276d282"
     }
   ]
 }

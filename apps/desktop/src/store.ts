@@ -33,6 +33,7 @@ import type {
   NodePacks,
   NodeState,
   OomFallback,
+  ProgramBuild,
   ProgramId,
   ProgramsReport,
   Project,
@@ -581,8 +582,9 @@ interface AppState {
   refreshPrograms: () => Promise<void>;
   /** Start setting up LocalCut's own copy of a program, on the engine's
    * machine. `null` means it started (or was already in place); anything
-   * else is why not. The outcome arrives later, over /ws. */
-  setupProgram: (programId: ProgramId) => Promise<string | null>;
+   * else is why not. The outcome arrives later, over /ws. `build` asks for
+   * one of the other builds pinned for the machine's card. */
+  setupProgram: (programId: ProgramId, build?: ProgramBuild) => Promise<string | null>;
   cancelProgramSetup: (programId: ProgramId) => Promise<string | null>;
   /** Pull a model through the program's server, the user's own or
    * LocalCut's: by default the one scripts are written with. It reports
@@ -1103,6 +1105,7 @@ export const useApp = create<AppState>((set, get) => {
     jobId: string,
     phase: "downloading" | "pulling",
     total: number,
+    build: ProgramBuild | null = null,
   ) => {
     const report = get().programs;
     if (!report) return;
@@ -1117,7 +1120,7 @@ export const useApp = create<AppState>((set, get) => {
                   ...program.setup,
                   job: program.setup.job
                     ? { ...program.setup.job, id: jobId }
-                    : { id: jobId, phase, done: 0, total, bytes_per_s: null },
+                    : { id: jobId, phase, done: 0, total, bytes_per_s: null, build },
                   last: null,
                 },
               }
@@ -3042,15 +3045,29 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    setupProgram: async (programId) => {
+    setupProgram: async (programId, build) => {
       const { client } = get();
       if (!client) return t("errors.engineUnavailable");
       const row = get().programs?.programs.find((program) => program.id === programId);
+      // What this setup downloads and keeps: the build asked for, or the
+      // one the engine picks.
+      const sizes = (build && row?.setup.builds?.find((other) => other.build === build)) || {
+        download_bytes: row?.setup.download_bytes ?? 0,
+        install_bytes: row?.setup.install_bytes ?? 0,
+      };
       try {
-        const answer = await client.setupProgram(programId);
+        const answer = build
+          ? await client.setupProgram(programId, build)
+          : await client.setupProgram(programId);
         const live = get().client === client && !seedFrozen;
         if (answer.status === "started" && live) {
-          showJob(programId, answer.job, "downloading", row?.setup.download_bytes ?? 0);
+          showJob(
+            programId,
+            answer.job,
+            "downloading",
+            sizes.download_bytes,
+            build ?? row?.setup.build ?? null,
+          );
         }
         if (answer.status === "installed") await get().refreshPrograms();
         return null;
@@ -3060,9 +3077,7 @@ export const useApp = create<AppState>((set, get) => {
           return t("programs.refusals.noSpace", {
             name: t(`programs.names.${programId}` as MessageKey),
             size: formatSize(
-              (row.setup.download_bytes ?? 0) +
-                (row.setup.install_bytes ?? 0) +
-                (row.setup.pull?.bytes ?? 0),
+              sizes.download_bytes + sizes.install_bytes + (row.setup.pull?.bytes ?? 0),
             ),
             dir: report?.programs_dir ?? "",
           });

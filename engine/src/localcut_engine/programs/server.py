@@ -1,5 +1,5 @@
-"""LocalCut's own copy of a program that runs as a server (Ollama, and
-ComfyUI next), started and stopped with the engine.
+"""LocalCut's own copy of a program that runs as a server (Ollama and
+ComfyUI), started and stopped with the engine.
 
 One `ManagedServer` per program supervises one child process:
 
@@ -58,8 +58,9 @@ from ..project.store import _write_atomic
 
 logger = logging.getLogger(__name__)
 
-#: How long a started copy has to answer before it counts as a failed start.
-#: Ollama looks at every GPU the first time, which takes a few seconds.
+#: How long a started copy has to answer before it counts as a failed start,
+#: unless its program says otherwise (`start_timeout_s`). Ollama looks at
+#: every GPU the first time, which takes a few seconds.
 START_TIMEOUT_S = 60.0
 _ASK_EVERY_S = 0.25
 # Restarts allowed within the window before the copy is left `crashed`, and
@@ -106,7 +107,9 @@ class ServerLaunch:
 
 
 class ServerProgram(Protocol):
-    """What the supervisor needs to know about one program."""
+    """What the supervisor needs to know about one program. A program that
+    takes longer than START_TIMEOUT_S to answer after a start says how long
+    in a `start_timeout_s` attribute of its own."""
 
     program: str
 
@@ -218,9 +221,13 @@ class ManagedServer:
         if self.state != "stopped" or self.reason != reason:
             self._set("stopped", reason)
 
-    async def settled(self, timeout_s: float = START_TIMEOUT_S + 5) -> str:
+    @property
+    def start_timeout_s(self) -> float:
+        return float(getattr(self.program, "start_timeout_s", START_TIMEOUT_S))
+
+    async def settled(self, timeout_s: float | None = None) -> str:
         """Wait while the copy is starting, and return the state it reaches."""
-        deadline = time.monotonic() + timeout_s
+        deadline = time.monotonic() + (timeout_s or self.start_timeout_s + 5)
         while self.state == "starting" and time.monotonic() < deadline:
             event = self._changed_event()
             event.clear()
@@ -291,7 +298,7 @@ class ManagedServer:
                 self._set("running")
                 self.on_ready()
             elif timed_out and not self._stopping:
-                logger.warning("LocalCut's %s did not answer in %gs", self.id, START_TIMEOUT_S)
+                logger.warning("LocalCut's %s did not answer in %gs", self.id, self.start_timeout_s)
             if not answered:
                 await stop_child(run.process)
             code = await run.process.wait()
@@ -356,7 +363,7 @@ class ManagedServer:
         return _Run(process=process, started=time.monotonic(), log_start=log_start)
 
     async def _wait_until_answering(self, run: _Run, launch: ServerLaunch) -> bool:
-        deadline = time.monotonic() + START_TIMEOUT_S
+        deadline = time.monotonic() + self.start_timeout_s
         while time.monotonic() < deadline and not self._stopping:
             if run.process.returncode is not None:
                 return False

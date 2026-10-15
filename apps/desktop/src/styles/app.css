@@ -5852,9 +5852,11 @@ a.icon-btn-sm {
   font-size: inherit;
 }
 
-/* A failure's actions sit under its explanation, not in the header. */
+/* A failure's actions sit under its explanation, not in the header. Two of
+   them (another build and Try again) wrap in a narrow window. */
 .pw-fix {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin: 10px 0 2px 44px;
 }

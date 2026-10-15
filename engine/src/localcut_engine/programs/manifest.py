@@ -4,12 +4,21 @@ shipped in this package.
 A pin is exact. Per program it gives the version, and per platform (an OS
 and an architecture, and a GPU vendor where one build does not serve every
 card) the download's URL, its size in bytes, its SHA-256, the archive's
-format, and every file LocalCut keeps out of it: the member's exact name in
-the archive, the path it is written under inside the program's folder, and
-its size. GitHub
-publishes each release asset's SHA-256 in its API `digest` field, which is
-where the digests here come from. A download whose size or digest differs is
-discarded, and nothing in an archive is written unless a pin names it.
+format and what LocalCut keeps out of it. That is either a list of files
+(the member's exact name in the archive, the path it is written under
+inside the program's folder and its size), or for a program that is a
+whole folder tree, the archive's one top folder with the number of files
+under it and their total size. GitHub publishes each release asset's
+SHA-256 in its API `digest` field, which is where the digests here come
+from. A download whose size or digest differs is discarded and nothing in
+an archive is written unless a pin names it or the folder it sits in.
+
+A program with more than one build for the same card (ComfyUI's NVIDIA
+build and its build for older drivers) names the others with `build` and
+says what each needs of the card in `requires`; builds.py picks between
+them. An archive format Python cannot read is unpacked by a pinned
+extractor, downloaded beside the archive and held to its own size and
+digest (`extractors`).
 
 Versions are pinned, never "latest", and nothing at runtime can change what
 is fetched: there is no override file in the data dir and no request field
@@ -27,7 +36,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from . import PROGRAM_IDS
+from . import BUILDS, PROGRAM_IDS
 
 #: The newest manifest format this engine reads.
 MANIFEST_VERSION = 1
@@ -50,6 +59,22 @@ _MACHINES = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm6
 # Segments are joined by "/" alone.
 _BARE_NAME = re.compile(r"[A-Za-z0-9._+-]+")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_VERSION = re.compile(r"\d+(\.\d+)*")
+
+#: The GPU vendors a build can be for, as the hardware probe names them.
+GPU_VENDORS = ("nvidia", "amd", "intel")
+
+
+def _known_platform(value: str) -> str:
+    if value not in PLATFORMS:
+        raise ValueError(f"unknown platform {value!r} (known: {', '.join(PLATFORMS)})")
+    return value
+
+
+def _digest(value: str) -> str:
+    if not _DIGEST.fullmatch(value):
+        raise ValueError("sha256 is 64 lowercase hex digits")
+    return value
 
 
 class ManifestTooNew(ValueError):
@@ -102,6 +127,44 @@ class KeptFile(_Strict):
         return value
 
 
+class KeptTree(_Strict):
+    """A whole folder taken out of the archive: everything under its one top
+    folder, which becomes the program's folder."""
+
+    #: The top folder's name in the archive. Every member is inside it.
+    root: str
+    #: How many files are under it and their total size unpacked. The
+    #: archive's own listing has to agree before anything is unpacked and
+    #: what was unpacked has to agree after.
+    files: int = Field(gt=0)
+    bytes: int = Field(gt=0)
+
+    @field_validator("root")
+    @classmethod
+    def _a_bare_folder_name(cls, value: str) -> str:
+        if not _BARE_NAME.fullmatch(value) or value in (".", ".."):
+            raise ValueError(f"an archive's top folder is a bare name, not {value!r}")
+        return value
+
+
+class Requirements(_Strict):
+    """What a build needs of the card, where a build for the same vendor
+    exists that needs less. A machine the probe could not read is assumed to
+    meet them."""
+
+    #: The oldest NVIDIA driver it runs on, as nvidia-smi spells versions.
+    nvidia_driver: str | None = None
+    #: The oldest compute capability its CUDA build has kernels for.
+    compute_capability: str | None = None
+
+    @field_validator("nvidia_driver", "compute_capability")
+    @classmethod
+    def _a_dotted_number(cls, value: str | None) -> str | None:
+        if value is not None and not _VERSION.fullmatch(value):
+            raise ValueError(f"{value!r} is not a version number")
+        return value
+
+
 class ProgramAsset(_Strict):
     """One downloadable build of a program, for one platform."""
 
@@ -109,25 +172,51 @@ class ProgramAsset(_Strict):
     #: Set when the program publishes a build per GPU vendor (nvidia, amd,
     #: intel). None is the build for any card.
     gpu: str | None = None
+    #: One of BUILDS, for a second build for the same platform and vendor.
+    #: None is the vendor's usual build.
+    build: str | None = None
+    requires: Requirements | None = None
     url: str = Field(min_length=1)
     size: int = Field(gt=0)
     sha256: str
-    format: Literal["zip", "tar.xz", "tar.zst"]
-    files: list[KeptFile] = Field(min_length=1)
+    format: Literal["zip", "tar.xz", "tar.zst", "7z"]
+    #: What is kept: these files, or the whole tree.
+    files: list[KeptFile] = Field(default_factory=list)
+    tree: KeptTree | None = None
 
     @field_validator("platform")
     @classmethod
     def _a_known_platform(cls, value: str) -> str:
-        if value not in PLATFORMS:
-            raise ValueError(f"unknown platform {value!r} (known: {', '.join(PLATFORMS)})")
+        return _known_platform(value)
+
+    @field_validator("gpu")
+    @classmethod
+    def _a_known_vendor(cls, value: str | None) -> str | None:
+        if value is not None and value not in GPU_VENDORS:
+            raise ValueError(f"unknown GPU vendor {value!r} (known: {', '.join(GPU_VENDORS)})")
+        return value
+
+    @field_validator("build")
+    @classmethod
+    def _a_known_build(cls, value: str | None) -> str | None:
+        if value is not None and value not in BUILDS:
+            raise ValueError(f"unknown build {value!r} (known: {', '.join(BUILDS)})")
         return value
 
     @field_validator("sha256")
     @classmethod
     def _a_digest(cls, value: str) -> str:
-        if not _DIGEST.fullmatch(value):
-            raise ValueError("sha256 is 64 lowercase hex digits")
-        return value
+        return _digest(value)
+
+    @model_validator(mode="after")
+    def _kept_one_way(self) -> ProgramAsset:
+        # A 7z is unpacked by the extractor as a whole; zip and tar.xz are
+        # read member by member in Python, which is what picks single files.
+        if (self.tree is None) == (not self.files):
+            raise ValueError(f"{self.url} keeps either a list of files or a tree, not both")
+        if (self.tree is not None) != (self.format == "7z"):
+            raise ValueError(f"{self.url}: a tree is kept from a 7z and files from a zip or tar")
+        return self
 
     @model_validator(mode="after")
     def _links_point_at_kept_files(self) -> ProgramAsset:
@@ -165,6 +254,8 @@ class ProgramAsset(_Strict):
     @property
     def install_bytes(self) -> int:
         """The disk the kept files take once unpacked."""
+        if self.tree is not None:
+            return self.tree.bytes
         return sum(kept.size for kept in self.files)
 
 
@@ -183,23 +274,71 @@ class ProgramPin(_Strict):
 
     @model_validator(mode="after")
     def _one_build_per_platform(self) -> ProgramPin:
-        keys = [(asset.platform, asset.gpu) for asset in self.assets]
+        keys = [(asset.platform, asset.gpu, asset.build) for asset in self.assets]
         if len(set(keys)) != len(keys):
             raise ValueError(f"{self.id} pins two builds for the same platform")
+        for platform_key, gpu, build in keys:
+            if build is not None and (platform_key, gpu, None) not in keys:
+                raise ValueError(f"{self.id} pins a {build} build with no usual build beside it")
         return self
 
-    def asset_for(self, platform_key: str, gpu: str | None = None) -> ProgramAsset | None:
+    def asset_for(
+        self, platform_key: str, gpu: str | None = None, build: str | None = None
+    ) -> ProgramAsset | None:
         """The build for this platform: the one for this GPU vendor where the
-        program has one, else the one for any card."""
-        builds = [asset for asset in self.assets if asset.platform == platform_key]
+        program has one, else the one for any card. `build` names one of the
+        vendor's other builds instead of its usual one."""
+        builds = [
+            asset
+            for asset in self.assets
+            if asset.platform == platform_key and asset.build == build
+        ]
         for_vendor = next((a for a in builds if gpu is not None and a.gpu == gpu), None)
         return for_vendor or next((a for a in builds if a.gpu is None), None)
+
+    def builds_for(self, platform_key: str, gpu: str | None) -> list[ProgramAsset]:
+        """Every build for this platform and vendor, the usual one first."""
+        return sorted(
+            (a for a in self.assets if a.platform == platform_key and a.gpu == gpu),
+            key=lambda asset: asset.build is not None,
+        )
+
+    def per_vendor(self, platform_key: str) -> bool:
+        """Whether this platform's builds are per GPU vendor, so which one a
+        machine gets depends on its card."""
+        return any(a.platform == platform_key and a.gpu is not None for a in self.assets)
+
+
+class ExtractorPin(_Strict):
+    """A program that unpacks an archive format Python cannot read, pinned
+    like a program's own build and downloaded on the same click as the
+    archive it unpacks. It runs only in the scratch folder of that setup
+    and is gone with it."""
+
+    format: Literal["7z"]
+    platform: str
+    version: str = Field(min_length=1)
+    license: str = ""
+    url: str = Field(min_length=1)
+    size: int = Field(gt=0)
+    sha256: str
+
+    @field_validator("platform")
+    @classmethod
+    def _a_known_platform(cls, value: str) -> str:
+        return _known_platform(value)
+
+    @field_validator("sha256")
+    @classmethod
+    def _a_digest(cls, value: str) -> str:
+        return _digest(value)
 
 
 class ProgramsManifest(_Strict):
     schema_version: int = MANIFEST_VERSION
     updated: str = ""
     programs: list[ProgramPin] = Field(default_factory=list)
+    extractors: list[ExtractorPin] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _each_program_once(self) -> ProgramsManifest:
@@ -212,12 +351,23 @@ class ProgramsManifest(_Strict):
         return next((pin for pin in self.programs if pin.id == program_id), None)
 
     def asset(
-        self, program_id: str, platform_key: str | None, gpu: str | None = None
+        self,
+        program_id: str,
+        platform_key: str | None,
+        gpu: str | None = None,
+        build: str | None = None,
     ) -> ProgramAsset | None:
         pin = self.program(program_id)
         if pin is None or platform_key is None:
             return None
-        return pin.asset_for(platform_key, gpu)
+        return pin.asset_for(platform_key, gpu, build)
+
+    def extractor(self, fmt: str, platform_key: str | None) -> ExtractorPin | None:
+        """The extractor for this archive format on this platform, or None
+        when the format needs none (Python reads it) or none is pinned."""
+        return next(
+            (e for e in self.extractors if e.format == fmt and e.platform == platform_key), None
+        )
 
 
 def parse_programs_manifest(text: str) -> ProgramsManifest:
