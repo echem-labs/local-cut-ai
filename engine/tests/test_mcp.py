@@ -773,6 +773,88 @@ def test_failures_an_agent_said_to_ignore_are_not_this_renders():
     assert payload["export_ready"] is False
 
 
+def test_jobs_this_render_lost_to_a_cancel_are_listed_beside_its_failures():
+    """A stopped clip takes the timeline, captions and export with it, and
+    none of them failed. Reporting only failures, a cancelled render reads
+    done with nothing wrong, the same reading as a render that worked."""
+    jobs = [  # newest first, as /jobs lists them
+        {"id": "exp", "status": "cancelled", "spec": {"node_id": "export"}},
+        {"id": "mine", "status": "cancelled", "spec": {"node_id": "s1.clip"}},
+        {"id": "old", "status": "cancelled", "spec": {"node_id": "s3.clip"}},
+    ]
+
+    payload = mcp_server.render_status_payload(jobs, export_hash=None, ignore_job_ids=["old"])
+
+    assert payload["failed"] == []
+    assert payload["cancelled"] == [
+        {"id": "exp", "node_id": "export"},
+        {"id": "mine", "node_id": "s1.clip"},
+    ]
+
+
+def test_a_job_the_engine_replaced_is_not_reported_cancelled():
+    """A re-plan cancels a queued job whose inputs moved and queues its
+    replacement. The node still renders; only its newest job counts."""
+    jobs = [
+        {"id": "new", "status": "done", "spec": {"node_id": "timeline"}, "created_at": 2.0},
+        {
+            "id": "replaced",
+            "status": "cancelled",
+            "spec": {"node_id": "timeline"},
+            "created_at": 1.0,
+        },
+    ]
+
+    payload = mcp_server.render_status_payload(jobs, export_hash=None, ignore_job_ids=[])
+
+    assert payload["cancelled"] == []
+
+
+class _CannedEngine:
+    """Just enough EngineClient for start_render: a canned /jobs history."""
+
+    jobs: list[dict] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> _CannedEngine:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+    def get(self, path: str, **kwargs: object) -> list[dict]:
+        assert path == "/jobs"
+        return self.jobs
+
+    def post(self, path: str, **kwargs: object) -> dict:
+        return {"enqueued": 0}
+
+
+async def test_start_render_hands_out_earlier_cancels_with_earlier_failures(monkeypatch):
+    """render_status lists cancelled jobs, so an earlier render's cancel has
+    to be in the list the agent hands back, or it is blamed on this one."""
+    monkeypatch.setattr(
+        _CannedEngine,
+        "jobs",
+        [
+            {"id": "c1", "status": "cancelled", "spec": {"node_id": "export"}},
+            {"id": "f1", "status": "failed", "spec": {"node_id": "s1.clip"}},
+            {"id": "d1", "status": "done", "spec": {"node_id": "s2.clip"}},
+        ],
+    )
+    monkeypatch.setattr(mcp_server, "EngineClient", _CannedEngine)
+
+    async with Client(build("http://127.0.0.1:9")) as client:
+        started = await call(client, "start_render", {"project_id": "d970f9e7ad"})
+
+    assert started["earlier_failures"] == ["c1", "f1"]
+
+
 def test_outstanding_rows_carry_the_stall_signal():
     """status+progress, not bare node ids: progress that stops moving across
     polls is the only way an agent can tell a wedged render from a slow one —

@@ -33,6 +33,10 @@ raw document.
 the engine could not be reached. Nothing else returns `0`, so a script can
 branch on it without parsing anything.
 
+A `render` whose jobs were cancelled while it waited (Stop in the app, or an
+agent's `cancel_render`) has not finished its work, so it exits `1` and names
+each one as `<node>: cancelled`, under `cancelled` in `--json`.
+
 ## MCP agents
 
 `localcut mcp` serves a running engine to MCP hosts — Claude, goose, IDE
