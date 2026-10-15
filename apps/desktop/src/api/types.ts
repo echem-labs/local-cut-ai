@@ -385,7 +385,11 @@ export type ReadinessReason =
   /** The engine sits in a folder whose path is too long for espeak-ng to
    * find its data, so every Kokoro narration fails. `data` carries
    * `path_bytes` and `path_limit`. */
-  | "install_path_too_long";
+  | "install_path_too_long"
+  /** A cloned narration on an engine where chatterbox-tts is missing or
+   * will not load. `data.cloning_reason` is the engine's own sentence, the
+   * same one GET /voices sends as `cloning_reason`. */
+  | "clone_unavailable";
 
 export type ReadinessFix =
   | { type: "download"; model_id: string; size_bytes: number }

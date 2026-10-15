@@ -106,3 +106,14 @@ is missing, the backend chain has no `chatterbox`, or the import failed, in
 which case the reason quotes the error. The desktop's inspector shows the same
 text where the clone control would be. The engine tries the import once per run
 (it loads PyTorch), so restart the engine after you fix the environment.
+
+A project whose narration is already cloned gets the same sentence from its
+readiness report, as a `will_fail` narration row with the reason
+`clone_unavailable` and the text in `data.cloning_reason`. The board's banner
+and the check before a render show it, so a broken environment is caught
+before the render rather than by every narration failing in it.
+
+The engine inside the installed app can never clone. It is a frozen build that
+loads only what it was built with, and chatterbox-tts isn't part of it, so
+there is nothing to install into. It says so in `cloning_reason`. To clone a
+voice, run the engine from a source checkout as described above.

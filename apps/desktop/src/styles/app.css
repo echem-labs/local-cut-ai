@@ -5589,6 +5589,17 @@ button.link:hover {
   border-top: 1px solid var(--border);
 }
 
+/* The engine's own words under a cause the catalog can only name: the
+   import error behind a voice clone that will not load. Third-party text
+   runs long and can hold a path or a version range with no spaces in it,
+   so it wraps anywhere. */
+.well-detail {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
 /* The readout under the narration field: the app's one non-obvious rule,
    live, at the only moment it can be acted on. */
 .scene-runtime {

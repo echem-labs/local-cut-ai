@@ -28,6 +28,7 @@ import asyncio
 import importlib
 import logging
 import shutil
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -47,6 +48,23 @@ INSTALL_HINT = (
     'environment. Install it with `uv pip install chatterbox-tts "setuptools<81"`; '
     "docs/voices.md has the steps, including how to keep it in a dev checkout."
 )
+
+FROZEN_HINT = (
+    "voice cloning is not available in the installed app. Chatterbox runs inside the "
+    "engine and brings PyTorch with it, and the engine that ships with the app does "
+    "not include either. Cloning needs an engine run from a source checkout; "
+    "docs/voices.md has the steps."
+)
+
+
+def absent_reason() -> str:
+    """Why a clone cannot run where chatterbox-tts cannot be found.
+
+    The packaged engine is a PyInstaller build, which imports what it was
+    built with and nothing else, so installing the package anywhere changes
+    nothing for it and the install hint would send its user on an errand.
+    """
+    return FROZEN_HINT if getattr(sys, "frozen", False) else INSTALL_HINT
 
 
 def _has_module(name: str) -> bool:
@@ -169,7 +187,7 @@ class ChatterboxBackend(ExecutionBackend):
         behind rather than the environment as it now is.
         """
         if not self.package_installed():
-            return INSTALL_HINT
+            return absent_reason()
         with self._probe_lock:
             if not self._probed:
                 self._problem = _import_problem()

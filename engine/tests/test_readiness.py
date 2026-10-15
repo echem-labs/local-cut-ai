@@ -13,6 +13,8 @@ import asyncio
 import json
 import os
 import shutil
+import sys
+import threading
 
 import httpx
 import pytest
@@ -21,6 +23,7 @@ from conftest import pin_hardware
 from localcut_engine.api.app import _build_backends, create_app
 from localcut_engine.automation import outstanding_jobs
 from localcut_engine.backends.base import ServiceProbe
+from localcut_engine.backends.chatterbox import FROZEN_HINT, INSTALL_HINT
 from localcut_engine.backends.ffmpeg import FFmpegBackend
 from localcut_engine.backends.llm import LLMScriptBackend
 from localcut_engine.config import EngineConfig
@@ -1060,3 +1063,143 @@ async def test_narration_will_fail_where_espeak_ng_cannot_hold_its_data_path(
             "path_bytes": length,
             "path_limit": DATA_PATH_LIMIT,
         }
+
+
+# -- cloned narration ----------------------------------------------------------
+#
+# A clone puts every narration node on `local:chatterbox`, and chatterbox-tts
+# can be installed and still fail to load: a dev checkout's `uv run` puts a
+# newer tokenizers back under its transformers, and resemble-perth needs a
+# setuptools that still ships pkg_resources. The report has to read the same
+# answer `/voices` reads, or the gate waves through a render whose every
+# narration fails.
+
+# What transformers raises at import when the lockfile has put a newer
+# tokenizers back underneath the one chatterbox-tts installed.
+_TOKENIZERS_REFUSAL = (
+    "tokenizers>=0.22.0,<=0.23.0 is required for a normal functioning of this module, "
+    "but found tokenizers==0.23.1."
+)
+
+
+@pytest.mark.parametrize(
+    ("faults", "cause"),
+    [
+        ({"tts_error": ImportError(_TOKENIZERS_REFUSAL)}, _TOKENIZERS_REFUSAL),
+        ({"watermarker": False, "pkg_resources": False}, "setuptools<81"),
+    ],
+    ids=["transformers refuses tokenizers", "no pkg_resources for the watermarker"],
+)
+async def test_a_cloned_narration_will_fail_where_chatterbox_cannot_load(
+    tmp_path, clone_runtime, faults, cause
+):
+    clone_runtime(**faults)
+    config = _bare_config(tmp_path)
+    backends = _build_backends(config)
+
+    (row,) = await readiness_rows(config, backends, [(NodeKind.NARRATION, "local:chatterbox")])
+
+    assert row["verdict"] == "will_fail"
+    assert row["reason"] == "clone_unavailable"
+    assert row["backend"] == "chatterbox"
+    assert row["model"] == "local:chatterbox"
+    assert cause in row["data"]["cloning_reason"]
+    assert row["data"]["cloning_reason"] == backends.find("chatterbox").runtime_problem()
+    assert row["fix"] is None  # an environment to repair, not a click
+
+
+async def test_a_cloned_narration_will_fail_where_chatterbox_is_not_installed(
+    tmp_path, monkeypatch
+):
+    # None in sys.modules is what makes `find_spec` say a module is absent,
+    # whatever this machine has installed.
+    monkeypatch.setitem(sys.modules, "chatterbox", None)
+    config = _bare_config(tmp_path)
+
+    (row,) = await readiness_rows(
+        config, _build_backends(config), [(NodeKind.NARRATION, "local:chatterbox")]
+    )
+
+    assert row["verdict"] == "will_fail"
+    assert row["reason"] == "clone_unavailable"
+    assert row["data"]["cloning_reason"] == INSTALL_HINT
+
+
+async def test_a_cloned_narration_is_ready_where_chatterbox_loads(tmp_path, clone_runtime):
+    clone_runtime()
+    config = _bare_config(tmp_path)
+
+    (row,) = await readiness_rows(
+        config, _build_backends(config), [(NodeKind.NARRATION, "local:chatterbox")]
+    )
+
+    assert (row["verdict"], row["reason"], row["backend"]) == ("ready", "ok", "chatterbox")
+
+
+async def _cloned_voiceover(http: httpx.AsyncClient) -> str:
+    """A voiceover tool session whose narration was moved to the clone
+    model, the way the inspector's clone control moves every one."""
+    pid = (await http.post("/tools", json={"tool": "voiceover", "text": "hello"})).json()["id"]
+    patched = await http.post(
+        f"/projects/{pid}/patch",
+        json={"ops": [{"op": "set_model", "node_id": "voiceover", "model": "local:chatterbox"}]},
+    )
+    assert patched.status_code == 200, patched.text
+    return pid
+
+
+@pytest.fixture
+async def cloning_engine(tmp_path):
+    """An engine whose chain sends a cloned narration to chatterbox and
+    everything else to mock."""
+    config = EngineConfig(data_dir=tmp_path, token="test-token", backend="chatterbox,mock")
+    app = create_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        transport,
+        httpx.AsyncClient(
+            transport=transport,
+            base_url="http://engine",
+            headers={"Authorization": "Bearer test-token"},
+        ) as http,
+    ):
+        async with app.router.lifespan_context(app):
+            yield http
+
+
+async def test_the_report_and_the_voices_route_give_one_answer(cloning_engine, clone_runtime):
+    """Not a second look at the same question: the report reads the probe
+    `/voices` reads, so the two cannot disagree and the import, which loads
+    PyTorch, still happens once per engine and off the event loop."""
+    runtime = clone_runtime(tts_error=ImportError(_TOKENIZERS_REFUSAL))
+    pid = await _cloned_voiceover(cloning_engine)
+
+    rows = (await cloning_engine.get(f"/projects/{pid}/readiness")).json()["rows"]
+    voices = (await cloning_engine.get("/voices")).json()
+
+    (row,) = [row for row in rows if row["kind"] == "narration"]
+    assert row["reason"] == "clone_unavailable"
+    assert voices["cloning"] is False
+    assert row["data"]["cloning_reason"] == voices["cloning_reason"]
+    importers = runtime.imports_of("chatterbox.tts")
+    assert len(importers) == 1, f"chatterbox was imported {len(importers)} times"
+    assert threading.get_ident() not in importers, "chatterbox was imported on the event loop"
+
+
+async def test_an_installed_build_says_it_cannot_clone_in_both_places(cloning_engine, monkeypatch):
+    """The packaged engine is a PyInstaller build that imports what it was
+    built with and nothing else, so `uv pip install` is advice it cannot
+    take. The inspector shows `/voices`' reason where the clone control would
+    be, and the board's banner shows the report's, and they are one
+    sentence."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setitem(sys.modules, "chatterbox", None)
+    pid = await _cloned_voiceover(cloning_engine)
+
+    rows = (await cloning_engine.get(f"/projects/{pid}/readiness")).json()["rows"]
+    voices = (await cloning_engine.get("/voices")).json()
+
+    (row,) = [row for row in rows if row["kind"] == "narration"]
+    assert row["verdict"] == "will_fail"
+    assert row["data"]["cloning_reason"] == voices["cloning_reason"] == FROZEN_HINT
+    assert "uv pip install" not in FROZEN_HINT
