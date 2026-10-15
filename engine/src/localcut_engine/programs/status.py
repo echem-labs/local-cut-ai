@@ -10,7 +10,9 @@ scripts are written with is there.
 Cheap enough to ask often. The binaries are run only the first time they are
 seen (their answers are kept per binary, backends/ffmpeg.py), the servers
 are asked over loopback or the LAN with a short timeout and the answer is
-kept for a few seconds, and nothing here downloads anything.
+kept for a few seconds and nothing here downloads anything. The disk a copy
+takes is the figure its setup recorded, not a walk of its folder: ComfyUI's
+is tens of thousands of files.
 
 Paths are the engine machine's own. A desktop paired with a remote engine
 shows them as the remote box's paths, and reaches them only through these
@@ -28,14 +30,24 @@ from pathlib import Path
 
 import httpx
 
-from .. import storage
 from ..backends import ffmpeg as ffmpeg_backend
 from ..backends.ffmpeg import FFmpegBackend, _ffprobe_beside
 from ..config import EngineConfig
 from ..readiness import _lists_model
-from . import PROGRAM_IDS, ollama
+from ..hardware.probe import GPU
+from . import PROGRAM_IDS, builds, ollama
 from . import manifest as program_manifest
-from .setup import INSTALLERS, ProgramSetup, is_current, pinned, read_record
+from .setup import (
+    INSTALLERS,
+    ProgramSetup,
+    download_bytes,
+    installed_build,
+    installed_bytes,
+    is_current,
+    pinned_here,
+    probed_gpu,
+    read_record,
+)
 
 # Servers are asked with this timeout, concurrently, and the answer is kept
 # this long, so a screen asking every second does not ask the server every
@@ -64,10 +76,11 @@ async def programs_report(
     script_model: str,
 ) -> dict:
     """The whole GET /programs document."""
+    gpu = await _gpu_if_it_decides(config)
     rows = await asyncio.gather(
         _ffmpeg(config, setup, text_probe),
         _llm_server(config, setup, script_model),
-        _comfyui(config, setup),
+        _comfyui(config, setup, gpu),
     )
     totals = await asyncio.to_thread(_totals, config)
     return {
@@ -77,13 +90,36 @@ async def programs_report(
     }
 
 
+async def _gpu_if_it_decides(config: EngineConfig) -> GPU | None:
+    """The machine's main card, where it decides which build of a program
+    this machine gets; probed once per engine. None, without probing, where
+    no program's builds here depend on it."""
+    pins = program_manifest.load_programs_manifest()
+    platform_key = program_manifest.platform_key()
+    if platform_key is None or not any(pin.per_vendor(platform_key) for pin in pins.programs):
+        return None
+    return await probed_gpu(config)
+
+
+def _copies_bytes(root: Path) -> int:
+    """The disk LocalCut's copies take: each one's recorded size. A setup
+    under way in a dot-folder beside them is not a copy yet."""
+    if not root.is_dir():
+        return 0
+    return sum(
+        installed_bytes(entry)
+        for entry in root.iterdir()
+        if entry.is_dir() and not entry.name.startswith(".")
+    )
+
+
 def _totals(config: EngineConfig) -> dict:
     root = config.programs_dir
     return {
         # Resolved, as /storage reports the data dir: "used where?" has no
         # answer in a relative path, least of all on a remote engine.
         "programs_dir": str(root.resolve()),
-        "programs_bytes": storage._dir_size(root),
+        "programs_bytes": _copies_bytes(root),
         "disk_free_bytes": shutil.disk_usage(root if root.is_dir() else config.data_dir).free,
         # The two folders a setup by hand needs named: where a binary of
         # the user's own outranks LocalCut's copy (config.ffmpeg_lookup),
@@ -108,16 +144,27 @@ def _row(program_id: str, source: str, location: str, setting: str) -> dict:
 
 
 def _setup(
-    config: EngineConfig, setup: ProgramSetup, program_id: str, model: str | None = None
+    config: EngineConfig,
+    setup: ProgramSetup,
+    program_id: str,
+    model: str | None = None,
+    *,
+    gpu: GPU | None = None,
 ) -> dict:
     """What setting this program up would download and keep here, or why it
     cannot be, and the setup running or last ended. For a program that
     serves a model, `pull` is the model a setup would pull into LocalCut's
-    copy and about how much it adds, null when its store has it."""
-    pin, asset, unavailable = pinned(program_id)
+    copy and about how much it adds, null when its store has it. For a
+    program whose builds are per GPU vendor, which vendor's build this
+    machine gets (`gpu`), which of its builds (`build`, null for the usual
+    one) and the vendor's other builds a user could ask for instead
+    (`builds`)."""
+    pin, asset, unavailable = pinned_here(config, program_id, gpu)
     installer = INSTALLERS.get(program_id)
+    platform_key = program_manifest.platform_key() or ""
+    others = builds.others(pin, platform_key, asset) if pin is not None and asset else []
     extra = {}
-    if installer is not None and installer.serves:
+    if installer is not None and hasattr(installer, "model_to_pull"):
         missing = model is not None and installer.model_to_pull(config, model) is not None
         extra["pull"] = (
             {"model": model, "bytes": ollama.model_bytes(config, model)} if missing else None
@@ -130,29 +177,40 @@ def _setup(
         and installer.takes_effect(config),
         "version": pin.version if pin is not None and asset is not None else None,
         "url": asset.url if asset is not None else None,
-        "download_bytes": asset.size if asset is not None else None,
+        "download_bytes": download_bytes(asset) if asset is not None else None,
         "install_bytes": asset.install_bytes if asset is not None else None,
+        "gpu": asset.gpu if asset is not None else None,
+        "build": asset.build if asset is not None else None,
+        "builds": [
+            {
+                "build": other.build,
+                "download_bytes": download_bytes(other),
+                "install_bytes": other.install_bytes,
+            }
+            for other in others
+        ],
         **extra,
         **setup.state(program_id),
     }
 
 
 def _managed(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict | None:
-    """LocalCut's own copy, when there is one: where, how much disk it takes,
-    which build, whether that is the build pinned now, and whether the engine
-    is using it. A copy that runs as a server adds `server`, what it is doing
-    (server.py)."""
+    """LocalCut's own copy, when there is one: where, how much disk it took
+    when it was set up, which build, whether that is the build pinned now
+    for its line (its vendor's build for older drivers is compared with that
+    build, not with the usual one) and whether the engine is using it. A
+    copy that runs as a server adds `server`, what it is doing (server.py)."""
     folder = config.programs_dir / program_id
     if not folder.is_dir():
         return None
     record = read_record(folder)
-    _, asset, _ = pinned(program_id)
     installer = INSTALLERS.get(program_id)
     row = {
         "location": str(folder.resolve()),
-        "bytes": storage._dir_size(folder),
+        "bytes": installed_bytes(folder),
         "version": record.get("version") if record is not None else None,
-        "current": is_current(folder, asset),
+        "build": record.get("build") if record is not None else None,
+        "current": is_current(folder, installed_build(program_id, folder)),
         "in_use": installer is not None and installer.in_use(config),
     }
     server = setup.servers.get(program_id) if setup.servers is not None else None
@@ -277,7 +335,7 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
     return row
 
 
-async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
+async def _comfyui(config: EngineConfig, setup: ProgramSetup, gpu: GPU | None) -> dict:
     url = config.comfyui_url
 
     async def ask() -> dict:
@@ -288,7 +346,10 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
                 return {"stats": exc}
 
     answer = await _server_answer("comfyui", url, ask, _changes(setup, "comfyui"))
-    row = _row("comfyui", _source_of(config, "comfyui_url"), url, "LOCALCUT_COMFYUI_URL")
+    # The address is the same either way; who answers there is not.
+    ours = INSTALLERS["comfyui"].in_use(config)
+    source = "managed" if ours else _source_of(config, "comfyui_url")
+    row = _row("comfyui", source, url, "LOCALCUT_COMFYUI_URL")
     stats = answer["stats"]
     system = (
         stats[1].get("system") if isinstance(stats, tuple) and isinstance(stats[1], dict) else None
@@ -301,5 +362,5 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
     else:
         row.update(state="broken", problem="unexpected_response")
     row["managed"] = await asyncio.to_thread(_managed, config, setup, "comfyui")
-    row["setup"] = _setup(config, setup, "comfyui")
+    row["setup"] = _setup(config, setup, "comfyui", gpu=gpu)
     return row

@@ -88,6 +88,7 @@ from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate, script_model
 from ..programs import ollama as ollama_program
 from ..programs.server import ManagedServers
+from ..programs import BUILDS as PROGRAM_BUILDS
 from ..programs.setup import (
     INSTALLERS,
     NoServer,
@@ -109,6 +110,7 @@ from ..providers.textgen import ProviderError
 from ..readiness import (
     PIPELINE_ORDER,
     auto_defaults,
+    comfy_answered,
     export_burns_captions,
     export_draws_titles,
     project_pairs,
@@ -431,6 +433,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                 registry.register(
                     ComfyUIBackend(
                         base_url=config.comfyui_url,
+                        probe=comfy_probe,
                         # The same function the import routes write through.
                         # A repeated literal was the only thing joining "where
                         # an import lands" to "where the backend looks", so
@@ -511,12 +514,15 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     def render_uses(program_id: str) -> bool:
         """Whether the job rendering now runs this program: ffmpeg through
         every backend that holds one (assembly, the aligner's decode, the
-        voice-clone retime), and the LLM server through the script backend."""
+        voice-clone retime), the LLM server through the script backend and
+        ComfyUI through its own backend."""
         name = scheduler.running_backend()
         if name is None:
             return False
         if program_id == "ollama":
             return name == "llm"
+        if program_id == "comfyui":
+            return name == "comfyui"
         return program_id == "ffmpeg" and hasattr(backends.find(name), "ffmpeg_bin")
 
     def llm_server_answers() -> None:
@@ -527,13 +533,22 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if llm is not None and hasattr(llm, "probe"):
             llm.probe.mark_alive()
 
+    def comfyui_answers() -> None:
+        """LocalCut's ComfyUI just answered: the render chain's and the
+        readiness report's cached verdicts about the address are out of
+        date and the next keyframe must not go to the stand-in for them."""
+        comfy = backends.find("comfyui")
+        if comfy is not None and getattr(comfy, "probe", None) is not None:
+            comfy.probe.mark_alive()
+        comfy_answered(config)
+
     # LocalCut's own copies of the programs that run as servers, started
     # and stopped with the engine (programs/server.py).
     servers = ManagedServers(
         config,
         events,
         {program: installer for program, installer in INSTALLERS.items() if installer.serves},
-        on_ready={"ollama": llm_server_answers},
+        on_ready={"ollama": llm_server_answers, "comfyui": comfyui_answers},
     )
     programs = ProgramSetup(
         config,
@@ -576,16 +591,20 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if backfilled:
             logger.info("backfilled meta for %d finished project(s)", backfilled)
         # What a setup that the last engine did not finish left in
-        # <data_dir>/programs. Before anything can start a setup of its own.
+        # <data_dir>/programs. Looked at before anything can start a setup of
+        # its own and deleted while the engine serves.
+        leftovers: list[Path] = []
         try:
-            await asyncio.to_thread(programs.sweep)
+            leftovers = await asyncio.to_thread(programs.sweep)
         except Exception:  # noqa: BLE001 - startup outranks housekeeping
             logger.exception("could not clear what an interrupted setup left; continuing")
         # LocalCut's own servers, where it has a copy and nothing of the
         # user's answers at the address. They start in the background and
-        # the API answers meanwhile, but the queue waits for them (a minute
-        # at most): a job left queued by the last engine would otherwise run
-        # before LocalCut's Ollama answers, and its script go to the stand-in.
+        # the API answers meanwhile, but the queue waits for them (until each
+        # answers or gives up): a job left queued by the last engine would
+        # otherwise run before LocalCut's Ollama or ComfyUI answers and its
+        # script or keyframe go to the stand-in.
+        clearing = asyncio.ensure_future(asyncio.to_thread(programs.clear, leftovers))
         events.bind_to_running_loop()
         held: asyncio.Task | None = None
         if servers.start_all():
@@ -601,6 +620,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         if held is not None and not held.done():
             held.cancel()
         await programs.shutdown()
+        # After the setups' stop flag is set, so a deletion of what an
+        # interrupted setup left stops between files rather than hold up the
+        # engine's exit; the rest goes at the next start.
+        await asyncio.gather(clearing, return_exceptions=True)
         await downloads.shutdown()
         await scheduler.stop()
         # After the scheduler, so a script job winding down still has its
@@ -1189,12 +1212,16 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         )
 
     @app.post("/programs/{program_id}/setup", dependencies=[Authed])
-    async def setup_program(program_id: ProgramId) -> dict:
+    async def setup_program(
+        program_id: ProgramId,
+        build: Annotated[Literal[PROGRAM_BUILDS] | None, Query()] = None,
+    ) -> dict:
         """Start setting up LocalCut's own copy from the pinned build, and
         return at once; progress and the outcome arrive over /ws. Takes no
-        body: what is fetched is the pin, and only the pin."""
+        body: what is fetched is the pin and only the pin. `build` asks for
+        one of the other builds pinned for this machine's card by name."""
         try:
-            return await programs.start(program_id)
+            return await programs.start(program_id, build)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
         except NotEnoughSpace as exc:
@@ -1217,8 +1244,9 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/programs/{program_id}/start", dependencies=[Authed])
     async def start_program(program_id: ProgramId) -> dict:
         """Start LocalCut's copy of a server program and wait until it
-        answers or gives up (a minute at most). Returns the copy's state,
-        which says why when it did not start."""
+        answers or gives up (a minute for Ollama, ten for ComfyUI, whose
+        first start loads PyTorch). Returns the copy's state, which says why
+        when it did not start."""
         try:
             return await programs.start_server(program_id)
         except KeyError:

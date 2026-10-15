@@ -184,6 +184,10 @@ export interface HardwareGPU {
   name: string;
   vram_gb: number;
   backend: string;
+  /** NVIDIA only, as nvidia-smi reports them; null where the probe could
+   * not tell. An engine older than these fields leaves them out. */
+  driver_version?: string | null;
+  compute_capability?: string | null;
 }
 
 /**
@@ -443,7 +447,14 @@ export type ProgramProblem =
 export type ProgramSource = "managed" | "configured" | "data_dir" | "path" | "default";
 
 /** Why the engine cannot set a program up itself. */
-export type SetupUnavailableReason = "platform_not_supported" | "program_not_supported";
+export type SetupUnavailableReason =
+  | "platform_not_supported"
+  | "program_not_supported"
+  | "gpu_not_supported";
+
+/** A build a program has besides its vendor's usual one, which a client may
+ * ask a setup for by name. */
+export type ProgramBuild = "older_drivers";
 
 /** What a running setup is doing, in the order it does it. A program that
  * runs as a server goes on to `starting` it and `pulling` its model, and a
@@ -471,6 +482,7 @@ export type SetupFailure =
   | "does_not_run"
   | "in_use"
   | "install_failed"
+  | "gpu_not_usable"
   | "did_not_start"
   | "pull_failed";
 
@@ -507,8 +519,11 @@ export interface ProgramJob {
   phase: SetupPhase;
   done: number;
   total: number;
-  /** Measured over the last few seconds of the download; null otherwise. */
+  /** Measured over the last few seconds of the download or the unpack;
+   * null otherwise. */
   bytes_per_s: number | null;
+  /** Which of the vendor's builds it sets up; null for the usual one. */
+  build?: ProgramBuild | null;
 }
 
 /** How the last setup in this engine's life ended. */
@@ -518,13 +533,18 @@ export interface ProgramLastSetup {
   reason: SetupFailure | null;
   /** The same failure in English, for logs and the CLI. */
   error: string | null;
+  /** Which build it set up, or tried to; null for the usual one. */
+  build?: ProgramBuild | null;
 }
 
 /** LocalCut's own copy, in <data_dir>/programs/<id>. */
 export interface ProgramManagedCopy {
   location: string;
+  /** As the setup recorded it when the copy was put there. */
   bytes: number;
   version: string | null;
+  /** Which of the vendor's builds it is; null for the usual one. */
+  build?: ProgramBuild | null;
   /** Whether it is the build pinned now, whole. */
   current: boolean;
   /** Whether the engine runs it: a configured path or <data_dir>/bin
@@ -550,8 +570,22 @@ export interface ProgramSetupInfo {
    * LocalCut's copy and about how much it adds (null when the catalog does
    * not know it), or null when the copy has it. */
   pull?: { model: string; bytes: number | null } | null;
+  /** A program pinned per GPU vendor (ComfyUI): the vendor whose build this
+   * machine gets, as /system names vendors and which of its builds; null
+   * for a build that serves every card. */
+  gpu?: string | null;
+  build?: ProgramBuild | null;
+  /** The vendor's other builds, which a setup can be asked for instead. */
+  builds?: ProgramBuildChoice[];
   job: ProgramJob | null;
   last: ProgramLastSetup | null;
+}
+
+export interface ProgramBuildChoice {
+  /** Null for the vendor's usual build, when the machine gets another. */
+  build: ProgramBuild | null;
+  download_bytes: number;
+  install_bytes: number;
 }
 
 export interface ProgramInfo {
@@ -821,6 +855,8 @@ export type EngineEvent =
       draws_text: boolean | null;
       /** A program that serves a model: the one it pulled, or null. */
       model?: string | null;
+      /** ComfyUI: the graphics card its PyTorch found. */
+      device?: string | null;
     }
   | { type: "program.setup.failed"; program: ProgramId; reason: SetupFailure; error: string }
   | { type: "program.setup.cancelled"; program: ProgramId }

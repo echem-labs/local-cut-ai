@@ -7,10 +7,12 @@ ComfyUI, which draws the keyframes, animates the clips and makes the music.
 
 The engine reports each of them as it finds them, and on Windows x64 and Linux
 x64 it can download and set up its own copy of FFmpeg and of Ollama. Ollama's
-copy runs while the engine runs, with the script model pulled into it.
-ComfyUI is reported only, for now. Everything below happens on the machine the engine runs on, so
-a desktop paired with a GPU box sees that box's programs and sets them up
-there, over the same HTTP API.
+copy runs while the engine runs, with the script model pulled into it. On
+Windows x64 it sets up its own ComfyUI too, the official portable build for
+the machine's graphics card, which also runs while the engine runs.
+Everything below happens on the machine the engine runs on, so a desktop
+paired with a GPU box sees that box's programs and sets them up there, over
+the same HTTP API.
 
 ## Where the engine finds FFmpeg
 
@@ -106,6 +108,63 @@ the rest of the models. Ollama keeps a key pair in its home folder, which for
 LocalCut's copy is `<data_dir>/run/ollama-home`. Nothing is written outside
 the data dir.
 
+## LocalCut's own ComfyUI
+
+On Windows x64, LocalCut's ComfyUI is the official portable build from
+[Comfy-Org/ComfyUI's releases](https://github.com/Comfy-Org/ComfyUI/releases),
+version 0.40.0, pinned by URL, size and SHA-256. There is one per GPU vendor
+(NVIDIA, AMD and Intel) and for NVIDIA a second build for older drivers. The
+hardware probe picks the build. An NVIDIA card gets the usual build, on CUDA
+13, when its driver is 580 or newer and the card is a Turing or newer and the
+build for older drivers (CUDA 12.6, from driver 525) when nvidia-smi says it is
+not. A figure the probe could not read counts as met. A machine with no card
+from one of those vendors gets no build (`gpu_not_supported`). There is no
+portable build for Linux or macOS, so there the setup is yours to do and the
+Programs screen gives the steps. ComfyUI is GPL-3.0; LocalCut runs it as a
+separate program and talks to it over HTTP.
+
+A portable build is a 7z archive, packed with the BCJ2 filter, which Python's
+standard library cannot read and no pure-Python reader decodes. The same
+click downloads 7-Zip's own console extractor, `7zr.exe` 26.04
+(LGPL-2.1-or-later), pinned like the build in the manifest's `extractors`,
+into the setup's scratch folder. It lists the archive first and the setup
+refuses it unless every member sits under its one top folder, no name climbs
+out with `..` or names a drive, an absolute path or an alternate data stream,
+nothing is a link, no name repeats in any case and the files are the pin's
+count and size. Then it unpacks the archive and the setup walks what landed,
+following nothing, against the same count and size. The extractor goes with
+the scratch folder. The walk and the removal of a scratch folder use Windows'
+extended-length paths, since the deepest files sit more than 190 characters
+inside the build.
+
+Before the copy replaces anything, the build's own Python imports its
+PyTorch and sums a few numbers on the card. A build that cannot use the card
+fails the setup with `gpu_not_usable` and keeps nothing; on NVIDIA the build
+for older drivers can then be asked for by name.
+
+The copy is the whole portable folder: 61,925 files and about 4.1 GiB for
+NVIDIA's usual build, 4.96 to 5.75 GiB for the others. LocalCut starts it the
+way the build's own `run_nvidia_gpu.bat` does, with the address the engine
+asks for, no browser and the model paths file it writes beside the copy:
+
+```
+python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build
+    --disable-auto-launch --listen 127.0.0.1 --port 8188
+    --extra-model-paths-config <data_dir>\programs\comfyui\extra_model_paths.yaml
+```
+
+`extra_model_paths.yaml` points ComfyUI at `<data_dir>/models`. A start
+writes it again whenever it would say something else, so it follows the
+models folder if that moves. Every node the workflow templates use is in
+ComfyUI's core, so no custom node pack is installed.
+
+The copy runs the way Ollama's does: started with the engine when nothing
+answers at `LOCALCUT_COMFYUI_URL`, stopped with it, restarted within the same
+limit, logged to `<data_dir>/logs/comfyui.log` and left stopped when a
+ComfyUI of your own answers at the address. Its first start loads PyTorch and
+every node, so it has ten minutes to answer rather than one and jobs wait
+for it when the engine starts.
+
 ## The API
 
 Every route needs the engine token, like the rest of the API.
@@ -150,8 +209,11 @@ setup or a pull ends, or when LocalCut's copy of the server starts or stops.
         "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/...",
         "download_bytes": 137034436,
         "install_bytes": 283955728,
+        "gpu": null,
+        "build": null,
+        "builds": [],
         "job": null,
-        "last": { "job": "3f9c2a7d1e04", "outcome": "done", "reason": null, "error": null }
+        "last": { "job": "3f9c2a7d1e04", "outcome": "done", "reason": null, "error": null, "build": null }
       }
     },
     {
@@ -187,9 +249,12 @@ setup or a pull ends, or when LocalCut's copy of the server starts or stops.
         "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-linux-amd64.tar.zst",
         "download_bytes": 1436408810,
         "install_bytes": 2255368362,
+        "gpu": null,
+        "build": null,
+        "builds": [],
         "pull": null,
         "job": null,
-        "last": { "job": "7497cc9940ae", "outcome": "done", "reason": null, "error": null }
+        "last": { "job": "7497cc9940ae", "outcome": "done", "reason": null, "error": null, "build": null }
       }
     },
     {
@@ -202,7 +267,20 @@ setup or a pull ends, or when LocalCut's copy of the server starts or stops.
       "version": null,
       "checks": {},
       "managed": null,
-      "setup": { "available": false, "unavailable_reason": "program_not_supported" }
+      "setup": {
+        "available": false,
+        "unavailable_reason": "platform_not_supported",
+        "takes_effect": false,
+        "version": null,
+        "url": null,
+        "download_bytes": null,
+        "install_bytes": null,
+        "gpu": null,
+        "build": null,
+        "builds": [],
+        "job": null,
+        "last": null
+      }
     }
   ]
 }
@@ -211,7 +289,8 @@ setup or a pull ends, or when LocalCut's copy of the server starts or stops.
 Top level: `platform` is the engine machine as a pin names it (`windows-x64`,
 `linux-arm64`, `macos-arm64` and so on, or null for one no pin can name).
 `programs_dir` is where LocalCut's copies live, resolved, and
-`programs_bytes` is everything in it. `disk_free_bytes` is the free space on
+`programs_bytes` is the disk its copies take, each as its setup recorded it
+(a setup still running is not counted). `disk_free_bytes` is the free space on
 that disk. `bin_dir` is `<data_dir>/bin`, where an FFmpeg you put there
 yourself outranks LocalCut's copy, and `models_dir` is where the engine keeps
 model weights, the folder ComfyUI's `extra_model_paths.yaml` points at. Both
@@ -240,11 +319,14 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   written with and `model_present`. That is null when a server that is not
   Ollama lists no models (plenty serve chat without listing). An Ollama lists
   every model it has, so its empty list is `false`.
-- `managed` is LocalCut's own copy when there is one: where, how many bytes,
-  which version, whether it is the build pinned now (`current`), and whether
-  the engine is using it (`in_use`). A copy can be there and not in use, when
-  `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` outranks it, or for Ollama when
-  a server of your own answers at the address. A program LocalCut runs as a
+- `managed` is LocalCut's own copy when there is one: where, how many bytes
+  it took when it was set up (the figure its setup recorded, so the report
+  never walks ComfyUI's tens of thousands of files), which version and which
+  `build`, whether it is the build pinned now for its line (`current`; a
+  copy of the build for older drivers is compared with that build) and
+  whether the engine is using it (`in_use`). A copy can be there and not in
+  use, when `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` outranks it, or for
+  Ollama and ComfyUI when a server of your own answers at the address. A program LocalCut runs as a
   server adds `server`: its `state` (`stopped`, `starting`, `running` or
   `crashed`), the `reason` it is stopped or crashed (`own_server`, `stopped`,
   `port_in_use`, `cannot_start`, `no_answer` or `exited`) with `error` in
@@ -253,22 +335,56 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   its `log`.
 - `setup` is what a setup would do here. When `available` is false,
   `unavailable_reason` is `platform_not_supported` (builds are pinned for
-  other machines) or `program_not_supported`, and the size fields are null.
-  `takes_effect` is false when something outranks LocalCut's copy, so setting
-  it up would not change what the engine runs, which for Ollama is an
-  address on another machine. `download_bytes` and `install_bytes` are exact;
-  a setup needs both free at once. For Ollama, `pull` is the model a setup
+  other machines), `program_not_supported`, or `gpu_not_supported` (the
+  builds are per GPU vendor and this machine has no card from one of them)
+  and the size fields are null. `takes_effect` is false when something
+  outranks LocalCut's copy, so setting it up would not change what the
+  engine runs, which for Ollama and ComfyUI is an address on another
+  machine. `download_bytes` and `install_bytes` are exact; a setup needs both
+  free at once and `download_bytes` counts the extractor a 7z comes with. For Ollama, `pull` is the model a setup
   would pull into LocalCut's copy and about how much disk it takes (`bytes`,
   the model catalog's figure, or null for a model the catalog does not hold),
-  or null when the copy has it already. `job` is the
-  setup running now (`id`, `phase`, `done`, `total`, `bytes_per_s`), and
-  `last` is how the last one in this engine's life ended (`outcome` `done`,
-  `failed` or `cancelled`, with `reason` and `error` for a failure).
+  or null when the copy has it already. `job` is the setup running now (`id`,
+  `phase`, `done`, `total`, `bytes_per_s`, `build`) and `last` is how the
+  last one in this engine's life ended (`outcome` `done`, `failed` or
+  `cancelled`, with `reason` and `error` for a failure and the `build` it
+  set up).
+- `setup.gpu`, `setup.build` and `setup.builds` say which build a setup
+  would fetch, for a program pinned per GPU vendor: the vendor (`nvidia`,
+  `amd`, `intel`), which of that vendor's builds (null for the usual one,
+  `older_drivers` for NVIDIA's build for older drivers) and the vendor's
+  other builds, each with its `build` and sizes, which a client can ask for
+  instead. For FFmpeg and Ollama they are null, null and empty. On a Windows
+  machine with an NVIDIA card on a current driver, ComfyUI's reads:
+
+  ```json
+  {
+    "available": true,
+    "unavailable_reason": null,
+    "takes_effect": true,
+    "version": "0.40.0",
+    "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia.7z",
+    "download_bytes": 2010504119,
+    "install_bytes": 4421748361,
+    "gpu": "nvidia",
+    "build": null,
+    "builds": [
+      { "build": "older_drivers", "download_bytes": 1902221251, "install_bytes": 5596292364 }
+    ],
+    "job": null,
+    "last": null
+  }
+  ```
 
 ### POST /programs/{id}/setup
 
 Starts a setup in the background and returns at once. It takes no body, and
-nothing a client sends changes what is downloaded.
+nothing a client sends names what is downloaded. A program with more than
+one build for this machine's card takes `?build=` with one of their names
+(`older_drivers`, ComfyUI's NVIDIA build for older drivers), which picks
+between the builds pinned for that card and nothing else. Without it the
+engine picks and a copy already set up from another build keeps that
+build.
 
 - `200 {"status": "started", "job": "<id>"}`. Progress and the outcome
   arrive over `/ws`, and the outcome stays in `setup.last` with the same job
@@ -278,8 +394,9 @@ nothing a client sends changes what is downloaded.
   too.
 - `404` for an unknown program.
 - `409` when a setup of it is already running, when there is no build for
-  this machine, or when a render is running LocalCut's copy and the setup
-  would replace it.
+  this machine (or none by the name asked for, for its card), or when a
+  render is running LocalCut's copy and the setup would replace it.
+- `422` for a `build` that is not a build's name.
 - `507` when the disk cannot hold the download and the unpacked copy at once.
   For Ollama the model it pulls has to fit too, on the disk that holds
   `models_dir`.
@@ -290,10 +407,19 @@ only the files the pin names, and runs them where they were unpacked: both
 binaries must answer `-version` and ffmpeg must get through the text probe.
 Then it renames the whole folder into place, so the engine never sees an
 ffmpeg without its ffprobe, and replaces an earlier copy the same way. A
-failed or cancelled setup removes what it wrote before it says so, and what
-an engine that stopped mid-setup left behind is cleared when it next starts.
+failed or cancelled setup removes what it wrote before it says so. What an
+engine that stopped mid-setup left behind is deleted while the next engine
+serves. A deletion under way when the engine stops (a half-unpacked ComfyUI
+is tens of thousands of files) stops between files, so the engine exits
+inside the time the desktop gives it. The next start carries on with it.
 An ffmpeg that runs and draws no text is still installed, and `done` says
 `draws_text: false`.
+
+A ComfyUI build is unpacked whole by the extractor it was downloaded with
+and checked as [above](#localcuts-own-comfyui) and its PyTorch has to use
+the card before anything is replaced. Then, like Ollama, it goes on to
+`starting`, which has ten minutes for a first start. `done` names the card
+PyTorch found as `device`.
 
 Ollama's check is a real start. The unpacked `ollama serve` runs on a free
 loopback port with an empty model store and has to answer `/api/version`
@@ -393,15 +519,17 @@ holds one of its files open (Windows will not move the folder then).
 ```
 
 `phase` runs `downloading`, `verifying`, `unpacking`, `checking` and
-`installing`, then for Ollama `starting` and `pulling`. Each phase is
-announced as it starts. A pull on its own is the one phase `pulling`. `done`
-and `total` are bytes of the archive while downloading and verifying and
-bytes of the kept files while unpacking. While pulling they are bytes of
+`installing`, then for Ollama `starting` and `pulling` and for ComfyUI
+`starting`. Each phase is announced as it starts. A pull on its own is the
+one phase `pulling`. `done` and `total` are bytes of the archive while
+downloading and verifying (with the extractor's, for a 7z) and bytes of the
+kept files while unpacking, which for a tree the extractor unpacks move with
+the percentage it reports. While pulling they are bytes of
 every layer Ollama has named so far, so a pull's total grows as it finds
 them. The other
 phases report 0 of 0. Progress is throttled to one event every half second.
-`bytes_per_s` is the speed of a download or a pull over its last five
-seconds (over all of it in its first five). It is null for its first half
+`bytes_per_s` is the speed of a download, an unpack or a pull over its last
+five seconds (over all of it in its first five). It is null for its first half
 second and in the other phases. While nothing arrives, as when a dropped
 download waits to try again, `GET /programs` reports it as 0. Ollama's
 `done` adds the `model` it pulled. A pull's `done` has the server's address
@@ -412,7 +540,8 @@ state, with the `reason` when it is stopped or crashed.
 
 A failure's `reason` is one of `no_space`, `download_failed`,
 `download_gone`, `size_mismatch`, `checksum_mismatch`, `unpack_failed`,
-`does_not_run`, `in_use`, `install_failed`, `did_not_start` (LocalCut's
+`does_not_run`, `gpu_not_usable` (the build's PyTorch cannot use the card),
+`in_use`, `install_failed`, `did_not_start` (LocalCut's
 copy was set up and did not start) and `pull_failed` (Ollama would not pull
 the model, or stopped partway; its own message is in `error`). `error` is the
 same failure in English, for logs and the CLI.
@@ -437,6 +566,13 @@ out; `size_bytes` is the catalog's figure, null for a model it does not hold.
 A server that is not Ollama cannot pull, so its row keeps the `pick_model`
 fix.
 
+A `comfyui_down` row carries the setup for ComfyUI, with the size of the
+build for this machine's card plus its extractor, where LocalCut's copy
+would be the ComfyUI the engine renders with: the address is on this
+machine, a build is pinned for the card, the report already knows which card
+that is (from `GET /system` or `GET /programs`; the readiness report never
+runs the hardware probe itself) and the copy is not set up yet.
+
 ## From a terminal
 
 The CLI is a client of a running engine like the desktop, so a headless GPU
@@ -446,6 +582,8 @@ box sets itself up from its own shell:
 localcut programs list                # each program, and what setup would take
 localcut programs setup ffmpeg        # download LocalCut's copy, and wait
 localcut programs setup ollama        # the same, then start it and pull the script model
+localcut programs setup comfyui       # the build for this machine's card, then start it
+localcut programs setup comfyui --build older_drivers
 localcut programs pull ollama         # pull the script model through whichever Ollama runs
 localcut programs pull ollama --model llama3.2
 localcut programs stop ollama         # stop LocalCut's copy, never your own
@@ -460,6 +598,8 @@ Each takes `--engine`, `--token`, `--cert` and `--json`, as in
 or was cancelled and 2 when no engine answered. They wait up to `--timeout`
 seconds (7200 by default, since Ollama and its model are several gigabytes)
 and then exit 1 too. Only the wait ends there: the work carries on in the
-engine while `localcut programs list` shows how far it has got. `start` exits
+engine while `localcut programs list` shows how far it has got. `list` says
+which build a ComfyUI setup would fetch and after a build whose PyTorch could
+not use the card, the command that fetches the other one. `start` exits
 0 once the copy runs and `stop` once it has stopped; either exits 1 when it
 did not.

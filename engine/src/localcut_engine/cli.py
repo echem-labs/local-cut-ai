@@ -19,6 +19,7 @@ import uvicorn
 
 from . import __version__
 from .config import EngineConfig
+from .programs import BUILDS as PROGRAM_BUILDS
 
 #: The words `serve` leads with when it could not claim the port.
 #:
@@ -693,6 +694,13 @@ def _add_automation_commands(subcommands) -> None:
         default=None,
         help="the model to pull (default: the one scripts are written with)",
     )
+    programs_setup.add_argument(
+        "--build",
+        choices=PROGRAM_BUILDS,
+        default=None,
+        help="one of the other builds pinned for this machine's graphics card, instead of "
+        "the one LocalCut picks (older_drivers: ComfyUI's NVIDIA build for older drivers)",
+    )
     for waits in (programs_setup, programs_pull):
         waits.add_argument(
             "--timeout",
@@ -1006,19 +1014,43 @@ def _program_line(row: dict) -> str:
         notes.append(f"LocalCut's copy: {said}")
     setup = row.get("setup") or {}
     job = setup.get("job")
+    last = setup.get("last") or {}
     if job:
         notes.append(f"setting up: {job['phase']}")
     elif row["state"] != "ready" and setup.get("available"):
+        build = _build_words(setup.get("gpu"), setup.get("build"))
         notes.append(
             f"`localcut programs setup {row['id']}` downloads {_mib(setup['download_bytes'])}"
+            + (f", {build}" if build else "")
         )
+        if last.get("reason") == "gpu_not_usable" and not last.get("build"):
+            for other in setup.get("builds") or []:
+                if not other["build"]:
+                    continue
+                notes.append(
+                    f"or `localcut programs setup {row['id']} --build {other['build']}` "
+                    f"downloads {_mib(other['download_bytes'])}, "
+                    f"{_build_words(setup.get('gpu'), other['build'])}"
+                )
+    elif setup.get("unavailable_reason") == "gpu_not_supported":
+        notes.append("no build for this machine's graphics card")
     return f"{line}  ({'; '.join(notes)})" if notes else line
+
+
+def _build_words(gpu: str | None, build: str | None) -> str:
+    """Which build a setup fetches, for a program with one per GPU vendor."""
+    if gpu is None:
+        return ""
+    vendor = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel"}.get(gpu, gpu)
+    if build == "older_drivers":
+        return f"the build for {vendor} cards on older drivers"
+    return f"the build for {vendor} cards"
 
 
 def _setup_line(program: str, job: dict) -> str:
     """Where a setup has got to, coarsely enough that a log is not flooded:
-    the phase, and a download or a pull in tenths."""
-    if job["phase"] not in ("downloading", "pulling") or not job.get("total"):
+    the phase and a download, an unpack or a pull in tenths."""
+    if job["phase"] not in ("downloading", "unpacking", "pulling") or not job.get("total"):
         return f"  {program}: {job['phase']}"
     tenth = min(10, int(10 * job["done"] / job["total"]))
     rate = job.get("bytes_per_s")
@@ -1064,9 +1096,10 @@ def _programs_command(args: argparse.Namespace, client) -> int:
         return automation.EXIT_OK
 
     if args.action in ("start", "stop"):
-        # A start answers once the server does, which can take most of a
-        # minute the first time it looks at the GPUs.
-        server = client.post(f"/programs/{args.program}/{args.action}", timeout=120)
+        # A start answers once the server does: most of a minute the first
+        # time Ollama looks at the GPUs and minutes for ComfyUI, which loads
+        # PyTorch and every node first.
+        server = client.post(f"/programs/{args.program}/{args.action}", timeout=660)
         said = server["state"] + (f" ({server['reason']})" if server.get("reason") else "")
         line = f"LocalCut's {args.program}: {said}"
         if server.get("url"):
@@ -1090,7 +1123,8 @@ def _programs_command(args: argparse.Namespace, client) -> int:
             return automation.EXIT_OK
         doing = f"pulling {what} through {args.program}"
     else:
-        started = client.post(f"/programs/{args.program}/setup")
+        build = f"?build={args.build}" if args.build else ""
+        started = client.post(f"/programs/{args.program}/setup{build}")
         if started.get("status") == "installed":
             automation.emit(started, as_json=args.json, lines=[f"{args.program} is set up already"])
             return automation.EXIT_OK

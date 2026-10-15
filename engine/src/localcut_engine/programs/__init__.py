@@ -5,9 +5,12 @@ Three programs make real output: FFmpeg (assembly, and the audio decode
 caption timing reads), an OpenAI-compatible LLM server (Ollama by default)
 and ComfyUI. `status.py` reports each one as this engine finds it, and
 `setup.py` downloads a pinned build of one into a folder of its own, on
-request, while the engine runs. The pins are data (`manifest.py`). A program
-that runs as a server is run from that folder by `server.py` while the engine
-runs, and `ollama.py` holds what is particular to Ollama.
+request, while the engine runs. The pins are data (`manifest.py`) and
+`builds.py` picks between a program's builds for the machine's graphics card.
+A 7z archive is unpacked by a pinned 7-Zip extractor (`sevenzip.py`). A
+program that runs as a server is run from that folder by `server.py` while
+the engine runs; `ollama.py` and `comfyui.py` hold what is particular to
+Ollama and to ComfyUI.
 
 Everything here crosses the wire as codes plus data, like the readiness
 report: the desktop words each code from its own catalog. The closed sets
@@ -59,6 +62,16 @@ SETUP_UNAVAILABLE = (
     "platform_not_supported",
     # LocalCut does not set this program up at all yet.
     "program_not_supported",
+    # The program's builds are per GPU vendor and this machine has no card
+    # from a vendor one is pinned for (or no GPU at all).
+    "gpu_not_supported",
+)
+
+#: The builds a program can have besides a vendor's usual one, as a pin
+#: names them and a client asks for one.
+BUILDS = (
+    # A CUDA build for drivers and cards, older than the usual build needs.
+    "older_drivers",
 )
 
 #: What a running setup is doing, in the order it does it. A program that
@@ -95,6 +108,9 @@ SETUP_FAILURES = (
     "unpack_failed",
     # A binary that was unpacked does not run.
     "does_not_run",
+    # The program runs and its PyTorch cannot use the graphics card: a
+    # driver older than the build needs, or a card it has no kernels for.
+    "gpu_not_usable",
     # LocalCut's existing copy is held open by another process, so it cannot
     # be replaced.
     "in_use",

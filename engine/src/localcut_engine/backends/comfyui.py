@@ -21,7 +21,7 @@ from ..aspects import DEFAULT_ASPECT, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, reso
 from ..graph.compiler import JobSpec
 from ..graph.model import KEYFRAME_PORT, NodeKind
 from ..providers.images import mime_type
-from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError
+from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError, ServiceProbe
 
 _OOM_MARKERS = ("out of memory", "cuda oom", "allocation failed")
 
@@ -87,8 +87,12 @@ class ComfyUIBackend(ExecutionBackend):
         model_templates: dict[str, str] | None = None,
         capability: Callable[[], set[NodeKind]] | None = None,
         installed_models: Callable[[], dict[NodeKind, list[str]]] | None = None,
+        probe: ServiceProbe | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # The liveness probe the capability claim reads, kept so the engine
+        # can tell it the server answers the moment LocalCut's own copy does.
+        self.probe = probe
         self.templates_dir = templates_dir
         self.kinds = {NodeKind(k.strip()) for k in kinds.split(",") if k.strip()}
         # Manifest-fed model id → workflow template. Model switching (e.g.

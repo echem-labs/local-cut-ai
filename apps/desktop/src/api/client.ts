@@ -20,6 +20,7 @@ import type {
   ModelDefaults,
   ModelRow,
   NodePacks,
+  ProgramBuild,
   ProgramId,
   ProgramServer,
   ProgramsReport,
@@ -547,11 +548,16 @@ export class EngineClient {
 
   /** Start setting up LocalCut's own copy and return at once. 409 when one
    * is running, there is no build for that machine, or a render is using
-   * the copy it would replace; 507 when the disk cannot hold it. */
+   * the copy it would replace; 507 when the disk cannot hold it. `build`
+   * asks for one of the other builds pinned for the machine's card. */
   setupProgram(
     programId: ProgramId,
+    build?: ProgramBuild,
   ): Promise<{ status: "started"; job: string } | { status: "installed" }> {
-    return this.request(`/programs/${encodeURIComponent(programId)}/setup`, { method: "POST" });
+    const query = build ? `?build=${encodeURIComponent(build)}` : "";
+    return this.request(`/programs/${encodeURIComponent(programId)}/setup${query}`, {
+      method: "POST",
+    });
   }
 
   /** Pull a model through the program's server, LocalCut's copy or the

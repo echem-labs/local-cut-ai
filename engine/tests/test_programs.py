@@ -326,7 +326,7 @@ def _stub_check(monkeypatch, *, draws_text: bool = True) -> list[Path]:
     Records the folders it was asked about."""
     checked: list[Path] = []
 
-    async def check(self, folder: Path) -> dict:
+    async def check(self, folder: Path, asset=None) -> dict:  # noqa: ANN001 - a pin
         checked.append(folder)
         assert (folder / f"ffmpeg{_EXE}").is_file()
         assert (folder / f"ffprobe{_EXE}").is_file()
@@ -614,6 +614,10 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
             "url": pinned.url,
             "download_bytes": pinned.size,
             "install_bytes": pinned.install_bytes,
+            # One build of FFmpeg serves every card.
+            "gpu": None,
+            "build": None,
+            "builds": [],
             "job": None,
             "last": None,
         },
@@ -639,6 +643,10 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
         "url": ollama_pin.url,
         "download_bytes": ollama_pin.size,
         "install_bytes": ollama_pin.install_bytes,
+        # One build of Ollama serves every card.
+        "gpu": None,
+        "build": None,
+        "builds": [],
         "pull": {"model": "qwen3:14b", "bytes": 9 * 2**30},
         "job": None,
         "last": None,
@@ -1441,8 +1449,8 @@ async def test_remove_waits_for_a_render_that_is_using_the_copy(tmp_path, monkey
 async def test_what_an_interrupted_setup_left_is_cleared_when_the_engine_starts(tmp_path):
     """An engine that stopped mid-setup leaves its scratch folder behind,
     and one that stopped between the two renames of a replacement leaves the
-    old copy aside with nothing in its place. The first is removed. The
-    second is put back."""
+    old copy aside with nothing in its place. The first is removed while the
+    engine serves. The second is put back before it serves."""
     programs = tmp_path / "programs"
     _plant(programs / ".setup-ffmpeg-0a1b2c3d" / "ffmpeg-test.zip.part", b"partial")
     _plant(programs / ".old-ffmpeg-0a1b2c3d" / f"ffmpeg{_EXE}", b"the old copy")
@@ -1450,10 +1458,10 @@ async def test_what_an_interrupted_setup_left_is_cleared_when_the_engine_starts(
     _plant(programs / ".removing-ffmpeg-0a1b2c3d" / f"ffmpeg{_EXE}", b"half removed")
 
     async with _engine(_config(tmp_path)):
-        pass
-
-    assert _leftovers(tmp_path) == []
-    assert (programs / "ffmpeg" / f"ffmpeg{_EXE}").read_bytes() == b"the old copy"
+        assert (programs / "ffmpeg" / f"ffmpeg{_EXE}").read_bytes() == b"the old copy"
+        async with asyncio.timeout(30):
+            while _leftovers(tmp_path):
+                await asyncio.sleep(0.05)
 
 
 # -- the CLI -------------------------------------------------------------------

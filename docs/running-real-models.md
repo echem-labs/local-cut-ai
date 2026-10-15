@@ -63,12 +63,37 @@ logs and how it is restarted.
 
 Packaged defaults cover SDXL keyframes and thumbnails, LTX-Video clips, Wan
 2.2 I2V, and ACE-Step music. Override any of them per-file in
-`~/.localcut/comfy-templates/`.
+`~/.localcut/comfy-templates/`. Every node they use is in ComfyUI's core, so
+they need no custom node pack.
 
-Point ComfyUI at the shared weights directory with an `extra_model_paths.yaml`
-whose `base_path` is `~/.localcut/models`. If it is not on `127.0.0.1:8188` —
-another host, another port, a container — `LOCALCUT_COMFYUI_URL` is the whole
-base URL.
+On Windows, LocalCut can set up and run its own ComfyUI: Settings > Programs,
+the first-run Programs step, or `localcut programs setup comfyui`. It is the
+official portable build for your graphics card, kept in
+`~/.localcut/programs/comfyui`, started while the engine runs and stopped
+with it and already pointed at LocalCut's models. A ComfyUI of your own that
+answers at the address is used instead and LocalCut's copy stays stopped.
+[programs.md](programs.md#comfyui) has the details, including the build for
+older NVIDIA drivers.
+
+Elsewhere, or with your own install, point ComfyUI at the shared weights
+directory with an `extra_model_paths.yaml` whose `base_path` is
+`~/.localcut/models`, naming the folders the engine downloads into:
+
+```yaml
+localcut:
+  base_path: /home/you/.localcut/models
+  checkpoints: checkpoints
+  diffusion_models: diffusion_models
+  text_encoders: text_encoders
+  vae: vae
+  clip: clip
+  loras: loras
+```
+
+Settings > Programs shows this file with the engine's own models folder filled
+in, ready to copy.
+If ComfyUI is not on `127.0.0.1:8188` (another host, another port, a
+container), `LOCALCUT_COMFYUI_URL` is the whole base URL.
 
 `LOCALCUT_COMFY_KINDS` decides which node kinds ComfyUI is allowed to serve.
 It defaults to `auto`, which claims a kind only while an installed manifest

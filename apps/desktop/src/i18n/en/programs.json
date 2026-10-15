@@ -30,7 +30,8 @@
   },
   "unavailable": {
     "platform_not_supported": "LocalCut has no build of {name} for this system, so it can't set it up for you.",
-    "program_not_supported": "LocalCut can't set {name} up for you yet."
+    "program_not_supported": "LocalCut can't set {name} up for you yet.",
+    "gpu_not_supported": "LocalCut has no build of {name} for this computer's graphics card, so it can't set it up for you."
   },
   "phases": {
     "downloading": "Downloading {name}",
@@ -70,6 +71,7 @@
     "does_not_run": "Setup stopped: the {name} it downloaded doesn't run on this system.",
     "in_use": "Setup stopped: another program has LocalCut's copy of {name} open.",
     "install_failed": "Setup stopped: it couldn't be moved into place.",
+    "gpu_not_usable": "Setup stopped: PyTorch couldn't use your graphics card.",
     "did_not_start": "Setup stopped: {name} is set up, and didn't start.",
     "pull_failed": "Setup stopped: the model didn't download."
   },
@@ -83,8 +85,22 @@
     "does_not_run": "Nothing was kept. Set {name} up yourself with the steps below.",
     "in_use": "Close whatever is using it, then try again.",
     "install_failed": "Nothing changed. Try again.",
+    "gpu_not_usable": "Nothing was kept. Update your graphics card's driver, then try again, or set {name} up yourself with the steps below.",
     "did_not_start": "LocalCut's copy is in place. Try again, or set {name} up yourself with the steps below.",
     "pull_failed": "{name} itself is set up. Check the connection, then try again."
+  },
+  "builds": {
+    "older_drivers": "Use the build for older drivers"
+  },
+  "build": {
+    "picks": "LocalCut picks the build for {vendor} graphics cards.",
+    "picksOlder": "LocalCut picks the build for {vendor} graphics cards on older drivers.",
+    "olderAdvice": "Nothing was kept. Update the NVIDIA driver, or use the build made for older drivers.",
+    "olderAdviceDriver": "Nothing was kept. Your NVIDIA driver is {driver}. Update it, or use the build made for older drivers.",
+    "driverLink": "NVIDIA's drivers",
+    "driverTip": "Opens NVIDIA's driver downloads in your browser",
+    "olderTip": "Set up the build made for older drivers",
+    "olderTipHint": "Downloads {size} instead of the usual build"
   },
   "here": "this computer",
   "on": "On {where}",

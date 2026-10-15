@@ -8,13 +8,16 @@ import { describe, expect, it } from "vitest";
 import type { ProgramInfo, ProgramsReport, ReadinessRow } from "../api/types";
 import {
   binDirOf,
+  buildPicked,
   comfyModelPaths,
   manualSteps,
   osOf,
+  otherBuildOffer,
   programCause,
   pullFixes,
   rowsCostBy,
   settingsTabFor,
+  setupEta,
   setupFraction,
   setupOffer,
   statusOf,
@@ -427,5 +430,59 @@ describe("doing it by hand", () => {
     expect(yaml).toContain("  checkpoints: checkpoints");
     const { steps } = manualSteps(program("comfyui"), ctx());
     expect(steps.some((step) => step.block?.includes("/home/me/.localcut/models"))).toBe(true);
+  });
+});
+
+describe("a program built per graphics card", () => {
+  const comfyui = (over: Partial<ProgramInfo["setup"]> = {}) =>
+    program("comfyui", {
+      setup: {
+        ...program("ffmpeg").setup,
+        version: "0.40.0",
+        gpu: "nvidia",
+        build: null,
+        builds: [{ build: "older_drivers", download_bytes: 1800 * MB, install_bytes: 5300 * MB }],
+        ...over,
+      },
+    });
+  const failedOn = (build: "older_drivers" | null, reason: "gpu_not_usable" | "download_failed") =>
+    ({ job: "j", outcome: "failed", reason, error: "x", build }) as const;
+
+  it("names the vendor whose build it picks and the build for older drivers", () => {
+    expect(buildPicked(comfyui())).toBe("LocalCut picks the build for NVIDIA graphics cards.");
+    expect(buildPicked(comfyui({ gpu: "amd", builds: [] }))).toBe(
+      "LocalCut picks the build for AMD graphics cards.",
+    );
+    expect(buildPicked(comfyui({ build: "older_drivers" }))).toBe(
+      "LocalCut picks the build for NVIDIA graphics cards on older drivers.",
+    );
+    // One build for every card and a vendor this build has no word for.
+    expect(buildPicked(program("ffmpeg"))).toBeNull();
+    expect(buildPicked(comfyui({ gpu: "matrox" }))).toBeNull();
+  });
+
+  it("offers the other build only after PyTorch could not use the card", () => {
+    expect(otherBuildOffer(comfyui())).toBeNull();
+    expect(otherBuildOffer(comfyui({ last: failedOn(null, "download_failed") }))).toBeNull();
+    expect(otherBuildOffer(comfyui({ last: failedOn(null, "gpu_not_usable") }))).toEqual({
+      build: "older_drivers",
+      download_bytes: 1800 * MB,
+      install_bytes: 5300 * MB,
+    });
+    // Not the build that just failed and never back to the usual one.
+    expect(otherBuildOffer(comfyui({ last: failedOn("older_drivers", "gpu_not_usable") }))).toBeNull();
+    const older = comfyui({
+      build: "older_drivers",
+      builds: [{ build: null, download_bytes: 1, install_bytes: 1 }],
+      last: failedOn("older_drivers", "gpu_not_usable"),
+    });
+    expect(otherBuildOffer(older)).toBeNull();
+  });
+
+  it("estimates the time left through the unpack as well as the download", () => {
+    const job = { id: "j", done: 0, total: 600 * MB, bytes_per_s: 5 * MB, build: null };
+    expect(setupEta({ ...job, phase: "unpacking" })).toBe("about 2 min");
+    expect(setupEta({ ...job, phase: "downloading" })).toBe("about 2 min");
+    expect(setupEta({ ...job, phase: "checking" })).toBeNull();
   });
 });

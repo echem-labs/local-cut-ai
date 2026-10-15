@@ -20,6 +20,7 @@ import {
   manualSteps,
   needsAttention,
   osOf,
+  otherBuildOffer,
   PROGRAM_SITES,
   programName,
   rowsCostBy,
@@ -38,6 +39,10 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { formatSize } from "./ModelLibrary";
 import { GapRows } from "./Readiness";
 import { Tip } from "./Tooltip";
+
+/** Where NVIDIA's drivers are, for a card whose driver is older than a
+ * build needs. */
+const NVIDIA_DRIVERS = "https://www.nvidia.com/Download/index.aspx";
 
 const ICON: Record<ProgramId, LucideIcon> = {
   ffmpeg: Clapperboard,
@@ -346,6 +351,9 @@ export function ProgramWell({
   const job = program.setup.job;
   const offer = setupOffer(program);
   const failure = shownFailure(program);
+  const otherBuild = otherBuildOffer(program);
+  const system = useApp((state) => state.system);
+  const card = system?.hardware.primary_gpu ?? null;
   const attention = needsAttention(program);
   const costs: ReadinessRow[] =
     failure || (context === "settings" && attention) || (attention && program.state === "broken")
@@ -595,16 +603,51 @@ export function ProgramWell({
           <p className="pw-status fail">
             {t(`programs.failures.${failure}` as MessageKey, { name })}
           </p>
-          <p className="pw-detail">
-            {t(`programs.advice.${failure}` as MessageKey, {
-              name,
-              size: formatSize(
-                (program.setup.download_bytes ?? 0) + (program.setup.install_bytes ?? 0),
-              ),
-              dir: report.programs_dir,
-            })}
-          </p>
-          {offer?.kind === "retry" && <div className="pw-fix">{setupButton("retry")}</div>}
+          {otherBuild ? (
+            <p className="pw-detail">
+              {card?.vendor === "nvidia" && card.driver_version
+                ? t("programs.build.olderAdviceDriver", { driver: card.driver_version })
+                : t("programs.build.olderAdvice")}{" "}
+              <Tip label={t("programs.build.driverLink")} hint={t("programs.build.driverTip")}>
+                <a className="link-out" href={NVIDIA_DRIVERS} target="_blank" rel="noreferrer">
+                  {t("programs.build.driverLink")}
+                  <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+                </a>
+              </Tip>
+            </p>
+          ) : (
+            <p className="pw-detail">
+              {t(`programs.advice.${failure}` as MessageKey, {
+                name,
+                size: formatSize(
+                  (program.setup.download_bytes ?? 0) + (program.setup.install_bytes ?? 0),
+                ),
+                dir: report.programs_dir,
+              })}
+            </p>
+          )}
+          {(otherBuild || offer?.kind === "retry") && (
+            <div className="pw-fix">
+              {otherBuild && (
+                <Tip
+                  label={t("programs.build.olderTip")}
+                  hint={t("programs.build.olderTipHint", {
+                    size: formatSize(otherBuild.download_bytes),
+                  })}
+                >
+                  <button
+                    className="btn-outline sm"
+                    disabled={busy}
+                    onClick={() => void act(() => setupProgram(program.id, otherBuild.build))}
+                  >
+                    {t(`programs.builds.${otherBuild.build}` as MessageKey)}{" "}
+                    <span className="readout">{formatSize(otherBuild.download_bytes)}</span>
+                  </button>
+                </Tip>
+              )}
+              {offer?.kind === "retry" && setupButton("retry")}
+            </div>
+          )}
         </>
       )}
       {lines.length > 0 && !queuedBehind && (
