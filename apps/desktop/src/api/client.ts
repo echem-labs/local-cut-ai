@@ -21,6 +21,7 @@ import type {
   ModelRow,
   NodePacks,
   ProgramId,
+  ProgramServer,
   ProgramsReport,
   Project,
   ProjectTemplate,
@@ -114,6 +115,18 @@ export class EngineClient {
   }
 
   private async request<T>(path: string, init?: RequestInit, timeoutMs = 120_000): Promise<T> {
+    const response = await this.answered(path, init, timeoutMs);
+    return (await response.json()) as T;
+  }
+
+  /** A route that answers with plain text rather than JSON. */
+  private async requestText(path: string, init?: RequestInit, timeoutMs = 120_000): Promise<string> {
+    const response = await this.answered(path, init, timeoutMs);
+    return response.text();
+  }
+
+  /** The response to a request the engine accepted; anything else throws. */
+  private async answered(path: string, init?: RequestInit, timeoutMs = 120_000): Promise<Response> {
     // Bound every request: a half-open remote engine (accepts the socket, never
     // responds) would otherwise leave the promise pending forever and wedge the
     // establish/reconnect state machine with no recovery but an app restart.
@@ -151,7 +164,7 @@ export class EngineClient {
       }
       throw new EngineError(response.status, `engine ${response.status}: ${detail.slice(0, 300)}`);
     }
-    return (await response.json()) as T;
+    return response;
   }
 
   createProject(body: {
@@ -539,6 +552,38 @@ export class EngineClient {
     programId: ProgramId,
   ): Promise<{ status: "started"; job: string } | { status: "installed" }> {
     return this.request(`/programs/${encodeURIComponent(programId)}/setup`, { method: "POST" });
+  }
+
+  /** Pull a model through the program's server, LocalCut's copy or the
+   * user's own, and return at once; it reports like a setup, over /ws.
+   * With no model, the one scripts are written with. 409 when no server
+   * answers or one is already busy; 507 when it would not fit beside
+   * LocalCut's copy. */
+  pullModel(
+    programId: ProgramId,
+    model?: string,
+  ): Promise<{ status: "started"; job: string; model: string } | { status: "present"; model: string }> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/pull`, {
+      method: "POST",
+      ...(model ? { body: JSON.stringify({ model }) } : {}),
+    });
+  }
+
+  /** Start LocalCut's copy of a server program; answers once it answers,
+   * or has given up, with its state. */
+  startProgram(programId: ProgramId): Promise<ProgramServer> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/start`, { method: "POST" });
+  }
+
+  /** Stop LocalCut's copy of a server program. Never the user's own. */
+  stopProgram(programId: ProgramId): Promise<ProgramServer> {
+    return this.request(`/programs/${encodeURIComponent(programId)}/stop`, { method: "POST" });
+  }
+
+  /** The end of what LocalCut's copy of a server printed, for a support
+   * bundle. Empty when it never ran. */
+  programLog(programId: ProgramId): Promise<string> {
+    return this.requestText(`/programs/${encodeURIComponent(programId)}/log`);
   }
 
   /** Stop a running setup. 409 when none is running, or it is already

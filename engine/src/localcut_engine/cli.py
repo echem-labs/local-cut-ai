@@ -683,17 +683,38 @@ def _add_automation_commands(subcommands) -> None:
         help="download LocalCut's own copy of a program, on the engine's machine, and wait",
     )
     programs_setup.add_argument("program")
-    programs_setup.add_argument(
-        "--timeout",
-        type=float,
-        default=1800.0,
-        dest="timeout_s",
-        help="seconds to wait before giving up (default 1800)",
+    programs_pull = program_actions.add_parser(
+        "pull",
+        help="pull a model through the program's server (LocalCut's copy or your own), and wait",
     )
-    programs_setup.add_argument(
-        "--no-wait", action="store_true", help="start the setup and return without waiting"
+    programs_pull.add_argument("program")
+    programs_pull.add_argument(
+        "--model",
+        default=None,
+        help="the model to pull (default: the one scripts are written with)",
     )
-    _add_automation_flags(programs_setup)
+    for waits in (programs_setup, programs_pull):
+        waits.add_argument(
+            "--timeout",
+            type=float,
+            default=7200.0,
+            dest="timeout_s",
+            help="seconds to wait before giving up (default 7200)",
+        )
+        waits.add_argument(
+            "--no-wait", action="store_true", help="start it and return without waiting"
+        )
+        _add_automation_flags(waits)
+    programs_start = program_actions.add_parser(
+        "start", help="start LocalCut's own copy of a server program, and wait until it answers"
+    )
+    programs_start.add_argument("program")
+    _add_automation_flags(programs_start)
+    programs_stop = program_actions.add_parser(
+        "stop", help="stop LocalCut's own copy of a server program (never your own)"
+    )
+    programs_stop.add_argument("program")
+    _add_automation_flags(programs_stop)
     programs_cancel = program_actions.add_parser("cancel", help="stop a running setup")
     programs_cancel.add_argument("program")
     _add_automation_flags(programs_cancel)
@@ -977,6 +998,12 @@ def _program_line(row: dict) -> str:
         notes.append("draws no text")
     if row.get("checks", {}).get("model_present") is False:
         notes.append(f"no {row['checks']['model']}")
+    server = (row.get("managed") or {}).get("server")
+    if server:
+        said = server["state"] + (
+            f", {server['reason'].replace('_', ' ')}" if server["reason"] else ""
+        )
+        notes.append(f"LocalCut's copy: {said}")
     setup = row.get("setup") or {}
     job = setup.get("job")
     if job:
@@ -990,14 +1017,14 @@ def _program_line(row: dict) -> str:
 
 def _setup_line(program: str, job: dict) -> str:
     """Where a setup has got to, coarsely enough that a log is not flooded:
-    the phase, and the download in tenths."""
-    if job["phase"] != "downloading" or not job.get("total"):
+    the phase, and a download or a pull in tenths."""
+    if job["phase"] not in ("downloading", "pulling") or not job.get("total"):
         return f"  {program}: {job['phase']}"
     tenth = min(10, int(10 * job["done"] / job["total"]))
     rate = job.get("bytes_per_s")
     speed = f", {rate / 2**20:.1f} MiB/s" if rate else ""
     return (
-        f"  {program}: downloading {_mib(tenth * job['total'] // 10)} "
+        f"  {program}: {job['phase']} {_mib(tenth * job['total'] // 10)} "
         f"of {_mib(job['total'])}{speed}"
     )
 
@@ -1036,12 +1063,40 @@ def _programs_command(args: argparse.Namespace, client) -> int:
         )
         return automation.EXIT_OK
 
-    started = client.post(f"/programs/{args.program}/setup")
-    if started.get("status") == "installed":
-        automation.emit(started, as_json=args.json, lines=[f"{args.program} is set up already"])
-        return automation.EXIT_OK
+    if args.action in ("start", "stop"):
+        # A start answers once the server does, which can take most of a
+        # minute the first time it looks at the GPUs.
+        server = client.post(f"/programs/{args.program}/{args.action}", timeout=120)
+        said = server["state"] + (f" ({server['reason']})" if server.get("reason") else "")
+        line = f"LocalCut's {args.program}: {said}"
+        if server.get("url"):
+            line += f" at {server['url']}"
+        automation.emit(server, as_json=args.json, lines=[line])
+        wanted = "running" if args.action == "start" else "stopped"
+        if server["state"] == wanted:
+            return automation.EXIT_OK
+        if server.get("error") and not args.json:
+            print(f"error: {server['error']}", file=sys.stderr)
+        return automation.EXIT_FAILED
+
+    if args.action == "pull":
+        body = {"model": args.model} if args.model else None
+        started = client.post(f"/programs/{args.program}/pull", json=body)
+        what = started.get("model") or args.model or "the model"
+        if started.get("status") == "present":
+            automation.emit(
+                started, as_json=args.json, lines=[f"{args.program} has {what} already"]
+            )
+            return automation.EXIT_OK
+        doing = f"pulling {what} through {args.program}"
+    else:
+        started = client.post(f"/programs/{args.program}/setup")
+        if started.get("status") == "installed":
+            automation.emit(started, as_json=args.json, lines=[f"{args.program} is set up already"])
+            return automation.EXIT_OK
+        doing = f"setting up {args.program}"
     if args.no_wait:
-        automation.emit(started, as_json=args.json, lines=[f"setting up {args.program}"])
+        automation.emit(started, as_json=args.json, lines=[doing])
         return automation.EXIT_OK
 
     # Polled rather than watched over /ws: the setup reports its job id
@@ -1065,26 +1120,28 @@ def _programs_command(args: argparse.Namespace, client) -> int:
             # Only the wait ends here. The setup is the engine's, and a slow
             # link is the usual reason it is still going.
             raise automation.EngineError(
-                f"stopped waiting after {args.timeout_s:.0f}s; the engine is still setting up "
-                f"{args.program}, and the setup carries on there. `localcut programs list` "
-                f"shows how far it has got, and `localcut programs cancel {args.program}` "
-                "stops it"
+                f"stopped waiting after {args.timeout_s:.0f}s; the engine is still {doing}, "
+                "and it carries on there. `localcut programs list` shows how far it has got, "
+                f"and `localcut programs cancel {args.program}` stops it"
             )
         time.sleep(min(_SETUP_POLL_S, max(0.0, deadline - time.monotonic())))
 
     payload = {"program": args.program, **last, "location": row.get("location")}
     if last["outcome"] == "done":
-        automation.emit(
-            payload, as_json=args.json, lines=[f"{args.program} is set up: {row['location']}"]
+        done = (
+            f"{args.program} has {what}"
+            if args.action == "pull"
+            else f"{args.program} is set up: {row['location']}"
         )
+        automation.emit(payload, as_json=args.json, lines=[done])
         return automation.EXIT_OK
     if args.json:
         automation.emit(payload, as_json=True)
     if last["outcome"] == "cancelled":
-        print(f"error: the setup of {args.program} was cancelled", file=sys.stderr)
+        print(f"error: {doing} was cancelled", file=sys.stderr)
     else:
         print(
-            f"error: setting up {args.program} failed ({last.get('reason')}): {last.get('error')}",
+            f"error: {doing} failed ({last.get('reason')}): {last.get('error')}",
             file=sys.stderr,
         )
     return automation.EXIT_FAILED

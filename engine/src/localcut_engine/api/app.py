@@ -86,7 +86,11 @@ from ..manifest.defaults import (
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate, script_model
+from ..programs import ollama as ollama_program
+from ..programs.server import ManagedServers
 from ..programs.setup import (
+    INSTALLERS,
+    NoServer,
     NotEnoughSpace,
     ProgramInUse,
     ProgramSetup,
@@ -505,15 +509,39 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     downloads = DownloadManager(config, events)
 
     def render_uses(program_id: str) -> bool:
-        """Whether the job rendering now runs this program. Only ffmpeg is run
-        by renders, through every backend that holds one (assembly, the
-        aligner's decode, the voice-clone retime)."""
-        if program_id != "ffmpeg":
-            return False
+        """Whether the job rendering now runs this program: ffmpeg through
+        every backend that holds one (assembly, the aligner's decode, the
+        voice-clone retime), and the LLM server through the script backend."""
         name = scheduler.running_backend()
-        return name is not None and hasattr(backends.find(name), "ffmpeg_bin")
+        if name is None:
+            return False
+        if program_id == "ollama":
+            return name == "llm"
+        return program_id == "ffmpeg" and hasattr(backends.find(name), "ffmpeg_bin")
 
-    programs = ProgramSetup(config, events, render_uses=render_uses)
+    def llm_server_answers() -> None:
+        """LocalCut's Ollama just answered: the script backend's cached
+        verdict about the address is out of date, and the next script must
+        not go to the stand-in for it."""
+        llm = backends.find("llm")
+        if llm is not None and hasattr(llm, "probe"):
+            llm.probe.mark_alive()
+
+    # LocalCut's own copies of the programs that run as servers, started
+    # and stopped with the engine (programs/server.py).
+    servers = ManagedServers(
+        config,
+        events,
+        {program: installer for program, installer in INSTALLERS.items() if installer.serves},
+        on_ready={"ollama": llm_server_answers},
+    )
+    programs = ProgramSetup(
+        config,
+        events,
+        render_uses=render_uses,
+        servers=servers,
+        script_model=functools.partial(script_model, config),
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -553,11 +581,31 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             await asyncio.to_thread(programs.sweep)
         except Exception:  # noqa: BLE001 - startup outranks housekeeping
             logger.exception("could not clear what an interrupted setup left; continuing")
-        scheduler.start()
+        # LocalCut's own servers, where it has a copy and nothing of the
+        # user's answers at the address. They start in the background and
+        # the API answers meanwhile, but the queue waits for them (a minute
+        # at most): a job left queued by the last engine would otherwise run
+        # before LocalCut's Ollama answers, and its script go to the stand-in.
+        events.bind_to_running_loop()
+        held: asyncio.Task | None = None
+        if servers.start_all():
+
+            async def start_when_settled() -> None:
+                await servers.settled()
+                scheduler.start()
+
+            held = asyncio.create_task(start_when_settled(), name="scheduler-after-servers")
+        else:
+            scheduler.start()
         yield
+        if held is not None and not held.done():
+            held.cancel()
         await programs.shutdown()
         await downloads.shutdown()
         await scheduler.stop()
+        # After the scheduler, so a script job winding down still has its
+        # server; with every process the server started.
+        await servers.stop_all()
         queue.close()
 
     app = FastAPI(title="LocalCut Engine", version=__version__, lifespan=lifespan)
@@ -1165,6 +1213,63 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         except SetupNotRunning as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"ok": True}
+
+    @app.post("/programs/{program_id}/start", dependencies=[Authed])
+    async def start_program(program_id: ProgramId) -> dict:
+        """Start LocalCut's copy of a server program and wait until it
+        answers or gives up (a minute at most). Returns the copy's state,
+        which says why when it did not start."""
+        try:
+            return await programs.start_server(program_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except SetupUnavailable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/programs/{program_id}/stop", dependencies=[Authed])
+    async def stop_program(program_id: ProgramId) -> dict:
+        """Stop LocalCut's copy of a server program until it is started
+        again or the engine restarts. Never touches a server of the user's."""
+        try:
+            return await programs.stop_server(program_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except (SetupUnavailable, ProgramInUse) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    class PullBody(BaseModel):
+        # Checked with fullmatch in the route: a pattern here would be read
+        # by pydantic's own regex engine, which disagrees with Python's
+        # about a trailing newline.
+        model: str | None = Field(default=None, max_length=ollama_program.MODEL_NAME_MAX)
+
+    @app.post("/programs/{program_id}/pull", dependencies=[Authed])
+    async def pull_program_model(program_id: ProgramId, body: PullBody | None = None) -> dict:
+        """Pull a model through the server that answers at the program's
+        address, LocalCut's copy or the user's own, and return at once;
+        progress and the outcome arrive over /ws like a setup's. With no
+        model named, the one scripts are written with."""
+        model = body.model if body is not None else None
+        if model is not None and not ollama_program.MODEL_NAME.fullmatch(model):
+            raise HTTPException(status_code=422, detail=f"{model!r} is not a model name")
+        try:
+            return await programs.pull(program_id, model)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no program {program_id!r}") from None
+        except NotEnoughSpace as exc:
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
+        except (SetupUnavailable, SetupBusy, NoServer) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/programs/{program_id}/log", dependencies=[Authed])
+    async def program_log(program_id: ProgramId) -> Response:
+        """The end of what LocalCut's copy of a server printed (its last
+        128 KiB), for a support bundle. Empty when it never ran."""
+        server = servers.get(program_id)
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"{program_id!r} keeps no log")
+        tail = await asyncio.to_thread(server.log_tail)
+        return Response(content=tail, media_type="text/plain; charset=utf-8")
 
     @app.delete("/programs/{program_id}", dependencies=[Authed])
     async def remove_program(program_id: ProgramId) -> dict:

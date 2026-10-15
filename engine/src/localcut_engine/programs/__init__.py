@@ -5,7 +5,9 @@ Three programs make real output: FFmpeg (assembly, and the audio decode
 caption timing reads), an OpenAI-compatible LLM server (Ollama by default)
 and ComfyUI. `status.py` reports each one as this engine finds it, and
 `setup.py` downloads a pinned build of one into a folder of its own, on
-request, while the engine runs. The pins are data (`manifest.py`).
+request, while the engine runs. The pins are data (`manifest.py`). A program
+that runs as a server is run from that folder by `server.py` while the engine
+runs, and `ollama.py` holds what is particular to Ollama.
 
 Everything here crosses the wire as codes plus data, like the readiness
 report: the desktop words each code from its own catalog. The closed sets
@@ -59,8 +61,18 @@ SETUP_UNAVAILABLE = (
     "program_not_supported",
 )
 
-#: What a running setup is doing, in the order it does it.
-SETUP_PHASES = ("downloading", "verifying", "unpacking", "checking", "installing")
+#: What a running setup is doing, in the order it does it. A program that
+#: runs as a server goes on to `starting` it and to `pulling` the model it
+#: serves, and a pull asked for on its own is a job with `pulling` alone.
+SETUP_PHASES = (
+    "downloading",
+    "verifying",
+    "unpacking",
+    "checking",
+    "installing",
+    "starting",
+    "pulling",
+)
 
 #: How a setup ended.
 SETUP_OUTCOMES = ("done", "failed", "cancelled")
@@ -88,4 +100,37 @@ SETUP_FAILURES = (
     "in_use",
     # Moving the program into place failed for another reason.
     "install_failed",
+    # LocalCut's copy of a server was set up and did not start.
+    "did_not_start",
+    # The server would not pull the model, or stopped partway.
+    "pull_failed",
+)
+
+#: What LocalCut's own copy of a server is doing (server.py).
+SERVER_STATES = (
+    # Not running, and not meant to be: never started, stopped on request,
+    # or left alone because another server answers at its address.
+    "stopped",
+    # Started, and not answering yet.
+    "starting",
+    "running",
+    # Gave up on it: it would not start, kept stopping, or found its address
+    # taken. `reason` says which.
+    "crashed",
+)
+
+#: Why LocalCut's copy of a server is stopped or crashed.
+SERVER_REASONS = (
+    # The user's own server answers at the address, so LocalCut uses that.
+    "own_server",
+    # Stopped through the API.
+    "stopped",
+    # Something that is not this program holds the address.
+    "port_in_use",
+    # The system would not run it.
+    "cannot_start",
+    # It ran and did not answer in time.
+    "no_answer",
+    # It stopped by itself, again after every restart allowed.
+    "exited",
 )

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-10-02",
+  "updated": "2026-10-15",
   "programs": [
     {
       "id": "ffmpeg",
@@ -42,6 +42,768 @@
               "member": "ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1/bin/ffmpeg",
               "path": "ffmpeg",
               "size": 142096680
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "version": "0.40.4",
+      "license": "MIT",
+      "assets": [
+        {
+          "platform": "windows-x64",
+          "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-windows-amd64.zip",
+          "size": 1469916992,
+          "sha256": "7485a1172f8527db4342a63521b9342fc466185ff0855da378cc864ecf6354cf",
+          "format": "zip",
+          "files": [
+            {
+              "member": "lib/ollama/CPP_HTTPLIB_LICENSE",
+              "path": "lib/ollama/CPP_HTTPLIB_LICENSE",
+              "size": 1097
+            },
+            {
+              "member": "lib/ollama/CUDNN_LICENSE.txt",
+              "path": "lib/ollama/CUDNN_LICENSE.txt",
+              "size": 1169
+            },
+            {
+              "member": "lib/ollama/CUTLASS_LICENSE.txt",
+              "path": "lib/ollama/CUTLASS_LICENSE.txt",
+              "size": 1888
+            },
+            {
+              "member": "lib/ollama/DLFCN_WIN32_COPYING",
+              "path": "lib/ollama/DLFCN_WIN32_COPYING",
+              "size": 1040
+            },
+            {
+              "member": "lib/ollama/DLPACK_LICENSE",
+              "path": "lib/ollama/DLPACK_LICENSE",
+              "size": 11546
+            },
+            {
+              "member": "lib/ollama/FMT_LICENSE",
+              "path": "lib/ollama/FMT_LICENSE",
+              "size": 1458
+            },
+            {
+              "member": "lib/ollama/GO_LICENSE",
+              "path": "lib/ollama/GO_LICENSE",
+              "size": 166573
+            },
+            {
+              "member": "lib/ollama/JSON_LICENSE.MIT",
+              "path": "lib/ollama/JSON_LICENSE.MIT",
+              "size": 1076
+            },
+            {
+              "member": "lib/ollama/LLAMA_CPP_LICENSE",
+              "path": "lib/ollama/LLAMA_CPP_LICENSE",
+              "size": 1099
+            },
+            {
+              "member": "lib/ollama/LLAMA_CPP_VENDORS_LICENSE",
+              "path": "lib/ollama/LLAMA_CPP_VENDORS_LICENSE",
+              "size": 7424
+            },
+            {
+              "member": "lib/ollama/MLX_C_LICENSE",
+              "path": "lib/ollama/MLX_C_LICENSE",
+              "size": 1088
+            },
+            {
+              "member": "lib/ollama/MLX_LICENSE",
+              "path": "lib/ollama/MLX_LICENSE",
+              "size": 1087
+            },
+            {
+              "member": "lib/ollama/NVTX3_LICENSE.txt",
+              "path": "lib/ollama/NVTX3_LICENSE.txt",
+              "size": 12706
+            },
+            {
+              "member": "lib/ollama/PICOJSON_LICENSE",
+              "path": "lib/ollama/PICOJSON_LICENSE",
+              "size": 1441
+            },
+            {
+              "member": "lib/ollama/XGRAMMAR_LICENSE",
+              "path": "lib/ollama/XGRAMMAR_LICENSE",
+              "size": 11558
+            },
+            {
+              "member": "lib/ollama/XGRAMMAR_NOTICE",
+              "path": "lib/ollama/XGRAMMAR_NOTICE",
+              "size": 57
+            },
+            {
+              "member": "lib/ollama/cuda_v12/concrt140.dll",
+              "path": "lib/ollama/cuda_v12/concrt140.dll",
+              "size": 311688
+            },
+            {
+              "member": "lib/ollama/cuda_v12/cublas64_12.dll",
+              "path": "lib/ollama/cuda_v12/cublas64_12.dll",
+              "size": 113720712
+            },
+            {
+              "member": "lib/ollama/cuda_v12/cublasLt64_12.dll",
+              "path": "lib/ollama/cuda_v12/cublasLt64_12.dll",
+              "size": 692449672
+            },
+            {
+              "member": "lib/ollama/cuda_v12/cudart64_12.dll",
+              "path": "lib/ollama/cuda_v12/cudart64_12.dll",
+              "size": 582024
+            },
+            {
+              "member": "lib/ollama/cuda_v12/ggml-cuda.dll",
+              "path": "lib/ollama/cuda_v12/ggml-cuda.dll",
+              "size": 355499912
+            },
+            {
+              "member": "lib/ollama/cuda_v12/msvcp140.dll",
+              "path": "lib/ollama/cuda_v12/msvcp140.dll",
+              "size": 545160
+            },
+            {
+              "member": "lib/ollama/cuda_v12/msvcp140_1.dll",
+              "path": "lib/ollama/cuda_v12/msvcp140_1.dll",
+              "size": 23432
+            },
+            {
+              "member": "lib/ollama/cuda_v12/msvcp140_2.dll",
+              "path": "lib/ollama/cuda_v12/msvcp140_2.dll",
+              "size": 267656
+            },
+            {
+              "member": "lib/ollama/cuda_v12/msvcp140_atomic_wait.dll",
+              "path": "lib/ollama/cuda_v12/msvcp140_atomic_wait.dll",
+              "size": 37768
+            },
+            {
+              "member": "lib/ollama/cuda_v12/msvcp140_codecvt_ids.dll",
+              "path": "lib/ollama/cuda_v12/msvcp140_codecvt_ids.dll",
+              "size": 19336
+            },
+            {
+              "member": "lib/ollama/cuda_v12/vccorlib140.dll",
+              "path": "lib/ollama/cuda_v12/vccorlib140.dll",
+              "size": 339848
+            },
+            {
+              "member": "lib/ollama/cuda_v12/vcruntime140.dll",
+              "path": "lib/ollama/cuda_v12/vcruntime140.dll",
+              "size": 112008
+            },
+            {
+              "member": "lib/ollama/cuda_v12/vcruntime140_1.dll",
+              "path": "lib/ollama/cuda_v12/vcruntime140_1.dll",
+              "size": 37256
+            },
+            {
+              "member": "lib/ollama/cuda_v12/vcruntime140_threads.dll",
+              "path": "lib/ollama/cuda_v12/vcruntime140_threads.dll",
+              "size": 25992
+            },
+            {
+              "member": "lib/ollama/cuda_v13/concrt140.dll",
+              "path": "lib/ollama/cuda_v13/concrt140.dll",
+              "size": 311688
+            },
+            {
+              "member": "lib/ollama/cuda_v13/cublas64_13.dll",
+              "path": "lib/ollama/cuda_v13/cublas64_13.dll",
+              "size": 50285960
+            },
+            {
+              "member": "lib/ollama/cuda_v13/cublasLt64_13.dll",
+              "path": "lib/ollama/cuda_v13/cublasLt64_13.dll",
+              "size": 477894536
+            },
+            {
+              "member": "lib/ollama/cuda_v13/ggml-cuda.dll",
+              "path": "lib/ollama/cuda_v13/ggml-cuda.dll",
+              "size": 134842248
+            },
+            {
+              "member": "lib/ollama/cuda_v13/msvcp140.dll",
+              "path": "lib/ollama/cuda_v13/msvcp140.dll",
+              "size": 545160
+            },
+            {
+              "member": "lib/ollama/cuda_v13/msvcp140_1.dll",
+              "path": "lib/ollama/cuda_v13/msvcp140_1.dll",
+              "size": 23432
+            },
+            {
+              "member": "lib/ollama/cuda_v13/msvcp140_2.dll",
+              "path": "lib/ollama/cuda_v13/msvcp140_2.dll",
+              "size": 267656
+            },
+            {
+              "member": "lib/ollama/cuda_v13/msvcp140_atomic_wait.dll",
+              "path": "lib/ollama/cuda_v13/msvcp140_atomic_wait.dll",
+              "size": 37768
+            },
+            {
+              "member": "lib/ollama/cuda_v13/msvcp140_codecvt_ids.dll",
+              "path": "lib/ollama/cuda_v13/msvcp140_codecvt_ids.dll",
+              "size": 19336
+            },
+            {
+              "member": "lib/ollama/cuda_v13/vccorlib140.dll",
+              "path": "lib/ollama/cuda_v13/vccorlib140.dll",
+              "size": 339848
+            },
+            {
+              "member": "lib/ollama/cuda_v13/vcruntime140.dll",
+              "path": "lib/ollama/cuda_v13/vcruntime140.dll",
+              "size": 112008
+            },
+            {
+              "member": "lib/ollama/cuda_v13/vcruntime140_1.dll",
+              "path": "lib/ollama/cuda_v13/vcruntime140_1.dll",
+              "size": 37256
+            },
+            {
+              "member": "lib/ollama/cuda_v13/vcruntime140_threads.dll",
+              "path": "lib/ollama/cuda_v13/vcruntime140_threads.dll",
+              "size": 25992
+            },
+            {
+              "member": "lib/ollama/ggml-base.dll",
+              "path": "lib/ollama/ggml-base.dll",
+              "size": 848776
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-alderlake.dll",
+              "path": "lib/ollama/ggml-cpu-alderlake.dll",
+              "size": 1776520
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-cannonlake.dll",
+              "path": "lib/ollama/ggml-cpu-cannonlake.dll",
+              "size": 2059144
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-cascadelake.dll",
+              "path": "lib/ollama/ggml-cpu-cascadelake.dll",
+              "size": 2041224
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-cooperlake.dll",
+              "path": "lib/ollama/ggml-cpu-cooperlake.dll",
+              "size": 2039176
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-haswell.dll",
+              "path": "lib/ollama/ggml-cpu-haswell.dll",
+              "size": 1784200
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-icelake.dll",
+              "path": "lib/ollama/ggml-cpu-icelake.dll",
+              "size": 2048904
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-ivybridge.dll",
+              "path": "lib/ollama/ggml-cpu-ivybridge.dll",
+              "size": 1658760
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-piledriver.dll",
+              "path": "lib/ollama/ggml-cpu-piledriver.dll",
+              "size": 1664392
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-sandybridge.dll",
+              "path": "lib/ollama/ggml-cpu-sandybridge.dll",
+              "size": 1633160
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-sapphirerapids.dll",
+              "path": "lib/ollama/ggml-cpu-sapphirerapids.dll",
+              "size": 2340744
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-skylakex.dll",
+              "path": "lib/ollama/ggml-cpu-skylakex.dll",
+              "size": 2051464
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-sse42.dll",
+              "path": "lib/ollama/ggml-cpu-sse42.dll",
+              "size": 1257352
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-x64.dll",
+              "path": "lib/ollama/ggml-cpu-x64.dll",
+              "size": 1245064
+            },
+            {
+              "member": "lib/ollama/ggml-cpu-zen4.dll",
+              "path": "lib/ollama/ggml-cpu-zen4.dll",
+              "size": 2046856
+            },
+            {
+              "member": "lib/ollama/ggml.dll",
+              "path": "lib/ollama/ggml.dll",
+              "size": 52104
+            },
+            {
+              "member": "lib/ollama/libc++.dll",
+              "path": "lib/ollama/libc++.dll",
+              "size": 1767816
+            },
+            {
+              "member": "lib/ollama/libllama-common.dll",
+              "path": "lib/ollama/libllama-common.dll",
+              "size": 4264328
+            },
+            {
+              "member": "lib/ollama/libllama-quantize-impl.dll",
+              "path": "lib/ollama/libllama-quantize-impl.dll",
+              "size": 83848
+            },
+            {
+              "member": "lib/ollama/libllama-server-impl.dll",
+              "path": "lib/ollama/libllama-server-impl.dll",
+              "size": 2715528
+            },
+            {
+              "member": "lib/ollama/libllama.dll",
+              "path": "lib/ollama/libllama.dll",
+              "size": 3673480
+            },
+            {
+              "member": "lib/ollama/libmtmd.dll",
+              "path": "lib/ollama/libmtmd.dll",
+              "size": 1443720
+            },
+            {
+              "member": "lib/ollama/libomp.dll",
+              "path": "lib/ollama/libomp.dll",
+              "size": 965000
+            },
+            {
+              "member": "lib/ollama/libunwind.dll",
+              "path": "lib/ollama/libunwind.dll",
+              "size": 107912
+            },
+            {
+              "member": "lib/ollama/libwinpthread-1.dll",
+              "path": "lib/ollama/libwinpthread-1.dll",
+              "size": 390024
+            },
+            {
+              "member": "lib/ollama/llama-quantize.exe",
+              "path": "lib/ollama/llama-quantize.exe",
+              "size": 22920
+            },
+            {
+              "member": "lib/ollama/llama-server.exe",
+              "path": "lib/ollama/llama-server.exe",
+              "size": 22920
+            },
+            {
+              "member": "lib/ollama/vulkan/concrt140.dll",
+              "path": "lib/ollama/vulkan/concrt140.dll",
+              "size": 311688
+            },
+            {
+              "member": "lib/ollama/vulkan/ggml-vulkan.dll",
+              "path": "lib/ollama/vulkan/ggml-vulkan.dll",
+              "size": 43689864
+            },
+            {
+              "member": "lib/ollama/vulkan/msvcp140.dll",
+              "path": "lib/ollama/vulkan/msvcp140.dll",
+              "size": 545160
+            },
+            {
+              "member": "lib/ollama/vulkan/msvcp140_1.dll",
+              "path": "lib/ollama/vulkan/msvcp140_1.dll",
+              "size": 23432
+            },
+            {
+              "member": "lib/ollama/vulkan/msvcp140_2.dll",
+              "path": "lib/ollama/vulkan/msvcp140_2.dll",
+              "size": 267656
+            },
+            {
+              "member": "lib/ollama/vulkan/msvcp140_atomic_wait.dll",
+              "path": "lib/ollama/vulkan/msvcp140_atomic_wait.dll",
+              "size": 37768
+            },
+            {
+              "member": "lib/ollama/vulkan/msvcp140_codecvt_ids.dll",
+              "path": "lib/ollama/vulkan/msvcp140_codecvt_ids.dll",
+              "size": 19336
+            },
+            {
+              "member": "lib/ollama/vulkan/vccorlib140.dll",
+              "path": "lib/ollama/vulkan/vccorlib140.dll",
+              "size": 339848
+            },
+            {
+              "member": "lib/ollama/vulkan/vcruntime140.dll",
+              "path": "lib/ollama/vulkan/vcruntime140.dll",
+              "size": 112008
+            },
+            {
+              "member": "lib/ollama/vulkan/vcruntime140_1.dll",
+              "path": "lib/ollama/vulkan/vcruntime140_1.dll",
+              "size": 37256
+            },
+            {
+              "member": "lib/ollama/vulkan/vcruntime140_threads.dll",
+              "path": "lib/ollama/vulkan/vcruntime140_threads.dll",
+              "size": 25992
+            },
+            {
+              "member": "ollama.exe",
+              "path": "ollama.exe",
+              "size": 27891080
+            }
+          ]
+        },
+        {
+          "platform": "linux-x64",
+          "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-linux-amd64.tar.zst",
+          "size": 1436408810,
+          "sha256": "15f31e9576d15a481e099b4145dba6e9f8c1f295927d6b8895300ae30ed3740a",
+          "format": "tar.zst",
+          "files": [
+            {
+              "member": "bin/ollama",
+              "path": "bin/ollama",
+              "size": 29909872
+            },
+            {
+              "member": "lib/ollama/CPP_HTTPLIB_LICENSE",
+              "path": "lib/ollama/CPP_HTTPLIB_LICENSE",
+              "size": 1075
+            },
+            {
+              "member": "lib/ollama/DLPACK_LICENSE",
+              "path": "lib/ollama/DLPACK_LICENSE",
+              "size": 11345
+            },
+            {
+              "member": "lib/ollama/FMT_LICENSE",
+              "path": "lib/ollama/FMT_LICENSE",
+              "size": 1431
+            },
+            {
+              "member": "lib/ollama/GO_LICENSE",
+              "path": "lib/ollama/GO_LICENSE",
+              "size": 122002
+            },
+            {
+              "member": "lib/ollama/LLAMA_CPP_LICENSE",
+              "path": "lib/ollama/LLAMA_CPP_LICENSE",
+              "size": 1078
+            },
+            {
+              "member": "lib/ollama/LLAMA_CPP_VENDORS_LICENSE",
+              "path": "lib/ollama/LLAMA_CPP_VENDORS_LICENSE",
+              "size": 7257
+            },
+            {
+              "member": "lib/ollama/MLX_C_LICENSE",
+              "path": "lib/ollama/MLX_C_LICENSE",
+              "size": 1067
+            },
+            {
+              "member": "lib/ollama/MLX_LICENSE",
+              "path": "lib/ollama/MLX_LICENSE",
+              "size": 1066
+            },
+            {
+              "member": "lib/ollama/PICOJSON_LICENSE",
+              "path": "lib/ollama/PICOJSON_LICENSE",
+              "size": 1414
+            },
+            {
+              "member": "lib/ollama/XGRAMMAR_LICENSE",
+              "path": "lib/ollama/XGRAMMAR_LICENSE",
+              "size": 11357
+            },
+            {
+              "member": "lib/ollama/XGRAMMAR_NOTICE",
+              "path": "lib/ollama/XGRAMMAR_NOTICE",
+              "size": 54
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcublas.so.12",
+              "path": "lib/ollama/cuda_v12/libcublas.so.12",
+              "size": 0,
+              "link": "libcublas.so.12.8.5.5"
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcublas.so.12.8.5.5",
+              "path": "lib/ollama/cuda_v12/libcublas.so.12.8.5.5",
+              "size": 116388640
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcublasLt.so.12",
+              "path": "lib/ollama/cuda_v12/libcublasLt.so.12",
+              "size": 0,
+              "link": "libcublasLt.so.12.8.5.5"
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcublasLt.so.12.8.5.5",
+              "path": "lib/ollama/cuda_v12/libcublasLt.so.12.8.5.5",
+              "size": 751775824
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcudart.so.12",
+              "path": "lib/ollama/cuda_v12/libcudart.so.12",
+              "size": 0,
+              "link": "libcudart.so.12.8.90"
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libcudart.so.12.8.90",
+              "path": "lib/ollama/cuda_v12/libcudart.so.12.8.90",
+              "size": 728800
+            },
+            {
+              "member": "lib/ollama/cuda_v12/libggml-cuda.so",
+              "path": "lib/ollama/cuda_v12/libggml-cuda.so",
+              "size": 423416056
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcublas.so.13",
+              "path": "lib/ollama/cuda_v13/libcublas.so.13",
+              "size": 0,
+              "link": "libcublas.so.13.1.1.3"
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcublas.so.13.1.1.3",
+              "path": "lib/ollama/cuda_v13/libcublas.so.13.1.1.3",
+              "size": 54177976
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcublasLt.so.13",
+              "path": "lib/ollama/cuda_v13/libcublasLt.so.13",
+              "size": 0,
+              "link": "libcublasLt.so.13.1.1.3"
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcublasLt.so.13.1.1.3",
+              "path": "lib/ollama/cuda_v13/libcublasLt.so.13.1.1.3",
+              "size": 541607888
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcudart.so.13",
+              "path": "lib/ollama/cuda_v13/libcudart.so.13",
+              "size": 0,
+              "link": "libcudart.so.13.0.96"
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libcudart.so.13.0.96",
+              "path": "lib/ollama/cuda_v13/libcudart.so.13.0.96",
+              "size": 704288
+            },
+            {
+              "member": "lib/ollama/cuda_v13/libggml-cuda.so",
+              "path": "lib/ollama/cuda_v13/libggml-cuda.so",
+              "size": 258293912
+            },
+            {
+              "member": "lib/ollama/libggml-base.so",
+              "path": "lib/ollama/libggml-base.so",
+              "size": 0,
+              "link": "libggml-base.so.0"
+            },
+            {
+              "member": "lib/ollama/libggml-base.so.0",
+              "path": "lib/ollama/libggml-base.so.0",
+              "size": 0,
+              "link": "libggml-base.so.0.26.0"
+            },
+            {
+              "member": "lib/ollama/libggml-base.so.0.26.0",
+              "path": "lib/ollama/libggml-base.so.0.26.0",
+              "size": 834288
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-alderlake.so",
+              "path": "lib/ollama/libggml-cpu-alderlake.so",
+              "size": 1304840
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-cannonlake.so",
+              "path": "lib/ollama/libggml-cpu-cannonlake.so",
+              "size": 1554696
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-cascadelake.so",
+              "path": "lib/ollama/libggml-cpu-cascadelake.so",
+              "size": 1562888
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-cooperlake.so",
+              "path": "lib/ollama/libggml-cpu-cooperlake.so",
+              "size": 1562888
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-haswell.so",
+              "path": "lib/ollama/libggml-cpu-haswell.so",
+              "size": 1304840
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-icelake.so",
+              "path": "lib/ollama/libggml-cpu-icelake.so",
+              "size": 1562888
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-ivybridge.so",
+              "path": "lib/ollama/libggml-cpu-ivybridge.so",
+              "size": 1227112
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-piledriver.so",
+              "path": "lib/ollama/libggml-cpu-piledriver.so",
+              "size": 1223016
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-sandybridge.so",
+              "path": "lib/ollama/libggml-cpu-sandybridge.so",
+              "size": 1210728
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-sapphirerapids.so",
+              "path": "lib/ollama/libggml-cpu-sapphirerapids.so",
+              "size": 1808960
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-skylakex.so",
+              "path": "lib/ollama/libggml-cpu-skylakex.so",
+              "size": 1554696
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-sse42.so",
+              "path": "lib/ollama/libggml-cpu-sse42.so",
+              "size": 903560
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-x64.so",
+              "path": "lib/ollama/libggml-cpu-x64.so",
+              "size": 899496
+            },
+            {
+              "member": "lib/ollama/libggml-cpu-zen4.so",
+              "path": "lib/ollama/libggml-cpu-zen4.so",
+              "size": 1562888
+            },
+            {
+              "member": "lib/ollama/libggml.so",
+              "path": "lib/ollama/libggml.so",
+              "size": 0,
+              "link": "libggml.so.0"
+            },
+            {
+              "member": "lib/ollama/libggml.so.0",
+              "path": "lib/ollama/libggml.so.0",
+              "size": 0,
+              "link": "libggml.so.0.26.0"
+            },
+            {
+              "member": "lib/ollama/libggml.so.0.26.0",
+              "path": "lib/ollama/libggml.so.0.26.0",
+              "size": 220840
+            },
+            {
+              "member": "lib/ollama/libgomp.so.1",
+              "path": "lib/ollama/libgomp.so.1",
+              "size": 0,
+              "link": "libgomp.so.1.0.0"
+            },
+            {
+              "member": "lib/ollama/libgomp.so.1.0.0",
+              "path": "lib/ollama/libgomp.so.1.0.0",
+              "size": 235072
+            },
+            {
+              "member": "lib/ollama/libllama-common.so",
+              "path": "lib/ollama/libllama-common.so",
+              "size": 0,
+              "link": "libllama-common.so.0"
+            },
+            {
+              "member": "lib/ollama/libllama-common.so.0",
+              "path": "lib/ollama/libllama-common.so.0",
+              "size": 0,
+              "link": "libllama-common.so.0.6.0"
+            },
+            {
+              "member": "lib/ollama/libllama-common.so.0.6.0",
+              "path": "lib/ollama/libllama-common.so.0.6.0",
+              "size": 4622096
+            },
+            {
+              "member": "lib/ollama/libllama-quantize-impl.so",
+              "path": "lib/ollama/libllama-quantize-impl.so",
+              "size": 72560
+            },
+            {
+              "member": "lib/ollama/libllama-server-impl.so",
+              "path": "lib/ollama/libllama-server-impl.so",
+              "size": 3021488
+            },
+            {
+              "member": "lib/ollama/libllama.so",
+              "path": "lib/ollama/libllama.so",
+              "size": 0,
+              "link": "libllama.so.0"
+            },
+            {
+              "member": "lib/ollama/libllama.so.0",
+              "path": "lib/ollama/libllama.so.0",
+              "size": 0,
+              "link": "libllama.so.0.6.0"
+            },
+            {
+              "member": "lib/ollama/libllama.so.0.6.0",
+              "path": "lib/ollama/libllama.so.0.6.0",
+              "size": 4247664
+            },
+            {
+              "member": "lib/ollama/libmtmd.so",
+              "path": "lib/ollama/libmtmd.so",
+              "size": 0,
+              "link": "libmtmd.so.0"
+            },
+            {
+              "member": "lib/ollama/libmtmd.so.0",
+              "path": "lib/ollama/libmtmd.so.0",
+              "size": 0,
+              "link": "libmtmd.so.0.6.0"
+            },
+            {
+              "member": "lib/ollama/libmtmd.so.0.6.0",
+              "path": "lib/ollama/libmtmd.so.0.6.0",
+              "size": 1712048
+            },
+            {
+              "member": "lib/ollama/llama-quantize",
+              "path": "lib/ollama/llama-quantize",
+              "size": 15096
+            },
+            {
+              "member": "lib/ollama/llama-server",
+              "path": "lib/ollama/llama-server",
+              "size": 15096
+            },
+            {
+              "member": "lib/ollama/vulkan/libggml-vulkan.so",
+              "path": "lib/ollama/vulkan/libggml-vulkan.so",
+              "size": 43966216
             }
           ]
         }

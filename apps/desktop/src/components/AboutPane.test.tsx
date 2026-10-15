@@ -295,6 +295,27 @@ describe("support", () => {
     );
   });
 
+  it("adds what LocalCut's own Ollama printed, which only the engine can read", async () => {
+    const programLog = vi.fn(async () => "Listening on 127.0.0.1:11434\n");
+    await mount({
+      client: { baseUrl: "http://127.0.0.1:7830", programLog },
+      programs: {
+        programs: [
+          { id: "ffmpeg", managed: null },
+          { id: "ollama", managed: { server: { state: "running" } } },
+        ],
+      },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByText(t("settings.about.exportBundle")));
+    });
+    expect(programLog).toHaveBeenCalledWith("ollama");
+    expect(programLog).toHaveBeenCalledTimes(1);
+    expect(bridge.exportSupportBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ programLogs: { ollama: "Listening on 127.0.0.1:11434\n" } }),
+    );
+  });
+
   it("says nothing at all when the save was cancelled", async () => {
     // Cancelling is a decision, not a failure — neither a path nor an error.
     stubBridge({ exportSupportBundle: vi.fn(async () => ({ path: null, error: null })) });

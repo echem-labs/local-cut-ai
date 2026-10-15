@@ -196,10 +196,12 @@ def test_the_desktop_asks_the_engine_to_stop_the_way_the_engine_answers(tmp_path
     status turns every ask into a refusal and every quit back into a kill the
     next start may count as a crash. A grace shorter than the engine's own
     stop kills it partway through every quit during a render, before it
-    requeues the render or stops what the lifespan runs."""
+    requeues the render or stops what the lifespan runs, LocalCut's Ollama
+    among them."""
     from localcut_engine.api.app import SHUTDOWN_DRAIN_S, create_app
     from localcut_engine.config import EngineConfig
     from localcut_engine.jobs.scheduler import CANCEL_GRACE_S, SHUTDOWN_GRACE_S
+    from localcut_engine.programs.server import STOP_GRACE_S as SERVER_STOP_GRACE_S
 
     source = _ts_source(_ENGINE_TS)
     assert re.search(r"fetch\(`\$\{connection\.url\}/shutdown`", source), (
@@ -217,7 +219,9 @@ def test_the_desktop_asks_the_engine_to_stop_the_way_the_engine_answers(tmp_path
     match = re.search(r"export const STOP_GRACE_MS = ([\d_]+);", source)
     assert match, "engine.ts no longer declares STOP_GRACE_MS"
     grace_ms = int(match.group(1).replace("_", ""))
-    engine_ms = (SHUTDOWN_DRAIN_S + SHUTDOWN_GRACE_S + CANCEL_GRACE_S) * 1000
+    # The managed servers (LocalCut's Ollama) stop after the scheduler, in
+    # the same lifespan exit, so their grace adds to the rest.
+    engine_ms = (SHUTDOWN_DRAIN_S + SHUTDOWN_GRACE_S + CANCEL_GRACE_S + SERVER_STOP_GRACE_S) * 1000
     assert grace_ms >= engine_ms, (
         f"the desktop kills after {grace_ms} ms but the engine's own stop can take {engine_ms} ms"
     )
@@ -351,6 +355,8 @@ def test_program_vocabulary_matches_the_desktop():
         PROGRAM_PROBLEMS,
         PROGRAM_SOURCES,
         PROGRAM_STATES,
+        SERVER_REASONS,
+        SERVER_STATES,
         SETUP_FAILURES,
         SETUP_OUTCOMES,
         SETUP_PHASES,
@@ -377,6 +383,10 @@ def test_program_vocabulary_matches_the_desktop():
         ("SetupFailure", "failures", SETUP_FAILURES),
         # A failure is said twice: what happened, then what to do about it.
         ("SetupFailure", "advice", SETUP_FAILURES),
+        # LocalCut's copy of a server: its state as a word, and why it is
+        # stopped or crashed as a sentence.
+        ("ServerState", "serverStates", SERVER_STATES),
+        ("ServerReason", "serverReasons", SERVER_REASONS),
     )
     for declaration, section, engine in pairs:
         assert union(declaration) == set(engine), (

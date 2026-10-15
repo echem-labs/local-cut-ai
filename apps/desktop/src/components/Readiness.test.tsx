@@ -761,3 +761,40 @@ describe("a cloned narration that cannot load", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+const scriptModelPullable: ReadinessRow = {
+  ...scriptModelMissing,
+  model: "qwen3:8b",
+  data: { task: "text.llm", model: "qwen3:8b" },
+  fix: { type: "pull_model", program: "ollama", model: "qwen3:8b", size_bytes: 5 * 2 ** 30 },
+};
+
+/**
+ * A model to pull. An Ollama that runs without the script model gets it
+ * where the gap is shown, the way a missing program is set up there, and
+ * Programs is where both lead.
+ */
+describe("a model to pull", () => {
+  it("pulls it from the banner's header when it is the only fix", async () => {
+    const pullModel = vi.fn(async () => null);
+    seed([scriptModelPullable], { pullModel, programs: null });
+    render(<ReadinessBanner />);
+    await userEvent.click(screen.getByRole("button", { name: "Get qwen3:8b 5.0 GB" }));
+    expect(pullModel).toHaveBeenCalledWith("ollama", "qwen3:8b");
+  });
+
+  it("pulls it from the gate's fixes, and routes the footer to Programs", async () => {
+    const pullModel = vi.fn(async () => null);
+    const openSettings = vi.fn();
+    seed([scriptModelPullable], { pullModel, openSettings, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Get qwen3:8b" }));
+    expect(pullModel).toHaveBeenCalledWith("ollama", "qwen3:8b");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupPrograms") }),
+    );
+    expect(openSettings).toHaveBeenCalledWith("programs");
+  });
+});

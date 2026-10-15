@@ -99,6 +99,15 @@ class ServiceProbe:
         with self._lock:
             return self._alive
 
+    def mark_alive(self) -> None:
+        """Record that the server answers now, from someone who just saw it
+        answer (the engine starting its own copy). Without it the verdict
+        from before the start stands for up to `ttl_s`, and a script asked
+        for in that window goes to the stand-in."""
+        with self._lock:
+            self._alive = True
+            self._checked_at = time.monotonic()
+
 
 class OOMError(GenerationError):
     """VRAM exhaustion — triggers the fallback ladder."""

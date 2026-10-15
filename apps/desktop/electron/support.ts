@@ -55,6 +55,34 @@ export function bundleEntries({ versions, system, logs }: BundleInput): ZipEntry
 
 const json = (value: unknown): Buffer => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
 
+/** The most of one program's log a bundle carries. The engine serves the
+ * last 128 KiB of it; this holds the renderer to the same. */
+export const PROGRAM_LOG_LIMIT = 128 * 1024;
+
+/**
+ * What LocalCut's own copy of a server printed (Ollama's log), which only
+ * the engine can read and the renderer fetched over HTTP, as bundle log
+ * entries named `engine-<program>.log`.
+ *
+ * Shaped here rather than trusted: the map comes from the renderer, so a key
+ * that is not a plain program id, a value that is not text, or more than a
+ * handful of entries is dropped, and each log is cut to its last
+ * PROGRAM_LOG_LIMIT bytes, the end being where a crash explains itself.
+ */
+export function programLogEntries(value: unknown): ZipEntry[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const entries: ZipEntry[] = [];
+  for (const [id, text] of Object.entries(value).slice(0, 8)) {
+    if (!/^[a-z]{1,32}$/.test(id) || typeof text !== "string" || text.length === 0) continue;
+    const data = Buffer.from(text, "utf8");
+    entries.push({
+      name: `engine-${id}.log`,
+      data: data.length > PROGRAM_LOG_LIMIT ? data.subarray(data.length - PROGRAM_LOG_LIMIT) : data,
+    });
+  }
+  return entries;
+}
+
 /**
  * General purpose bit 11: "the name in this header is UTF-8".
  *

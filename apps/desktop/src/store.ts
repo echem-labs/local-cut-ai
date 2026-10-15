@@ -10,6 +10,7 @@ import { modelThatFailed, nextResolutionScale, smallerModelFor } from "./lib/oom
 import { blockingGaps, readinessFingerprint } from "./lib/readiness";
 import { formatSize } from "./lib/size";
 import { usePlayback } from "./lib/playback";
+import { setupOffer, setupSize } from "./lib/programs";
 import {
   loadTemplates,
   refuseReason,
@@ -130,6 +131,9 @@ declare global {
       exportSupportBundle: (report: {
         versions: unknown;
         system: unknown;
+        /** What LocalCut's own servers printed, by program, from GET
+         * /programs/:id/log. Left out when there is none. */
+        programLogs?: Record<string, string>;
       }) => Promise<{ path: string | null; error: string | null }>;
       checkForUpdates: () => Promise<UpdateCheckResult>;
       /** False when the shell has no release feed (see resolveUpdateFeed in
@@ -580,16 +584,26 @@ interface AppState {
    * else is why not. The outcome arrives later, over /ws. */
   setupProgram: (programId: ProgramId) => Promise<string | null>;
   cancelProgramSetup: (programId: ProgramId) => Promise<string | null>;
+  /** Pull a model through the program's server, the user's own or
+   * LocalCut's: by default the one scripts are written with. It reports
+   * like a setup, as the row's job. `null` means it started, or the server
+   * had it already. */
+  pullModel: (programId: ProgramId, model?: string) => Promise<string | null>;
+  /** Start or stop LocalCut's own copy of a server program. `null` means
+   * it is running (or stopped) now; anything else is why not. */
+  startProgram: (programId: ProgramId) => Promise<string | null>;
+  stopProgram: (programId: ProgramId) => Promise<string | null>;
   /** Remove LocalCut's own copy. Never touches an install of the user's. */
   removeProgram: (programId: ProgramId) => Promise<string | null>;
   /** Programs waiting their turn behind a running setup, in the order they
    * will start. Empty unless "Set up all" queued them. */
   programQueue: ProgramId[];
   /** Set up several programs one at a time, smallest download first, so the
-   * quick one is ready while the big ones still download. Runs here rather
-   * than in a screen, so it carries on when the screen that started it is
-   * left. Resolves once the last one has ended; `null` means none was
-   * refused. */
+   * quick one is ready while the big ones still download. Each gets what
+   * its well offers: a setup, a pull of the model a running Ollama lacks,
+   * or a start of LocalCut's stopped copy. Runs here rather than in a
+   * screen, so it carries on when the screen that started it is left.
+   * Resolves once the last one has ended; `null` means none was refused. */
   setupPrograms: (programIds: ProgramId[]) => Promise<string | null>;
   /** Decode a pairing code for review — nothing is sent, nothing is stored. */
   inspectPairing: (code: string) => Promise<PairingPreview>;
@@ -1081,6 +1095,38 @@ export const useApp = create<AppState>((set, get) => {
     set({ readinessEpoch: get().readinessEpoch + 1 });
   };
 
+  // The bar appears with the click rather than with the first progress
+  // event, half a second later. The events move it on, and one that beat
+  // the answer here has already: it keeps its bytes and gains the job's id.
+  const showJob = (
+    programId: ProgramId,
+    jobId: string,
+    phase: "downloading" | "pulling",
+    total: number,
+  ) => {
+    const report = get().programs;
+    if (!report) return;
+    set({
+      programs: {
+        ...report,
+        programs: report.programs.map((program) =>
+          program.id === programId
+            ? {
+                ...program,
+                setup: {
+                  ...program.setup,
+                  job: program.setup.job
+                    ? { ...program.setup.job, id: jobId }
+                    : { id: jobId, phase, done: 0, total, bytes_per_s: null },
+                  last: null,
+                },
+              }
+            : program,
+        ),
+      },
+    });
+  };
+
   // A setup's bar moves with the /ws progress events, in place. A tick for a
   // program whose row holds no job is a setup started somewhere else (the
   // CLI on a GPU box, a second window), and one read fills in the rest.
@@ -1420,6 +1466,13 @@ export const useApp = create<AppState>((set, get) => {
         } else if (event.type === "program.removed") {
           programsGen++;
           afterProgramChange();
+        } else if (event.type === "program.server") {
+          // LocalCut's copy of a server started, stopped or gave up: where
+          // scripts go changes with it, so everything that says so reads
+          // again. A copy that is only starting changes nothing yet.
+          programsGen++;
+          if (event.state === "starting") void get().refreshPrograms();
+          else afterProgramChange();
         } else if (event.type === "job.failed") {
           // Keep the advice with the node it is about. `suggestions` is
           // absent on ordinary failures — only the exhausted OOM ladder
@@ -2996,37 +3049,8 @@ export const useApp = create<AppState>((set, get) => {
       try {
         const answer = await client.setupProgram(programId);
         const live = get().client === client && !seedFrozen;
-        if (answer.status === "started" && get().programs && live) {
-          // The bar appears with the click rather than with the first
-          // progress event, half a second later. The events move it on, and
-          // one that beat this answer here has already: it keeps its bytes
-          // and gains the job's id.
-          const report = get().programs!;
-          set({
-            programs: {
-              ...report,
-              programs: report.programs.map((program) =>
-                program.id === programId
-                  ? {
-                      ...program,
-                      setup: {
-                        ...program.setup,
-                        job: program.setup.job
-                          ? { ...program.setup.job, id: answer.job }
-                          : {
-                              id: answer.job,
-                              phase: "downloading",
-                              done: 0,
-                              total: program.setup.download_bytes ?? 0,
-                              bytes_per_s: null,
-                            },
-                        last: null,
-                      },
-                    }
-                  : program,
-              ),
-            },
-          });
+        if (answer.status === "started" && live) {
+          showJob(programId, answer.job, "downloading", row?.setup.download_bytes ?? 0);
         }
         if (answer.status === "installed") await get().refreshPrograms();
         return null;
@@ -3035,7 +3059,11 @@ export const useApp = create<AppState>((set, get) => {
           const report = get().programs;
           return t("programs.refusals.noSpace", {
             name: t(`programs.names.${programId}` as MessageKey),
-            size: formatSize((row.setup.download_bytes ?? 0) + (row.setup.install_bytes ?? 0)),
+            size: formatSize(
+              (row.setup.download_bytes ?? 0) +
+                (row.setup.install_bytes ?? 0) +
+                (row.setup.pull?.bytes ?? 0),
+            ),
             dir: report?.programs_dir ?? "",
           });
         }
@@ -3047,6 +3075,57 @@ export const useApp = create<AppState>((set, get) => {
         if (err instanceof EngineError && err.status === 409 && now?.setup.job) return null;
         return messageOf(err);
       }
+    },
+
+    pullModel: async (programId, model) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        const answer = await client.pullModel(programId, model);
+        if (answer.status === "started" && get().client === client && !seedFrozen) {
+          showJob(programId, answer.job, "pulling", 0);
+        }
+        if (answer.status === "present") afterProgramChange();
+        return null;
+      } catch (err) {
+        if (err instanceof EngineError && err.status === 507) {
+          return t("programs.refusals.noSpaceModel", { model: model ?? "" });
+        }
+        await get().refreshPrograms();
+        const now = get().programs?.programs.find((program) => program.id === programId);
+        if (err instanceof EngineError && err.status === 409 && now?.setup.job) return null;
+        return messageOf(err);
+      }
+    },
+
+    startProgram: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        const server = await client.startProgram(programId);
+        afterProgramChange();
+        if (server.state === "running") return null;
+        return server.reason
+          ? t(`programs.serverReasons.${server.reason}` as MessageKey, {
+              name: t(`programs.names.${programId}` as MessageKey),
+              address: server.url ?? "",
+            })
+          : (server.error ?? t("programs.server.notStarted"));
+      } catch (err) {
+        return messageOf(err);
+      }
+    },
+
+    stopProgram: async (programId) => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.stopProgram(programId);
+      } catch (err) {
+        return messageOf(err);
+      }
+      afterProgramChange();
+      return null;
     },
 
     cancelProgramSetup: async (programId) => {
@@ -3067,8 +3146,13 @@ export const useApp = create<AppState>((set, get) => {
 
     setupPrograms: async (programIds) => {
       const rows = get().programs?.programs ?? [];
-      const size = (id: ProgramId) =>
-        rows.find((row) => row.id === id)?.setup.download_bytes ?? Number.MAX_SAFE_INTEGER;
+      const size = (id: ProgramId) => {
+        const row = rows.find((entry) => entry.id === id);
+        const offer = row ? setupOffer(row) : null;
+        if (offer?.kind === "start") return 0;
+        if (offer?.kind === "pull") return offer.size ?? 0;
+        return (row && setupSize(row)) ?? Number.MAX_SAFE_INTEGER;
+      };
       const order = [...new Set(programIds)].sort((a, b) => size(a) - size(b));
       const client = get().client;
       set({ programQueue: order });
@@ -3076,7 +3160,14 @@ export const useApp = create<AppState>((set, get) => {
       while (get().programQueue.length > 0 && get().client === client) {
         const [next, ...rest] = get().programQueue;
         set({ programQueue: rest });
-        const error = await get().setupProgram(next);
+        const row = get().programs?.programs.find((entry) => entry.id === next);
+        const offer = row ? setupOffer(row) : null;
+        const error =
+          offer?.kind === "pull"
+            ? await get().pullModel(next, offer.model)
+            : offer?.kind === "start"
+              ? await get().startProgram(next)
+              : await get().setupProgram(next);
         if (error) {
           refused ??= error;
           continue;

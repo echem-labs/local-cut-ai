@@ -12,7 +12,7 @@
 import { inflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
-import { bundleEntries, zipEntries } from "./support";
+import { bundleEntries, PROGRAM_LOG_LIMIT, programLogEntries, zipEntries } from "./support";
 
 const SYSTEM = { hardware: { tier: "A", ram_gb: 32 }, backend_mode: "local" };
 const VERSIONS = { app: "0.1.0", engine: "0.1.0", api: 1 };
@@ -91,6 +91,37 @@ describe("what goes in the bundle", () => {
       "logs/localcut.log",
       "logs/localcut.log.1",
     ]);
+  });
+});
+
+describe("what LocalCut's own servers printed", () => {
+  it("goes in beside the shell's logs, named for the program", () => {
+    const entries = bundleEntries({
+      versions: VERSIONS,
+      system: SYSTEM,
+      logs: programLogEntries({ ollama: "Listening on 127.0.0.1:11434\n" }),
+    });
+    expect(entries.map((entry) => entry.name)).toEqual([
+      "versions.json",
+      "system.json",
+      "logs/engine-ollama.log",
+    ]);
+    expect(entries[2].data.toString()).toBe("Listening on 127.0.0.1:11434\n");
+  });
+
+  it("keeps only the end of a long log, where a crash explains itself", () => {
+    const long = `${"x".repeat(PROGRAM_LOG_LIMIT)}the last line`;
+    const [entry] = programLogEntries({ ollama: long });
+    expect(entry.data.length).toBe(PROGRAM_LOG_LIMIT);
+    expect(entry.data.toString().endsWith("the last line")).toBe(true);
+  });
+
+  it("drops anything the renderer sends that is not a program's log", () => {
+    expect(programLogEntries(null)).toEqual([]);
+    expect(programLogEntries(["ollama"])).toEqual([]);
+    expect(
+      programLogEntries({ "../../etc": "x", OLLAMA: "x", comfyui: 3, ollama: "" }),
+    ).toEqual([]);
   });
 });
 

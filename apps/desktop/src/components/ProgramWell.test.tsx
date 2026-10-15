@@ -11,9 +11,10 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ProgramInfo, ProgramsReport, ReadinessRow } from "../api/types";
+import type { ProgramInfo, ProgramsReport, ReadinessRow, ServerReason } from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
+import { formatSize } from "../lib/size";
 import { ProgramWell } from "./ProgramWell";
 
 const MB = 2 ** 20;
@@ -92,6 +93,9 @@ let actions: {
   setupProgram: ReturnType<typeof vi.fn>;
   cancelProgramSetup: ReturnType<typeof vi.fn>;
   removeProgram: ReturnType<typeof vi.fn>;
+  pullModel: ReturnType<typeof vi.fn>;
+  startProgram: ReturnType<typeof vi.fn>;
+  stopProgram: ReturnType<typeof vi.fn>;
   openSettings: ReturnType<typeof vi.fn>;
 };
 
@@ -100,6 +104,9 @@ beforeEach(() => {
     setupProgram: vi.fn(async () => null),
     cancelProgramSetup: vi.fn(async () => null),
     removeProgram: vi.fn(async () => null),
+    pullModel: vi.fn(async () => null),
+    startProgram: vi.fn(async () => null),
+    stopProgram: vi.fn(async () => null),
     openSettings: vi.fn(),
   };
   useApp.setState({
@@ -311,6 +318,123 @@ describe("a program that works", () => {
     mount(ffmpeg({ state: "ready", problem: null, checks: { draws_text: false } }));
     expect(well()).toHaveTextContent(/can't draw captions or titles/);
     expect(screen.getByRole("button", { name: /Set up FFmpeg/ })).toBeInTheDocument();
+  });
+});
+
+describe("LocalCut's own Ollama", () => {
+  /** Ollama as an engine with its pin reports it. */
+  const settable = (over: Partial<ProgramInfo> = {}): ProgramInfo =>
+    ollama({
+      setup: {
+        available: true,
+        unavailable_reason: null,
+        takes_effect: true,
+        version: "0.40.4",
+        url: "https://example.test/ollama.tar.zst",
+        download_bytes: 1436 * MB,
+        install_bytes: 2151 * MB,
+        pull: { model: "qwen3:14b", bytes: 9216 * MB },
+        job: null,
+        last: null,
+      },
+      ...over,
+    });
+  const copy = (
+    state: "stopped" | "starting" | "running" | "crashed",
+    reason: ServerReason | null = null,
+  ): ProgramInfo["managed"] => ({
+    location: "/home/me/.localcut/programs/ollama",
+    bytes: 2151 * MB,
+    version: "0.40.4",
+    current: true,
+    in_use: state === "running" || state === "starting",
+    server: {
+      state,
+      reason,
+      error: null,
+      pid: state === "running" ? 4242 : null,
+      url: "http://127.0.0.1:11434",
+      restarts: 0,
+      log: "/home/me/.localcut/logs/ollama.log",
+    },
+  });
+
+  it("sets up with the program and the model counted together", () => {
+    mount(settable());
+    const button = screen.getByRole("button", { name: /Set up Ollama/ });
+    expect(button).toHaveTextContent(formatSize((1436 + 9216) * MB));
+    fireEvent.click(button);
+    expect(actions.setupProgram).toHaveBeenCalledWith("ollama");
+  });
+
+  it("names the model while it pulls it", () => {
+    mount(
+      settable({
+        setup: {
+          ...settable().setup,
+          job: { id: "j", phase: "pulling", done: 512 * MB, total: 1024 * MB, bytes_per_s: null },
+        },
+      }),
+    );
+    expect(well()).toHaveTextContent("Downloading qwen3:14b");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+  });
+
+  it("pulls the model into the user's own Ollama when it lacks it", () => {
+    mount(
+      settable({
+        state: "ready",
+        problem: null,
+        checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+        setup: { ...settable().setup, pull: null },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Get qwen3:14b" }));
+    expect(actions.pullModel).toHaveBeenCalledWith("ollama", "qwen3:14b");
+    expect(actions.setupProgram).not.toHaveBeenCalled();
+  });
+
+  it("is quiet while it runs, and Settings can stop it", () => {
+    mount(
+      settable({
+        state: "ready",
+        problem: null,
+        source: "managed",
+        version: "0.40.4",
+        checks: { server: "ollama", model: "qwen3:14b", model_present: true },
+        managed: copy("running"),
+        setup: { ...settable().setup, pull: null },
+      }),
+    );
+    expect(well()).toHaveTextContent("Set up by LocalCut.");
+    fireEvent.click(screen.getByRole("button", { name: t("programs.menu.aria", { name: "Ollama" }) }));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("programs.menu.stop") }));
+    expect(actions.stopProgram).toHaveBeenCalledWith("ollama");
+  });
+
+  it("says why a stopped or crashed copy is not running, and starts it again", () => {
+    mount(settable({ managed: copy("crashed", "exited") }));
+    expect(well()).toHaveTextContent(
+      "LocalCut's copy kept stopping, so LocalCut stopped restarting it.",
+    );
+    expect(screen.queryByRole("button", { name: /Set up Ollama/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(actions.startProgram).toHaveBeenCalledWith("ollama");
+  });
+
+  it("leaves the user's own Ollama in charge, and says LocalCut's copy waits", () => {
+    mount(
+      settable({
+        state: "ready",
+        problem: null,
+        version: "0.22.0",
+        checks: { server: "ollama", model: "qwen3:14b", model_present: true },
+        managed: copy("stopped", "own_server"),
+      }),
+    );
+    expect(well()).toHaveTextContent("Your own Ollama, at 127.0.0.1:11434.");
+    expect(well()).toHaveTextContent("stays stopped while yours runs");
+    expect(screen.queryByRole("button", { name: "Start" })).toBeNull();
   });
 });
 

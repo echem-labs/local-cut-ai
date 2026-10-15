@@ -6,10 +6,11 @@ OpenAI-compatible LLM server, Ollama by default, which writes the script; and
 ComfyUI, which draws the keyframes, animates the clips and makes the music.
 
 The engine reports each of them as it finds them, and on Windows x64 and Linux
-x64 it can download and set up its own copy of FFmpeg. Ollama and ComfyUI are
-reported only, for now. Everything below happens on the machine the engine
-runs on, so a desktop paired with a GPU box sees that box's programs and sets
-them up there, over the same HTTP API.
+x64 it can download and set up its own copy of FFmpeg and of Ollama. Ollama's
+copy runs while the engine runs, with the script model pulled into it.
+ComfyUI is reported only, for now. Everything below happens on the machine the engine runs on, so
+a desktop paired with a GPU box sees that box's programs and sets them up
+there, over the same HTTP API.
 
 ## Where the engine finds FFmpeg
 
@@ -44,6 +45,67 @@ are. There is no managed setup on macOS or on Linux for ARM: install FFmpeg
 yourself there, a build with libass, or titles and burned captions will not
 draw.
 
+## LocalCut's own Ollama
+
+Ollama's copy is the standalone build from
+[Ollama's own releases](https://github.com/ollama/ollama/releases), version
+0.40.4. It is downloaded only when someone presses Set up. It is pinned the
+same way as FFmpeg's: `ollama-windows-amd64.zip` on Windows (1.37 GiB,
+1.81 GiB unpacked) and `ollama-linux-amd64.tar.zst` on Linux (1.34 GiB,
+2.10 GiB unpacked). Ollama is MIT-licensed. Its licence and those of the
+libraries it ships stay in `lib/ollama` beside them.
+
+Everything in the archive is kept: the binary (`ollama.exe`, or `bin/ollama`)
+and the whole `lib/ollama` tree it loads its CPU, CUDA and Vulkan libraries
+from. On Linux that includes the 17 links that give those libraries their
+sonames. NVIDIA cards run through CUDA. AMD and Intel cards run through
+Vulkan, which the same build ships and Ollama turns on by default. Ollama's
+ROCm add-on archives are not pinned, so an AMD card that Vulkan does not
+cover runs on the CPU. There is no managed Ollama on macOS or on Linux for
+ARM.
+
+The engine starts its copy as `ollama serve` when the engine starts, if the
+copy is there and nothing answers at `LOCALCUT_LLM_URL`. It stops the copy
+and every process the copy started when it shuts down, however the stop was
+asked for: it asks the copy to exit and kills it a second later if it has
+not, so the engine's whole stop stays inside the ten seconds the desktop
+gives it. The copy listens on
+the address in `LOCALCUT_LLM_URL` (`127.0.0.1:11434` by default), which has
+to be a loopback address over plain HTTP. An address on another machine is
+someone else's server, so LocalCut's copy is neither offered nor started for
+it. On Windows the copy gets no window. What it prints goes to
+`<data_dir>/logs/ollama.log`, which starts over once it passes 5 MiB (the run
+before is kept as `ollama.log.1`). The desktop's support bundle includes its
+last 128 KiB.
+
+- An Ollama of your own that answers at the address wins. LocalCut uses it
+  and leaves its own copy stopped. If yours stops while LocalCut runs, start
+  LocalCut's copy from Settings > Programs, or it starts the next time the
+  engine does.
+- Something at the address that is not Ollama is reported as `port_in_use`.
+  LocalCut does not try to take the port.
+- A copy that stops by itself is started again up to three times in ten
+  minutes, after 1, 2 and 4 seconds. After that it is `crashed` with the
+  reason and the last lines it printed, until someone starts it again.
+- An engine that dies without stopping its copy leaves
+  `<data_dir>/run/ollama.json` behind, naming the process. The next engine
+  stops that process before it looks for a server at the address, as long as
+  it is still the process that was started and runs LocalCut's binary. So an
+  orphan is never taken for an install of yours. On POSIX the copy shares the
+  engine's process group, which means a signal to the group (a terminal's
+  Ctrl+C, the desktop quitting) reaches both.
+- Jobs wait for the copy to answer when the engine starts, for a minute at
+  most. A script left queued is then not written by the stand-in while
+  Ollama starts.
+
+Its models are kept in `<models_dir>/ollama` (`OLLAMA_MODELS`) with the other
+weights, not in the program's folder. An update replaces that folder whole.
+Removing the program keeps the models, because they are most of the download
+and a reinstall would fetch them again; Settings > Storage counts them with
+the rest of the models. Ollama keeps a key pair in its home folder, which for
+LocalCut's copy is `<data_dir>/run/ollama-home`. Nothing is written outside
+the data dir.
+
 ## The API
 
 Every route needs the engine token, like the rest of the API.
@@ -52,7 +114,8 @@ Every route needs the engine token, like the rest of the API.
 
 Cheap enough to call often. It runs a binary only the first time it sees it,
 asks each server with a two-second timeout and keeps the answer for three
-seconds, and never downloads anything.
+seconds, and never downloads anything. A kept answer is dropped early when a
+setup or a pull ends, or when LocalCut's copy of the server starts or stops.
 
 ```json
 {
@@ -95,22 +158,38 @@ seconds, and never downloads anything.
       "id": "ollama",
       "state": "ready",
       "problem": null,
-      "source": "default",
+      "source": "managed",
       "location": "http://127.0.0.1:11434/v1",
       "setting": "LOCALCUT_LLM_URL",
-      "version": "0.35.0",
-      "checks": { "server": "ollama", "model": "qwen3:14b", "model_present": false },
-      "managed": null,
+      "version": "0.40.4",
+      "checks": { "server": "ollama", "model": "qwen3:8b", "model_present": true },
+      "managed": {
+        "location": "/home/me/.localcut/programs/ollama",
+        "bytes": 2255368362,
+        "version": "0.40.4",
+        "current": true,
+        "in_use": true,
+        "server": {
+          "state": "running",
+          "reason": null,
+          "error": null,
+          "pid": 48211,
+          "url": "http://127.0.0.1:11434",
+          "restarts": 0,
+          "log": "/home/me/.localcut/logs/ollama.log"
+        }
+      },
       "setup": {
-        "available": false,
-        "unavailable_reason": "program_not_supported",
-        "takes_effect": false,
-        "version": null,
-        "url": null,
-        "download_bytes": null,
-        "install_bytes": null,
+        "available": true,
+        "unavailable_reason": null,
+        "takes_effect": true,
+        "version": "0.40.4",
+        "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-linux-amd64.tar.zst",
+        "download_bytes": 1436408810,
+        "install_bytes": 2255368362,
+        "pull": null,
         "job": null,
-        "last": null
+        "last": { "job": "7497cc9940ae", "outcome": "done", "reason": null, "error": null }
       }
     },
     {
@@ -145,10 +224,11 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   ready: `not_found`, `ffprobe_missing`, `does_not_run`, `unreachable` or
   `unexpected_response`.
 - `source` and `location` say where the engine looks, even when nothing is
-  there: `managed` (LocalCut's copy), `configured` (set by the variable in
-  `setting`), `data_dir` (`<data_dir>/bin`), `path` (found on `PATH`, or the
-  bare name when it is not), or `default` (a server at its usual address).
-  `location` is a path for FFmpeg and a URL for the servers.
+  there: `managed` (LocalCut's copy; for a server, LocalCut's copy is the
+  one answering), `configured` (set by the variable in `setting`), `data_dir`
+  (`<data_dir>/bin`), `path` (found on `PATH`, or the bare name when it is
+  not), or `default` (a server at its usual address). `location` is a path
+  for FFmpeg and a URL for the servers.
 - `version` is the release number the program reports: `8.1.3` for FFmpeg's
   `n8.1.3-9-g29e619e767`, the server's own version for Ollama and ComfyUI.
   Null when it reported none, which is the usual answer from an LLM server
@@ -157,18 +237,30 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   with LocalCut's font, through the probe an export's refusal reads. False
   means exports with titles or burned captions will refuse. For the LLM
   server it is `server` (`ollama` or `other`), the `model` scripts are
-  written with, and `model_present`, null when the server does not list its
-  models.
+  written with and `model_present`. That is null when a server that is not
+  Ollama lists no models (plenty serve chat without listing). An Ollama lists
+  every model it has, so its empty list is `false`.
 - `managed` is LocalCut's own copy when there is one: where, how many bytes,
   which version, whether it is the build pinned now (`current`), and whether
   the engine is using it (`in_use`). A copy can be there and not in use, when
-  `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` outranks it.
+  `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` outranks it, or for Ollama when
+  a server of your own answers at the address. A program LocalCut runs as a
+  server adds `server`: its `state` (`stopped`, `starting`, `running` or
+  `crashed`), the `reason` it is stopped or crashed (`own_server`, `stopped`,
+  `port_in_use`, `cannot_start`, `no_answer` or `exited`) with `error` in
+  English, its `pid` while it runs, the `url` it answers at, `restarts` (how
+  many times it was started again since it was last started on request) and
+  its `log`.
 - `setup` is what a setup would do here. When `available` is false,
   `unavailable_reason` is `platform_not_supported` (builds are pinned for
   other machines) or `program_not_supported`, and the size fields are null.
   `takes_effect` is false when something outranks LocalCut's copy, so setting
-  it up would not change what the engine runs. `download_bytes` and
-  `install_bytes` are exact; a setup needs both free at once. `job` is the
+  it up would not change what the engine runs, which for Ollama is an
+  address on another machine. `download_bytes` and `install_bytes` are exact;
+  a setup needs both free at once. For Ollama, `pull` is the model a setup
+  would pull into LocalCut's copy and about how much disk it takes (`bytes`,
+  the model catalog's figure, or null for a model the catalog does not hold),
+  or null when the copy has it already. `job` is the
   setup running now (`id`, `phase`, `done`, `total`, `bytes_per_s`), and
   `last` is how the last one in this engine's life ended (`outcome` `done`,
   `failed` or `cancelled`, with `reason` and `error` for a failure).
@@ -182,12 +274,15 @@ nothing a client sends changes what is downloaded.
   arrive over `/ws`, and the outcome stays in `setup.last` with the same job
   id.
 - `200 {"status": "installed"}` when LocalCut's copy is already the pinned
-  build, complete.
+  build and complete. For Ollama it has to be running with the script model
+  too.
 - `404` for an unknown program.
 - `409` when a setup of it is already running, when there is no build for
   this machine, or when a render is running LocalCut's copy and the setup
   would replace it.
 - `507` when the disk cannot hold the download and the unpacked copy at once.
+  For Ollama the model it pulls has to fit too, on the disk that holds
+  `models_dir`.
 
 A setup downloads the pinned archive into a scratch folder in
 `<data_dir>/programs`, checks its size to the byte and its SHA-256, unpacks
@@ -199,6 +294,22 @@ failed or cancelled setup removes what it wrote before it says so, and what
 an engine that stopped mid-setup left behind is cleared when it next starts.
 An ffmpeg that runs and draws no text is still installed, and `done` says
 `draws_text: false`.
+
+Ollama's check is a real start. The unpacked `ollama serve` runs on a free
+loopback port with an empty model store and has to answer `/api/version`
+within a minute, which loads its libraries and looks at the GPUs. A running
+copy is stopped before its folder is replaced. Once the new one is in place
+the setup goes on to `starting` it, which has to answer, then to `pulling`
+the script model into it through Ollama's `/api/pull` unless the copy has it
+already. A server of your own at the address skips both: LocalCut leaves it
+and its models alone, so `done` says `in_use: false`.
+
+Cancelling or failing after the copy is in place leaves it there. Ollama is
+set up then and the model is not, so setting up again pulls only what is
+missing. Setting up a copy that is already the pinned build starts it and
+pulls, where either is left to do. Each layer Ollama names is held against
+the free space where the copy keeps its models. The pull stops with
+`no_space` before it would fill the disk.
 
 A download that stops partway picks up where it stopped. When the connection
 is closed or reset before the archive is complete, or nothing arrives for two
@@ -219,6 +330,40 @@ pinned build is no longer where it was published, and the rest with
 the whole archive are what decide whether it is the pinned build. Model
 downloads ask again by the same rules.
 
+### POST /programs/{id}/pull
+
+Pulls a model through the Ollama that answers at `LOCALCUT_LLM_URL`
+(LocalCut's copy or your own) and returns at once. It reports like a setup:
+a job with the one phase `pulling`, over the same events. This is the fix for
+the most common gap after installing Ollama by hand, where it runs without
+the model. The body is optional. `{"model": "qwen3:8b"}` names a model the
+way `ollama pull` takes it, checked against that form. Without one it is the
+model scripts are written with.
+
+- `200 {"status": "started", "job": "<id>", "model": "qwen3:8b"}`.
+- `200 {"status": "present", "model": "qwen3:8b"}` when the server has it.
+- `409` when no Ollama answers at the address, when a setup or pull of it is
+  already running, or for a program with no models (`ffmpeg`, `comfyui`).
+- `422` for a model name `ollama pull` would not take.
+- `507` when LocalCut's copy is the server and the catalog's figure for the
+  model does not fit. A server of your own keeps its models where LocalCut
+  cannot measure, so it is left to say so itself.
+
+### POST /programs/{id}/start and POST /programs/{id}/stop
+
+Start LocalCut's copy of a server program and answer once it answers or has
+given up, a minute at most, or stop it and every process it started. Both
+answer with the copy's state, the same object as `managed.server`. A copy
+that was stopped stays stopped until it is started again or the engine
+restarts. Starting gives a crashed copy its restarts back. `409` for a
+program LocalCut does not run as a server or a copy that is not set up, or a
+stop while a script job is using it.
+
+### GET /programs/{id}/log
+
+The last 128 KiB of what LocalCut's copy of a server printed, as text, for a
+support bundle. Empty when it never ran.
+
 ### DELETE /programs/{id}/setup
 
 Cancels the running setup: `200 {"ok": true}`, then `program.setup.cancelled`
@@ -230,9 +375,10 @@ moving the copy into place, which takes a moment and then finishes.
 Removes LocalCut's own copy, `200 {"ok": true, "freed_bytes": N}`, and 0 when
 there was none. It never touches an install of yours, on `PATH`, in
 `<data_dir>/bin` or at a configured path. The engine uses the next FFmpeg it
-finds from the next job on. `409` while a setup of the program runs, while a
-render is running LocalCut's copy, or when another process holds one of its
-files open (Windows will not move the folder then).
+finds from the next job on. LocalCut's Ollama is stopped first. The models it
+pulled stay in `<models_dir>/ollama`. `409` while a setup of the program
+runs, while a render is running LocalCut's copy, or when another process
+holds one of its files open (Windows will not move the folder then).
 
 ### Events on /ws
 
@@ -242,22 +388,34 @@ files open (Windows will not move the folder then).
 {"type": "program.setup.failed", "program": "ffmpeg", "reason": "checksum_mismatch", "error": "the download's SHA-256 is ..."}
 {"type": "program.setup.cancelled", "program": "ffmpeg"}
 {"type": "program.removed", "program": "ffmpeg", "freed_bytes": 283956127}
+{"type": "program.setup.done", "program": "ollama", "version": "0.40.4", "location": "/home/me/.localcut/programs/ollama/bin/ollama", "in_use": true, "draws_text": null, "model": "qwen3:8b"}
+{"type": "program.server", "program": "ollama", "state": "running", "reason": null}
 ```
 
-`phase` runs `downloading`, `verifying`, `unpacking`, `checking`,
-`installing`, and each phase is announced as it starts. `done` and `total`
-are bytes of the archive while downloading and verifying, and bytes of the
-kept files while unpacking; the other phases report 0 of 0. Progress is
-throttled to one event every half second. `bytes_per_s` is the download's
-speed over its last five seconds, or over all of it in its first five, and is
-null for its first half second and in the other phases. While nothing
-arrives, as when a dropped download waits to try again, `GET /programs`
-reports it as 0.
+`phase` runs `downloading`, `verifying`, `unpacking`, `checking` and
+`installing`, then for Ollama `starting` and `pulling`. Each phase is
+announced as it starts. A pull on its own is the one phase `pulling`. `done`
+and `total` are bytes of the archive while downloading and verifying and
+bytes of the kept files while unpacking. While pulling they are bytes of
+every layer Ollama has named so far, so a pull's total grows as it finds
+them. The other
+phases report 0 of 0. Progress is throttled to one event every half second.
+`bytes_per_s` is the speed of a download or a pull over its last five
+seconds (over all of it in its first five). It is null for its first half
+second and in the other phases. While nothing arrives, as when a dropped
+download waits to try again, `GET /programs` reports it as 0. Ollama's
+`done` adds the `model` it pulled. A pull's `done` has the server's address
+as its `location` and no `version`.
+
+`program.server` goes out each time LocalCut's copy of a server changes
+state, with the `reason` when it is stopped or crashed.
 
 A failure's `reason` is one of `no_space`, `download_failed`,
 `download_gone`, `size_mismatch`, `checksum_mismatch`, `unpack_failed`,
-`does_not_run`, `in_use` and `install_failed`. `error` is the same failure in
-English, for logs and the CLI.
+`does_not_run`, `in_use`, `install_failed`, `did_not_start` (LocalCut's
+copy was set up and did not start) and `pull_failed` (Ollama would not pull
+the model, or stopped partway; its own message is in `error`). `error` is the
+same failure in English, for logs and the CLI.
 
 ### In the readiness report
 
@@ -269,6 +427,16 @@ ffmpeg came from `PATH`. It is not offered where nothing is pinned for this
 machine, where `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` would still win, or
 where LocalCut's copy is already the one in use.
 
+An `llm_server_down` row gets the same fix for Ollama, with its download's
+size, where LocalCut's copy would serve `LOCALCUT_LLM_URL` and is not set up
+yet. A copy that is set up and stopped is started from Settings > Programs
+instead. An `llm_model_missing` row whose server is an Ollama gets
+`{"type": "pull_model", "program": "ollama", "model": "qwen3:8b",
+"size_bytes": N}`, which `POST /programs/ollama/pull` with that model carries
+out; `size_bytes` is the catalog's figure, null for a model it does not hold.
+A server that is not Ollama cannot pull, so its row keeps the `pick_model`
+fix.
+
 ## From a terminal
 
 The CLI is a client of a running engine like the desktop, so a headless GPU
@@ -277,13 +445,21 @@ box sets itself up from its own shell:
 ```bash
 localcut programs list                # each program, and what setup would take
 localcut programs setup ffmpeg        # download LocalCut's copy, and wait
-localcut programs cancel ffmpeg       # stop a setup
+localcut programs setup ollama        # the same, then start it and pull the script model
+localcut programs pull ollama         # pull the script model through whichever Ollama runs
+localcut programs pull ollama --model llama3.2
+localcut programs stop ollama         # stop LocalCut's copy, never your own
+localcut programs start ollama        # start it again and wait until it answers
+localcut programs cancel ffmpeg       # stop a setup or a pull
 localcut programs remove ffmpeg       # remove LocalCut's copy, never your own
 ```
 
 Each takes `--engine`, `--token`, `--cert` and `--json`, as in
-[agents-and-automation.md](agents-and-automation.md). `setup` exits 0 when
-the copy is in place, 1 when the setup failed or was cancelled, and 2 when no
-engine answered. It waits up to `--timeout` seconds (1800 by default) and then
-exits 1 too, but only the wait ends there: the setup carries on in the engine,
-and `localcut programs list` shows how far it has got.
+[agents-and-automation.md](agents-and-automation.md). `setup` and `pull` exit
+0 when the copy is in place or the model is there. They exit 1 when it failed
+or was cancelled and 2 when no engine answered. They wait up to `--timeout`
+seconds (7200 by default, since Ollama and its model are several gigabytes)
+and then exit 1 too. Only the wait ends there: the work carries on in the
+engine while `localcut programs list` shows how far it has got. `start` exits
+0 once the copy runs and `stop` once it has stopped; either exits 1 when it
+did not.

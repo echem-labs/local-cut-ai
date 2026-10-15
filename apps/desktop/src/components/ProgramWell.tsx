@@ -26,6 +26,7 @@ import {
   setupEta,
   setupFraction,
   setupOffer,
+  setupSize,
   shownFailure,
   statusOf,
   type ManualText,
@@ -190,7 +191,15 @@ function ManualSetup({
 
 /** The gear menu Settings puts on a well: the program's site, LocalCut's
  * own copy, and the screens that are the other way round a missing one. */
-function ProgramMenu({ program, onRemove }: { program: ProgramInfo; onRemove: () => void }) {
+function ProgramMenu({
+  program,
+  onRemove,
+  onStop,
+}: {
+  program: ProgramInfo;
+  onRemove: () => void;
+  onStop: () => void;
+}) {
   const openSettings = useApp((state) => state.openSettings);
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -213,6 +222,10 @@ function ProgramMenu({ program, onRemove }: { program: ProgramInfo; onRemove: ()
     return () => window.removeEventListener("keydown", onKey, true);
   }, [open]);
   const canRemove = program.managed !== null && !program.setup.job;
+  // LocalCut's copy of a server, while it serves. A stopped one is started
+  // from the well's own button.
+  const server = program.managed?.server;
+  const canStop = !program.setup.job && (server?.state === "running" || server?.state === "starting");
   return (
     <div className="pw-menu" ref={wrap}>
       <Tip label={t("programs.menu.tip", { name })} hint={t("programs.menu.tipHint")}>
@@ -258,6 +271,17 @@ function ProgramMenu({ program, onRemove }: { program: ProgramInfo; onRemove: ()
               }}
             >
               {t("programs.menu.workflows")}
+            </button>
+          )}
+          {canStop && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onStop();
+              }}
+            >
+              {t("programs.menu.stop")}
             </button>
           )}
           {canRemove && (
@@ -309,6 +333,9 @@ export function ProgramWell({
   const setupProgram = useApp((state) => state.setupProgram);
   const cancelProgramSetup = useApp((state) => state.cancelProgramSetup);
   const removeProgram = useApp((state) => state.removeProgram);
+  const pullModel = useApp((state) => state.pullModel);
+  const startProgram = useApp((state) => state.startProgram);
+  const stopProgram = useApp((state) => state.stopProgram);
   const openSettings = useApp((state) => state.openSettings);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -353,8 +380,10 @@ export function ProgramWell({
     setBusy(false);
   };
 
-  const size = offer?.size ?? program.setup.download_bytes;
+  const size = offer && "size" in offer ? offer.size : setupSize(program);
   const sizeLabel = size ? formatSize(size) : null;
+  // The model a setup pulls into LocalCut's copy, named in its tooltip.
+  const pulls = program.setup.pull ?? null;
   const setupButton = (kind: "setup" | "retry" | "update") => {
     const label =
       kind === "retry"
@@ -377,9 +406,22 @@ export function ProgramWell({
             }
           : {
               label: t("programs.setup.tip", { name }),
-              hint: host
-                ? t("programs.setup.tipHintOn", { size: sizeLabel ?? "", host })
-                : t("programs.setup.tipHint", { size: sizeLabel ?? "" }),
+              hint: pulls
+                ? host
+                  ? t("programs.setup.tipHintPullOn", {
+                      size: sizeLabel ?? "",
+                      host,
+                      name,
+                      model: pulls.model,
+                    })
+                  : t("programs.setup.tipHintPull", {
+                      size: sizeLabel ?? "",
+                      name,
+                      model: pulls.model,
+                    })
+                : host
+                  ? t("programs.setup.tipHintOn", { size: sizeLabel ?? "", host })
+                  : t("programs.setup.tipHint", { size: sizeLabel ?? "" }),
             };
     return (
       <Tip label={tip.label} hint={tip.hint}>
@@ -416,6 +458,40 @@ export function ProgramWell({
     );
   } else if (queuedBehind && sizeLabel) {
     action = <span className="readout">{sizeLabel}</span>;
+  } else if (offer?.kind === "pull") {
+    const model = offer.model;
+    action = (
+      <Tip
+        label={t("programs.setup.pullTip", { model, name })}
+        hint={
+          sizeLabel
+            ? t("programs.setup.pullTipHintSize", { size: sizeLabel })
+            : t("programs.setup.pullTipHint")
+        }
+      >
+        <button
+          className="btn-outline sm"
+          disabled={busy}
+          onClick={() => void act(() => pullModel(program.id, model))}
+        >
+          {t("programs.setup.pull", { model })}
+          {sizeLabel && " "}
+          {sizeLabel && <span className="readout">{sizeLabel}</span>}
+        </button>
+      </Tip>
+    );
+  } else if (offer?.kind === "start") {
+    action = (
+      <Tip label={t("programs.setup.startTip", { name })} hint={t("programs.setup.startTipHint")}>
+        <button
+          className="btn-outline sm"
+          disabled={busy}
+          onClick={() => void act(() => startProgram(program.id))}
+        >
+          {t("programs.setup.start")}
+        </button>
+      </Tip>
+    );
   } else if (offer && offer.kind !== "retry") {
     action = setupButton(offer.kind);
   } else if (!attention && context === "wizard") {
@@ -428,7 +504,11 @@ export function ProgramWell({
   }
   const gear =
     context === "settings" && !job && offer?.kind !== "setup" ? (
-      <ProgramMenu program={program} onRemove={() => setConfirmRemove(true)} />
+      <ProgramMenu
+        program={program}
+        onRemove={() => setConfirmRemove(true)}
+        onStop={() => void act(() => stopProgram(program.id))}
+      />
     ) : null;
 
   const fraction = job ? setupFraction(job) : 0;
@@ -443,7 +523,12 @@ export function ProgramWell({
           })
         : t("programs.setup.progress", { done: formatSize(job.done), total: formatSize(job.total) })
       : null;
-  const phase = job ? t(`programs.phases.${job.phase}` as MessageKey, { name }) : "";
+  const phase = job
+    ? t(`programs.phases.${job.phase}` as MessageKey, {
+        name,
+        model: program.checks.model ?? name,
+      })
+    : "";
   const lines = job || failure ? [] : statusOf(program, { host, offer });
   // The other way round a missing Ollama: a cloud model, with a key.
   const cloudAlternative = program.id === "ollama" && attention;
