@@ -5,7 +5,9 @@ Three programs make real output: FFmpeg (assembly, and the audio decode
 caption timing reads), an OpenAI-compatible LLM server (Ollama by default)
 and ComfyUI. `status.py` reports each one as this engine finds it, and
 `setup.py` downloads a pinned build of one into a folder of its own, on
-request, while the engine runs. The pins are data (`manifest.py`).
+request, while the engine runs. The pins are data (`manifest.py`). A program
+that runs as a server is run from that folder by `server.py` while the engine
+runs, and `ollama.py` holds what is particular to Ollama.
 
 Everything here crosses the wire as codes plus data, like the readiness
 report: the desktop words each code from its own catalog. The closed sets
