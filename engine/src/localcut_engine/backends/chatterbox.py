@@ -44,8 +44,10 @@ _SPEED_MIN, _SPEED_MAX = 0.5, 2.0  # atempo's single-pass range
 
 INSTALL_HINT = (
     "voice cloning requires the chatterbox-tts package (PyTorch) in the engine "
-    'environment. Install it with `uv pip install chatterbox-tts "setuptools<81"`; '
-    "docs/voices.md has the steps, including how to keep it in a dev checkout."
+    "environment, and engine/clone-requirements.txt lists what it needs. In a dev "
+    "checkout, start the engine with `uv run --with-requirements clone-requirements.txt "
+    "localcut serve`, or the desktop dev shell with LOCALCUT_DEV_CLONE=1; "
+    "docs/voices.md has the steps."
 )
 
 

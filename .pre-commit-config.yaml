@@ -175,6 +175,7 @@ repos:
             README\.md
             |docs/.+\.md
             |apps/desktop/package\.json
+            |apps/desktop/electron/engine\.ts
             |\.github/workflows/ci-(engine|desktop)\.yml
           )$
         pass_filenames: false

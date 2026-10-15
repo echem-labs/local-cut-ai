@@ -7,6 +7,7 @@
  * happens when the port is already taken — because each of those was a defect
  * that produced no error message when it was wrong.
  */
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawned = vi.hoisted(() => ({
@@ -91,6 +92,7 @@ const healthyEngine = () =>
   })) as unknown as typeof fetch;
 
 const envKeys = [
+  "LOCALCUT_DEV_CLONE",
   "LOCALCUT_ENGINE_CMD",
   "LOCALCUT_ENGINE_PORT",
   "LOCALCUT_BACKEND",
@@ -326,6 +328,21 @@ describe("spawn options", () => {
     expect(firstSpawn().cmd).toBe("uv");
     expect(firstSpawn().args.slice(0, 2)).toEqual(["run", "localcut"]);
     expect(String(firstSpawn().options.cwd)).toMatch(/engine$/);
+  });
+
+  it("layers voice cloning's runtime over the checkout's environment when asked", async () => {
+    // Installed into .venv, chatterbox-tts lasted until the next launch:
+    // `uv run` syncs to uv.lock first and puts back the tokenizers and
+    // setuptools it cannot import with. Layered, the lock is never asked
+    // to hold it.
+    process.env.LOCALCUT_DEV_CLONE = "1";
+    await new EngineManager().start();
+    const { args, options } = firstSpawn();
+    expect(firstSpawn().cmd).toBe("uv");
+    expect(args.slice(0, 2)).toEqual(["run", "--with-requirements"]);
+    expect(args[2]).toBe(path.join(String(options.cwd), "clone-requirements.txt"));
+    expect(args[3]).toBe("localcut");
+    expect(serveArgs()).toEqual(["serve", "--port", "7830", "--backend", "local,mock"]);
   });
 
   it("splits a custom command on quotes, not on whitespace", async () => {

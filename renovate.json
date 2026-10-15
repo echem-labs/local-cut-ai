@@ -19,6 +19,11 @@
       "description": "ML stack upgrades are gated on the ComfyUI compatibility matrix and handled deliberately via the engine component channel"
     },
     {
+      "matchFileNames": ["engine/clone-requirements.txt"],
+      "enabled": false,
+      "description": "Voice cloning's runtime, which no lockfile holds. setuptools<81 is a ceiling rather than a version to keep current: resemble-perth imports pkg_resources, which setuptools 82 dropped. chatterbox-tts carries no version, so the newest release is what installs"
+    },
+    {
       "matchDepNames": ["gitleaks/gitleaks"],
       "extractVersion": "^v(?<version>.+)$",
       "groupName": "gitleaks",
