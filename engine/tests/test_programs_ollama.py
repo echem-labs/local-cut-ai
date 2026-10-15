@@ -31,7 +31,7 @@ import pytest
 from conftest import free_port
 from test_programs import TOKEN, _Archives, _program_events, _row, _ws_url
 
-from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL, create_app
+from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL, EngineServer, create_app
 from localcut_engine.config import EngineConfig
 from localcut_engine.manifest import downloads as downloads_module
 from localcut_engine.programs import (
@@ -156,17 +156,20 @@ def _config(data: Path, port: int, **overrides) -> EngineConfig:
 
 
 @contextlib.contextmanager
-def _live(config: EngineConfig):
+def _live(config: EngineConfig, threads: list | None = None):
     """A live engine on loopback, its lifespan run by uvicorn as `localcut
     serve` runs it, with a client. Shut down on the way out, which is what
-    stops LocalCut's Ollama."""
+    stops LocalCut's Ollama. `threads` gets the thread it runs on, for a
+    test that stops it another way and waits for it."""
     import uvicorn
 
-    server = uvicorn.Server(
+    server = EngineServer(
         uvicorn.Config(create_app(config), host="127.0.0.1", port=free_port(), log_level="error")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+    if threads is not None:
+        threads.append(thread)
     deadline = time.monotonic() + 20
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -328,14 +331,16 @@ def test_setup_runs_ollama_and_pulls_the_script_model(tmp_path, monkeypatch, arc
     LocalCut's copy and pulling the script model into it. Then the copy is
     the server scripts are written with, the script stage is ready, and
     shutting the engine down stops it. A second engine on the same data
-    starts the copy by itself."""
+    starts the copy by itself. Quitting the way the desktop does, with POST
+    /shutdown, stops the copy within the time the desktop gives the engine."""
     from websockets.sync.client import connect
 
     asset = _pin_ollama(monkeypatch, archives)
     data = tmp_path / "engine"
     config = _config(data, free_port())
+    threads: list = []
 
-    with _live(config) as (url, http):
+    with _live(config, threads) as (url, http):
         before = _ollama(http)
         assert (before["state"], before["problem"]) == ("missing", "unreachable")
         assert before["setup"]["available"] and before["setup"]["takes_effect"]
@@ -392,7 +397,17 @@ def test_setup_runs_ollama_and_pulls_the_script_model(tmp_path, monkeypatch, arc
         assert (script["verdict"], script["backend"], script["model"]) == ("ready", "llm", _MODEL)
         assert http.post("/programs/ollama/setup").json() == {"status": "installed"}
 
+        # A normal quit: the desktop asks the engine to stop, and kills it
+        # STOP_GRACE_MS later. The lifespan's exit stops LocalCut's copy
+        # well inside that, with nothing left to kill.
+        asked = time.monotonic()
+        assert http.post("/shutdown").status_code == 202
+        threads[0].join(timeout=10)
+        assert not threads[0].is_alive(), "the engine did not stop within the desktop's grace"
+        took = time.monotonic() - asked
+
     assert _gone(pid), "the engine's shutdown stops LocalCut's Ollama"
+    assert took < 10
     assert not (data / "run" / "ollama.json").exists()
 
     with _live(config) as (_, http):

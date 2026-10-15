@@ -18,7 +18,9 @@ One `ManagedServer` per program supervises one child process:
   that is a terminal's Ctrl+C or the desktop stopping the engine's process
   group, which the child shares on POSIX so it goes with the engine.
 - It is stopped, with every process it started, when the engine shuts down
-  (the app lifespan).
+  (the app lifespan): asked with SIGTERM, and killed if it is still there a
+  second later (STOP_GRACE_S), so the engine's whole stop fits the time the
+  desktop gives it.
 - What it is running is written to <data_dir>/run/<program>.json (the pid,
   the process's start time and its binary). An engine that died without
   stopping its child leaves that file behind, and the next engine stops the
@@ -65,8 +67,16 @@ _ASK_EVERY_S = 0.25
 _MAX_RESTARTS = 3
 _RESTART_WINDOW_S = 600.0
 _RESTART_PAUSE_S = 1.0
-# How long a stop waits for the child to exit by itself before killing it.
-_STOP_GRACE_S = 10.0
+#: How long the engine's stop waits for its copy to exit after SIGTERM
+#: before killing it. Ollama unloads its models and exits well inside it,
+#: and the desktop kills the whole engine STOP_GRACE_MS after asking it to
+#: stop, a budget this second is part of (test_ui_contract.py).
+STOP_GRACE_S = 1.0
+# An orphan found at startup gets longer: no desktop is counting then.
+_ORPHAN_GRACE_S = 10.0
+# How long a kill is waited for. SIGKILL and TerminateProcess are not
+# refusable, so this only bounds a system too busy to reap at once.
+_KILL_WAIT_S = 5.0
 # The log is started over when a new run would find it larger than this; the
 # run before is kept beside it as <program>.log.1.
 _LOG_LIMIT = 5 << 20
@@ -460,15 +470,16 @@ def _stop_tree(pid: int) -> None:
         return
     with contextlib.suppress(psutil.Error):
         root.terminate()
-    _, alive = psutil.wait_procs([root], timeout=_STOP_GRACE_S)
+    _, alive = psutil.wait_procs([root], timeout=_ORPHAN_GRACE_S)
     _kill([*alive, *children])
 
 
 async def stop_child(process: asyncio.subprocess.Process) -> None:
     """Stop a process this engine started, and everything it started. The
-    same as `_stop_tree`, except that the process itself is waited for
-    through asyncio, which reaps it: psutil waiting on a child of this
-    process would reap it first, and asyncio's wait would then never end."""
+    same as `_stop_tree` with STOP_GRACE_S for the grace, except that the
+    process itself is waited for through asyncio, which reaps it: psutil
+    waiting on a child of this process would reap it first, and asyncio's
+    wait would then never end."""
     if process.returncode is not None:
         return
     try:
@@ -486,7 +497,7 @@ async def stop_child(process: asyncio.subprocess.Process) -> None:
     with contextlib.suppress(ProcessLookupError):
         process.terminate()
     try:
-        await asyncio.wait_for(process.wait(), timeout=_STOP_GRACE_S)
+        await asyncio.wait_for(process.wait(), timeout=STOP_GRACE_S)
     except TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             process.kill()
@@ -504,7 +515,7 @@ def _kill(processes: list) -> None:
             if process.is_running():
                 process.kill()
                 alive.append(process)
-    psutil.wait_procs(alive, timeout=_STOP_GRACE_S)
+    psutil.wait_procs(alive, timeout=_KILL_WAIT_S)
 
 
 def _port_taken(host: str, port: int) -> bool:

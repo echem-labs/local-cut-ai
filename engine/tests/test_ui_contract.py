@@ -196,10 +196,12 @@ def test_the_desktop_asks_the_engine_to_stop_the_way_the_engine_answers(tmp_path
     status turns every ask into a refusal and every quit back into a kill the
     next start may count as a crash. A grace shorter than the engine's own
     stop kills it partway through every quit during a render, before it
-    requeues the render or stops what the lifespan runs."""
+    requeues the render or stops what the lifespan runs, LocalCut's Ollama
+    among them."""
     from localcut_engine.api.app import SHUTDOWN_DRAIN_S, create_app
     from localcut_engine.config import EngineConfig
     from localcut_engine.jobs.scheduler import CANCEL_GRACE_S, SHUTDOWN_GRACE_S
+    from localcut_engine.programs.server import STOP_GRACE_S as SERVER_STOP_GRACE_S
 
     source = _ts_source(_ENGINE_TS)
     assert re.search(r"fetch\(`\$\{connection\.url\}/shutdown`", source), (
@@ -217,7 +219,9 @@ def test_the_desktop_asks_the_engine_to_stop_the_way_the_engine_answers(tmp_path
     match = re.search(r"export const STOP_GRACE_MS = ([\d_]+);", source)
     assert match, "engine.ts no longer declares STOP_GRACE_MS"
     grace_ms = int(match.group(1).replace("_", ""))
-    engine_ms = (SHUTDOWN_DRAIN_S + SHUTDOWN_GRACE_S + CANCEL_GRACE_S) * 1000
+    # The managed servers (LocalCut's Ollama) stop after the scheduler, in
+    # the same lifespan exit, so their grace adds to the rest.
+    engine_ms = (SHUTDOWN_DRAIN_S + SHUTDOWN_GRACE_S + CANCEL_GRACE_S + SERVER_STOP_GRACE_S) * 1000
     assert grace_ms >= engine_ms, (
         f"the desktop kills after {grace_ms} ms but the engine's own stop can take {engine_ms} ms"
     )

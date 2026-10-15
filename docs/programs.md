@@ -66,7 +66,10 @@ ARM.
 
 The engine starts its copy as `ollama serve` when the engine starts, if the
 copy is there and nothing answers at `LOCALCUT_LLM_URL`. It stops the copy
-and every process the copy started when it shuts down. The copy listens on
+and every process the copy started when it shuts down, however the stop was
+asked for: it asks the copy to exit and kills it a second later if it has
+not, so the engine's whole stop stays inside the ten seconds the desktop
+gives it. The copy listens on
 the address in `LOCALCUT_LLM_URL` (`127.0.0.1:11434` by default), which has
 to be a loopback address over plain HTTP. An address on another machine is
 someone else's server, so LocalCut's copy is neither offered nor started for
