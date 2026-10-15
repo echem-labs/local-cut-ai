@@ -150,12 +150,69 @@ def test_an_export_gives_back_every_port_an_upload_held():
     assert orphaned_nodes(imported) == set(), "a generated node imports feeding nothing"
 
 
-def test_an_export_puts_back_only_a_node_the_template_has():
+def _scene_slots_held_by_uploads() -> StoryGraph:
+    """What the canvas leaves behind when an upload takes a scene's slot on
+    the timeline: the user's own video in scene 2's slot and in the second
+    take's slot of scene 1, and their own recording in scene 1's narration
+    slot. The generated clips and narration stay in the graph, still
+    rendering, feeding nothing."""
+    graph = prompt_template_graph("a hummingbird", target_duration_s=20)
+    expand_screenplay(
+        graph,
+        Screenplay(
+            title="Slots",
+            hook="",
+            scenes=[
+                Scene(id="s1", narration="line 1", visual="shot 1", duration_s=12.0),
+                Scene(id="s2", narration="line 2", visual="shot 2", duration_s=5.0),
+            ],
+        ),
+    )
+    graph.add_node(Node(id="asset-video", kind=NodeKind.ASSET, params={"sha256": "d" * 64}))
+    graph.add_node(Node(id="asset-take", kind=NodeKind.ASSET, params={"sha256": "e" * 64}))
+    graph.add_node(Node(id="asset-voice", kind=NodeKind.ASSET, params={"sha256": "f" * 64}))
+    apply_patch(
+        graph,
+        [
+            PatchOp(op="connect", node_id="timeline", src="asset-video", port="s2"),
+            PatchOp(op="connect", node_id="timeline", src="asset-take", port="s1.p2"),
+            PatchOp(op="connect", node_id="timeline", src="asset-voice", port="s1.audio"),
+        ],
+    )
+    return graph
+
+
+def test_an_export_gives_back_every_scene_slot_an_upload_held():
+    """Dropping the upload's edge alone empties the slot, so the imported
+    cut has no scene 2, no second take of scene 1, and a silent scene 1.
+    Each slot gets back the node the builder wires there: a scene's clip,
+    each later take, and its narration."""
+    source = _scene_slots_held_by_uploads()
+    slots = {e.port for e in source.edges if e.dst == "timeline"}
+
+    template = to_template(source, name="Slots")
+
+    held = {e.port: e.src for e in template.edges if e.dst == "timeline"}
+    assert held == {
+        "s1": "s1.clip",
+        "s1.p2": "s1.clip2",
+        "s1.audio": "s1.narration",
+        "s2": "s2.clip",
+        "s2.audio": "s2.narration",
+        "music": "music",
+    }
+    assert set(held) == slots, "the imported cut has a different set of scenes"
+    build_graph(from_template(template.model_dump(mode="json"))).topological_order()
+
+
+def test_a_start_frame_export_gives_the_clip_the_keyframe_the_tool_makes():
     """The Quick Tool clip with a start frame wires the frame in and removes
-    the generated keyframe in the same patch, so there is nothing to give
-    the port back to. An edge invented from `keyframe` would point at a node
-    the document does not carry, and import refuses that outright."""
-    graph = tool_graph("clip", {"prompt": "a wave"})
+    the generated keyframe in the same patch, so there is no keyframe to
+    give the port back to, and the clip imports with nothing to animate.
+    Export makes the one the tool builds: the clip's own prompt, at its
+    aspect."""
+    asked = {"prompt": "a wave", "aspect": "9:16"}
+    graph = tool_graph("clip", asked)
     graph.add_node(Node(id="asset-1", kind=NodeKind.ASSET, params={"sha256": "a" * 64}))
     apply_patch(
         graph,
@@ -167,8 +224,28 @@ def test_an_export_puts_back_only_a_node_the_template_has():
 
     template = to_template(graph, name="Start frame")
 
-    assert template.edges == []
-    assert set(from_template(template.model_dump(mode="json")).nodes) == {"clip"}
+    built = tool_graph("clip", asked).nodes["keyframe"]
+    keyframe = template.nodes.get("keyframe")
+    assert keyframe is not None, "the clip has nothing to animate"
+    assert (keyframe.kind, keyframe.params) == (built.kind, built.params)
+    assert {(e.src, e.dst, e.port) for e in template.edges} == {("keyframe", "clip", "keyframe")}
+    imported = build_graph(from_template(template.model_dump(mode="json")))
+    assert unready_nodes(imported) == set(), "a node in the imported graph can never render"
+
+
+def test_an_export_puts_back_only_a_node_the_template_has():
+    """A narration removed on the canvas is not made up again, because there
+    is no text to make it from. The slot the upload held stays empty rather
+    than wired to a node the document does not carry, which import refuses
+    outright."""
+    graph = _scene_slots_held_by_uploads()
+    apply_patch(graph, [PatchOp(op="remove_node", node_id="s1.narration")])
+
+    template = to_template(graph, name="No narration")
+
+    assert "s1.narration" not in template.nodes
+    assert not [e for e in template.edges if e.dst == "timeline" and e.port == "s1.audio"]
+    from_template(template.model_dump(mode="json"))
 
 
 def test_an_export_takes_a_narration_off_the_voice_it_cannot_carry():
@@ -801,3 +878,54 @@ async def test_a_project_made_with_uploads_exports_a_template_that_renders(mock_
     assert not [job for job in queue.list(copy.id, 1000) if job.status is JobStatus.FAILED]
     timeline = store.resolve_artifact(copy.id, board["aux"]["timeline"]["artifact_hash"])
     assert "music" in json.loads(timeline.read_text(encoding="utf-8"))["inputs"]
+
+
+async def test_a_project_with_uploads_in_its_scene_slots_exports_a_template_that_renders(
+    mock_rig,
+):
+    """The scene slots through the service: the imported timeline assembles
+    from the same slots the author's did, each fed by the generated node."""
+    store, queue, service = mock_rig
+    source = service.create_from_prompt("tide pools", target_duration_s=20)
+    await _until_exported(service, source.id)
+    video = service.add_asset(source.id, "mine.mp4", b"\x00\x00\x00\x18ftypmp42" + b"x" * 32)
+    voice = service.add_asset(source.id, "mine.wav", b"RIFF" + b"y" * 32)
+    service.patch(
+        source.id,
+        [
+            PatchOp(op="connect", node_id="timeline", src=video["node_id"], port="s2"),
+            PatchOp(op="connect", node_id="timeline", src=voice["node_id"], port="s1.audio"),
+        ],
+    )
+    slots = {e.port for e in store.load_graph(source.id).edges if e.dst == "timeline"}
+
+    copy = service.create_from_template(from_template(service.export_template(source.id)))
+
+    board = await _until_exported(service, copy.id)
+    assert not [job for job in queue.list(copy.id, 1000) if job.status is JobStatus.FAILED]
+    timeline = store.resolve_artifact(copy.id, board["aux"]["timeline"]["artifact_hash"])
+    assert set(json.loads(timeline.read_text(encoding="utf-8"))["inputs"]) == slots
+
+
+async def test_a_start_frame_session_exports_a_template_that_renders(mock_rig):
+    """The Quick Tool clip with a start frame, made the way the desktop makes
+    it: the session, then the upload and one patch that wires it in and
+    removes the generated keyframe."""
+    store, queue, service = mock_rig
+    source = service.create_tool("clip", {"prompt": "a red kite over dunes", "aspect": "16:9"})
+    frame = service.add_asset(source.id, "frame.png", b"\x89PNG\r\n\x1a\n" + b"x" * 32)
+    service.patch(
+        source.id,
+        [
+            PatchOp(op="connect", node_id="clip", src=frame["node_id"], port="keyframe"),
+            PatchOp(op="remove_node", node_id="keyframe"),
+        ],
+    )
+
+    copy = service.create_from_template(from_template(service.export_template(source.id)))
+
+    assert service.scene_board(copy.id)["aux"]["clip"]["status"] != "blocked"
+    async with asyncio.timeout(15.0):
+        while not service.scene_board(copy.id)["aux"]["clip"]["artifact_hash"]:
+            await asyncio.sleep(0.05)
+    assert not [job for job in queue.list(copy.id, 1000) if job.status is JobStatus.FAILED]
