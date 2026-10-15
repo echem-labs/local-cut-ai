@@ -466,10 +466,16 @@ def test_a_manifest_from_a_newer_engine_is_refused():
         parse_programs_manifest(json.dumps({"schema_version": 99, "programs": []}))
 
 
-@pytest.mark.parametrize("path", ["../ffmpeg", "bin/ffmpeg", "..", "", "C:ffmpeg", "a\\b"])
+@pytest.mark.parametrize(
+    "path",
+    ["../ffmpeg", "bin/../../ffmpeg", "/bin/ffmpeg", "bin//ffmpeg", "./ffmpeg", "bin/", "..", ""]
+    + ["C:ffmpeg", "a\\b", "lib/ollama/a:b"],
+)
 def test_a_kept_file_lands_inside_its_program_folder(path):
-    """Members are taken by exact name, and each is written under a name the
-    pin gives it. That name is a bare file name or the pin is refused."""
+    """Members are taken by exact name, and each is written under a path the
+    pin gives it: plain names joined by "/", never absolute, never "..", and
+    nothing a drive or an alternate data stream could be read out of. Any
+    other path and the pin is refused."""
     document = {
         "schema_version": 1,
         "programs": [
@@ -877,8 +883,11 @@ def test_setup_lands_a_working_ffmpeg_the_engine_renders_with_without_a_restart(
 
         assert archives.requests == [f"/{asset['url'].rsplit('/', 1)[1]}"]
         phases = [event["phase"] for event in events if event["type"] == "program.setup.progress"]
+        # FFmpeg runs per job, so it has none of a server's phases after
+        # installing.
+        file_phases = SETUP_PHASES[: SETUP_PHASES.index("installing") + 1]
         assert [phase for i, phase in enumerate(phases) if phases.index(phase) == i] == list(
-            SETUP_PHASES
+            file_phases
         ), "every phase, in order"
         for event in events:
             if event["type"] == "program.setup.progress" and event["phase"] == "downloading":

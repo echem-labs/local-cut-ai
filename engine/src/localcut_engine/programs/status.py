@@ -33,7 +33,7 @@ from ..backends import ffmpeg as ffmpeg_backend
 from ..backends.ffmpeg import FFmpegBackend, _ffprobe_beside
 from ..config import EngineConfig
 from ..readiness import _lists_model
-from . import PROGRAM_IDS
+from . import PROGRAM_IDS, ollama
 from . import manifest as program_manifest
 from .setup import INSTALLERS, ProgramSetup, is_current, pinned, read_record
 
@@ -107,11 +107,21 @@ def _row(program_id: str, source: str, location: str, setting: str) -> dict:
     }
 
 
-def _setup(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict:
+def _setup(
+    config: EngineConfig, setup: ProgramSetup, program_id: str, model: str | None = None
+) -> dict:
     """What setting this program up would download and keep here, or why it
-    cannot be, and the setup running or last ended."""
+    cannot be, and the setup running or last ended. For a program that
+    serves a model, `pull` is the model a setup would pull into LocalCut's
+    copy and about how much it adds, null when its store has it."""
     pin, asset, unavailable = pinned(program_id)
     installer = INSTALLERS.get(program_id)
+    extra = {}
+    if installer is not None and installer.serves:
+        missing = model is not None and installer.model_to_pull(config, model) is not None
+        extra["pull"] = (
+            {"model": model, "bytes": ollama.model_bytes(config, model)} if missing else None
+        )
     return {
         "available": asset is not None,
         "unavailable_reason": unavailable,
@@ -122,27 +132,33 @@ def _setup(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict:
         "url": asset.url if asset is not None else None,
         "download_bytes": asset.size if asset is not None else None,
         "install_bytes": asset.install_bytes if asset is not None else None,
+        **extra,
         **setup.state(program_id),
     }
 
 
-def _managed(config: EngineConfig, program_id: str) -> dict | None:
+def _managed(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict | None:
     """LocalCut's own copy, when there is one: where, how much disk it takes,
     which build, whether that is the build pinned now, and whether the engine
-    is using it."""
+    is using it. A copy that runs as a server adds `server`, what it is doing
+    (server.py)."""
     folder = config.programs_dir / program_id
     if not folder.is_dir():
         return None
     record = read_record(folder)
     _, asset, _ = pinned(program_id)
     installer = INSTALLERS.get(program_id)
-    return {
+    row = {
         "location": str(folder.resolve()),
         "bytes": storage._dir_size(folder),
         "version": record.get("version") if record is not None else None,
         "current": is_current(folder, asset),
         "in_use": installer is not None and installer.in_use(config),
     }
+    server = setup.servers.get(program_id) if setup.servers is not None else None
+    if server is not None:
+        row["server"] = server.describe()
+    return row
 
 
 async def _ffmpeg(config: EngineConfig, setup: ProgramSetup, text_probe: FFmpegBackend) -> dict:
@@ -168,7 +184,7 @@ async def _ffmpeg(config: EngineConfig, setup: ProgramSetup, text_probe: FFmpegB
                 row["checks"]["draws_text"] = await text_probe.supports_drawtext()
     else:
         row["problem"] = "not_found"
-    row["managed"] = await asyncio.to_thread(_managed, config, "ffmpeg")
+    row["managed"] = await asyncio.to_thread(_managed, config, setup, "ffmpeg")
     row["setup"] = _setup(config, setup, "ffmpeg")
     return row
 
@@ -177,8 +193,16 @@ def _source_of(config: EngineConfig, field: str) -> str:
     return "default" if getattr(config, field) == _DEFAULTS[field].default else "configured"
 
 
-async def _server_answer(kind: str, url: str, ask) -> dict:  # noqa: ANN001 - a coroutine function
-    key = (kind, url)
+async def _server_answer(
+    kind: str,
+    url: str,
+    ask,  # noqa: ANN001 - a coroutine function
+    managed: str | None = None,
+) -> dict:
+    # Keyed by what LocalCut's own copy is doing too: the answer from before
+    # it started or stopped says nothing about the address now, and a screen
+    # asks again the moment it hears the copy changed.
+    key = (kind, url, managed)
     kept = _server_answers.get(key)
     if kept is not None and time.monotonic() - kept[0] < _SERVER_TTL_S:
         return kept[1]
@@ -212,8 +236,12 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
             )
         return {"version": version, "models": models}
 
-    answer = await _server_answer("llm", url, ask)
-    row = _row("ollama", _source_of(config, "llm_url"), url, "LOCALCUT_LLM_URL")
+    running = setup.servers.get("ollama") if setup.servers is not None else None
+    answer = await _server_answer("llm", url, ask, running.state if running else None)
+    ours = INSTALLERS["ollama"].in_use(config)
+    # The address is the same either way; who answers there is not.
+    source = "managed" if ours else _source_of(config, "llm_url")
+    row = _row("ollama", source, url, "LOCALCUT_LLM_URL")
     row["checks"] = {"server": None, "model": script_model, "model_present": None}
     version, models = answer["version"], answer["models"]
     if isinstance(models, BaseException) and isinstance(version, BaseException):
@@ -235,8 +263,8 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
         row["checks"]["model_present"] = _lists_model(names, script_model) if names else None
     else:
         row.update(state="broken", problem="unexpected_response")
-    row["managed"] = await asyncio.to_thread(_managed, config, "ollama")
-    row["setup"] = _setup(config, setup, "ollama")
+    row["managed"] = await asyncio.to_thread(_managed, config, setup, "ollama")
+    row["setup"] = await asyncio.to_thread(_setup, config, setup, "ollama", script_model)
     return row
 
 
@@ -250,7 +278,8 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
             except Exception as exc:  # noqa: BLE001 - an address nothing answers at, however it fails
                 return {"stats": exc}
 
-    answer = await _server_answer("comfyui", url, ask)
+    running = setup.servers.get("comfyui") if setup.servers is not None else None
+    answer = await _server_answer("comfyui", url, ask, running.state if running else None)
     row = _row("comfyui", _source_of(config, "comfyui_url"), url, "LOCALCUT_COMFYUI_URL")
     stats = answer["stats"]
     system = (
@@ -263,6 +292,6 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup) -> dict:
         row["version"] = str(system.get("comfyui_version") or "") or None
     else:
         row.update(state="broken", problem="unexpected_response")
-    row["managed"] = await asyncio.to_thread(_managed, config, "comfyui")
+    row["managed"] = await asyncio.to_thread(_managed, config, setup, "comfyui")
     row["setup"] = _setup(config, setup, "comfyui")
     return row

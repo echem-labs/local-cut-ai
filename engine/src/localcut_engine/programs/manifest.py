@@ -5,7 +5,8 @@ A pin is exact. Per program it gives the version, and per platform (an OS
 and an architecture, and a GPU vendor where one build does not serve every
 card) the download's URL, its size in bytes, its SHA-256, the archive's
 format, and every file LocalCut keeps out of it: the member's exact name in
-the archive, the bare file name it is written under, and its size. GitHub
+the archive, the path it is written under inside the program's folder, and
+its size. GitHub
 publishes each release asset's SHA-256 in its API `digest` field, which is
 where the digests here come from. A download whose size or digest differs is
 discarded, and nothing in an archive is written unless a pin names it.
@@ -44,9 +45,10 @@ PLATFORMS = (
 _SYSTEMS = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}
 _MACHINES = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}
 
-# What a kept file may be called: one path segment, with nothing a path
-# separator, a drive or an alternate data stream could be read out of.
-_BARE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+# What each segment of a kept file's path may be called, with nothing a
+# path separator, a drive or an alternate data stream could be read out of.
+# Segments are joined by "/" alone.
+_BARE_NAME = re.compile(r"[A-Za-z0-9._+-]+")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 
 
@@ -66,16 +68,21 @@ class KeptFile(_Strict):
 
     #: The member's name in the archive, matched exactly.
     member: str = Field(min_length=1)
-    #: The bare file name it is written under, in the program's folder.
+    #: Where it is written in the program's folder: a file name, or a path
+    #: of them joined by "/" for a program that finds its libraries beside
+    #: its binary (Ollama's lib/ollama). Never absolute and never "..".
     path: str
     #: Its size unpacked, in bytes.
     size: int = Field(gt=0)
 
     @field_validator("path")
     @classmethod
-    def _a_bare_file_name(cls, value: str) -> str:
-        if not _BARE_NAME.fullmatch(value) or value in (".", ".."):
-            raise ValueError(f"a kept file is written under a bare file name, not {value!r}")
+    def _inside_the_folder(cls, value: str) -> str:
+        segments = value.split("/")
+        if not all(_BARE_NAME.fullmatch(part) and part not in (".", "..") for part in segments):
+            raise ValueError(
+                f"a kept file is written under a relative path of plain names, not {value!r}"
+            )
         return value
 
 
@@ -89,7 +96,7 @@ class ProgramAsset(_Strict):
     url: str = Field(min_length=1)
     size: int = Field(gt=0)
     sha256: str
-    format: Literal["zip", "tar.xz"]
+    format: Literal["zip", "tar.xz", "tar.zst"]
     files: list[KeptFile] = Field(min_length=1)
 
     @field_validator("platform")
@@ -112,6 +119,15 @@ class ProgramAsset(_Strict):
         members = [kept.member for kept in self.files]
         if len(set(paths)) != len(paths) or len(set(members)) != len(members):
             raise ValueError(f"{self.url} keeps the same file twice")
+        # Compared without case, as Windows compares them: a file there
+        # cannot also be the folder another kept file goes in.
+        folders = {
+            "/".join(parts[:depth])
+            for parts in (path.split("/")[:-1] for path in paths)
+            for depth in range(1, len(parts) + 1)
+        }
+        if folders & set(paths):
+            raise ValueError(f"{self.url} keeps a file where another one's folder goes")
         return self
 
     @property

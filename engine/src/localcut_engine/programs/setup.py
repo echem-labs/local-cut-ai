@@ -23,6 +23,21 @@ phases, each announced as it starts:
    its ffmpeg, so a folder that filled up file by file would show it an
    ffmpeg without its ffprobe.
 
+A program that runs as a server (Ollama) goes on:
+
+6. starting: LocalCut's copy is started (server.py) and has to answer. A
+   copy already running is stopped before its folder is replaced, and the
+   new one started in its place;
+7. pulling: the model scripts are written with is pulled through it, when
+   its store does not have it yet. Cancelling here leaves the program set
+   up and the model not.
+
+Setting up a server program whose copy is already the pinned build runs
+only the last two, where they have something to do: it starts a copy that
+is not running and pulls a model it lacks. A pull can also be asked for on
+its own (`pull`), through whichever Ollama answers at the address, the
+user's own included.
+
 It ends with `program.setup.done`, `program.setup.failed` (with a reason
 from SETUP_FAILURES) or `program.setup.cancelled`. A failed or cancelled
 setup removes everything it wrote before saying so, and what an interrupted
@@ -33,8 +48,8 @@ fetched: the routes take no body, and the pin is the only source.
 
 What a setup needs to know about one program in particular (which files it
 must keep, how to tell the copy works, whether the engine would use it) is
-that program's installer. FFmpeg is the only one so far. Another program is
-a pin in programs-manifest.json plus an installer here.
+that program's installer: FFmpeg and Ollama so far. Another program is a
+pin in programs-manifest.json plus an installer here.
 """
 
 from __future__ import annotations
@@ -49,7 +64,9 @@ import lzma
 import os
 import secrets
 import shutil
+import socket
 import stat
+import subprocess
 import tarfile
 import threading
 import time
@@ -58,7 +75,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 import httpx
 
@@ -69,11 +86,20 @@ from ..events import EventBus
 from ..manifest import downloads
 from ..manifest.model import ModelFile
 from ..project.store import _write_atomic
-from . import PROGRAM_IDS
+from . import PROGRAM_IDS, ollama
 from . import manifest as program_manifest
+from . import server as managed_server
 from .manifest import KeptFile, ProgramAsset, ProgramPin
+from .server import ManagedServers, ServerLaunch
 
 logger = logging.getLogger(__name__)
+
+try:
+    from compression import zstd as _zstd
+
+    _ZSTD_ERRORS: tuple[type[Exception], ...] = (_zstd.ZstdError,)
+except ImportError:  # Python 3.13
+    _ZSTD_ERRORS = ()
 
 #: What LocalCut writes beside a program's files: which build it is.
 RECORD = "program.json"
@@ -100,7 +126,11 @@ _REASON_BY_PHASE = {
     "unpacking": "unpack_failed",
     "checking": "does_not_run",
     "installing": "install_failed",
+    "starting": "did_not_start",
+    "pulling": "pull_failed",
 }
+# The phases whose bytes arrive over a network, and so have a speed.
+_TRANSFERS = ("downloading", "pulling")
 
 
 class SetupUnavailable(RuntimeError):
@@ -132,6 +162,11 @@ class ProgramInUse(RuntimeError):
     """LocalCut's copy is being run, so it cannot be removed or replaced."""
 
 
+class NoServer(RuntimeError):
+    """No server of this program answers where the engine looks for it, so
+    there is nothing to start, stop or pull through."""
+
+
 class SetupFailed(Exception):
     """A setup stopped, with a reason code from SETUP_FAILURES."""
 
@@ -151,6 +186,8 @@ class FFmpegInstaller:
     """FFmpeg as a setup sees it: two binaries, run to prove they work."""
 
     program = "ffmpeg"
+    #: FFmpeg is run per job, not kept running.
+    serves = False
 
     @staticmethod
     def _exe(platform_key: str) -> str:
@@ -194,8 +231,147 @@ class FFmpegInstaller:
         return {"draws_text": drawn}
 
 
+class OllamaInstaller:
+    """Ollama as a setup sees it: one binary and the libraries it loads from
+    lib/ollama beside it, run as a server (server.py) that LocalCut starts
+    and stops with the engine, and the model scripts are written with."""
+
+    program = "ollama"
+    serves = True
+
+    @staticmethod
+    def _binary_path(platform_key: str) -> str:
+        return "ollama.exe" if platform_key.startswith("windows") else "bin/ollama"
+
+    def fits(self, asset: ProgramAsset) -> bool:
+        """Whether a pinned build keeps the binary where the engine starts
+        it, with the CPU library every machine falls back to."""
+        kept = {kept.path for kept in asset.files}
+        return self._binary_path(asset.platform) in kept and any(
+            path.startswith("lib/ollama/") for path in kept
+        )
+
+    def takes_effect(self, config: EngineConfig) -> bool:
+        """Whether LocalCut's copy could be the server scripts are written
+        with: the address the engine asks is one a copy on this machine can
+        listen on. An address on another machine is someone else's."""
+        return ollama.local_address(config.llm_url) is not None
+
+    def in_use(self, config: EngineConfig) -> bool:
+        """Whether LocalCut's copy is the server at the address, or is
+        starting to be."""
+        running = managed_server.find(config, self.program)
+        return running is not None and running.serving
+
+    def binary(self, config: EngineConfig) -> Path:
+        name = "ollama.exe" if os.name == "nt" else "bin/ollama"
+        return config.programs_dir / self.program / name
+
+    def _environment(self, config: EngineConfig, host: str, port: int, models: Path) -> dict:
+        # Ollama keeps a key pair in ~/.ollama, made the first time it
+        # serves. Its home is a folder of LocalCut's, so nothing is written
+        # outside the data dir.
+        home = str((config.data_dir / "run" / "ollama-home").resolve())
+        listen = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        return {
+            "OLLAMA_HOST": listen,
+            "OLLAMA_MODELS": str(models.resolve()),
+            "HOME": home,
+            "USERPROFILE": home,
+        }
+
+    def launch(self, config: EngineConfig) -> ServerLaunch | None:
+        address = ollama.local_address(config.llm_url)
+        binary = self.binary(config)
+        if address is None or not binary.is_file():
+            return None
+        host, port = address
+        models = ollama.model_store(config)
+        models.mkdir(parents=True, exist_ok=True)
+        environment = self._environment(config, host, port, models)
+        Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
+        return ServerLaunch(
+            argv=[str(binary), "serve"],
+            env=environment,
+            cwd=binary.parent,
+            url=f"http://{host if ':' not in host else f'[{host}]'}:{port}",
+            host=host,
+            port=port,
+        )
+
+    async def identify(self, url: str):  # noqa: ANN201 - server.Identity
+        return await ollama.identify(url)
+
+    async def check(self, folder: Path) -> dict:
+        """Serve from where it was unpacked, on a free loopback port with an
+        empty model store, until it answers /api/version: that loads its
+        libraries and looks at the GPUs, which `--version` alone does not."""
+        binary = folder / ("ollama.exe" if os.name == "nt" else "bin/ollama")
+        scratch = folder.parent / "check"
+        scratch.mkdir(parents=True, exist_ok=True)
+        port = _free_port()
+        environment = {
+            "OLLAMA_HOST": f"127.0.0.1:{port}",
+            "OLLAMA_MODELS": str(scratch / "models"),
+            "HOME": str(scratch),
+            "USERPROFILE": str(scratch),
+        }
+        options: dict[str, Any] = {}
+        if os.name == "nt":
+            options["creationflags"] = subprocess.CREATE_NO_WINDOW
+        with (scratch / "serve.log").open("wb") as log:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    str(binary),
+                    "serve",
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=binary.parent,
+                    env={**os.environ, **environment},
+                    **options,
+                )
+            except OSError as exc:
+                raise SetupFailed("does_not_run", f"the ollama it unpacked does not run: {exc}")
+        try:
+            deadline = time.monotonic() + managed_server.START_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if process.returncode is not None:
+                    break
+                if await ollama.identify(f"http://127.0.0.1:{port}") == "self":
+                    return {}
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=0.25)
+        finally:
+            await asyncio.to_thread(managed_server._stop_tree, process.pid)
+            await process.wait()
+        said = (scratch / "serve.log").read_text("utf-8", "replace").strip().splitlines()[-3:]
+        raise SetupFailed(
+            "does_not_run",
+            "the ollama it unpacked did not answer" + (f": {' | '.join(said)}" if said else ""),
+        )
+
+    def model_to_pull(self, config: EngineConfig, model: str) -> str | None:
+        """`model`, when LocalCut's copy has not pulled it yet."""
+        return None if ollama.model_on_disk(ollama.model_store(config), model) else model
+
+    def pull_bytes(self, config: EngineConfig, model: str) -> int:
+        """What pulling `model` into LocalCut's copy would add, by the
+        catalog's estimate: 0 when it is there already or not catalogued."""
+        if self.model_to_pull(config, model) is None:
+            return 0
+        return ollama.model_bytes(config, model) or 0
+
+
 #: The programs LocalCut can set up, by id.
-INSTALLERS = {"ffmpeg": FFmpegInstaller()}
+INSTALLERS: dict[str, Any] = {"ffmpeg": FFmpegInstaller(), "ollama": OllamaInstaller()}
+
+
+def _free_port() -> int:
+    """A loopback port nothing listens on now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
 
 
 def pinned(program_id: str) -> tuple[ProgramPin | None, ProgramAsset | None, str | None]:
@@ -206,9 +382,16 @@ def pinned(program_id: str) -> tuple[ProgramPin | None, ProgramAsset | None, str
     if installer is None or pin is None:
         return pin, None, "program_not_supported"
     asset = pin.asset_for(program_manifest.platform_key() or "")
-    if asset is None or not installer.fits(asset):
+    if asset is None or not installer.fits(asset) or not _readable(asset):
         return pin, None, "platform_not_supported"
     return pin, asset, None
+
+
+def _readable(asset: ProgramAsset) -> bool:
+    """Whether this Python can unpack the archive. zstd came to the standard
+    library in 3.14; every engine LocalCut ships runs on 3.14, and one run
+    from a source checkout on 3.13 sets up what it can read."""
+    return asset.format != "tar.zst" or bool(_ZSTD_ERRORS)
 
 
 def setup_fix(config: EngineConfig, program_id: str) -> dict | None:
@@ -221,6 +404,10 @@ def setup_fix(config: EngineConfig, program_id: str) -> dict | None:
     if installer is None or asset is None:
         return None
     if not installer.takes_effect(config) or installer.in_use(config):
+        return None
+    if installer.serves and is_current(config.programs_dir / program_id, asset):
+        # Set up already, and not running: starting it is what it needs,
+        # which is Settings > Programs' to offer, not a download.
         return None
     return {"type": "setup_program", "program": program_id, "size_bytes": asset.size}
 
@@ -281,7 +468,7 @@ class _Job:
         arrived since the window began, over the time since. 0 while nothing
         arrives, and None for the first half second, which is too little to
         measure."""
-        if self.phase != "downloading" or not self._samples:
+        if self.phase not in _TRANSFERS or not self._samples:
             return None
         now = time.monotonic() if now is None else now
         start = now - _RATE_WINDOW_S
@@ -338,10 +525,17 @@ class ProgramSetup:
         events: EventBus,
         *,
         render_uses: Callable[[str], bool] = lambda program: False,
+        servers: ManagedServers | None = None,
+        script_model: Callable[[], str] | None = None,
     ) -> None:
         self.config = config
         self.events = events
         self.render_uses = render_uses
+        # The engine's managed servers, which a setup of a server program
+        # starts, stops and pulls through. None runs no server phases.
+        self.servers = servers
+        # The model a setup of Ollama pulls: the one scripts are written with.
+        self.script_model = script_model
         self._jobs: dict[str, _Job] = {}
         self._last: dict[str, dict] = {}
         # Start and remove, one at a time per program: the checks they make
@@ -382,32 +576,171 @@ class ProgramSetup:
                 )
             installer = INSTALLERS[program_id]
             folder = self.folder(program_id)
+            model = await self._model_for(installer)
             if await asyncio.to_thread(is_current, folder, asset):
-                return {"status": "installed"}
+                if not await self._left_to_do(installer, model):
+                    return {"status": "installed"}
+                server = self.servers.get(program_id) if self.servers is not None else None
+                first = "pulling" if server is not None and server.serving else "starting"
+                job = self._open_job(program_id, first, 0)
+                job.task = asyncio.get_running_loop().create_task(
+                    self._run_server_phases(job, pin, installer), name=f"setup-{program_id}"
+                )
+                return {"status": "started", "job": job.id}
             if folder.exists() and installer.in_use(self.config) and self.render_uses(program_id):
                 raise ProgramInUse(
                     f"a render is using LocalCut's {program_id}; wait for it to finish, "
                     "or cancel it, and set it up again"
                 )
-            need = asset.size + asset.install_bytes
-            free = await asyncio.to_thread(self._free_bytes)
-            if free < need:
-                raise NotEnoughSpace(
-                    f"setting up {program_id} needs {need} bytes free in "
-                    f"{self.config.programs_dir} for the download and the unpacked copy "
-                    f"at once, and {free} are free",
-                    need=need,
-                    free=free,
-                )
-            job = _Job(
-                id=secrets.token_hex(6), program=program_id, phase="downloading", total=asset.size
-            )
-            self._jobs[program_id] = job
-            self._last.pop(program_id, None)
+            pull = installer.pull_bytes(self.config, model) if model else 0
+            await asyncio.to_thread(self._check_space, program_id, asset, pull)
+            job = self._open_job(program_id, "downloading", asset.size)
             job.task = asyncio.get_running_loop().create_task(
                 self._run(job, pin, asset), name=f"setup-{program_id}"
             )
             return {"status": "started", "job": job.id}
+
+    async def pull(self, program_id: str, model: str | None = None) -> dict:
+        """Pull a model through whichever server of this program answers
+        where the engine looks: LocalCut's copy, or the user's own. With no
+        model named, the one scripts are written with. Returns {"status":
+        "started", "job": id, "model": name}, or {"status": "present",
+        "model": name} when the server has it already.
+
+        Raises KeyError for an unknown program, SetupUnavailable for one with
+        no models to pull, NoServer when no server of it answers, SetupBusy
+        while a setup or pull of it runs, and NotEnoughSpace when the model
+        would not fit beside LocalCut's copy (a server of the user's own
+        keeps its models where LocalCut cannot measure)."""
+        if program_id not in PROGRAM_IDS:
+            raise KeyError(program_id)
+        installer = INSTALLERS.get(program_id)
+        if installer is None or not installer.serves:
+            raise SetupUnavailable("program_not_supported", f"{program_id} has no models to pull")
+        lock = self._locks.setdefault(program_id, asyncio.Lock())
+        async with lock:
+            if program_id in self._jobs:
+                raise SetupBusy(f"{program_id} is already being set up")
+            model = model or await self._model_for(installer)
+            if not model:
+                raise SetupUnavailable("program_not_supported", "there is no model to pull")
+            url = self.config.llm_url
+            if await installer.identify(url) != "self":
+                raise NoServer(
+                    f"no {program_id} answers at {url}; set it up, or start your own, "
+                    "and pull again"
+                )
+            names = await ollama.listed_models(url)
+            if names is not None and ollama.lists_model(names, model):
+                return {"status": "present", "model": model}
+            ours = installer.in_use(self.config)
+            store = ollama.model_store(self.config) if ours else None
+            if store is not None:
+                need = installer.pull_bytes(self.config, model)
+                free = await asyncio.to_thread(_free_at, store)
+                if need and free < need:
+                    raise NotEnoughSpace(
+                        f"{model} needs about {need} bytes free in {store}, and {free} are free",
+                        need=need,
+                        free=free,
+                    )
+            job = self._open_job(program_id, "pulling", 0)
+            job.task = asyncio.get_running_loop().create_task(
+                self._run_pull(job, url, model, store), name=f"pull-{program_id}"
+            )
+            return {"status": "started", "job": job.id, "model": model}
+
+    async def start_server(self, program_id: str) -> dict:
+        """Start LocalCut's copy of a server program, and wait until it
+        answers or gives up. Returns its state. Raises KeyError for an
+        unknown program, and SetupUnavailable for one that is not a server
+        or has no copy to start here."""
+        server = self._server_of(program_id)
+        if not server.start():
+            raise SetupUnavailable(
+                "program_not_supported", f"LocalCut has no copy of {program_id} to start here"
+            )
+        await server.settled()
+        return server.describe()
+
+    async def stop_server(self, program_id: str) -> dict:
+        """Stop LocalCut's copy of a server program. It stays stopped until
+        it is started again, or the engine restarts. Raises ProgramInUse
+        while a render is using it."""
+        server = self._server_of(program_id)
+        if server.serving and self.render_uses(program_id):
+            raise ProgramInUse(
+                f"a render is using LocalCut's {program_id}; wait for it to finish, "
+                "or cancel it, and stop it then"
+            )
+        await server.stop()
+        return server.describe()
+
+    def _server_of(self, program_id: str):  # noqa: ANN202 - server.ManagedServer
+        if program_id not in PROGRAM_IDS:
+            raise KeyError(program_id)
+        server = self.servers.get(program_id) if self.servers is not None else None
+        if server is None:
+            raise SetupUnavailable(
+                "program_not_supported", f"LocalCut does not run {program_id} as a server"
+            )
+        return server
+
+    def _open_job(self, program_id: str, phase: str, total: int) -> _Job:
+        job = _Job(id=secrets.token_hex(6), program=program_id, phase=phase, total=total)
+        self._jobs[program_id] = job
+        self._last.pop(program_id, None)
+        return job
+
+    async def _model_for(self, installer) -> str | None:  # noqa: ANN001 - an installer
+        """The model a setup of this program pulls, for one that has models."""
+        if not installer.serves or self.script_model is None:
+            return None
+        return await asyncio.to_thread(self.script_model)
+
+    async def _left_to_do(self, installer, model: str | None) -> bool:  # noqa: ANN001
+        """Whether a copy that is already the pinned build still has to be
+        started, or still lacks the model. Not when a server of the user's
+        own answers at the address: LocalCut uses that one, and a setup
+        leaves it alone."""
+        server = self.servers.get(installer.program) if self.servers is not None else None
+        if not installer.serves or server is None or not installer.takes_effect(self.config):
+            return False
+        if not server.serving and await installer.identify(self.config.llm_url) == "self":
+            return False
+        if not server.serving:
+            return True
+        return model is not None and installer.model_to_pull(self.config, model) is not None
+
+    def _check_space(self, program_id: str, asset: ProgramAsset, pull: int) -> None:
+        """The download and the unpacked copy, at once, on the programs
+        disk, and the model the setup pulls on the disk that keeps models.
+        Raises NotEnoughSpace with the first that does not fit."""
+        self.config.programs_dir.mkdir(parents=True, exist_ok=True)
+        need = asset.size + asset.install_bytes
+        store = ollama.model_store(self.config) if pull else None
+        if store is not None:
+            store.mkdir(parents=True, exist_ok=True)
+            if os.stat(store).st_dev == os.stat(self.config.programs_dir).st_dev:
+                need, store = need + pull, None
+        free = shutil.disk_usage(self.config.programs_dir).free
+        if free < need:
+            raise NotEnoughSpace(
+                f"setting up {program_id} needs {need} bytes free in "
+                f"{self.config.programs_dir} for the download, the unpacked copy"
+                + (" and the model" if pull and store is None else "")
+                + f" at once, and {free} are free",
+                need=need,
+                free=free,
+            )
+        if store is not None:
+            free = shutil.disk_usage(store).free
+            if free < pull:
+                raise NotEnoughSpace(
+                    f"the model needs about {pull} bytes free in {store}, and {free} are free",
+                    need=pull,
+                    free=free,
+                )
 
     def cancel(self, program_id: str) -> None:
         """Stop a running setup; everything it wrote is removed. Raises
@@ -448,7 +781,18 @@ class ProgramSetup:
                         f"a render is using LocalCut's {program_id}; wait for it to finish, "
                         "or cancel it, and remove it then"
                     )
-            freed = await asyncio.to_thread(self._take_away, folder)
+            # A running copy holds its own files open, and Windows will not
+            # move a folder with an open file in it.
+            server = self.servers.get(program_id) if self.servers is not None else None
+            was_serving = server is not None and server.serving
+            if server is not None:
+                await server.stop(reason=None)
+            try:
+                freed = await asyncio.to_thread(self._take_away, folder)
+            except ProgramInUse:
+                if was_serving:
+                    server.start()
+                raise
         self.events.publish("program.removed", program=program_id, freed_bytes=freed)
         return freed
 
@@ -493,10 +837,6 @@ class ProgramSetup:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-
-    def _free_bytes(self) -> int:
-        self.config.programs_dir.mkdir(parents=True, exist_ok=True)
-        return shutil.disk_usage(self.config.programs_dir).free
 
     # -- progress ------------------------------------------------------------
 
@@ -548,6 +888,12 @@ class ProgramSetup:
             await asyncio.to_thread(_write_record, staged, pin, asset)
             job.cancellable = False
             self._phase(job, "installing", 0)
+            server = self._server_for(installer)
+            # The running copy is stopped before its folder is replaced: it
+            # holds its own files open, and the new build is the one to run.
+            stopped = server is not None and server.serving
+            if server is not None:
+                await server.stop(reason=None)
             move = asyncio.ensure_future(asyncio.to_thread(_move_into_place, staged, live))
             try:
                 await asyncio.shield(move)
@@ -558,19 +904,22 @@ class ProgramSetup:
                 with contextlib.suppress(Exception):
                     await move
                 raise
+            except Exception:
+                if stopped:
+                    server.start()
+                raise
+            await asyncio.to_thread(_remove_tree, scratch)
+            if installer.serves:
+                job.cancellable = True
+                facts |= await self._serve_and_pull(job, installer)
         except asyncio.CancelledError:
             await asyncio.shield(asyncio.to_thread(_remove_tree, scratch))
             self._finish(job, "cancelled")
             self.events.publish("program.setup.cancelled", program=job.program)
             raise
         except Exception as exc:  # noqa: BLE001 - every failure is reported, none escapes
-            reason, message = _failure(exc, job.phase, pin)
-            logger.warning("setup of %s failed (%s): %s", job.program, reason, message)
             await asyncio.to_thread(_remove_tree, scratch)
-            self._finish(job, "failed", reason=reason, error=message)
-            self.events.publish(
-                "program.setup.failed", program=job.program, reason=reason, error=message
-            )
+            self._fail(job, exc, pin)
             return
         await asyncio.to_thread(_remove_tree, scratch)
         self._finish(job, "done")
@@ -581,7 +930,116 @@ class ProgramSetup:
             location=str(installer.binary(self.config)),
             in_use=installer.in_use(self.config),
             draws_text=facts.get("draws_text"),
+            # The model it pulled, for a program that serves one.
+            **({"model": facts.get("model")} if installer.serves else {}),
         )
+
+    async def _run_server_phases(self, job: _Job, pin: ProgramPin, installer) -> None:  # noqa: ANN001
+        """A setup of a copy that is the pinned build already: start it if
+        it is not running, and pull the model it lacks."""
+        try:
+            facts = await self._serve_and_pull(job, installer)
+        except asyncio.CancelledError:
+            self._finish(job, "cancelled")
+            self.events.publish("program.setup.cancelled", program=job.program)
+            raise
+        except Exception as exc:  # noqa: BLE001 - every failure is reported, none escapes
+            self._fail(job, exc, pin)
+            return
+        self._finish(job, "done")
+        self.events.publish(
+            "program.setup.done",
+            program=job.program,
+            version=pin.version,
+            location=str(installer.binary(self.config)),
+            in_use=installer.in_use(self.config),
+            draws_text=None,
+            model=facts.get("model"),
+        )
+
+    async def _run_pull(self, job: _Job, url: str, model: str, store: Path | None) -> None:
+        """A pull on its own, through the server at `url`."""
+        pin = program_manifest.load_programs_manifest().program(job.program)
+        try:
+            self._phase(job, "pulling", 0)
+            await self._pull(job, url, model, store)
+        except asyncio.CancelledError:
+            self._finish(job, "cancelled")
+            self.events.publish("program.setup.cancelled", program=job.program)
+            raise
+        except Exception as exc:  # noqa: BLE001 - every failure is reported, none escapes
+            self._fail(job, exc, pin)
+            return
+        self._finish(job, "done")
+        self.events.publish(
+            "program.setup.done",
+            program=job.program,
+            version=None,
+            location=url,
+            in_use=INSTALLERS[job.program].in_use(self.config),
+            draws_text=None,
+            model=model,
+        )
+
+    def _fail(self, job: _Job, exc: BaseException, pin: ProgramPin | None) -> None:
+        reason, message = _failure(exc, job.phase, pin)
+        logger.warning("setup of %s failed (%s): %s", job.program, reason, message)
+        self._finish(job, "failed", reason=reason, error=message)
+        self.events.publish(
+            "program.setup.failed", program=job.program, reason=reason, error=message
+        )
+
+    def _server_for(self, installer):  # noqa: ANN001, ANN202 - server.ManagedServer | None
+        if not installer.serves or self.servers is None:
+            return None
+        return self.servers.get(installer.program)
+
+    async def _serve_and_pull(self, job: _Job, installer) -> dict:  # noqa: ANN001
+        """The phases of a server program after it is in place: start
+        LocalCut's copy and wait for it to answer, then pull the model
+        scripts are written with into it, if its store lacks it. A server of
+        the user's own already at the address is left alone, and so is its
+        store."""
+        server = self._server_for(installer)
+        if server is None or not installer.takes_effect(self.config):
+            return {}
+        if not server.serving:
+            if await installer.identify(self.config.llm_url) == "self":
+                return {}
+            self._phase(job, "starting", 0)
+            server.start()
+        elif server.state == "starting" and job.phase != "starting":
+            self._phase(job, "starting", 0)
+        if await server.settled() != "running":
+            raise SetupFailed(
+                "did_not_start",
+                f"LocalCut's {job.program} did not start ({server.reason})"
+                + (f": {server.error}" if server.error else ""),
+            )
+        model = await self._model_for(installer)
+        if model and installer.model_to_pull(self.config, model) is not None:
+            await self._pull(job, server.url, model, ollama.model_store(self.config))
+        return {"model": model}
+
+    async def _pull(self, job: _Job, url: str, model: str, store: Path | None) -> None:
+        if job.phase != "pulling":
+            self._phase(job, "pulling", 0)
+
+        def progress(done: int, total: int) -> None:
+            job.total = total
+            self._progress(job, done)
+
+        try:
+            await ollama.pull(url, model, progress, store=store)
+        except ollama.PullNoSpace as exc:
+            raise SetupFailed("no_space", f"{model} does not fit: {exc}") from exc
+        except ollama.PullFailed as exc:
+            raise SetupFailed("pull_failed", f"Ollama could not pull {model}: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise SetupFailed(
+                "pull_failed",
+                f"the pull of {model} stopped: {str(exc) or type(exc).__name__}",
+            ) from exc
 
     async def _download(self, job: _Job, asset: ProgramAsset, scratch: Path) -> Path:
         name = asset.url.rsplit("/", 1)[-1]
@@ -624,15 +1082,22 @@ class ProgramSetup:
             raise
 
 
+def _free_at(path: Path) -> int:
+    path.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(path).free
+
+
 def _progress_payload(job: _Job) -> dict:
     described = job.describe()
     return {key: described[key] for key in ("phase", "done", "total", "bytes_per_s")}
 
 
-def _failure(exc: BaseException, phase: str, pin: ProgramPin) -> tuple[str, str]:
+def _failure(exc: BaseException, phase: str, pin: ProgramPin | None) -> tuple[str, str]:
     """(reason, message) for whatever stopped a setup."""
     if isinstance(exc, SetupFailed):
         return exc.reason, str(exc)
+    if pin is None:
+        return _REASON_BY_PHASE.get(phase, "install_failed"), str(exc) or type(exc).__name__
     if isinstance(exc, downloads.SizeMismatch):
         if exc.actual > exc.expected:
             said = f"ran past the {exc.expected} bytes pinned"
@@ -680,7 +1145,9 @@ def _unpack_files(
     def copy(source: IO[bytes], kept: KeptFile) -> None:
         nonlocal written
         count = 0
-        with (folder / kept.path).open("xb") as sink:
+        target = folder.joinpath(*kept.path.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as sink:
             while chunk := source.read(_CHUNK):
                 if stop.is_set():
                     raise _Stopped
@@ -700,7 +1167,7 @@ def _unpack_files(
                 "unpack_failed", f"{kept.member} is {count} bytes, and the pin says {kept.size}"
             )
         if os.name != "nt":
-            (folder / kept.path).chmod(0o755)
+            target.chmod(0o755)
 
     try:
         if asset.format == "zip":
@@ -719,9 +1186,10 @@ def _unpack_files(
             return
         wanted = {kept.member: kept for kept in asset.files}
         found: set[str] = set()
-        # One pass, in archive order: an xz stream cannot be read backwards
-        # without decompressing it again from the start.
-        with tarfile.open(archive, "r:xz") as untarred:
+        # One pass, in archive order: an xz or zstd stream cannot be read
+        # backwards without decompressing it again from the start.
+        mode = "r:xz" if asset.format == "tar.xz" else "r:zst"
+        with tarfile.open(archive, mode) as untarred:
             for member in untarred:
                 if stop.is_set():
                     raise _Stopped
@@ -740,7 +1208,7 @@ def _unpack_files(
         missing = [member for member in wanted if member not in found]
         if missing:
             raise SetupFailed("unpack_failed", f"the archive has no {missing[0]}")
-    except (zipfile.BadZipFile, tarfile.TarError, lzma.LZMAError, EOFError) as exc:
+    except (zipfile.BadZipFile, tarfile.TarError, lzma.LZMAError, *_ZSTD_ERRORS, EOFError) as exc:
         raise SetupFailed("unpack_failed", f"the archive cannot be read: {exc}") from exc
 
 
