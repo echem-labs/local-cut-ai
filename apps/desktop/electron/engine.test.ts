@@ -57,6 +57,12 @@ vi.mock("node:child_process", async () => {
         kill: () => void;
       };
       child.pid = 4242;
+      // What a live ChildProcess reports until it exits. `exited()` reads it
+      // to decide there is nothing left to wait for.
+      Object.assign(child, { exitCode: null, signalCode: null });
+      child.on("exit", (code: number | null, signal: string | null) =>
+        Object.assign(child, { exitCode: code ?? null, signalCode: signal ?? null }),
+      );
       child.stdout = new EventEmitter();
       child.stderr = new EventEmitter();
       child.kill = () => {};
@@ -82,6 +88,7 @@ const {
   EngineManager,
   EnginePortBusyError,
   REBIND_TIMEOUT_MS,
+  STOP_GRACE_MS,
 } = await import("./engine");
 
 /** /health answers, and /projects accepts our token. */
@@ -1293,5 +1300,143 @@ describe("whose crash the tail belongs to", () => {
     const tail = crashes[0]!.tail.join("\n");
     expect(tail).toContain("RuntimeError: no CUDA device");
     expect(tail).not.toContain("FATAL: port 7830 is taken");
+  });
+});
+
+/**
+ * A quit and a crash leave the engine's queue looking the same.
+ *
+ * A job the engine was rendering when it died stays `rendering` and the next
+ * start has only that to go on. It counts a crash against the job unless the
+ * engine had put a stop on record first. The second crash fails the job. A
+ * kill gives the engine no chance to do that: on Windows `killTree` is
+ * `taskkill /F`, which ends the process outright. So the app asks first, over
+ * the authenticated HTTP everything else uses. It kills only an engine that
+ * has not gone by the end of the grace.
+ */
+describe("asking the engine to stop before it is killed", () => {
+  /** What the app did, in order. */
+  let happened: string[];
+
+  /**
+   * An engine that answers the stop request the way `POST /shutdown` does
+   * and then exits after `exitsAfterMs`, or never.
+   */
+  const stoppingEngine = (exitsAfterMs: number | null): void => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: { method?: string; headers?: Record<string, string> }) => {
+        if (!input.endsWith("/shutdown")) return { ok: true, status: 200 };
+        happened.push(`asked ${init?.method} ${init?.headers?.Authorization}`);
+        const { child } = engineSpawns().at(-1)!;
+        if (exitsAfterMs !== null) setTimeout(() => child.emit("exit", 0, null), exitsAfterMs);
+        return { ok: true, status: 202 };
+      }),
+    );
+  };
+
+  /** A kill, in whichever dialect this platform speaks. */
+  const killsSoFar = (): string[] => happened.filter((event) => event.startsWith("killed"));
+
+  beforeEach(() => {
+    happened = [];
+    vi.spyOn(process, "kill").mockImplementation((pid: number, signal?: string | number) => {
+      if (pid === -4242) happened.push(`killed ${signal}`);
+      return true;
+    });
+    spawned.says = (cmd) => {
+      if (cmd === "taskkill") happened.push("killed taskkill");
+      return null;
+    };
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("asks with the token and kills nothing when the engine goes", async () => {
+    const manager = new EngineManager();
+    const connection = await manager.start();
+    stoppingEngine(500);
+
+    await manager.stopAndWait();
+
+    expect(happened).toEqual([`asked POST Bearer ${connection.token}`]);
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain(
+      `${connection.url}/shutdown`,
+    );
+  });
+
+  it("still kills an engine that has not gone by the end of the grace", async () => {
+    const manager = new EngineManager();
+    await manager.start();
+    stoppingEngine(null);
+    vi.useFakeTimers();
+
+    const stopping = manager.stopAndWait();
+    await vi.advanceTimersByTimeAsync(STOP_GRACE_MS - 100);
+    expect(killsSoFar()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(happened[0]).toMatch(/^asked POST/);
+    expect(killsSoFar()).toEqual([
+      process.platform === "win32" ? "killed taskkill" : "killed SIGTERM",
+    ]);
+
+    // And the escalation after that is the one quitting always had.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await stopping;
+    if (process.platform !== "win32") expect(killsSoFar()).toContain("killed SIGKILL");
+  });
+
+  it("kills at once an engine that cannot be asked", async () => {
+    // Refused, or an engine from before the route existed: there is nobody to
+    // wait for. The grace would only hold the quit open.
+    const manager = new EngineManager();
+    await manager.start();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+    vi.useFakeTimers();
+
+    void manager.stopAndWait();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(killsSoFar()).toHaveLength(1);
+  });
+
+  it("asks before switching to a paired engine, not only on quit", async () => {
+    // `engine:pair` stops the local engine with the app still running. A
+    // render in flight there is the same render a quit would interrupt.
+    const manager = new EngineManager();
+    await manager.start();
+    stoppingEngine(0);
+
+    manager.stop();
+    await vi.waitFor(() => expect(happened).toHaveLength(1));
+
+    expect(happened[0]).toMatch(/^asked POST/);
+    expect(killsSoFar()).toEqual([]);
+  });
+
+  it("does not start an engine onto the data dir one that is stopping still holds", async () => {
+    // Until it exits, the stopping engine holds the data directory lock, and
+    // a second engine started in that window exits on startup saying another
+    // engine is using it.
+    const manager = new EngineManager();
+    await manager.start();
+    stoppingEngine(2_000);
+    vi.useFakeTimers();
+
+    manager.stop();
+    const next = manager.start();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(engineSpawns()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    await next;
+    expect(engineSpawns()).toHaveLength(2);
   });
 });

@@ -190,6 +190,39 @@ def test_the_desktop_can_recognise_a_bind_the_engine_refused():
         assert match.group(1) == BIND_REFUSED, f"{path.name} disagrees with cli.py"
 
 
+def test_the_desktop_asks_the_engine_to_stop_the_way_the_engine_answers(tmp_path):
+    """engine.ts asks `POST /shutdown` before it kills the engine, takes only
+    a 202 as a yes and kills after STOP_GRACE_MS. A renamed route or another
+    status turns every ask into a refusal and every quit back into a kill the
+    next start may count as a crash. A grace shorter than the engine's own
+    stop kills it partway through every quit during a render, before it
+    requeues the render or stops what the lifespan runs."""
+    from localcut_engine.api.app import SHUTDOWN_DRAIN_S, create_app
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.jobs.scheduler import CANCEL_GRACE_S, SHUTDOWN_GRACE_S
+
+    source = _ts_source(_ENGINE_TS)
+    assert re.search(r"fetch\(`\$\{connection\.url\}/shutdown`", source), (
+        "engine.ts no longer asks `${connection.url}/shutdown` - update this test with it"
+    )
+    assert 'method: "POST"' in source
+    assert "status === 202" in source, "engine.ts no longer reads a 202 as the engine's yes"
+
+    app = create_app(EngineConfig(data_dir=tmp_path, token="t", backend="mock"))
+    routes = [route for route in app.routes if getattr(route, "path", None) == "/shutdown"]
+    assert len(routes) == 1, "the engine serves no /shutdown"
+    assert routes[0].methods == {"POST"}
+    assert routes[0].status_code == 202
+
+    match = re.search(r"export const STOP_GRACE_MS = ([\d_]+);", source)
+    assert match, "engine.ts no longer declares STOP_GRACE_MS"
+    grace_ms = int(match.group(1).replace("_", ""))
+    engine_ms = (SHUTDOWN_DRAIN_S + SHUTDOWN_GRACE_S + CANCEL_GRACE_S) * 1000
+    assert grace_ms >= engine_ms, (
+        f"the desktop kills after {grace_ms} ms but the engine's own stop can take {engine_ms} ms"
+    )
+
+
 def test_the_u7_gate_can_recognise_the_wait_it_measures():
     """u7 proves the restart it timed actually outlived a held port by
     grepping the app log for the sentence engine.ts writes when it recognises
