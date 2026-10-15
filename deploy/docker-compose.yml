@@ -20,7 +20,14 @@ services:
       LOCALCUT_TOKEN: ${LOCALCUT_TOKEN:?set LOCALCUT_TOKEN to a long random pairing token}
       LOCALCUT_BACKEND: ${LOCALCUT_BACKEND:-local,mock}
       LOCALCUT_LLM_URL: http://ollama:11434/v1
-      LOCALCUT_LLM_MODEL: ${LOCALCUT_LLM_MODEL:-qwen3:14b}
+      # Not set here, so the script model is Auto: the one the hardware
+      # recommendation fits to this box's GPU, qwen3:8b on an 8 GB card and
+      # qwen3:14b from 10 GB, which is also what the first-run screen tells
+      # you to pull. To use one model whatever the card, export
+      # LOCALCUT_LLM_MODEL=qwen3:14b (or any model Ollama has) before
+      # `docker compose up`; with no value here it is passed through from
+      # your shell when set there, and left out of the container when not.
+      LOCALCUT_LLM_MODEL:
       LOCALCUT_COMFYUI_URL: ${LOCALCUT_COMFYUI_URL:-http://host.docker.internal:8188}
       # What the pairing code tells the laptop to dial. Without it the engine
       # advertises its own outbound address, which inside a container is the
@@ -36,6 +43,18 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - ollama
+    # The engine renders nothing on the GPU itself. It is given the card so
+    # its hardware probe (nvidia-smi, which the NVIDIA runtime mounts in) can
+    # see it. Without that the probe finds no GPU, Auto falls back to
+    # qwen3:14b whatever the card, and the first-run screen offers no local
+    # model for scripts, keyframes, clips or music.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   ollama:
     # Pinned for the same reason the engine's FFmpeg is: this box is

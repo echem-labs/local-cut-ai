@@ -1,16 +1,20 @@
-"""The container image's supply-chain pins, read off the file.
+"""The container image's supply-chain pins and the compose file that runs it,
+read off the files.
 
-No job builds this image — test_cli_name.py says so where it explains why it
-reads the Dockerfile itself — so nothing else in the suite can tell whether
-the pins hold. What can be checked here is cheap and is the only check there
-is.
+No job builds this image or starts the compose file — test_cli_name.py says
+so where it explains why it reads the Dockerfile itself — so nothing else in
+the suite can tell whether the pins hold or what the compose file hands the
+engine. What can be checked here is cheap and is the only check there is.
 """
 
 import calendar
 import re
 from pathlib import Path
 
+import yaml
+
 DOCKERFILE = Path(__file__).resolve().parents[2] / "engine" / "Dockerfile"
+COMPOSE = Path(__file__).resolve().parents[2] / "deploy" / "docker-compose.yml"
 
 # The release a BtbN download URL names, e.g. autobuild-2026-09-30-13-08.
 _BTBN_RELEASE = re.compile(
@@ -101,3 +105,34 @@ def test_the_image_and_localcuts_own_setup_pin_the_same_linux_ffmpeg():
     pinned = load_programs_manifest().asset("ffmpeg", "linux-x64")
     assert pinned is not None, "the programs manifest pins no FFmpeg for linux-x64"
     assert (pinned.url, pinned.sha256) == (url, digest)
+
+
+def _engine_service() -> dict:
+    return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["engine"]
+
+
+def test_the_compose_file_leaves_the_script_model_to_auto():
+    """LOCALCUT_LLM_MODEL is an operator's pin: set, it names the script
+    model on every machine. A default in the compose file is a pin nobody
+    chose, and it asked an 8 GB card for qwen3:14b, a model the first-run
+    screen had told the user not to pull. Passed through bare it is set only
+    when the operator's shell sets it."""
+    environment = _engine_service().get("environment") or {}
+    assert isinstance(environment, dict), "the engine's environment is no longer a mapping"
+    assert environment.get("LOCALCUT_LLM_MODEL") is None, (
+        f"the compose file pins the script model: {environment['LOCALCUT_LLM_MODEL']!r}"
+    )
+
+
+def test_the_engine_container_can_see_the_gpu_it_recommends_for():
+    """Auto picks the script model, and the first-run screen its models, from
+    the hardware probe, which reads the card through nvidia-smi. A container
+    with no GPU reserved has no nvidia-smi and no card, so the probe reports
+    none and every box is treated as one with no GPU."""
+    devices = (
+        ((_engine_service().get("deploy") or {}).get("resources") or {}).get("reservations") or {}
+    ).get("devices") or []
+    assert any(
+        device.get("driver") == "nvidia" and "gpu" in (device.get("capabilities") or [])
+        for device in devices
+    ), "the engine service reserves no NVIDIA GPU"
