@@ -171,14 +171,15 @@ export function setupOffer(program: ProgramInfo): SetupOffer | null {
   ) {
     return { kind: "pull", model: checks.model, size: setup.pull?.bytes ?? null };
   }
-  // LocalCut's copy is there and not serving: stopped, or given up on.
-  // Starting it again is the fix; it is already the build a setup fetches.
+  // LocalCut's copy is there and nothing answers: it stopped, gave up, or
+  // stood aside for a server of the user's own that has since gone. Starting
+  // it is the fix; it is already the build a setup fetches.
   const server = program.managed?.server;
   if (
     server &&
     program.state !== "ready" &&
     setup.takes_effect &&
-    (server.state === "crashed" || (server.state === "stopped" && server.reason !== "own_server"))
+    (server.state === "crashed" || server.state === "stopped")
   ) {
     return { kind: "start" };
   }
@@ -568,9 +569,12 @@ export function statusOf(
       // LocalCut's own copy is on its way up: that is the news, not that
       // nothing answers yet.
       lines.push({ text: t("programs.server.starting", { name }) });
-    } else if (server?.reason && server.reason !== "own_server") {
+    } else if (server?.reason) {
+      // Stood aside for the user's own server, which is not answering now:
+      // what matters is that LocalCut's copy is stopped.
+      const reason = server.reason === "own_server" ? "stopped" : server.reason;
       lines.push({
-        text: t(`programs.serverReasons.${server.reason}`, { name, address }),
+        text: t(`programs.serverReasons.${reason}`, { name, address }),
         code: [address],
       });
     } else {

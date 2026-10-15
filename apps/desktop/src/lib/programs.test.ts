@@ -228,7 +228,7 @@ describe("Ollama's well", () => {
     expect(setupOffer(other)).toBeNull();
   });
 
-  it("starts LocalCut's copy when it stopped or gave up, and never over the user's own", () => {
+  it("starts LocalCut's copy when it stopped or gave up, never over the user's own", () => {
     const stopped = ollama({ managed: server("stopped", "stopped") });
     expect(setupOffer(stopped)).toEqual({ kind: "start" });
     expect(setupOffer(ollama({ managed: server("crashed", "exited") }))).toEqual({
@@ -241,6 +241,12 @@ describe("Ollama's well", () => {
       managed: server("stopped", "own_server"),
     });
     expect(setupOffer(theirs)).toBeNull();
+    // Theirs has gone since: LocalCut's copy is what is left to start.
+    const gone = ollama({ managed: server("stopped", "own_server") });
+    expect(setupOffer(gone)).toEqual({ kind: "start" });
+    expect(statusOf(gone, { host: null, offer: { kind: "start" } })[0].text).toBe(
+      "LocalCut's copy is stopped.",
+    );
   });
 
   it("says what LocalCut's copy is doing instead of that nothing answers", () => {

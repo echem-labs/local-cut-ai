@@ -42,7 +42,22 @@ names one model for every machine instead.
 
 If the server does not have that model, the readiness report says so by
 name (`llm_model_missing`) rather than writing the script with another
-model it happens to have.
+model it happens to have. When the server is an Ollama, the fix is pulling
+it: the Get button in Settings > Programs or in the render gate, or
+`localcut programs pull ollama` from a terminal.
+
+## Ollama
+
+Any OpenAI-compatible server writes scripts. An Ollama of your own on
+`127.0.0.1:11434` is used as it is. Without one, LocalCut can set up its own
+copy on Windows x64 and Linux x64: Set up Ollama in Settings > Programs or on
+the first-run screen, or `localcut programs setup ollama`. That downloads the
+pinned Ollama build into `~/.localcut/programs/ollama`, starts it and pulls
+the script model into `~/.localcut/models/ollama`. From then on the engine
+starts it when the engine starts and stops it when the engine stops, as long
+as no Ollama of yours answers at `LOCALCUT_LLM_URL` first.
+[programs.md](programs.md#localcuts-own-ollama) has what it keeps, where it
+logs and how it is restarted.
 
 ## ComfyUI
 
@@ -104,7 +119,8 @@ before it renders a scene, and the readiness report says so beforehand with
 `GET /models` and `POST /models/{id}/download`, with progress over `/ws`. The
 desktop app's first-run screen and Settings → model library use exactly that.
 Programs work the same way, through `GET /programs` and
-`POST /programs/ffmpeg/setup`; [programs.md](programs.md) has the details.
+`POST /programs/{id}/setup`, as does pulling a model into Ollama with
+`POST /programs/ollama/pull`; [programs.md](programs.md) has the details.
 
 ## Handing off to an NLE
 
