@@ -719,3 +719,45 @@ describe("a model to pick", () => {
     expect(openSettings).toHaveBeenCalledWith("programs");
   });
 });
+
+describe("a cloned narration that cannot load", () => {
+  // The engine's own sentence, as `/voices` sends it to the inspector. It
+  // quotes the import error, so it cannot come from the catalog.
+  const reason =
+    "chatterbox-tts is installed but does not import (ImportError: tokenizers>=0.22.0," +
+    "<=0.23.0 is required for a normal functioning of this module, but found " +
+    "tokenizers==0.23.1.). Repair the engine environment as docs/voices.md describes, " +
+    "then restart the engine.";
+  const cloneFails: ReadinessRow = {
+    kind: "narration",
+    model: "local:chatterbox",
+    backend: "chatterbox",
+    verdict: "will_fail",
+    reason: "clone_unavailable",
+    data: { task: "speech.tts", cloning_reason: reason },
+    fix: null,
+  };
+
+  it("says cloning cannot run, and why in the engine's words, on the board", () => {
+    seed([cloneFails]);
+    const { container } = render(<ReadinessBanner />);
+    const well = container.querySelector(".well");
+    expect(well?.querySelector(".whead")?.textContent).toBe(
+      t("readiness.reasons.clone_unavailable"),
+    );
+    expect(well?.textContent).toContain(reason);
+    expect(well?.textContent).toContain(t("readiness.effects.will_fail"));
+  });
+
+  it("holds a render behind the gate with the same reason", async () => {
+    // The gate is what stood between "Make my final video" and a render
+    // whose every narration fails.
+    const run = vi.fn();
+    seed([cloneFails]);
+    render(<Harness onRun={run} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain(reason);
+    expect(run).not.toHaveBeenCalled();
+  });
+});

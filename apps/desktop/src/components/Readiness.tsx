@@ -120,10 +120,22 @@ export interface GapGroup {
   /** The task whose Default models picker fixes this cause, when the engine
    * says the fix is a pick (`pick_model`). */
   pickTask: string | null;
+  /** The engine's own sentence about the cause, shown under the catalog's,
+   * where the engine sends one (`detailOf`). */
+  detail: string | null;
   items: GapItem[];
   /** The worst verdict inside, which decides both the well's edge colour
    * and where the group sorts. */
   severity: number;
+}
+
+/** What the engine said about a cause in its own words, for the one reason
+ * whose cause no catalog can hold: a voice clone that will not load, where
+ * the engine quotes the import error. It is the same sentence the
+ * inspector shows under its own note, from GET /voices. */
+function detailOf(row: ReadinessRow): string | null {
+  const said = row.data.cloning_reason;
+  return row.reason === "clone_unavailable" && typeof said === "string" && said ? said : null;
 }
 
 /** Gaps grouped by cause, worst group first.
@@ -143,10 +155,12 @@ export function gapGroups(rows: readonly ReadinessRow[]): GapGroup[] {
       cause,
       reason: row.reason,
       pickTask: null,
+      detail: null,
       items: [],
       severity: 0,
     };
     if (group.pickTask === null && row.fix?.type === "pick_model") group.pickTask = row.fix.task;
+    group.detail ??= detailOf(row);
     group.items.push({
       key: `${row.kind}:${row.model ?? ""}:${row.reason}`,
       stage: stageOf(row),
@@ -217,6 +231,7 @@ export function GapList({
                 <Icon size={14} strokeWidth={1.8} aria-hidden="true" />
                 <span>{group.cause}</span>
               </div>
+              {group.detail && <p className="well-detail">{group.detail}</p>}
               <StageRows items={group.items} />
               {pick !== null && (
                 <div className="well-fix">

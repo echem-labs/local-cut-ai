@@ -28,10 +28,11 @@ render it, on ready rows too: the desktop's model picker reads the resolved
 model to say what "Auto" means, and its per-task surfaces key on the task.
 A row that omits either is a row those surfaces silently drop.
 
-Known limitation, on purpose: a `local:chatterbox` narration row reports
-ready without probing for the chatterbox package — the import pulls torch,
-far too heavy for a preflight. Clone failures stay execute-time and loud
-(backends/chatterbox.py never falls back to a stock voice).
+A `local:chatterbox` narration row asks the chatterbox backend whether it
+can load (`ChatterboxBackend.runtime_problem`), the answer `/voices` and a
+render read too. The first ask imports PyTorch and the answer is kept for
+the engine's life, and a report asks only for a project whose narration is
+cloned.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ import httpx
 
 from .backends import espeak
 from .backends.base import BackendRegistry, GenerationError, ServiceProbe
+from .backends.chatterbox import ChatterboxBackend
 from .backends.ffmpeg import FFmpegBackend, ffmpeg_available
 from .config import EngineConfig
 from .graph.model import CAPTIONS_PORT, NodeKind
@@ -83,6 +85,11 @@ READINESS_REASONS = (
     # titles or burned-in captions): the export refuses before it renders a
     # scene.
     "ffmpeg_cannot_draw_text",
+    # A cloned narration (`local:chatterbox`) on an engine where chatterbox-tts
+    # is missing or will not load. `data.cloning_reason` is the backend's own
+    # sentence, the one `/voices` sends as `cloning_reason`: where an import
+    # failed it quotes the exception, which no catalog can hold.
+    "clone_unavailable",
     # The engine sits in a folder deep enough that the path to espeak-ng's
     # data does not fit the buffer espeak-ng keeps it in, so every Kokoro
     # narration fails (backends/espeak.py). `data` carries the path's length
@@ -641,9 +648,11 @@ def _local_row(
 
     if name == "kokoro":
         return _kokoro_row(kind, model)
+    if isinstance(resolved, ChatterboxBackend):
+        return _clone_row(resolved, kind, model)
 
-    # align, chatterbox, ffmpeg assembly, and any future tier that claimed
-    # the kind for real.
+    # align, ffmpeg assembly, and any future tier that claimed the kind for
+    # real.
     return _row(kind, verdict="ready", reason="ok", backend=name, model=model)
 
 
@@ -670,6 +679,25 @@ def _kokoro_row(kind: NodeKind, model: str | None) -> dict:
             "path_bytes": len(espeak.encoded(path)),
             "path_limit": espeak.DATA_PATH_LIMIT,
         },
+    )
+
+
+def _clone_row(backend: ChatterboxBackend, kind: NodeKind, model: str | None) -> dict:
+    """Chatterbox claimed a cloned narration, which says nothing about
+    whether it can load: the package can be missing, or installed under a
+    transformers that refuses the tokenizers beside it, or without the
+    pkg_resources its watermarker needs. Blocking, and called off the event
+    loop like the rest of `_local_row`."""
+    problem = backend.runtime_problem()
+    if problem is None:
+        return _row(kind, verdict="ready", reason="ok", backend=backend.name, model=model)
+    return _row(
+        kind,
+        verdict="will_fail",
+        reason="clone_unavailable",
+        backend=backend.name,
+        model=model,
+        extra={"cloning_reason": problem},
     )
 
 

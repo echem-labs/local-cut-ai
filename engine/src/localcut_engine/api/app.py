@@ -40,7 +40,7 @@ from .. import ENGINE_API_VERSION, __version__
 from ..aspects import EXPORT_RESOLUTIONS
 from ..backends.align import AlignBackend
 from ..backends.base import BackendRegistry, GenerationError, ServiceProbe
-from ..backends.chatterbox import INSTALL_HINT, ChatterboxBackend
+from ..backends.chatterbox import ChatterboxBackend, absent_reason
 from ..backends.cloud import CloudBackend
 from ..backends.comfyui import ComfyUIBackend
 from ..backends.ffmpeg import FFmpegBackend
@@ -840,7 +840,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         chain without chatterbox never pays for it.
         """
         if not ChatterboxBackend.package_installed():
-            return INSTALL_HINT
+            return absent_reason()
         backend = backends.find("chatterbox")
         if not isinstance(backend, ChatterboxBackend):
             return (
