@@ -375,8 +375,46 @@ def failed_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> lis
     return [
         job
         for job in jobs
-        if str(job.get("status")) == "failed" and str(job.get("id")) not in not_mine
+        if str(job.get("status")) == JobStatus.FAILED.value and str(job.get("id")) not in not_mine
     ]
+
+
+def cancelled_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> list[dict]:
+    """Rows that ended cancelled with nothing after them for their node, and
+    are not excused as an earlier render's. What a cancel leaves undone,
+    shared by wait_for_render and the MCP render_status like failed_jobs.
+
+    Only the newest job for a node counts. A re-plan cancels a queued job
+    whose inputs have moved and queues the one that replaces it, so that
+    node still renders, and the cancelled row says nothing about it. Newest
+    by `created_at`, and by place in the list where that ties, since /jobs
+    lists the newest first."""
+    newest: dict[Any, dict] = {}
+    for job in jobs:
+        node = (job.get("spec") or {}).get("node_id")
+        seen = newest.get(node)
+        if seen is None or _created_at(job) > _created_at(seen):
+            newest[node] = job
+    return [
+        job
+        for job in jobs
+        if str(job.get("status")) == JobStatus.CANCELLED.value
+        and str(job.get("id")) not in not_mine
+        and newest.get((job.get("spec") or {}).get("node_id")) is job
+    ]
+
+
+def unfinished_jobs(jobs: list[dict], *, not_mine: frozenset[str] | set[str]) -> list[dict]:
+    """This render's jobs that did not do their work: the failed ones, then
+    the cancelled ones. Either way the render did not succeed."""
+    return failed_jobs(jobs, not_mine=not_mine) + cancelled_jobs(jobs, not_mine=not_mine)
+
+
+def _created_at(job: dict) -> float:
+    stamp = job.get("created_at")
+    if isinstance(stamp, bool) or not isinstance(stamp, (int, float)):
+        return 0.0
+    return float(stamp)
 
 
 def settled_jobs(client: EngineClient, project_id: str) -> frozenset[str]:
@@ -395,11 +433,13 @@ def wait_for_render(
     on_progress=None,
     not_mine: frozenset[str] = frozenset(),
 ) -> list[dict]:
-    """Block until nothing is queued or rendering. Returns the failed jobs.
+    """Block until nothing is queued or rendering. Returns this render's jobs
+    that did not do their work (`unfinished_jobs`): the failed ones, then the
+    cancelled ones.
 
-    Returning the failures rather than raising: a render where three scenes
-    landed and one did not is a partial success the caller may well want to
-    report node by node, and an exception would flatten that to a string.
+    Returning them rather than raising: a render where three scenes landed
+    and one did not is a partial success the caller may well want to report
+    node by node, and an exception would flatten that to a string.
 
     A timeout raises, because a script that silently proceeds past an
     unfinished render will do something worse a step later.
@@ -421,7 +461,7 @@ def wait_for_render(
         if on_progress is not None:
             on_progress(jobs, pending)
         if not pending:
-            return failed_jobs(jobs, not_mine=not_mine)
+            return unfinished_jobs(jobs, not_mine=not_mine)
         if time.monotonic() >= deadline:
             raise EngineError(
                 f"still rendering after {timeout_s:.0f}s ({len(pending)} job(s) outstanding) - "

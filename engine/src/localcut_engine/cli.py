@@ -795,26 +795,32 @@ def _render_command(args: argparse.Namespace, client) -> int:
             state = "  ".join(f"{status}:{n}" for status, n in sorted(counts.items()))
             print(f"  {state}  ({len(pending)} outstanding)", flush=True)
 
-    failed = automation.wait_for_render(
+    unfinished = automation.wait_for_render(
         client,
         args.project_id,
         timeout_s=args.timeout_s,
         on_progress=progress,
         not_mine=not_mine,
     )
+    failed = [job for job in unfinished if job.get("status") == "failed"]
+    # Not a success either: a cancel leaves its node unrendered, and every
+    # node downstream of it is cancelled with it, the export included.
+    cancelled = [job for job in unfinished if job.get("status") == "cancelled"]
     payload = {
         "project_id": args.project_id,
         "failed": [
             {"node_id": job["spec"]["node_id"], "error": job.get("error")} for job in failed
         ],
+        "cancelled": [{"node_id": job["spec"]["node_id"]} for job in cancelled],
     }
     automation.emit(
         payload,
         as_json=args.json,
         lines=[f"{job['spec']['node_id']}: {job.get('error') or 'failed'}" for job in failed]
+        + [f"{job['spec']['node_id']}: cancelled" for job in cancelled]
         or ["render finished"],
     )
-    return automation.EXIT_FAILED if failed else automation.EXIT_OK
+    return automation.EXIT_FAILED if unfinished else automation.EXIT_OK
 
 
 def _export_command(args: argparse.Namespace, client) -> int:

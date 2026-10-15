@@ -97,13 +97,14 @@ _INSTRUCTIONS = """LocalCut turns a prompt or a script into a finished video \
 
 Typical flow: create_project -> get_project (the scene board) -> start_render \
 -> poll render_status until done (pass start_render's earlier_failures as \
-ignore_job_ids, or failures from past renders are blamed on this one) -> \
-export_video. Renders take real GPU time - minutes per clip on consumer \
-hardware - so poll between other work. Compare outstanding[].progress across \
-polls to spot a stalled render; cancel_render stops one. done only means \
-nothing is queued: a never-rendered or checkpoint-gated project is also \
-"done", so read export_ready before promising a file. export_video writes \
-only inside the export directory engine_info reports.
+ignore_job_ids, or failures and cancels from past renders are blamed on this \
+one) -> export_video. Renders take real GPU time - minutes per clip on \
+consumer hardware - so poll between other work. Compare outstanding[].progress \
+across polls to spot a stalled render; cancel_render stops one, and its jobs \
+then show in render_status's cancelled list. done only means nothing is \
+queued: a never-rendered or checkpoint-gated project is also "done", so read \
+export_ready before promising a file. export_video writes only inside the \
+export directory engine_info reports.
 
 If a tool says it cannot reach the engine, the fix is in this MCP server's \
 own configuration (the command and environment your host launches it with, \
@@ -283,6 +284,16 @@ def render_status_payload(
             }
             for job in automation.failed_jobs(jobs, not_mine=set(ignore_job_ids))
         ],
+        # Beside the failures rather than among them: nothing went wrong
+        # with these, but the render did not finish them, and every node
+        # downstream of a cancel is cancelled with it.
+        "cancelled": [
+            {
+                "id": str(job.get("id")),
+                "node_id": (job.get("spec") or {}).get("node_id"),
+            }
+            for job in automation.cancelled_jobs(jobs, not_mine=set(ignore_job_ids))
+        ],
         "history_counts": automation.render_summary(jobs),
         "export_ready": ready,
         "export_hash": export_hash if ready else None,
@@ -408,24 +419,25 @@ def build_server(
         mean nothing is happening - a project renders as soon as it is
         created, so work is often already queued. render_status is the
         authority on what is outstanding. `earlier_failures` lists job ids
-        that had already failed BEFORE this render; keep them and pass them
-        to render_status as ignore_job_ids so an old failure is never
-        blamed on this one."""
+        that had already failed or been cancelled BEFORE this render; keep
+        them and pass them to render_status as ignore_job_ids so an old
+        failure or cancel is never blamed on this one."""
         project_id = _project_id(project_id)
         with connect() as client:
             # Snapshot BEFORE the trigger: taken after, a job of this render
             # that failed instantly would be classified as somebody else's.
             jobs = client.get("/jobs", params={"project_id": project_id}) or []
-            earlier = automation.failed_jobs(jobs, not_mine=frozenset())
+            earlier = automation.unfinished_jobs(jobs, not_mine=frozenset())
             action = "finalize" if final else "render"
             result = client.post(f"/projects/{project_id}/{action}") or {}
         return {
             # The POST's own answer — not a third round trip that would
             # re-download the whole /jobs history for a count already sent.
             "enqueued": automation.enqueued_count(result),
-            # Failed ids only: they are all render_status ever consults, and
-            # the agent re-sends this list on every poll — done/cancelled
-            # ids would be unbounded dead weight in its context.
+            # Only the ids render_status would report (failed, and cancelled
+            # with nothing after them for their node): the agent re-sends
+            # this list on every poll, and done ids would be unbounded dead
+            # weight in its context.
             "earlier_failures": sorted(str(job.get("id")) for job in earlier),
         }
 
@@ -438,8 +450,11 @@ def build_server(
         across polls means a stalled render worth telling the user about.
         failed excludes ignore_job_ids - pass start_render's
         earlier_failures; omitted, it lists every failure still on record
-        for the project. history_counts likewise counts every job the engine
-        still lists (its newest 200), not just this render."""
+        for the project. cancelled lists this render's jobs that were
+        cancelled with nothing rendered after them, filtered the same way;
+        a render with any is not finished, whatever done says.
+        history_counts likewise counts every job the engine still lists (its
+        newest 200), not just this render."""
         project_id = _project_id(project_id)
         with connect() as client:
             jobs = client.get("/jobs", params={"project_id": project_id}) or []

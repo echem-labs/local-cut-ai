@@ -752,6 +752,73 @@ def test_a_job_that_fails_before_the_first_poll_is_still_this_render_s():
     assert [job["id"] for job in failed] == ["mine"]
 
 
+class _RenderStub(_JobsStub):
+    """A waiting `render` from start to finish: the /jobs snapshot taken
+    before the trigger, the trigger itself, then the polls."""
+
+    def post(self, path: str, **kwargs: object) -> object:
+        return {"enqueued": 1}
+
+
+def _wait_for(client, *, as_json: bool) -> int:
+    return cli._render_command(
+        argparse.Namespace(project_id="p1", no_wait=False, json=as_json, final=False, timeout_s=60),
+        client,
+    )
+
+
+STOPPED = {**MINE, "status": "cancelled"}
+STOPPED_EXPORT = {"id": "exp", "status": "cancelled", "spec": {"node_id": "export"}}
+
+
+def test_a_render_that_was_cancelled_exits_1_and_names_what_was_cancelled(capsys):
+    """Exit 0 is "succeeded", the one status a script reads as "carry on",
+    and a render whose clip was stopped did not finish its work: nothing
+    downstream of the clip rendered either, so the next step would export
+    whatever the previous complete run left behind."""
+    client = _RenderStub([OLD], [OLD, STOPPED, STOPPED_EXPORT])
+
+    assert _wait_for(client, as_json=False) == automation.EXIT_FAILED
+
+    out = capsys.readouterr().out
+    assert "s1.clip: cancelled" in out
+    assert "export: cancelled" in out
+    assert "render finished" not in out
+
+
+def test_the_json_report_lists_the_cancelled_jobs_apart_from_the_failed_ones(capsys):
+    client = _RenderStub([OLD], [OLD, STOPPED, STOPPED_EXPORT])
+
+    assert _wait_for(client, as_json=True) == automation.EXIT_FAILED
+
+    report = json_out(capsys)
+    assert report["failed"] == []
+    assert report["cancelled"] == [{"node_id": "s1.clip"}, {"node_id": "export"}]
+
+
+def test_a_cancel_from_an_earlier_render_is_not_this_one_s():
+    """The same bound failures get: an export someone stopped last week is
+    in /jobs for good, and must not fail every render since."""
+    earlier = {**STOPPED_EXPORT, "id": "earlier"}
+    client = _RenderStub([earlier], [earlier, {**MINE, "status": "done"}])
+
+    assert _wait_for(client, as_json=True) == automation.EXIT_OK
+
+
+def test_a_job_the_engine_replaced_is_not_a_cancelled_render():
+    """A re-plan cancels a queued job whose inputs moved and queues the one
+    that replaces it, so the node still renders. Only the newest job for a
+    node says whether its work was left undone."""
+    replaced = {**STOPPED, "created_at": 1.0}
+    replacement = {"id": "new", "status": "done", "spec": {"node_id": "s1.clip"}, "created_at": 2.0}
+
+    unfinished = automation.wait_for_render(
+        _JobsStub([replacement, replaced]), "p1", timeout_s=30, not_mine=frozenset()
+    )
+
+    assert unfinished == []
+
+
 # -- what the client refuses to call success ---------------------------------
 
 
