@@ -2,9 +2,11 @@
 a local HTTP server (python's RangeRequestHandler-capable SimpleHTTP)."""
 
 import asyncio
+import email.utils
 import hashlib
 import pathlib
 import threading
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -19,6 +21,8 @@ from localcut_engine.manifest.downloads import (
     UnsafeURL,
     assert_public_url,
     download_file,
+    download_file_retrying,
+    download_model,
     is_downloaded,
     partial_bytes,
 )
@@ -620,3 +624,252 @@ async def test_a_locked_weight_file_is_reported_not_traced(tmp_path, monkeypatch
     monkeypatch.undo()
     assert weights.exists()
     assert manager.delete("m1") == 100  # unlocked, it deletes and counts normally
+
+
+# -- trouble that passes, and trouble that does not -------------------------
+
+
+class _Flaky:
+    """Serves PAYLOAD at /weights.bin over loopback, answering each request
+    with the next entry of `script` and then normally: `("status", code,
+    headers)` answers with that status and no file, `("drop", n)` sends
+    the first n bytes of the body and closes the connection. A Range of
+    `bytes=N-` gets a 206 with the rest. Records the Range of every
+    request."""
+
+    def __init__(self) -> None:
+        self.script: list[tuple] = []
+        self.ranges: list[str | None] = []
+        outer = self
+
+        class Handler(SimpleHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
+                asked = self.headers.get("Range")
+                outer.ranges.append(asked)
+                answer = outer.script.pop(0) if outer.script else ("serve",)
+                if answer[0] == "status":
+                    self.send_response(answer[1])
+                    for name, value in answer[2].items():
+                        self.send_header(name, value)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                if self.path != "/weights.bin":
+                    self.send_error(404)
+                    return
+                start = int(asked.removeprefix("bytes=").split("-")[0]) if asked else 0
+                if start:
+                    self.send_response(206)
+                    self.send_header(
+                        "Content-Range", f"bytes {start}-{len(PAYLOAD) - 1}/{len(PAYLOAD)}"
+                    )
+                else:
+                    self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(PAYLOAD) - start))
+                self.end_headers()
+                body = PAYLOAD[start:]
+                if answer[0] == "drop":
+                    self.wfile.write(body[: answer[1]])
+                    self.wfile.flush()
+                    self.close_connection = True
+                    return
+                self.wfile.write(body)
+
+            def log_message(self, *args) -> None:
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+
+
+@pytest.fixture
+def flaky(monkeypatch):
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
+    server = _Flaky()
+    yield server
+    server.httpd.shutdown()
+    server.httpd.server_close()
+
+
+def _entry(url: str) -> ModelEntry:
+    return ModelEntry(
+        id="tiny",
+        task="image.gen",
+        family="test",
+        requirements=Requirements(vram_gb=0, disk_gb=0),
+        license=LicenseInfo(id="mit", commercial=True),
+        files=[
+            ModelFile(
+                url=url,
+                dest="checkpoints/weights.bin",
+                sha256=hashlib.sha256(PAYLOAD).hexdigest(),
+                size=len(PAYLOAD),
+            )
+        ],
+    )
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
+async def test_a_model_download_waits_out_a_server_error_and_carries_on(flaky, tmp_path, status):
+    """A weight host that is overloaded, restarting or rate-limiting answers
+    with a status that says so, and none of them says the file is gone. A
+    multi-GB download asks again rather than failing on the first one."""
+    flaky.script = [("status", status, {}), ("status", status, {})]
+
+    paths = await download_model(_entry(f"{flaky.url}/weights.bin"), tmp_path / "models")
+
+    assert paths[0].read_bytes() == PAYLOAD
+    assert len(flaky.ranges) == 3
+
+
+async def test_a_model_download_that_drops_mid_body_picks_up_where_it_stopped(flaky, tmp_path):
+    flaky.script = [("drop", 300_000), ("drop", 300_000)]
+
+    paths = await download_model(_entry(f"{flaky.url}/weights.bin"), tmp_path / "models")
+
+    assert paths[0].read_bytes() == PAYLOAD
+    assert flaky.ranges[0] is None
+    assert flaky.ranges[1] == "bytes=300000-"
+    assert flaky.ranges[2] == "bytes=600000-"
+
+
+async def test_a_model_url_that_is_gone_fails_at_once_and_says_so(flaky, tmp_path):
+    """A 404 is not going to change by asking again: the URL in the catalog
+    is out of date. One request, and a reason that says the file is gone
+    rather than that the download failed."""
+    with pytest.raises(DownloadError) as refused:
+        await download_model(_entry(f"{flaky.url}/moved.bin"), tmp_path / "models")
+
+    assert len(flaky.ranges) == 1
+    assert "HTTP 404" in str(refused.value)
+    assert "no longer at this address" in str(refused.value)
+
+
+async def test_a_refusal_other_than_429_is_not_asked_again(flaky, tmp_path):
+    flaky.script = [("status", 403, {})]
+
+    with pytest.raises(DownloadError, match="HTTP 403"):
+        await download_model(_entry(f"{flaky.url}/weights.bin"), tmp_path / "models")
+
+    assert len(flaky.ranges) == 1
+
+
+async def test_a_server_that_keeps_failing_gives_up_after_a_run_of_attempts(flaky, tmp_path):
+    flaky.script = [("status", 503, {})] * 50
+
+    with pytest.raises(DownloadError, match="HTTP 503"):
+        await download_model(_entry(f"{flaky.url}/weights.bin"), tmp_path / "models")
+
+    assert len(flaky.ranges) == 1 + downloads_module._RETRIES
+
+
+async def test_retry_after_is_waited_for_up_to_a_cap(tmp_path, monkeypatch):
+    """A 429 or 503 that says when to come back is taken at its word, in
+    seconds or as a date, but never for longer than a minute: a server
+    asking for an hour would hold a setup that long with nothing on screen."""
+    monkeypatch.setattr(downloads_module, "assert_public_url", lambda url: None)
+    soon = email.utils.format_datetime(datetime.now(UTC) + timedelta(seconds=3), usegmt=True)
+    answers = [
+        httpx.Response(503, headers={"Retry-After": "7"}),
+        httpx.Response(429, headers={"Retry-After": "86400"}),
+        httpx.Response(503, headers={"Retry-After": soon}),
+        httpx.Response(200, content=PAYLOAD),
+    ]
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: answers.pop(0)))
+    waits: list[float] = []
+    sleep = asyncio.sleep
+
+    async def record(delay: float, *args, **kwargs):
+        if delay:
+            waits.append(delay)
+        await sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", record)
+
+    await download_file_retrying(
+        model_file("https://cdn.example.com/w.bin", hashlib.sha256(PAYLOAD).hexdigest()),
+        tmp_path / "models",
+        client=client,
+    )
+    await client.aclose()
+
+    assert waits[:2] == [7.0, downloads_module._RETRY_AFTER_CAP_S]
+    assert 1.0 < waits[2] <= 3.0
+
+
+async def test_a_model_download_can_be_cancelled_while_it_waits(flaky, tmp_path, caplog):
+    import json
+
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.events import EventBus
+    from localcut_engine.manifest.manager import DownloadManager
+
+    flaky.script = [("status", 503, {"Retry-After": "60"})]
+    entry = _entry(f"{flaky.url}/weights.bin").model_dump(mode="json")
+    (tmp_path / "model-manifest.json").write_text(json.dumps({"models": [entry]}))
+    events = EventBus()
+    queue = events.subscribe()
+    manager = DownloadManager(EngineConfig(data_dir=tmp_path), events)
+
+    with caplog.at_level("WARNING"):
+        assert await manager.start("tiny") == "started"
+        async with asyncio.timeout(10):
+            while "trying again" not in caplog.text:
+                await asyncio.sleep(0.02)
+        assert manager.cancel("tiny")
+        async with asyncio.timeout(5):
+            await asyncio.gather(*manager._tasks.values(), return_exceptions=True)
+
+    seen = []
+    while not queue.empty():
+        seen.append(queue.get_nowait()["type"])
+    assert "model.download.cancelled" in seen
+    assert len(flaky.ranges) == 1
+
+
+async def test_a_host_that_did_not_resolve_is_asked_again(tmp_path, monkeypatch):
+    """The guard looks the host up before anything is fetched, so a lookup
+    that fails during a network blip never reaches httpx as the connection
+    error it is. It is asked again like one."""
+    looked_up: list[str] = []
+
+    def guard(url: str) -> None:
+        looked_up.append(url)
+        if len(looked_up) == 1:
+            raise downloads_module.UnresolvedHost(
+                "could not resolve cdn.example.com: [Errno -3] Temporary failure in name resolution"
+            )
+
+    monkeypatch.setattr(downloads_module, "assert_public_url", guard)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=PAYLOAD))
+    )
+
+    path = await download_file_retrying(
+        model_file("https://cdn.example.com/w.bin", hashlib.sha256(PAYLOAD).hexdigest()),
+        tmp_path / "models",
+        client=client,
+    )
+    await client.aclose()
+
+    assert path.read_bytes() == PAYLOAD
+    assert len(looked_up) == 2
+
+
+async def test_a_url_the_guard_refuses_is_not_asked_again(tmp_path, monkeypatch):
+    looked_up: list[str] = []
+
+    def guard(url: str) -> None:
+        looked_up.append(url)
+        raise UnsafeURL("refusing to fetch cdn.example.com: it resolves to 10.0.0.5")
+
+    monkeypatch.setattr(downloads_module, "assert_public_url", guard)
+
+    with pytest.raises(UnsafeURL):
+        await download_file_retrying(model_file("https://cdn.example.com/w.bin"), tmp_path)
+
+    assert len(looked_up) == 1

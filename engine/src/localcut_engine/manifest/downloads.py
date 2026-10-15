@@ -5,11 +5,18 @@ into a global models directory shared across projects, laid out the way
 ComfyUI expects (checkpoints/, vae/, clip/, ...). Interrupted downloads
 resume from the partial file via HTTP Range requests; completed files are
 verified against the manifest's sha256 before being moved into place.
+
+Model downloads and program setups ask again through one policy
+(`download_file_retrying`) when what stopped them is the kind that passes:
+a connection dropped, reset or stalled, a host that did not resolve, or a
+server that answered 429 or a 5xx it sends while overloaded or restarting.
+Any other refusal is final on the first answer, a 404 above all.
 """
 
 from __future__ import annotations
 
 import asyncio
+import email.utils
 import hashlib
 import ipaddress
 import logging
@@ -17,6 +24,7 @@ import re
 import socket
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -41,6 +49,21 @@ _MIN_UNVERIFIED_BYTES = 1 << 20  # 1 MiB
 # checksum-less path — a manifest sha256 is a far stronger statement than
 # any header, and some CDNs mislabel .safetensors as text/plain.
 _HTML_CONTENT_TYPES = ("text/html", "application/xhtml", "text/plain")
+
+#: Statuses a download waits out and asks again: the server is overloaded,
+#: restarting or rate-limiting this address, and none of that says the file
+#: is gone.
+TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+#: Statuses that say the file is not at its address any more.
+GONE_STATUSES = frozenset({404, 410})
+# A download that stops for a reason that passes asks again, for as long as
+# each attempt brings bytes. Attempts that bring none are a link or a server
+# that is down: it tries again _RETRIES times in a row, waiting twice as long
+# before each (1, 2, 4, 8, 16s), or as long as a Retry-After asks up to
+# _RETRY_AFTER_CAP_S, and then gives up with what stopped the last one.
+_RETRIES = 5
+_RETRY_PAUSE_S = 1.0
+_RETRY_AFTER_CAP_S = 60.0
 
 
 class DownloadError(RuntimeError):
@@ -69,6 +92,34 @@ class SizeMismatch(DownloadError):
 
 class UnsafeURL(DownloadError):
     """A catalog URL that resolves somewhere the engine must not fetch."""
+
+
+class UnresolvedHost(UnsafeURL):
+    """A catalog URL whose host did not resolve. Refused like any URL the
+    guard cannot check, and asked again like a dropped connection: a lookup
+    that fails is the network far more often than the host."""
+
+
+class UnexpectedStatus(DownloadError):
+    """The server answered with a status that does not carry the file.
+    `retry_after` is the wait its Retry-After asked for, in seconds, if it
+    sent one that reads."""
+
+    def __init__(
+        self, message: str, *, status: int, url: str, retry_after: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.url = url
+        self.retry_after = retry_after
+
+    @property
+    def transient(self) -> bool:
+        return self.status in TRANSIENT_STATUSES
+
+    @property
+    def gone(self) -> bool:
+        return self.status in GONE_STATUSES
 
 
 class RangeMismatch(DownloadError):
@@ -133,10 +184,10 @@ def assert_public_url(url: str) -> None:
     try:
         infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
     except OSError as exc:
-        raise UnsafeURL(f"could not resolve {host}: {exc}") from exc
+        raise UnresolvedHost(f"could not resolve {host}: {exc}") from exc
     addresses = {info[4][0] for info in infos}
     if not addresses:
-        raise UnsafeURL(f"could not resolve {host}")
+        raise UnresolvedHost(f"could not resolve {host}")
     private = sorted(a for a in addresses if not _is_public(a))
     if private:
         raise UnsafeURL(
@@ -268,7 +319,7 @@ async def download_file(
             elif response.status_code == 200:
                 offset = 0  # server ignored Range (or fresh download): restart
             else:
-                raise DownloadError(f"HTTP {response.status_code} for {file.url}")
+                raise _unexpected(response, file.url)
 
             if response.status_code in (200, 206):
                 # Only from a response that actually carried the file. A 416
@@ -364,6 +415,107 @@ async def download_file(
     return dest
 
 
+def _unexpected(response: httpx.Response, url: str) -> UnexpectedStatus:
+    """The refusal for a status that carries no file, saying which kind."""
+    status = response.status_code
+    if status in GONE_STATUSES:
+        said = ": the file is no longer at this address"
+    elif status in TRANSIENT_STATUSES:
+        said = ": the server is busy or failing for now"
+    else:
+        said = ""
+    return UnexpectedStatus(
+        f"HTTP {status} for {url}{said}",
+        status=status,
+        url=url,
+        retry_after=_retry_after(response.headers.get("retry-after")),
+    )
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Seconds a Retry-After asks for, as a number of seconds or as a date,
+    or None when there is none or it does not read."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())
+
+
+# How a download stops for a reason that passes, besides a transient status:
+# no bytes for the read timeout, a connection reset or refused, one closed
+# before the body was complete, or a host that did not resolve. A resume the
+# server answered from the wrong byte is one too: its .part is gone, so the
+# next attempt asks for the whole file.
+_PASSING = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    RangeMismatch,
+    UnresolvedHost,
+)
+
+
+def _passes(exc: BaseException) -> bool:
+    if isinstance(exc, UnexpectedStatus):
+        return exc.transient
+    return isinstance(exc, _PASSING)
+
+
+async def download_file_retrying(
+    file: ModelFile,
+    models_dir: Path,
+    progress: ProgressFn | None = None,
+    client: httpx.AsyncClient | None = None,
+    *,
+    exact_size: bool = False,
+) -> Path:
+    """`download_file`, asked again while what stops it is the kind that
+    passes (see the module docstring). The `.part` keeps what arrived, and
+    the next attempt asks for the rest of it; the size and the SHA-256 still
+    decide at the end. The one retry policy model downloads and program
+    setups share.
+
+    Cancelling lands in a wait as it would mid-download."""
+    misses = 0
+    while True:
+        brought = False
+
+        async def counting(dest: str, done: int, total: int) -> None:
+            nonlocal brought
+            brought = True
+            if progress is not None:
+                await progress(dest, done, total)
+
+        try:
+            return await download_file(file, models_dir, counting, client, exact_size=exact_size)
+        except Exception as exc:
+            if not _passes(exc):
+                raise
+            misses = 0 if brought else misses + 1
+            if misses > _RETRIES:
+                raise
+            asked = exc.retry_after if isinstance(exc, UnexpectedStatus) else None
+            if asked is not None:
+                pause = min(asked, _RETRY_AFTER_CAP_S)
+            else:
+                pause = _RETRY_PAUSE_S * 2 ** max(0, misses - 1)
+            logger.warning(
+                "the download of %s stopped (%s); trying again in %gs",
+                file.dest,
+                str(exc) or type(exc).__name__,
+                pause,
+            )
+            await asyncio.sleep(pause)
+
+
 async def download_model(
     entry: ModelEntry,
     models_dir: Path,
@@ -376,7 +528,7 @@ async def download_model(
     # guard sees every hop.
     async with httpx.AsyncClient(timeout=httpx.Timeout(30, read=120)) as client:
         for file in entry.files:
-            paths.append(await download_file(file, models_dir, progress, client))
+            paths.append(await download_file_retrying(file, models_dir, progress, client))
     return paths
 
 

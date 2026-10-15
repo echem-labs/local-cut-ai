@@ -105,7 +105,8 @@ class _Archives:
     `answer_range` is what a Range gets instead of the rest of the file:
     `ignored` sends the whole file with a 200, `misplaced` a 206 that starts
     somewhere else. `pace` sends the body a piece at a time, as a slow link
-    delivers it."""
+    delivers it. Each entry in `statuses` answers one request with that
+    status and no file, before any of the others."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -115,6 +116,7 @@ class _Archives:
         self.drop_after = _FIRST_CHUNK
         self.answer_range = "honoured"
         self.pace: tuple[int, float] | None = None
+        self.statuses: list[int] = []
         self._gate: threading.Event | None = None
         self._closing = threading.Event()
         self._resets: set[socket.socket] = set()
@@ -125,6 +127,11 @@ class _Archives:
                 outer.requests.append(self.path)
                 asked = self.headers.get("Range")
                 outer.ranges.append(asked)
+                if outer.statuses:
+                    self.send_response(outer.statuses.pop(0))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 path = outer.root / self.path.lstrip("/")
                 if not path.is_file():
                     self.send_error(404)
@@ -1055,10 +1062,10 @@ async def test_a_download_that_drops_picks_up_from_the_bytes_it_has(
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
     _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
     _stub_check(monkeypatch)
-    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
     monkeypatch.setattr(program_setup, "_READ_TIMEOUT_S", 0.5)
     piece = 512 << 10
-    drops = program_setup._DOWNLOAD_RETRIES + 2
+    drops = downloads_module._RETRIES + 2
     archives.drops = [drop] * drops
     archives.drop_after = piece
     data = tmp_path / "data"
@@ -1088,7 +1095,7 @@ async def test_a_resume_the_server_does_not_answer_exactly_starts_over(
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
     _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
     _stub_check(monkeypatch)
-    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
     archives.drops = ["closed"]
     archives.answer_range = answer
     data = tmp_path / "data"
@@ -1113,7 +1120,7 @@ async def test_a_link_that_brings_nothing_fails_the_setup_after_a_few_attempts(
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
     _pin(monkeypatch, archives)
     _stub_check(monkeypatch)
-    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 0.0)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
     archives.drops = ["closed"] * 50
     archives.drop_after = 0
     data = tmp_path / "data"
@@ -1125,8 +1132,56 @@ async def test_a_link_that_brings_nothing_fails_the_setup_after_a_few_attempts(
     last = row["setup"]["last"]
     assert (last["outcome"], last["reason"]) == ("failed", "download_failed")
     assert "peer closed connection" in last["error"]
-    assert len(archives.requests) == 1 + program_setup._DOWNLOAD_RETRIES
+    assert len(archives.requests) == 1 + downloads_module._RETRIES
     assert not (data / "programs" / "ffmpeg").exists()
+    assert _leftovers(data) == []
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504, 429])
+async def test_a_server_error_is_waited_out_and_the_setup_carries_on(
+    tmp_path, monkeypatch, archives, status
+):
+    """GitHub's CDN answers 5xx while it is having a bad minute, and 429 when
+    it is rate-limiting this address. None of them says the build is gone,
+    so the setup asks again, as it does after a dropped connection."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives)
+    _stub_check(monkeypatch)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 0.0)
+    archives.statuses = [status, status]
+    data = tmp_path / "data"
+
+    async with _engine(_config(data)) as http:
+        await http.post("/programs/ffmpeg/setup")
+        row = await _settled(http)
+
+    assert row["setup"]["last"]["outcome"] == "done", row["setup"]["last"]
+    assert len(archives.requests) == 3
+    assert _leftovers(data) == []
+
+
+async def test_a_pin_the_server_no_longer_has_fails_at_once_and_says_so(
+    tmp_path, monkeypatch, archives
+):
+    """A 404 for the pinned URL is a build that has been taken down, and no
+    number of attempts brings it back. The setup stops on the first one,
+    with a reason of its own rather than "the download didn't finish", which
+    would send the user off to check a connection that is fine."""
+    _without_ffmpeg_on_path(tmp_path, monkeypatch)
+    _pin(monkeypatch, archives)
+    _stub_check(monkeypatch)
+    archives.statuses = [404]
+    data = tmp_path / "data"
+
+    async with _engine(_config(data)) as http:
+        await http.post("/programs/ffmpeg/setup")
+        row = await _settled(http)
+
+    last = row["setup"]["last"]
+    assert (last["outcome"], last["reason"]) == ("failed", "download_gone")
+    assert "HTTP 404" in last["error"]
+    assert "ffmpeg 8.1.3" in last["error"]
+    assert len(archives.requests) == 1
     assert _leftovers(data) == []
 
 
@@ -1136,7 +1191,7 @@ async def test_cancel_stops_a_setup_that_is_waiting_to_resume(
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
     _pin(monkeypatch, archives, ffmpeg=b"x" * (4 << 20))
     _stub_check(monkeypatch)
-    monkeypatch.setattr(program_setup, "_RETRY_PAUSE_S", 60.0)
+    monkeypatch.setattr(downloads_module, "_RETRY_PAUSE_S", 60.0)
     archives.drops = ["closed"]
     data = tmp_path / "data"
 
