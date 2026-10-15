@@ -231,21 +231,28 @@ def main(argv: list[str] | None = None) -> int:
             scheme, config.host, config.port, config.token, fingerprint, config.advertise
         )
 
-    from .api.app import create_app, install_log_redaction
+    from .api.app import SHUTDOWN_DRAIN_S, EngineServer, create_app, install_log_redaction
 
     # access_log=False drops the HTTP request lines, but uvicorn logs the
     # WebSocket handshake path on `uvicorn.error`, which it does NOT silence —
     # so a client still using ?token= would write the live token to the log.
     install_log_redaction()
     config_kwargs = dict(
-        host=config.host, port=config.port, log_level="info", access_log=False, **ssl_args
+        host=config.host,
+        port=config.port,
+        log_level="info",
+        access_log=False,
+        timeout_graceful_shutdown=SHUTDOWN_DRAIN_S,
+        **ssl_args,
     )
     uvicorn_config = uvicorn.Config(create_app(config), **config_kwargs)
     # Again, now that uvicorn has installed its own handlers: a filter on a
     # Logger only sees records logged directly to it, so the handlers are
     # what covers uvicorn's child loggers.
     install_log_redaction()
-    server = uvicorn.Server(uvicorn_config)
+    # EngineServer: a signal or POST /shutdown is recorded by the scheduler
+    # before uvicorn's graceful exit waits on anything.
+    server = EngineServer(uvicorn_config)
     try:
         server.run(sockets=sockets)
     finally:

@@ -33,6 +33,17 @@ class Job(BaseModel):
     status: JobStatus = JobStatus.QUEUED
     progress: float = 0.0  # 0..1
     attempt: int = 0
+    # Starts of the engine that found this job still `rendering` with no stop
+    # on record: the engine crashed, was killed or lost power partway through
+    # it. JobQueue fails the job when this reaches CRASH_LIMIT rather than
+    # claim a render that takes the engine down every time it runs.
+    crashes: int = 0
+    # Set while the job renders once the engine has begun a stop it was asked
+    # for (POST /shutdown, SIGTERM, Ctrl+C). A start that finds the job still
+    # `rendering` with this set knows it was stopped, not crashed. It
+    # requeues the job without counting. Meaningful only on a `rendering`
+    # row; claiming clears it.
+    engine_stopping: bool = False
     error: str | None = None
     # Non-fatal signals from a job that finished — `error` means it did not.
     # Stored with the payload (no migration) and surfaced on the scene board.
