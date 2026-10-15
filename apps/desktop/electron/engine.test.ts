@@ -1335,8 +1335,30 @@ describe("asking the engine to stop before it is killed", () => {
     );
   };
 
-  /** A kill, in whichever dialect this platform speaks. */
-  const killsSoFar = (): string[] => happened.filter((event) => event.startsWith("killed"));
+  /** Where this test's spawns begin in `spawned.calls`. */
+  let mark = 0;
+
+  /**
+   * An engine in service, with the record cleared of anything an earlier
+   * test's teardown is still delivering: its `taskkill` can land after this
+   * test has begun.
+   */
+  const engineInService = async () => {
+    const manager = new EngineManager();
+    const connection = await manager.start();
+    happened = [];
+    mark = spawned.calls.length;
+    return { manager, connection };
+  };
+
+  /** The kills so far, in whichever dialect this platform speaks. */
+  const killsSoFar = (): string[] =>
+    process.platform === "win32"
+      ? spawned.calls
+          .slice(mark)
+          .filter((call) => call.cmd === "taskkill")
+          .map(() => "killed taskkill")
+      : happened.filter((event) => event.startsWith("killed"));
 
   beforeEach(() => {
     happened = [];
@@ -1344,31 +1366,26 @@ describe("asking the engine to stop before it is killed", () => {
       if (pid === -4242) happened.push(`killed ${signal}`);
       return true;
     });
-    spawned.says = (cmd) => {
-      if (cmd === "taskkill") happened.push("killed taskkill");
-      return null;
-    };
   });
   afterEach(() => {
     vi.useRealTimers();
   });
 
   it("asks with the token and kills nothing when the engine goes", async () => {
-    const manager = new EngineManager();
-    const connection = await manager.start();
+    const { manager, connection } = await engineInService();
     stoppingEngine(500);
 
     await manager.stopAndWait();
 
     expect(happened).toEqual([`asked POST Bearer ${connection.token}`]);
+    expect(killsSoFar()).toEqual([]);
     expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain(
       `${connection.url}/shutdown`,
     );
   });
 
   it("still kills an engine that has not gone by the end of the grace", async () => {
-    const manager = new EngineManager();
-    await manager.start();
+    const { manager } = await engineInService();
     stoppingEngine(null);
     vi.useFakeTimers();
 
@@ -1391,8 +1408,7 @@ describe("asking the engine to stop before it is killed", () => {
   it("kills at once an engine that cannot be asked", async () => {
     // Refused, or an engine from before the route existed: there is nobody to
     // wait for. The grace would only hold the quit open.
-    const manager = new EngineManager();
-    await manager.start();
+    const { manager } = await engineInService();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -1410,8 +1426,7 @@ describe("asking the engine to stop before it is killed", () => {
   it("asks before switching to a paired engine, not only on quit", async () => {
     // `engine:pair` stops the local engine with the app still running. A
     // render in flight there is the same render a quit would interrupt.
-    const manager = new EngineManager();
-    await manager.start();
+    const { manager } = await engineInService();
     stoppingEngine(0);
 
     manager.stop();
@@ -1425,8 +1440,7 @@ describe("asking the engine to stop before it is killed", () => {
     // Until it exits, the stopping engine holds the data directory lock, and
     // a second engine started in that window exits on startup saying another
     // engine is using it.
-    const manager = new EngineManager();
-    await manager.start();
+    const { manager } = await engineInService();
     stoppingEngine(2_000);
     vi.useFakeTimers();
 
