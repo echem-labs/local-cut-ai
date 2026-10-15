@@ -31,6 +31,12 @@ class GPU(BaseModel):
     # one of the _detect_* probes below — an unproduced value would tier real
     # hardware as "no GPU" and recommend cloud for every task.
     backend: str  # cuda | mps | rocm | xpu
+    # NVIDIA only, as nvidia-smi reports them: the driver ("581.57") and the
+    # card's compute capability ("8.6"). A CUDA build of a program names the
+    # oldest of each it runs on, so these pick the build a setup downloads
+    # (programs/builds.py). None where the probe could not tell.
+    driver_version: str | None = None
+    compute_capability: str | None = None
 
 
 class HardwareProfile(BaseModel):
@@ -43,28 +49,67 @@ class HardwareProfile(BaseModel):
     tier: Tier
 
 
+# What nvidia-smi is asked, newest first. `compute_cap` is a field only
+# drivers from 2021 on know and an older one refuses the whole query over it,
+# so that card is asked again without it rather than going unseen.
+_NVIDIA_QUERIES = (
+    "name,memory.total,driver_version,compute_cap",
+    "name,memory.total,driver_version",
+)
+
+
 def _detect_nvidia() -> list[GPU]:
     if shutil.which("nvidia-smi") is None:
         return []
-    try:
-        output = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=True,
-        ).stdout
-    except (subprocess.SubprocessError, OSError):
-        return []
+    for query in _NVIDIA_QUERIES:
+        try:
+            output = subprocess.run(
+                ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout
+        except subprocess.CalledProcessError:
+            continue
+        except (subprocess.SubprocessError, OSError):
+            return []
+        return _nvidia_cards(output, fields=query.count(",") + 1)
+    return []
+
+
+def _nvidia_cards(output: str, *, fields: int) -> list[GPU]:
+    """The cards in nvidia-smi's CSV answer. Split from the right, because a
+    card's name is the one field that could hold a comma."""
     gpus = []
     for line in output.strip().splitlines():
-        name, _, mem = line.rpartition(",")
+        parts = [part.strip() for part in line.rsplit(",", fields - 1)]
+        if len(parts) != fields:
+            continue
+        name, mem, *rest = parts
         try:
-            vram_gb = round(float(mem.strip()) / 1024, 1)
+            vram_gb = round(float(mem) / 1024, 1)
         except ValueError:
             continue
-        gpus.append(GPU(vendor="nvidia", name=name.strip(), vram_gb=vram_gb, backend="cuda"))
+        driver = rest[0] if rest and _known(rest[0]) else None
+        compute = rest[1] if len(rest) > 1 and _known(rest[1]) else None
+        gpus.append(
+            GPU(
+                vendor="nvidia",
+                name=name,
+                vram_gb=vram_gb,
+                backend="cuda",
+                driver_version=driver,
+                compute_capability=compute,
+            )
+        )
     return gpus
+
+
+def _known(value: str) -> bool:
+    """nvidia-smi writes "[N/A]" or "[Not Supported]" for a field it cannot
+    read."""
+    return bool(value) and not value.startswith("[")
 
 
 def _detect_apple() -> list[GPU]:
@@ -160,6 +205,79 @@ def _detect_intel() -> list[GPU]:
     return gpus
 
 
+# The display adapter class in the Windows registry: one numbered subkey per
+# adapter, written by its driver's installer.
+_DISPLAY_CLASS = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+# PCI vendor ids, as the subkeys' MatchingDeviceId spells them.
+_PCI_VENDORS = {"10de": ("nvidia", "cuda"), "1002": ("amd", "rocm"), "8086": ("intel", "xpu")}
+
+
+def _detect_windows_adapters() -> list[GPU]:
+    """Display adapters from the Windows registry, for the cards the tools
+    above miss there: AMD and Intel ship no rocm-smi or xpu-smi for Windows,
+    so without this every Radeon and Arc on Windows read as no GPU and a
+    setup could not tell which build of a program the card needs. Each
+    adapter's driver installer writes its PCI ids, its name and its memory
+    under the display class key. Adapters from any other vendor (Microsoft's
+    basic display driver, a virtual machine's) are not GPUs anything here
+    can use."""
+    if platform.system() != "Windows":
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    gpus = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _DISPLAY_CLASS) as adapters:
+            index = 0
+            while True:
+                try:
+                    subkey = winreg.EnumKey(adapters, index)
+                except OSError:
+                    break
+                index += 1
+                if not subkey.isdigit():
+                    continue
+                try:
+                    with winreg.OpenKey(adapters, subkey) as adapter:
+                        gpu = _windows_adapter(winreg, adapter)
+                except OSError:
+                    continue
+                if gpu is not None:
+                    gpus.append(gpu)
+    except OSError:
+        return []
+    return gpus
+
+
+def _windows_adapter(winreg, adapter) -> GPU | None:  # noqa: ANN001 - the winreg module and a key
+    def value(name: str):
+        try:
+            return winreg.QueryValueEx(adapter, name)[0]
+        except OSError:
+            return None
+
+    device = str(value("MatchingDeviceId") or "").lower()
+    vendor_id = device.partition("ven_")[2][:4]
+    if vendor_id not in _PCI_VENDORS:
+        return None
+    vendor, backend = _PCI_VENDORS[vendor_id]
+    # The 64-bit size where the driver writes one; the older 32-bit value
+    # stops at 4 GB and some drivers store it as four raw bytes.
+    memory = value("HardwareInformation.qwMemorySize")
+    if memory is None:
+        memory = value("HardwareInformation.MemorySize")
+    if isinstance(memory, bytes):
+        memory = int.from_bytes(memory[:8], "little")
+    try:
+        vram_gb = round(int(memory) / 2**30, 1)
+    except (TypeError, ValueError):
+        vram_gb = 0.0
+    name = str(value("DriverDesc") or f"{vendor} GPU").strip()
+    return GPU(vendor=vendor, name=name, vram_gb=vram_gb, backend=backend)
+
+
 def _tier_for(vram_gb: float) -> Tier:
     if vram_gb >= 24:
         return Tier.C
@@ -172,12 +290,19 @@ def _tier_for(vram_gb: float) -> Tier:
 
 def probe_hardware(disk_path: str = "/") -> HardwareProfile:
     # Vendor precedence, first hit wins: NVIDIA (the best-supported path),
-    # then Apple, then AMD, then Intel. Deliberately NOT a union — each probe
+    # then Apple, then AMD, then Intel, then on Windows whatever display
+    # adapters the registry lists. Deliberately NOT a union — each probe
     # shells out to a vendor tool, and a machine with a discrete NVIDIA card
     # alongside an integrated Intel one would otherwise pay for both on every
     # call while the integrated part could never be the primary anyway (the
     # primary is the largest-VRAM device below).
-    gpus = _detect_nvidia() or _detect_apple() or _detect_amd() or _detect_intel()
+    gpus = (
+        _detect_nvidia()
+        or _detect_apple()
+        or _detect_amd()
+        or _detect_intel()
+        or _detect_windows_adapters()
+    )
     primary = max(gpus, key=lambda g: g.vram_gb) if gpus else None
     return HardwareProfile(
         os=platform.system().lower(),
