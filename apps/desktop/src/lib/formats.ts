@@ -56,7 +56,7 @@ export const EXPORT_SHORT_SIDE_CHOICES = [480, 720, 1080] as const;
  * Timed per letter, not per word: the narration voice holds its pace per
  * letter whatever the words, while short words and long ones read at very
  * different words per second. */
-export const SPEECH_LETTERS_PER_S = 13;
+export const SPEECH_LETTERS_PER_S = 13.5;
 export const NARRATION_PAD_S = 0.35;
 
 /** Seconds a scene's narration actually takes to speak, engine-rule. Letters

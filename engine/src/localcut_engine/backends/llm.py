@@ -93,20 +93,25 @@ def script_max_tokens(params: dict) -> int:
 # narration at 2.52 words/s, but at 13.4 and 13.7 letters/s. A words rate
 # fits one of those and misses the other by a third: 3.5 words/s was right
 # for the couplets and put a real 62s explainer cut at 45s. Nineteen narrated
-# scenes rendered across the voices one machine used averaged 13.2 letters/s;
-# rounding down to 13 errs toward a budget that runs short rather than long.
-SPEECH_LETTERS_PER_S = 13.0
+# scenes rendered across the voices one machine used averaged 13.2 letters/s.
+# 76 drafts by qwen3.5:9b and llama3.2 (222 scenes, mostly af_sarah) read at
+# a median 13.8, with only one in ten of them under 13.1. A rate under the
+# voice's own measures every draft long, so one the length check takes as on
+# target speaks short; 13.5 leaves that at a few percent, still on the short
+# side.
+SPEECH_LETTERS_PER_S = 13.5
 # Letters in a word of the narration script models write (5.0 across those
 # 758 words). Only used to say a budget in words, the unit a model can count;
 # a draft is always measured by its own letters.
 LETTERS_PER_WORD = 5.0
 # How short or long a draft may come in before it is re-asked, as fractions
-# of the target. Deliberately wide: the rate is one number for every voice,
-# and voices differ by more than a tenth. This exists to catch a script well
-# short of the requested video or well past it, rather than to police
-# seconds.
-LENGTH_FLOOR = 0.7
-LENGTH_CEILING = 1.25
+# of the target: the same distance either side, a little wider than the ask
+# below so a draft that does what it was asked is kept. Kokoro reads a
+# script model's narration at 13 to 15.5 letters a second depending on the
+# voice and the text, so tighter than this would re-ask drafts the voice
+# was always going to land wherever it lands.
+LENGTH_FLOOR = 0.85
+LENGTH_CEILING = 1.15
 # What an ask aims for, as a band around the target. Narrower than the
 # window above: a model asked for "about N" writes past N, so the ask names
 # both ends.

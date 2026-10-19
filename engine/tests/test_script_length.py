@@ -21,6 +21,7 @@ from localcut_engine.backends.llm import (
     script_prompt,
 )
 from localcut_engine.backends.base import GenerationError
+from localcut_engine.backends.ffmpeg import NARRATION_PAD_S
 from localcut_engine.schema import Scene, SceneStyle, Screenplay
 
 
@@ -91,12 +92,23 @@ def _scenes_saying(lines: list[str]) -> Screenplay:
     )
 
 
+# What qwen3:8b wrote for a 20s target on a real Ubuntu first run, after one
+# re-ask: 38 words that made a 13.9s video. Kokoro, through the engine, reads its
+# two lines in 5.33 and 7.81s.
+_TWENTY_SECONDS_SHORT = [
+    "Honeybees use a unique dance to communicate the location of flowers to their hive mates.",
+    "The waggle dance is a precise signal that tells the direction and distance of the "
+    "flowers, ensuring the hive can find food efficiently.",
+]
+
+
 @pytest.mark.parametrize(
     "lines, measured_s",
     [
         # Synthesized speech plus the 0.35s pad after each line.
         pytest.param(_COUPLETS, 27.6 + 7 * 0.35, id="short-words"),
         pytest.param(_EXPLAINER, 62.28, id="long-words"),
+        pytest.param(_TWENTY_SECONDS_SHORT, 5.33 + 7.81 + 2 * 0.35, id="twenty-second-target"),
     ],
 )
 def test_the_estimate_holds_for_short_words_and_long_ones(lines, measured_s):
@@ -104,8 +116,10 @@ def test_the_estimate_holds_for_short_words_and_long_ones(lines, measured_s):
     explainer at 2.5, so no words-per-second rate gets both: 3.5 put the
     explainer's real 62s cut at 45s, and the script model was re-asked to
     lengthen a draft that was already on target. Per letter, the two read
-    at 13.4 and 13.7 a second."""
-    assert estimated_runtime_s(_scenes_saying(lines)) == pytest.approx(measured_s, rel=0.1)
+    at 13.4 and 13.7 a second and the 20s draft at 14.0. Within a twentieth,
+    because a rate under all three measures every draft long. A draft the
+    length check takes as on target then speaks short."""
+    assert estimated_runtime_s(_scenes_saying(lines)) == pytest.approx(measured_s, rel=0.05)
 
 
 def test_runtime_estimate_counts_padding_per_scene():
@@ -189,6 +203,57 @@ async def test_a_short_screenplay_is_re_asked_with_the_shortfall():
     assert "99" in asked[1]  # words it actually wrote
     assert "too short" in asked[1]
     assert str(narration_word_budget(60)) in asked[1]
+
+
+def _draft_lasting(seconds: float, scenes: int = 2) -> Screenplay:
+    """A screenplay whose estimate is `seconds`, in five-letter words."""
+    letters = round((seconds - NARRATION_PAD_S * scenes) * SPEECH_LETTERS_PER_S)
+    words = max(1, letters // (5 * scenes))
+    return _scenes_saying([" ".join(["abcde"] * words)] * scenes)
+
+
+async def test_a_draft_a_quarter_short_is_re_asked_with_the_shortfall():
+    """The 20s draft above, a quarter short, is asked again with what it
+    measured."""
+    replies = [
+        _scenes_saying(_TWENTY_SECONDS_SHORT).model_dump_json(),
+        _draft_lasting(20).model_dump_json(),
+    ]
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    out = await screenplay_within_target({"target_duration_s": 20}, ask)
+    assert len(asked) == 2
+    assert "too short" in asked[1]
+    assert "38 words" in asked[1]
+    assert estimated_runtime_s(out) == pytest.approx(20, abs=1)
+
+
+@pytest.mark.parametrize(
+    "ratio, re_asked",
+    [
+        pytest.param(0.8, True, id="a-fifth-short"),
+        pytest.param(1.2, True, id="a-fifth-long"),
+        pytest.param(0.9, False, id="a-tenth-short"),
+        pytest.param(1.1, False, id="a-tenth-long"),
+    ],
+)
+async def test_a_draft_is_re_asked_as_far_short_as_long(ratio, re_asked):
+    """The window is the same width on both sides of the target: a draft a
+    fifth short is asked again just as one a fifth long is. One a tenth
+    either way is kept."""
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return _draft_lasting(30 * ratio if len(asked) == 1 else 30).model_dump_json()
+
+    await screenplay_within_target({"target_duration_s": 30}, ask)
+    assert (len(asked) > 1) is re_asked
+    assert 1 - LENGTH_FLOOR == pytest.approx(LENGTH_CEILING - 1)
 
 
 async def test_an_unfixable_shortfall_renders_the_closest_attempt(caplog):
