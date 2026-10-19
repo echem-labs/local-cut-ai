@@ -14,7 +14,10 @@ environment it inherits, changes how it behaves:
   its registry does not have;
 - "layer": the size of the one layer a pull fetches (default 3000 bytes),
   reported in five steps "pace" seconds apart (default 0.15), slow enough
-  for the engine's throttled progress to show one.
+  for the engine's throttled progress to show one;
+- "env_to": a file to which every start adds one line, a JSON object of the
+  OLLAMA_ variables it was started with, which is what Ollama reads its
+  settings from.
 
 Standard library only: it runs outside the engine's environment.
 """
@@ -55,6 +58,10 @@ def main() -> int:
     host, _, port = os.environ["OLLAMA_HOST"].rpartition(":")
     models = Path(os.environ["OLLAMA_MODELS"])
     behaviour = json.loads(os.environ.get("FAKE_OLLAMA") or "{}")
+    if behaviour.get("env_to"):
+        settings = {key: value for key, value in os.environ.items() if key.startswith("OLLAMA_")}
+        with open(behaviour["env_to"], "a", encoding="utf-8") as record:
+            record.write(json.dumps(settings) + "\n")
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"

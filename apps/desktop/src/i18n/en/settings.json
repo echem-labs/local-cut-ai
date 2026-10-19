@@ -290,6 +290,7 @@
     "shortcutsTipHint": "The full keyboard map, over whatever you are looking at.",
     "privacyHeading": "Private by design",
     "privacyBody": "LocalCut AI reaches the network for exactly two things: model downloads, and the update check you trigger. No telemetry, no accounts, no usage data — your prompts and media never leave this machine.",
+    "privacyOllama": "LocalCut's own Ollama runs with Ollama's cloud features off. An Ollama of your own keeps its own settings. A cloud model you pick in it runs on Ollama's servers.",
     "linkWebsite": "Website",
     "linkDocs": "Documentation",
     "linkIssues": "Report an issue",

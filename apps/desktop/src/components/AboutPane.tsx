@@ -113,6 +113,7 @@ export function AboutPane({ onShowLicenses }: { onShowLicenses: () => void }) {
       <div className="about-card about-privacy">
         <div className="about-privacy-title">{t("settings.about.privacyHeading")}</div>
         <p>{t("settings.about.privacyBody")}</p>
+        <p>{t("settings.about.privacyOllama")}</p>
       </div>
 
       <div className="about-links">

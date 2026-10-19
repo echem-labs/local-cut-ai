@@ -369,3 +369,15 @@ describe("support", () => {
     expect(onShowLicenses).toHaveBeenCalled();
   });
 });
+
+describe("the privacy card", () => {
+  it("says LocalCut's Ollama keeps to the machine and an Ollama of the user's own decides for itself", async () => {
+    // The card says prompts never leave the machine. That holds for
+    // LocalCut's copy, which runs with Ollama's cloud features off. It does
+    // not hold for a cloud model picked in an Ollama whose settings
+    // LocalCut cannot change.
+    await mount();
+    const card = document.querySelector(".about-privacy") as HTMLElement;
+    expect(card).toHaveTextContent(t("settings.about.privacyOllama"));
+  });
+});
