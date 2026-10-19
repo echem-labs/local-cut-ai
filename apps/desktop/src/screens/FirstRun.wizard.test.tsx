@@ -668,4 +668,41 @@ describe("the ready step", () => {
     expect(first).toHaveTextContent("llama3.2");
     expect(first).toHaveTextContent(t("firstRun.statusNotPulled"));
   });
+
+  it("shows Ollama setting up while LocalCut downloads it", () => {
+    const ollama = program("ollama", {
+      setup: {
+        ...program("ollama").setup,
+        job: { id: "j", phase: "downloading", done: 411 * MB, total: 1370 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toReady();
+    const first = document.querySelector(".sumrail .srow")!;
+    expect(first).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 30 }));
+    expect(first).not.toHaveTextContent(t("firstRun.statusNeedsOllama"));
+  });
+
+  it("shows Ollama setting up while it pulls the script model", () => {
+    // The copy answers by now and lacks the model: without the job, that
+    // reads as a model nobody is fetching.
+    const ollama = program("ollama", {
+      state: "ready",
+      problem: null,
+      source: "managed",
+      checks: { server: "ollama", model: "qwen3:8b", model_present: false },
+      setup: {
+        ...program("ollama").setup,
+        job: { id: "j", phase: "pulling", done: 2490 * MB, total: 4983 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toReady();
+    const first = document.querySelector(".sumrail .srow")!;
+    expect(first).toHaveTextContent("qwen3:8b");
+    expect(first).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 50 }));
+    expect(first).not.toHaveTextContent(t("firstRun.statusNotPulled"));
+  });
 });
