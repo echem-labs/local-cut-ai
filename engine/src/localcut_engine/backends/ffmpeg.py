@@ -58,6 +58,13 @@ _STILL_CLIP_ZOOM = 0.06  # total push-in over the clip ("stills become clips")
 
 NARRATION_PAD_S = 0.35  # breathing room after each narration line
 MUSIC_BED_VOLUME = 0.22  # constant-level bed under narration
+# Every scene's audio, spoken or silent, in one format. ffmpeg settles the
+# concat that joins the scenes, and the amix that lays the bed under them, on
+# the first scene's format. Kokoro speaks at 24 kHz in mono, so left as it
+# is, a narrated first scene makes a stereo 44.1 kHz bed mono, with nothing
+# above 12 kHz.
+SEGMENT_AUDIO_RATE = 48000
+SEGMENT_AUDIO_LAYOUT = "stereo"
 # Beat alignment flexes only the pad: a boundary may shrink it to this floor
 # (speech is never cut) or stretch at most this far to reach the next beat.
 BEAT_MIN_PAD_S = 0.15
@@ -1024,9 +1031,14 @@ class FFmpegBackend(ExecutionBackend):
         args += ["-i", clip]
         if narration is not None:
             args += ["-i", str(narration)]
-            audio = ["-map", "1:a", "-af", "apad", "-c:a", "aac", "-b:a", "160k"]
+            spoken = (
+                f"apad,aformat=sample_rates={SEGMENT_AUDIO_RATE}"
+                f":channel_layouts={SEGMENT_AUDIO_LAYOUT}"
+            )
+            audio = ["-map", "1:a", "-af", spoken, "-c:a", "aac", "-b:a", "160k"]
         else:
-            args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+            silence = f"anullsrc=r={SEGMENT_AUDIO_RATE}:cl={SEGMENT_AUDIO_LAYOUT}"
+            args += ["-f", "lavfi", "-i", silence]
             audio = ["-map", "1:a", "-c:a", "aac", "-b:a", "160k"]
 
         vf = (
