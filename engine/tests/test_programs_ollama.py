@@ -437,6 +437,32 @@ def test_the_script_rows_setup_fix_counts_the_model_the_setup_pulls(
         assert script["fix"]["size_bytes"] > asset["size"]
 
 
+def test_every_ollama_localcut_starts_has_its_cloud_features_off(tmp_path, monkeypatch, archives):
+    """With its cloud features on, Ollama calls ollama.com by itself: for
+    model recommendations as it starts and every few hours after. As it
+    starts it also asks for the list of its cloud models. LocalCut tells
+    people nothing leaves their machine, so both the setup's check and the
+    copy it runs start with them off, even under an environment that turns
+    them on for an Ollama of the user's own. The pull the setup asks for is
+    its one call out."""
+    _pin_ollama(monkeypatch, archives)
+    monkeypatch.setenv("OLLAMA_NO_CLOUD", "0")
+    starts = tmp_path / "starts.jsonl"
+    _behave(monkeypatch, env_to=str(starts))
+    data = tmp_path / "engine"
+    with _live(_config(data, free_port())) as (_, http):
+        assert http.post("/programs/ollama/setup").json()["status"] == "started"
+        row = _wait_for(http, lambda row: (row["setup"]["last"] or {}).get("outcome"))
+        assert row["setup"]["last"]["outcome"] == "done", row["setup"]["last"]
+
+    settings = [json.loads(line) for line in starts.read_text().splitlines()]
+    store = str((data / "models" / "ollama").resolve())
+    assert [run["OLLAMA_MODELS"] == store for run in settings] == [False, True], (
+        "the check on a scratch store, then the copy on LocalCut's"
+    )
+    assert [run.get("OLLAMA_NO_CLOUD") for run in settings] == ["1", "1"]
+
+
 def test_a_server_of_the_users_own_is_used_and_left_alone(tmp_path, monkeypatch, archives):
     """LocalCut's copy is set up, and the user's own Ollama answers at the
     address when the engine starts: LocalCut uses theirs, never starts its

@@ -108,6 +108,18 @@ the rest of the models. Ollama keeps a key pair in its home folder, which for
 LocalCut's copy is `<data_dir>/run/ollama-home`. Nothing is written outside
 the data dir.
 
+LocalCut's copy runs with Ollama's cloud features off (`OLLAMA_NO_CLOUD=1`),
+whatever the engine's own environment says. So does the `ollama serve` a
+setup starts to check the build. With them on, Ollama 0.40.4 calls
+ollama.com by itself. It fetches model recommendations as it starts and
+again every few hours. It also lists Ollama's cloud models and their details
+as it starts. LocalCut uses none of it and tells people nothing leaves their
+machine. The same setting stops the copy from running a model on Ollama's
+servers. What the copy still fetches is a model someone asked for, from
+Ollama's registry. An Ollama of your own keeps its own settings, which
+LocalCut does not change. A cloud model you pick in it runs on Ollama's
+servers.
+
 ## LocalCut's own ComfyUI
 
 ### On Windows

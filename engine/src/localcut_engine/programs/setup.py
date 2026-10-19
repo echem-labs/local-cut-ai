@@ -297,6 +297,7 @@ class OllamaInstaller:
             "OLLAMA_MODELS": str(models.resolve()),
             "HOME": home,
             "USERPROFILE": home,
+            **ollama.OFFLINE,
         }
 
     def launch(self, config: EngineConfig) -> ServerLaunch | None:
@@ -338,6 +339,7 @@ class OllamaInstaller:
             "OLLAMA_MODELS": str(scratch / "models"),
             "HOME": str(scratch),
             "USERPROFILE": str(scratch),
+            **ollama.OFFLINE,
         }
         options: dict[str, Any] = {}
         if os.name == "nt":

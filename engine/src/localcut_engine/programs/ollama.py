@@ -35,6 +35,16 @@ _PULL_READ_TIMEOUT_S = 600.0
 # fits to the byte does not leave a disk the engine can no longer write to.
 _PULL_MARGIN = 256 << 20
 
+#: Set for every `ollama serve` LocalCut starts, over whatever the engine's
+#: own environment says, so that it calls nothing on the network by itself.
+#: With its cloud features on, Ollama 0.40.4 asks ollama.com for model
+#: recommendations as it starts and again every few hours. As it starts it
+#: also asks for the list of Ollama's cloud models and their details.
+#: OLLAMA_NO_CLOUD turns all of that off, along with running a model on
+#: Ollama's servers. A pull still reaches Ollama's registry, because someone
+#: asked for that model.
+OFFLINE = {"OLLAMA_NO_CLOUD": "1"}
+
 #: What `ollama pull` accepts: an optional registry host and namespace, the
 #: model, and an optional tag. Checked with fullmatch.
 MODEL_NAME = re.compile(
