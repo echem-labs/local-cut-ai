@@ -177,3 +177,88 @@ describe("where the prompt row's readiness note leads", () => {
     expect(within(note).getByRole("button")).toHaveTextContent(t("home.pickModel"));
   });
 });
+
+/**
+ * A program LocalCut is already setting up, or will set up once the one
+ * ahead of it is done, is on its way. The note says so rather than offering
+ * to get it, which reads as though nothing were happening.
+ */
+describe("the prompt row's note while the program it names is being set up", () => {
+  const scriptDown = {
+    kind: "script",
+    model: "qwen3:8b",
+    backend: "mock",
+    verdict: "placeholder",
+    reason: "llm_server_down",
+    data: { task: "text.llm" },
+    fix: null,
+  };
+  const ollama = (job: unknown) => ({
+    id: "ollama",
+    state: "missing",
+    problem: "not_found",
+    source: "default",
+    location: "http://127.0.0.1:11546",
+    setting: "LOCALCUT_LLM_URL",
+    version: null,
+    checks: {},
+    managed: null,
+    setup: {
+      available: true,
+      unavailable_reason: null,
+      takes_effect: true,
+      version: "0.40.4",
+      url: null,
+      download_bytes: 1_438_000_000,
+      install_bytes: 4_000_000_000,
+      pull: { model: "qwen3:8b", bytes: 5_200_000_000 },
+      job,
+      last: null,
+    },
+  });
+  const report = (job: unknown) => ({
+    platform: "linux-x64",
+    programs_dir: "/p",
+    programs_bytes: 0,
+    disk_free_bytes: 1,
+    programs: [ollama(job)],
+  });
+  const downloading = {
+    id: "j1",
+    phase: "downloading",
+    done: 60_000_000,
+    total: 1_438_000_000,
+    bytes_per_s: 400_000,
+  };
+
+  it("says the program is being set up while its setup runs", () => {
+    useApp.setState({ readiness: [scriptDown], programs: report(downloading) } as never);
+    render(<Home />);
+    const note = screen.getByText(/isn't running/);
+    expect(note).toHaveTextContent(t("home.settingUp", { name: "Ollama" }));
+    expect(within(note).queryByRole("button")).toBeNull();
+  });
+
+  it("says it is waiting its turn while it is queued behind another setup", () => {
+    useApp.setState({
+      readiness: [scriptDown],
+      programs: report(null),
+      programQueue: ["ollama"],
+    } as never);
+    render(<Home />);
+    const note = screen.getByText(/isn't running/);
+    expect(note).toHaveTextContent(t("home.setupQueued", { name: "Ollama" }));
+    expect(within(note).queryByRole("button")).toBeNull();
+  });
+
+  it("offers to get it again once no setup of it runs or waits", () => {
+    useApp.setState({
+      readiness: [scriptDown],
+      programs: report(null),
+      programQueue: [],
+    } as never);
+    render(<Home />);
+    const note = screen.getByText(/isn't running/);
+    expect(within(note).getByRole("button")).toHaveTextContent(t("home.getIt"));
+  });
+});

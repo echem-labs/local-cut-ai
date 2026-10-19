@@ -23,7 +23,7 @@ import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
 import { ASPECTS, TOOL_CLIP_SECONDS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
-import { settingsTabFor } from "../lib/programs";
+import { programCause, programName, settingsTabFor } from "../lib/programs";
 import { readyStages, stageRows } from "../lib/stages";
 import { STYLE_PRESETS } from "../lib/styles";
 import { tileStatus } from "../lib/tiles";
@@ -76,11 +76,21 @@ const TOOLS: { kind: ToolKind; icon: typeof FileText }[] = TOOL_KINDS.map((kind)
 /** A readiness gap as the standing line under a prompt box, and the link to
  * where it is fixed: the Default models picker a `pick_model` fix names,
  * otherwise the Settings tab `settingsTabFor` picks (Programs for a
- * program, Models for a model). Nothing for a reason this build has no
- * sentence for. */
+ * program, Models for a model). A program whose setup is running, or
+ * waiting its turn behind another, is already on its way, so the line says
+ * that instead of offering to get it. Nothing for a reason this build has
+ * no sentence for. */
 function GapNote({ row }: { row: ReadinessRow }) {
   const openSettings = useApp((state) => state.openSettings);
   const openDefaultPicker = useApp((state) => state.openDefaultPicker);
+  const program = programCause(row);
+  const setup = useApp((state) => {
+    if (program === null) return null;
+    if (state.programs?.programs.find((entry) => entry.id === program)?.setup.job) {
+      return "running";
+    }
+    return state.programQueue.includes(program) ? "queued" : null;
+  });
   const sentence = describeGap(row);
   if (sentence === null) return null;
   const pick = row.fix?.type === "pick_model" ? row.fix.task : null;
@@ -89,7 +99,11 @@ function GapNote({ row }: { row: ReadinessRow }) {
   return (
     <p className="hint" role="status">
       {sentence}{" "}
-      {pick !== null ? (
+      {program !== null && setup !== null ? (
+        t(setup === "running" ? "home.settingUp" : "home.setupQueued", {
+          name: programName(program),
+        })
+      ) : pick !== null ? (
         <button className="link" onClick={() => openDefaultPicker(pick)}>
           {t("home.pickModel")}
         </button>
