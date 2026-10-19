@@ -10,14 +10,14 @@ none of them is a special case, they are all a URL and a token.
 ## Automation CLI
 
 ```bash
-localcut projects                       # list projects on the engine
-localcut create "a 60s explainer on…"   # create a project from a prompt
-localcut render <project-id>            # render and wait for it to finish
-localcut export <id> --out cut.mp4      # write a finished cut or an NLE handoff
-localcut template export|import         # move a project shape between engines
-localcut workflow import|list|remove    # manage imported ComfyUI workflows
-localcut packs list|enable|disable      # ComfyUI custom-node packs this engine allows
-localcut programs list|setup|remove     # FFmpeg, Ollama, ComfyUI; set up LocalCut's FFmpeg
+localcut projects                         # list projects on the engine
+localcut create "a 60s explainer on…"     # create a project from a prompt
+localcut render <project-id>              # render and wait for it to finish
+localcut export <id> --out cut.mp4        # write a finished cut or an NLE handoff
+localcut template export|import           # move a project shape between engines
+localcut workflow import|list|remove      # manage imported ComfyUI workflows
+localcut packs list|enable|disable        # ComfyUI custom-node packs this engine allows
+localcut programs list|setup|pull|remove  # FFmpeg, Ollama, ComfyUI and LocalCut's own copies
 ```
 
 Each takes `--engine` (`$LOCALCUT_ENGINE_URL`, default
