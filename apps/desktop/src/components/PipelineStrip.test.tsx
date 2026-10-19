@@ -152,4 +152,40 @@ describe("the pipeline strip", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("Setting up FFmpeg, then Ollama.");
   });
+
+  it("names both programs waiting behind the one being set up", () => {
+    // Set up all three runs FFmpeg first, then ComfyUI, then Ollama.
+    const downloading = {
+      ...ready("ffmpeg"),
+      state: "missing",
+      setup: {
+        available: true,
+        job: { id: "j", phase: "downloading", done: 1, total: 131, bytes_per_s: null },
+        last: null,
+      },
+    };
+    useApp.setState({
+      programQueue: ["comfyui", "ollama"],
+      programs: {
+        platform: "linux-x64",
+        programs_dir: "/p",
+        programs_bytes: 0,
+        disk_free_bytes: 1,
+        programs: [
+          downloading,
+          { ...ready("ollama"), state: "missing" },
+          { ...ready("comfyui"), state: "missing" },
+        ],
+      },
+      readiness: [
+        row("script", "placeholder", "llm_server_down"),
+        row("keyframe", "placeholder", "comfyui_down"),
+        row("export", "will_fail", "no_ffmpeg"),
+      ],
+    } as never);
+    render(<PipelineStrip context="wizard" />);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Setting up FFmpeg, then ComfyUI and Ollama.",
+    );
+  });
 });

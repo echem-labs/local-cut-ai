@@ -49,10 +49,10 @@ function Said({
       const names = narration.ready.map((id: ProgramId) => programName(id));
       const parts = [
         names.length > 0 ? plural("programs.narrate.ready", names.length, { names: list(names) }) : "",
-        narration.next
+        narration.next.length > 0
           ? t("programs.narrate.settingUpThen", {
               name: programName(narration.current),
-              next: programName(narration.next),
+              next: list(narration.next.map(programName)),
             })
           : t("programs.narrate.settingUp", { name: programName(narration.current) }),
         context === "wizard" ? t("programs.narrate.goOn") : "",

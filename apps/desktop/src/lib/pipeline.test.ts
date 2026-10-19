@@ -95,7 +95,7 @@ describe("the strip on a first run", () => {
     expect(narrate(stages, programs, "wizard", [])).toEqual({
       kind: "settingUp",
       current: "ffmpeg",
-      next: null,
+      next: [],
       ready: ["ollama"],
     });
   });
@@ -131,7 +131,48 @@ describe("the strip on a first run", () => {
     const stages = pipelineStages(FRESH_ROWS, programs, "wizard", new Set(["ffmpeg", "comfyui"]));
     expect(narrate(stages, programs, "wizard", ["comfyui"])).toMatchObject({
       current: "ffmpeg",
-      next: "comfyui",
+      next: ["comfyui"],
+    });
+  });
+
+  it("names every program queued after the running one, in the order they will run", () => {
+    // Set up all three: FFmpeg runs while ComfyUI and then Ollama wait.
+    const programs = report([
+      program("ffmpeg", "missing", true),
+      program("ollama", "missing"),
+      program("comfyui", "missing"),
+    ]);
+    const stages = pipelineStages(
+      FRESH_ROWS,
+      programs,
+      "wizard",
+      new Set(["ffmpeg"]),
+      new Set(["comfyui", "ollama"]),
+    );
+    expect(narrate(stages, programs, "wizard", ["comfyui", "ollama"])).toEqual({
+      kind: "settingUp",
+      current: "ffmpeg",
+      next: ["comfyui", "ollama"],
+      ready: [],
+    });
+  });
+
+  it("names the rest of the queue when the first in line has not started yet", () => {
+    const programs = report([
+      program("ffmpeg", "missing"),
+      program("ollama", "missing"),
+      program("comfyui", "missing"),
+    ]);
+    const stages = pipelineStages(
+      FRESH_ROWS,
+      programs,
+      "wizard",
+      new Set(),
+      new Set(["ffmpeg", "comfyui", "ollama"]),
+    );
+    expect(narrate(stages, programs, "wizard", ["ffmpeg", "comfyui", "ollama"])).toMatchObject({
+      current: "ffmpeg",
+      next: ["comfyui", "ollama"],
     });
   });
 
