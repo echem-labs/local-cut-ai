@@ -94,9 +94,9 @@ function Said({
 
 /**
  * Seven lights, in the order a video gets made, saying what the next render
- * would come out like: ready, being set up, a stand-in, a failed job, a
- * lower-quality result, or (on the first run) waiting on the models the
- * next step downloads. The line under it says the same in a sentence,
+ * would come out like: ready, being set up, waiting its turn to be set
+ * up, a stand-in, a failed job, a lower-quality result, or (on the first
+ * run) waiting on the models the next step downloads. The line under it says the same in a sentence,
  * worst news first, and changes as programs come up.
  */
 export function PipelineStrip({ context }: { context: "wizard" | "settings" }) {
@@ -105,9 +105,10 @@ export function PipelineStrip({ context }: { context: "wizard" | "settings" }) {
   const queue = useApp((state) => state.programQueue);
   const setSettingsTab = useApp((state) => state.setSettingsTab);
   const locale = useLocale((state) => state.locale);
-  const busy = new Set<ProgramId>(queue);
+  const busy = new Set<ProgramId>();
   for (const row of programs?.programs ?? []) if (row.setup.job) busy.add(row.id);
-  const stages = pipelineStages(readiness, programs, context, busy);
+  const queued = new Set<ProgramId>(queue.filter((id) => !busy.has(id)));
+  const stages = pipelineStages(readiness, programs, context, busy, queued);
   const narration = narrate(stages, programs, context, queue);
   const list = (items: string[]) =>
     new Intl.ListFormat(locale, { style: "long", type: "conjunction" }).format(items);

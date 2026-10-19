@@ -6184,6 +6184,7 @@ a.icon-btn-sm {
 }
 
 .light.wait,
+.light.queued,
 .light.unknown {
   border: 2px solid var(--border-hi);
 }

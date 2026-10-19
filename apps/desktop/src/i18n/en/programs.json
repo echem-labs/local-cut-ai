@@ -280,6 +280,7 @@
     "lights": {
       "ok": "ready",
       "busy": "setting up",
+      "queued": "waiting",
       "ph": "a stand-in",
       "fail": "fails",
       "deg": "lower quality",

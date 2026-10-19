@@ -100,6 +100,28 @@ describe("the strip on a first run", () => {
     });
   });
 
+  it("lights a stage whose program waits its turn as queued, not as setting up", () => {
+    const programs = report([
+      program("ffmpeg", "missing", true),
+      program("ollama", "missing"),
+      program("comfyui", "missing"),
+    ]);
+    const stages = pipelineStages(
+      FRESH_ROWS,
+      programs,
+      "wizard",
+      new Set(["ffmpeg"]),
+      new Set(["ollama"]),
+    );
+    expect(stages.find((stage) => stage.id === "script")).toEqual({
+      id: "script",
+      light: "queued",
+      program: "ollama",
+      reason: "llm_server_down",
+    });
+    expect(stages.find((stage) => stage.id === "final")?.light).toBe("busy");
+  });
+
   it("names the program queued after the running one", () => {
     const programs = report([
       program("ffmpeg", "missing", true),
