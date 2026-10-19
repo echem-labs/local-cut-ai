@@ -389,6 +389,11 @@ class Scheduler:
                     missing.append(port)
             else:
                 inputs[port] = path
+        # Only optional ports can be absent from a render that goes ahead: a
+        # missing required one requeues or fails below. Saved with the DONE
+        # row, so the heal can tell a consumer built without an input from
+        # one built with it.
+        job.absent_inputs = sorted(port for port in job.spec.input_hashes if port not in inputs)
 
         ctx = ExecutionContext(
             output_dir=self.output_dir_for(job.project_id),

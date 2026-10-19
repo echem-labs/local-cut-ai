@@ -1028,6 +1028,117 @@ async def test_healing_never_deletes_a_pinned_artifact(rig):
     assert sorted(p.name for p in store.generated_dir(project.id).iterdir()) == before
 
 
+async def test_create_final_video_exports_once_with_its_captions(rig):
+    """Create final video assembles the cut once, and with its captions.
+
+    The finals land on the draft's addresses, music first. The draft cut was
+    built with the draft music, so the final music finishing finds nothing
+    that was built without it. Read as "built without", that completion
+    would drop the cached timeline, captions and export and queue captions
+    behind the final export, which would then run without captions and run
+    again once they finished.
+    """
+    from localcut_engine.graph.model import CAPTIONS_PORT, MUSIC_PORT
+
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools at dusk", target_duration_s=24)
+    await wait_for(
+        lambda: (
+            bool(service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash"))
+            and not queue.active(project.id)
+        )
+    )
+    graph = store.load_graph(project.id)
+    assert any(e.port == MUSIC_PORT and e.dst == "timeline" for e in graph.edges)
+    assert any(e.port == CAPTIONS_PORT and e.dst == "export" for e in graph.edges), (
+        "fixture assumption: music feeds the timeline and captions the export, both optional"
+    )
+    drafts = {job.id for job in queue.list(project.id, 1000)}
+
+    assert service.finalize(project.id) > 0
+    await wait_for(lambda: not queue.active(project.id))
+
+    finals = [job for job in queue.list(project.id, 1000) if job.id not in drafts]
+    assembled = sorted(
+        job.spec.node_id for job in finals if job.spec.node_id in {"timeline", "captions", "export"}
+    )
+    assert assembled == ["export", "timeline"]
+    assert all(job.status is JobStatus.DONE for job in finals)
+    captions_hash = service.scene_board(project.id)["aux"]["captions"]["artifact_hash"]
+    assert store.resolve_artifact(project.id, captions_hash) is not None
+
+
+async def test_a_consumer_built_without_its_optional_input_is_healed(rig):
+    """The other side of the case above: a cut that really was assembled
+    before its music existed is dropped and rebuilt when the music lands."""
+    store, queue, service = rig
+    project = service.create_from_prompt("tide pools at dusk", target_duration_s=24)
+    await wait_for(
+        lambda: (
+            bool(service.scene_board(project.id)["aux"].get("export", {}).get("artifact_hash"))
+            and not queue.active(project.id)
+        )
+    )
+    history = queue.list(project.id, 1000)
+    timeline = next(j for j in history if j.spec.node_id == "timeline")
+    music = next(j for j in history if j.spec.node_id == "music")
+    assert timeline.absent_inputs == [], "the draft cut was assembled with its music"
+
+    # The same cut, as if it had popped before the music finished.
+    timeline.absent_inputs = ["music"]
+    queue.update(timeline)
+    seen = {job.id for job in history}
+    service._heal_optional_consumers(music)
+    await wait_for(lambda: not queue.active(project.id))
+
+    rebuilt = sorted(j.spec.node_id for j in queue.list(project.id, 1000) if j.id not in seen)
+    assert rebuilt == ["captions", "export", "timeline"]
+
+
+async def test_a_render_records_the_optional_inputs_it_went_without(tmp_path):
+    """The heal reads this off the job that built a consumer, so the
+    scheduler writes it on every render: an empty list means every input
+    was there."""
+    from localcut_engine.graph.model import TIMING_PORT
+    from localcut_engine.jobs.models import Job
+
+    store = ProjectStore(tmp_path / "projects")
+    queue = JobQueue(tmp_path / "queue.db")
+    backends = BackendRegistry()
+    backends.register(MockBackend())
+    scheduler = Scheduler(
+        queue=queue,
+        backends=backends,
+        events=EventBus(),
+        output_dir_for=store.generated_dir,
+        resolve_artifact=store.resolve_artifact,
+    )
+    keyframe_hash = "b" * 64
+    keyframe = Job(
+        project_id="p1",
+        spec=make_spec(NodeKind.KEYFRAME, node_id="s1.keyframe", output_hash=keyframe_hash),
+    )
+    queue.put(keyframe)
+    await scheduler._execute(keyframe)
+    assert queue.get(keyframe.id).absent_inputs == []
+
+    clip = Job(
+        project_id="p1",
+        spec=make_spec(
+            NodeKind.CLIP,
+            node_id="s1.clip",
+            output_hash="c" * 64,
+            input_hashes={"keyframe": keyframe_hash, TIMING_PORT: "d" * 64},
+        ),
+    )
+    queue.put(clip)
+    await scheduler._execute(clip)
+    done = queue.get(clip.id)
+    assert done.status is JobStatus.DONE
+    assert done.absent_inputs == [TIMING_PORT]
+    queue.close()
+
+
 async def test_edit_plan_with_no_ops_still_persists_a_caption_resync(rig):
     """The caption resync can dirty the graph on its own. Enqueueing work
     derived from a graph that was never saved would render under a hash the
