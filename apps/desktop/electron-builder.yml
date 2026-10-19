@@ -89,6 +89,21 @@ linux:
         - x64
   synopsis: Local-first AI video generation
 deb:
+  # This list replaces electron-builder's default instead of adding to it.
+  # The first nine are that default. It leaves out two libraries Electron's
+  # binary links directly, and a bare Ubuntu 22.04 has neither: without
+  # them the installed app exits in the dynamic loader before it opens a
+  # window. libgbm1 provides libgbm.so.1, and ALSA's package libasound.so.2.
+  #
+  # ALSA is named twice because Ubuntu renamed it in 24.04. There
+  # libasound2t64 is the library and libasound2 only a name two packages
+  # provide, and apt picks the other one, liboss4-salsa-asound2: an OSS shim
+  # without ALSA's versioned symbols, which stops the app at
+  # "undefined symbol: snd_device_name_get_hint, version ALSA_0.9". 22.04
+  # has no libasound2t64 and takes the second name, its own libasound2.
+  #
+  # package.yml installs the deb in the bare 22.04 build container and
+  # starts it; electron/debDepends.test.ts holds both entries.
   depends:
     - libgtk-3-0
     - libnotify4
@@ -99,3 +114,5 @@ deb:
     - libatspi2.0-0
     - libuuid1
     - libsecret-1-0
+    - libgbm1
+    - "libasound2t64 | libasound2"
