@@ -105,9 +105,15 @@ _HTML_URL = re.compile(r"""\b(href|src|srcset)\s*=\s*(["'])(.*?)\2""", re.I | re
 #: block gets no anchor, and a `](path)` in an example is not a link.
 _FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$", re.M | re.S)
 
-#: An ATX heading, with any closing run of `#` dropped the way the renderer
-#: drops it.
-_HEADING = re.compile(r"^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", re.M)
+#: A heading, in either of the two forms GitHub gives an anchor: an ATX
+#: heading, with any closing run of `#` dropped the way the renderer drops
+#: it, or an HTML `<h1>` to `<h6>`. The HTML form matters for numbering. A
+#: feature grid built from `<h3>` cells takes its slugs first, so a section
+#: further down that repeats a cell's title is the `-1`.
+_HEADING = re.compile(
+    r"^#{1,6}[ \t]+(?P<atx>.+?)(?:[ \t]+#+)?[ \t]*$|<h([1-6])\b[^>]*>(?P<html>.*?)</h\2\s*>",
+    re.M | re.I | re.S,
+)
 
 #: An explicit anchor, `<a id="...">` or `<a name="...">`.
 _HTML_ANCHOR = re.compile(r"""<a\b[^>]*?\b(?:id|name)\s*=\s*(["'])(.*?)\1""", re.I)
@@ -188,8 +194,8 @@ def _anchors(text: str) -> set[str]:
     prose = _prose(text)
     seen: dict[str, int] = {}
     found: set[str] = set()
-    for heading in _HEADING.findall(prose):
-        slug = _slug(heading)
+    for match in _HEADING.finditer(prose):
+        slug = _slug(match.group("atx") or match.group("html"))
         count = seen.get(slug, 0)
         found.add(slug if count == 0 else f"{slug}-{count}")
         seen[slug] = count + 1
@@ -525,6 +531,8 @@ def test_the_anchor_reader_names_headings_the_way_github_does() -> None:
         "## [Programs](docs/programs.md) it needs\n"
         "## What is LocalCut AI?\n"
         '<a id="hero"></a>\n'
+        '<td><h3 align="center">One-off <b>tools</b></h3></td>\n'
+        "## One-off tools\n"
     )
     assert _anchors(text) == {
         "localcut-ai",
@@ -536,6 +544,8 @@ def test_the_anchor_reader_names_headings_the_way_github_does() -> None:
         "programs-it-needs",
         "what-is-localcut-ai-1",
         "hero",
+        "one-off-tools",
+        "one-off-tools-1",
     }
 
 
