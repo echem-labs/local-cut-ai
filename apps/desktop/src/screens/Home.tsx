@@ -126,6 +126,7 @@ export function Home() {
     dismissActionError,
     readiness,
     programs,
+    programQueue,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
@@ -351,9 +352,11 @@ export function Home() {
   // Setup hands over mid-download (FR1). The rows are the wizard's own; the
   // bytes are what the engine is still moving for THIS pipeline, so a model
   // downloaded from Settings for some other reason doesn't inflate them.
+  // "Set up both" carries on from Home too, so a program still queued behind
+  // another's setup reads as waiting here, as it does on the Ready step.
   const downloadStages = useMemo(
-    () => stageRows(system, models, programs),
-    [system, models, programs],
+    () => stageRows(system, models, programs, new Set(), new Set(programQueue)),
+    [system, models, programs, programQueue],
   );
   const dlReady = readyStages(downloadStages);
   // Only while bytes are actually moving: a stage nobody picked reads

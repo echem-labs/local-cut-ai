@@ -8,7 +8,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ModelRow, Project, SystemInfo } from "../api/types";
+import type { ModelRow, ProgramInfo, Project, SystemInfo } from "../api/types";
 import { formatSize } from "../components/ModelLibrary";
 import { t } from "../i18n";
 import { useApp } from "../store";
@@ -72,6 +72,8 @@ const seed = (over: Record<string, unknown> = {}) =>
     allJobs: [],
     models: [],
     system: null,
+    programs: null,
+    programQueue: [],
     templates: [],
     libraryOpen: false,
     settingsOpen: false,
@@ -234,5 +236,52 @@ describe("the download bridge", () => {
     seed({ models: settled, system: SYSTEM(settled) });
     render(<Home />);
     expect(screen.queryByText(t("home.dlSummary", { ready: 2, total: 3 }))).toBeNull();
+  });
+
+  it("says the script is waiting while Ollama's setup is queued behind another", () => {
+    // Set up both, left mid-way for Home: FFmpeg's setup runs and Ollama's
+    // waits its turn. Nothing answers at Ollama's address yet, and that is
+    // not something the user has to fix.
+    const ollama: ProgramInfo = {
+      id: "ollama",
+      state: "missing",
+      problem: "unreachable",
+      source: "default",
+      location: "http://127.0.0.1:11434/v1",
+      setting: "LOCALCUT_LLM_URL",
+      version: null,
+      checks: { server: null, model: "qwen3:8b", model_present: null },
+      managed: null,
+      setup: {
+        available: true,
+        unavailable_reason: null,
+        takes_effect: true,
+        version: "0.40.4",
+        url: null,
+        download_bytes: 1370 * 2 ** 20,
+        install_bytes: 4200 * 2 ** 20,
+        job: null,
+        last: null,
+      },
+    };
+    seed({
+      models: downloading,
+      system: SYSTEM(downloading),
+      programs: {
+        platform: "linux-x64",
+        programs_dir: "/home/me/.localcut/programs",
+        programs_bytes: 0,
+        disk_free_bytes: 2 ** 40,
+        programs: [ollama],
+      },
+      programQueue: ["ollama"],
+    });
+    render(<Home />);
+    fireEvent.click(screen.getByLabelText(t("home.dlExpandAria")));
+    const script = document.querySelector(".srow")!;
+    expect(script).toHaveTextContent("qwen3:8b");
+    expect(script).toHaveTextContent(t("firstRun.statusWaiting"));
+    expect(script).not.toHaveTextContent(t("firstRun.statusNeedsOllama"));
+    expect(script.querySelector(".pdot")).toHaveClass("wait");
   });
 });
