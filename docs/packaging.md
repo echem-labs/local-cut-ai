@@ -32,13 +32,14 @@ npm run package:mac:dir    # → the unpacked .app only
 
 **The packaged app launches the engine on `local,mock`**, the same hybrid the
 dev flow uses: real backends claim what they can serve, mock catches the rest.
-ComfyUI and Ollama give the real ones something to claim. On Windows,
-Settings > Programs sets ComfyUI up; [running-real-models.md](running-real-models.md)
-covers installing either yourself. Or set `LOCALCUT_BACKEND` to pin the chain
+ComfyUI and Ollama give the real ones something to claim. On Windows x64 and
+Linux x64, Settings > Programs sets up both, as [programs.md](programs.md)
+describes; [running-real-models.md](running-real-models.md) covers installing
+either yourself. Or set `LOCALCUT_BACKEND` to pin the chain
 yourself.
 
 **Windows builds are unsigned for now.** SmartScreen warns on the installer:
-More info → Run anyway.
+More info, then Run anyway.
 
 **The engine ships the font it draws text with.** On-screen titles and
 burned-in captions use Inter, which the engine package carries in

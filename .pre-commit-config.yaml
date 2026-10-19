@@ -181,6 +181,7 @@ repos:
             |docs/.+
             |LICENSE
             |(AGENTS|CLAUDE|CONTRIBUTING|SECURITY|TRADEMARK)\.md
+            |branding/logo\.svg
             |apps/desktop/package\.json
             |apps/desktop/electron/engine\.ts
             |\.github/workflows/ci-(engine|desktop)\.yml

@@ -410,7 +410,7 @@ def test_the_readme_names_the_platforms_ci_actually_runs_on() -> None:
     # that changed nothing.
     prose = " ".join(_README.read_text(encoding="utf-8").split())
     claim = re.search(
-        r"CI runs the engine suite on ([^.;]+?), and the desktop suite on ([^.;]+?)\.", prose
+        r"CI runs the engine suite on ([^.;]+?),? and the desktop suite on ([^.;]+?)\.", prose
     )
     assert claim, (
         "the README no longer states which platforms CI runs each suite on - "
