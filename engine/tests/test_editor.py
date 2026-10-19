@@ -442,3 +442,276 @@ def test_a_picked_voice_is_editable_and_bounded():
         apply_patch(graph, ops)
         assert "voice_id" not in graph.nodes["s1.narration"].params, bad
         assert any("voice_id" in w for w in warnings), bad
+
+
+# -- what the user approves ---------------------------------------------------
+
+# Three lines in the raindrop run's style: 29, 22 and 25 words.
+_LINES = {
+    "s1": "From the heart of a storm cloud, a single raindrop forms, suspended in the "
+    "thick, dark air. It is born of condensation, a tiny piece of the sky's breath.",
+    "s2": "The raindrop begins its descent, carried by the wind. It falls through the "
+    "sky, untouched by anything but the vast emptiness above.",
+    "s3": "It lands in a mountain stream. The water moves with purpose, catching the "
+    "sun's golden light on its surface as it carries the drop downhill.",
+}
+
+
+def narrated_graph():
+    graph = make_graph(3)
+    for sid, line in _LINES.items():
+        graph.nodes[f"{sid}.narration"].params["text"] = line
+    return graph
+
+
+def described(graph, edit_plan, scope="project"):
+    from localcut_engine.graph.editor import describe_edit
+
+    ops, _ = compile_edits(graph, edit_plan, scope)
+    after = graph.model_copy(deep=True)
+    if ops:
+        apply_patch(after, ops)
+    return describe_edit(graph, after, ops, edit_plan)
+
+
+def summarised(summary: str, *edits: dict) -> EditPlan:
+    return EditPlan.model_validate({"summary": summary, "edits": list(edits)})
+
+
+def test_a_word_count_the_ops_do_not_reach_is_not_what_the_user_approves():
+    """qwen3:8b answered "Trimmed narration to 160 words, adjusted
+    duplicates" for a cut to 100. The headline comes from the ops, and the
+    model's sentence is quoted beside what they really do."""
+    short = {
+        "s1": "A raindrop forms in a storm cloud.",
+        "s2": "It falls on the wind.",
+        "s3": "It lands in a mountain stream.",
+    }
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Trimmed narration to 60 words, adjusted duplicates",
+            *(
+                {"action": "update", "node_id": f"{sid}.narration", "params": {"text": text}}
+                for sid, text in short.items()
+            ),
+        ),
+    )
+    assert result["summary"] == "Narration in 3 scenes: 76 words to 18 in all"
+    assert result["changes"] == [
+        "Scene 1 narration: 29 words to 7",
+        "Scene 2 narration: 22 words to 5",
+        "Scene 3 narration: 25 words to 6",
+    ]
+    assert result["mismatch"] == (
+        'The model described this as "Trimmed narration to 60 words, adjusted duplicates", '
+        "but the narration comes to 18 words, about 6 a scene."
+    )
+
+
+def test_a_summary_the_ops_bear_out_is_kept_in_the_models_words():
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Made scene 1 nocturnal",
+            {"action": "update", "node_id": "s1.keyframe", "params": {"prompt": "night city"}},
+        ),
+    )
+    assert result == {
+        "summary": "Made scene 1 nocturnal",
+        "changes": ['Scene 1 picture: "night city"'],
+        "mismatch": None,
+    }
+
+
+def test_a_count_within_rounding_of_the_result_is_kept():
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Cut scene 1's line to about 8 words",
+            {
+                "action": "update",
+                "node_id": "s1.narration",
+                "params": {"text": "A raindrop forms in a storm cloud."},
+            },
+        ),
+    )
+    assert result["summary"] == "Cut scene 1's line to about 8 words"
+    assert result["mismatch"] is None
+
+
+def test_a_plan_whose_every_edit_was_refused_claims_nothing():
+    """ "No changes made, adjusted music volume under narration" was the
+    reply to a plan whose one edit named a param that does not exist."""
+    result = described(
+        narrated_graph(),
+        summarised(
+            "adjusted music volume under narration",
+            {"action": "update", "node_id": "music", "params": {"volume": 0.5}},
+        ),
+    )
+    assert result == {
+        "summary": "",
+        "changes": [],
+        "mismatch": 'The model described this as "adjusted music volume under narration", '
+        "but none of the changes it proposed can be made.",
+    }
+
+
+def test_a_plan_that_proposes_nothing_keeps_its_reason():
+    result = described(narrated_graph(), summarised("There is no volume control to change"))
+    assert result == {
+        "summary": "There is no volume control to change",
+        "changes": [],
+        "mismatch": None,
+    }
+
+
+def test_a_summary_naming_what_the_edit_leaves_alone_is_set_aside():
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Lowered the music in scene 3",
+            {"action": "update", "node_id": "s1.keyframe", "params": {"prompt": "night city"}},
+        ),
+    )
+    assert result["summary"] == 'Scene 1 picture: "night city"'
+    assert result["mismatch"] == (
+        'The model described this as "Lowered the music in scene 3", '
+        "but nothing in it changes the music and it does not change scene 3."
+    )
+
+
+def test_a_summary_that_leaves_out_a_removal_is_set_aside():
+    """llama3.2 called a plan "Trimmed narration" that also removed scenes."""
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Trimmed narration",
+            {"action": "update", "node_id": "s1.narration", "params": {"text": "A drop forms."}},
+            {"action": "remove_scene", "scene_id": "s2"},
+            {"action": "remove_scene", "scene_id": "s3"},
+        ),
+    )
+    assert result["summary"] == "Scenes 2 and 3 removed. Scene 1 narration: 29 words to 3"
+    assert result["changes"] == [
+        "Scene 1 narration: 29 words to 3",
+        "Scene 2 removed",
+        "Scene 3 removed",
+    ]
+    assert result["mismatch"] == (
+        'The model described this as "Trimmed narration", '
+        "but it does not say that scenes 2 and 3 are removed."
+    )
+
+
+def test_a_summary_that_says_every_scene_over_some_of_them_is_set_aside():
+    """gemma4:e2b's "Trimmed narration for each scene" over a plan that left
+    most scenes as they were."""
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Trimmed narration for each scene",
+            {"action": "update", "node_id": "s2.narration", "params": {"text": "It falls."}},
+        ),
+    )
+    assert result["mismatch"] == (
+        'The model described this as "Trimmed narration for each scene", '
+        "but it changes 1 of the 3 scenes."
+    )
+
+
+def test_a_runtime_the_narration_does_not_have_is_set_aside():
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Shortened the video to 5 seconds",
+            {"action": "update", "node_id": "s2.narration", "params": {"text": "It falls."}},
+        ),
+    )
+    assert result["summary"] == "Scene 2 narration: 22 words to 2"
+    assert "but the narration runs about" in result["mismatch"]
+
+
+def test_a_subject_named_only_as_the_place_of_a_change_is_not_a_claim():
+    """ "Under the narration" says where the music dips, not that the
+    narration changed."""
+    graph = narrated_graph()
+    graph.nodes["timeline"].params["ducking"] = False
+    result = described(
+        graph,
+        summarised(
+            "Lowered the music volume under the narration",
+            {"action": "update", "node_id": "timeline", "params": {"ducking": True}},
+        ),
+    )
+    assert result == {
+        "summary": "Lowered the music volume under the narration",
+        "changes": ["Music dips under the narration"],
+        "mismatch": None,
+    }
+
+
+def test_ops_that_set_what_is_already_there_change_nothing():
+    result = described(
+        narrated_graph(),
+        summarised(
+            "Made the music quieter under the narration",
+            {"action": "update", "node_id": "timeline", "params": {"ducking": True}},
+        ),
+    )
+    assert result["changes"] == []
+    assert result["summary"] == "Nothing in the project changes"
+    assert result["mismatch"] == (
+        'The model described this as "Made the music quieter under the narration", '
+        "but it changes nothing in the project."
+    )
+
+
+def test_every_kind_of_change_reads_as_a_line():
+    graph = narrated_graph()
+    graph.nodes["timeline"].params["overlays"] = {"s1": "BOOM"}
+    result = described(
+        graph,
+        summarised(
+            "",
+            {
+                "action": "update",
+                "node_id": "s2.narration",
+                "params": {"voice": "warm narrator", "speed": 1.2},
+            },
+            {
+                "action": "update",
+                "node_id": "s2.clip",
+                "params": {"motion": "slow tilt up", "duration_s": 7},
+            },
+            {"action": "update", "node_id": "music", "params": {"brief": "soft piano"}},
+            {
+                "action": "update",
+                "node_id": "timeline",
+                "params": {
+                    "order": ["s2", "s1", "s3"],
+                    "transitions": {"s1": "crossfade"},
+                    "overlays": {"s1": None, "s3": "THE END"},
+                    "ducking": False,
+                },
+            },
+            {"action": "update", "node_id": "export", "params": {"captions": "sidecar", "fps": 30}},
+        ),
+    )
+    assert result["changes"] == [
+        'Scene 2 voice: "warm narrator"',
+        "Scene 2 speech speed: 1 to 1.2",
+        'Scene 2 camera move: "slow tilt up"',
+        "Scene 2 clip length: 5 s to 7 s",
+        'Music: "soft piano"',
+        "Captions as a separate subtitle file",
+        "Frame rate: 30 fps",
+        "Scene order: 2, 1, 3",
+        "Transition after scene 1: crossfade",
+        "Scene 1 on-screen text removed",
+        'Scene 3 on-screen text: "THE END"',
+        "Music stays level under the narration",
+    ]
+    assert result["summary"] == 'Scene 2 voice: "warm narrator" and 11 other changes'
+    assert result["mismatch"] is None

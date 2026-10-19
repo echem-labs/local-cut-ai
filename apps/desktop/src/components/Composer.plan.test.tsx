@@ -53,6 +53,8 @@ const proposal = (overrides: Partial<EditProposal> = {}): EditProposal => ({
   planned: [],
   dirty: ["s1.clip", "s1.keyframe"],
   warnings: [],
+  changes: ['Scene 1 picture: "night city"', 'Scene 1 shot: "night city"'],
+  mismatch: null,
   ...overrides,
 });
 
@@ -110,6 +112,67 @@ describe("sending an instruction", () => {
 
     send("make scene 9 night");
     expect(await screen.findByText(/unknown node s9\.clip/)).toBeInTheDocument();
+  });
+
+  it("lists what each op changes", async () => {
+    const proposeEdit = vi.fn().mockResolvedValue(proposal());
+    mount({ proposeEdit, applyEditPlan: vi.fn() });
+
+    send("make scene 1 night");
+    const list = await screen.findByRole("list", { name: /what the edit changes/i });
+    expect(list).toHaveTextContent('Scene 1 picture: "night city"');
+    expect(list).toHaveTextContent('Scene 1 shot: "night city"');
+  });
+
+  it("does not list a single change the headline already says", async () => {
+    const proposeEdit = vi.fn().mockResolvedValue(
+      proposal({
+        summary: "Scene 1 narration: 26 words to 12",
+        changes: ["Scene 1 narration: 26 words to 12"],
+      }),
+    );
+    mount({ proposeEdit, applyEditPlan: vi.fn() });
+
+    send("shorten scene 1");
+    await screen.findByRole("group", { name: /proposed edit/i });
+    expect(screen.queryByRole("list", { name: /what the edit changes/i })).toBeNull();
+  });
+
+  it("quotes a model summary the ops do not bear out beside the real one", async () => {
+    // The raindrop run: "Trimmed narration to 160 words" for a cut to 100.
+    // The headline is what Apply lands; the model's sentence is shown as a
+    // claim, with what the ops do instead.
+    const mismatch =
+      'The model described this as "Trimmed narration to 160 words", ' +
+      "but the narration comes to 100 words, about 12 a scene.";
+    const proposeEdit = vi.fn().mockResolvedValue(
+      proposal({ summary: "Narration in 8 scenes: 207 words to 100 in all", mismatch }),
+    );
+    mount({ proposeEdit, applyEditPlan: vi.fn() });
+
+    send("trim the narration to about 160 words");
+    const card = await screen.findByRole("group", { name: /proposed edit/i });
+    expect(card.querySelector(".plan-summary")).toHaveTextContent(
+      "Narration in 8 scenes: 207 words to 100 in all",
+    );
+    expect(card.querySelector(".plan-mismatch")).toHaveTextContent(mismatch);
+  });
+
+  it("does not echo a refused plan's summary as though it happened", async () => {
+    // "No changes made — adjusted music volume under narration" read as a
+    // change that had been made.
+    const mismatch =
+      'The model described this as "adjusted music volume under narration", ' +
+      "but none of the changes it proposed can be made.";
+    const proposeEdit = vi
+      .fn()
+      .mockResolvedValue(
+        proposal({ ops: 0, dirty: [], warnings: [], summary: "", changes: [], mismatch }),
+      );
+    mount({ proposeEdit, applyEditPlan: vi.fn() });
+
+    send("make the music a little quieter under the narration");
+    expect(await screen.findByText(`No changes made. ${mismatch}`)).toBeInTheDocument();
   });
 
   it("answers directly when the plan would do nothing", async () => {

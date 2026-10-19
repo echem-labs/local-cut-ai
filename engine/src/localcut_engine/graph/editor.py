@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -358,6 +359,8 @@ fences), in this exact shape:
 ]}
 Rules:
 - Only change what the instruction asks for; leave everything else alone.
+- "summary" says in a few words what your edits change. Describe only the edits you return, \
+and never state a count (words, seconds, scenes) you have not counted in them.
 - params keys must come from the node's own params shown in the view.
 - keyframe/clip "prompt" values are image/video generation prompts; keep the established \
 visual style unless asked to change it. "motion" is a short camera direction.
@@ -724,3 +727,407 @@ def compile_edits(
         else:
             ops.append(PatchOp(op="set_params", node_id="timeline", params=timeline_params))
     return ops, warnings
+
+
+# -- what an edit does, in words ----------------------------------------------
+#
+# The model writes a summary beside its plan, and that summary is a claim
+# about the plan, not a reading of it. qwen3:8b called a cut from 207 words
+# to 100 "Trimmed narration to 160 words", and plans whose every edit was
+# refused still read "adjusted music volume under narration". What Apply
+# lands is the compiled ops, so what the user reads is built from them: one
+# line per change, and a headline. The model's sentence is the headline only
+# when nothing in it can be shown wrong against those ops; otherwise the
+# headline comes from the ops and the model's sentence is quoted with what
+# it got wrong.
+
+# How much of a prompt or an on-screen title a change line quotes.
+_QUOTED = 60
+
+# Claims a summary makes about counts and scenes. `_claim_problems` checks a
+# count against the real ones with some slack: models round, and a count that
+# comes near a real one is not the misreport being caught.
+_WORDS_CLAIM = re.compile(r"\b(\d+(?:\.\d+)?)[\s-]*words?\b", re.IGNORECASE)
+_SECONDS_CLAIM = re.compile(r"\b(\d+(?:\.\d+)?)[\s-]*(?:s|secs?|seconds?)\b", re.IGNORECASE)
+_SCENE_REF = re.compile(r"\bscenes?\s+(\d+(?:\s*(?:,|and|&|to|through|-)\s*\d+)*)", re.IGNORECASE)
+_REMOVAL_WORDS = re.compile(r"\b(?:remov|delet|drop|cut)", re.IGNORECASE)
+_EVERY_SCENE = re.compile(r"\b(?:each|every|all(?: the)?|all \d+) scenes?\b", re.IGNORECASE)
+# The words before a subject that make it a place rather than a thing changed.
+_PLACE = re.compile(r"\b(?:under|over|beneath|below|above|behind|against|during)\s+(?:the\s+)?$")
+
+# What a summary may say it changed, and which changes bear that out. A
+# subject the summary names and no change touches is a claim the edit does
+# not make. Generous on purpose, because a false mismatch replaces a true
+# sentence: "voice" is satisfied by a speed change too, and a subject named
+# only as where something happens ("the music under the narration") is not
+# a claim about it at all (see `_PLACE`). The narration is left to the word
+# and second counts below, which check it more closely than a word can.
+_SUBJECTS: tuple[tuple[re.Pattern[str], frozenset[str], str], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), frozenset(subjects), what)
+    for pattern, subjects, what in (
+        (r"\bmusic\b|\bsoundtrack\b", {"music", "ducking", "beat"}, "the music"),
+        (r"\bvolume\b|\bquieter\b|\blouder\b", {"ducking"}, "the volume"),
+        (r"\bvoices?\b|\bspeakers?\b", {"voice", "speed"}, "the voice"),
+        (r"\bspeed\b|\bspeech rate\b", {"speed"}, "the speech speed"),
+        (r"\bcaptions?\b|\bsubtitles?\b", {"captions"}, "the captions"),
+        (r"\btransitions?\b|\bcross-?fades?\b|\bdissolves?\b", {"transitions"}, "the transitions"),
+        (r"\bon-?screen\b|\boverlays?\b|\btitles?\b", {"overlays"}, "the on-screen text"),
+        (r"\breorder|\bscene order\b|\bswap", {"order"}, "the scene order"),
+        (
+            r"\bimages?\b|\bpictures?\b|\bkeyframes?\b|\bvisuals?\b|\bstills?\b",
+            {"picture", "shot", "thumbnail"},
+            "the pictures",
+        ),
+        (r"\bcamera\b|\bmotion\b|\bpans?\b|\bzoom", {"motion", "shot"}, "the camera movement"),
+        (r"\bframe rate\b|\bfps\b|\bresolution\b|\bbitrate\b", {"export"}, "the export settings"),
+        (r"\bthumbnail", {"thumbnail"}, "the thumbnail"),
+    )
+)
+
+
+@dataclass(frozen=True)
+class _Change:
+    subject: str
+    line: str
+    scenes: frozenset[str] = frozenset()
+
+
+def _scene_number(scene_id: str) -> str:
+    tail = scene_id[1:]
+    return tail if scene_id.startswith("s") and tail.isdigit() else scene_id
+
+
+def _scene_label(scene_id: str) -> str:
+    return f"Scene {_scene_number(scene_id)}"
+
+
+def _scene_list(scene_ids: list[str]) -> str:
+    """The scenes in words, in scene order: scene 2, or scenes 2, 3 and 5."""
+    numbers = [_scene_number(sid) for sid in sorted(scene_ids, key=scene_sort_key)]
+    if len(numbers) == 1:
+        return f"scene {numbers[0]}"
+    return f"scenes {', '.join(numbers[:-1])} and {numbers[-1]}"
+
+
+def _joined(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _quote(value: Any) -> str:
+    text = " ".join(str(value).split())
+    if len(text) > _QUOTED:
+        text = text[: _QUOTED - 3].rstrip() + "..."
+    return f'"{text}"'
+
+
+def _word_count(value: Any) -> int:
+    return len(str(value or "").split())
+
+
+def _narration_by_scene(graph: StoryGraph) -> dict[str, str]:
+    return {
+        node_id.removesuffix(".narration"): str(node.params.get("text") or "")
+        for node_id, node in graph.nodes.items()
+        if node.kind is NodeKind.NARRATION and node_id.endswith(".narration")
+    }
+
+
+def _number(value: Any) -> str:
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _timeline_changes(
+    graph: StoryGraph, key: str, old: Any, new: Any, removed: set[str]
+) -> list[_Change]:
+    if key == "order":
+        # The order a timeline without one plays in, less what the same
+        # edit removes: a removal is reported as a removal, not a reorder.
+        before = [s for s in (old or _scene_ids(graph)) if s not in removed]
+        after = list(new or [])
+        if after == before:
+            return []
+        moved = frozenset(s for i, s in enumerate(after) if i >= len(before) or before[i] != s)
+        numbers = ", ".join(_scene_number(s) for s in after)
+        return [_Change(subject="order", scenes=moved, line=f"Scene order: {numbers}")]
+    if key in _TIMELINE_MAPS:
+        old_map = {s: v for s, v in (old or {}).items() if s not in removed}
+        new_map = dict(new or {})
+        changes: list[_Change] = []
+        for sid in sorted(set(old_map) | set(new_map), key=scene_sort_key):
+            was, now = old_map.get(sid), new_map.get(sid)
+            if was == now:
+                continue
+            label = _scene_label(sid)
+            if key == "transitions":
+                line = f"Transition after {label.lower()}: {now or 'cut'}"
+            elif key == "trims":
+                spans = ", ".join(f"{k} {_number(v)} s" for k, v in (now or {}).items())
+                line = f"{label} trim: {spans}" if spans else f"{label} trim removed"
+            elif now is None:
+                line = f"{label} on-screen text removed"
+            else:
+                line = f"{label} on-screen text: {_quote(now)}"
+            changes.append(_Change(subject=key, scenes=frozenset({sid}), line=line))
+        return changes
+    if key == "ducking":
+        # On unless a plan turned it off: the editor's own prompt calls true
+        # the default.
+        if bool(new) == (old is None or bool(old)):
+            return []
+        line = "Music dips under the narration" if new else "Music stays level under the narration"
+        return [_Change(subject="ducking", line=line)]
+    if key == "beat_align":
+        if bool(new) == bool(old):
+            return []
+        line = "Cuts land on the music's beat" if new else "Cuts no longer follow the music's beat"
+        return [_Change(subject="beat", line=line)]
+    return [_Change(subject="other", line=f"Timeline {key} changed")]
+
+
+def _export_change(key: str, old: Any, new: Any) -> _Change:
+    if key == "captions":
+        line = (
+            "Captions burned into the picture"
+            if new == "burn"
+            else "Captions as a separate subtitle file"
+        )
+        return _Change(subject="captions", line=line)
+    label, unit = {
+        "fps": ("Frame rate", " fps"),
+        "resolution": ("Resolution", "p"),
+        "video_kbps": ("Video bitrate", " kbit/s"),
+        "audio_kbps": ("Audio bitrate", " kbit/s"),
+    }.get(key, (f"Export {key}", ""))
+    span = f"{new}{unit}" if old is None else f"{old}{unit} to {new}{unit}"
+    return _Change(subject="export", line=f"{label}: {span}")
+
+
+def _param_changes(
+    graph: StoryGraph, node_id: str, key: str, old: Any, new: Any, removed: set[str]
+) -> list[_Change]:
+    kind = graph.nodes[node_id].kind
+    scene = node_id.split(".")[0] if "." in node_id else ""
+    scenes = frozenset({scene}) if scene else frozenset()
+    label = _scene_label(scene) if scene else ""
+
+    def change(subject: str, line: str) -> list[_Change]:
+        return [_Change(subject=subject, scenes=scenes, line=line)]
+
+    if kind is NodeKind.NARRATION and key == "text":
+        was, now = _word_count(old), _word_count(new)
+        if was == now:
+            return change("narration", f"{label} narration reworded, {now} words")
+        return change("narration", f"{label} narration: {was} words to {now}")
+    if kind is NodeKind.NARRATION and key == "voice":
+        return change("voice", f"{label} voice: {_quote(new)}")
+    if kind is NodeKind.NARRATION and key == "voice_id":
+        return change("voice", f"{label} speaker: {new}")
+    if kind is NodeKind.NARRATION and key == "speed":
+        return change("speed", f"{label} speech speed: {_number(old or 1.0)} to {_number(new)}")
+    if kind is NodeKind.KEYFRAME and key == "prompt":
+        return change("picture", f"{label} picture: {_quote(new)}")
+    if kind is NodeKind.CLIP and key == "prompt":
+        return change("shot", f"{label} shot: {_quote(new)}")
+    if kind is NodeKind.CLIP and key == "motion":
+        return change("motion", f"{label} camera move: {_quote(new)}")
+    if kind is NodeKind.CLIP and key == "duration_s":
+        span = f"{_number(new)} s" if old is None else f"{_number(old)} s to {_number(new)} s"
+        return change("clip_length", f"{label} clip length: {span}")
+    if kind is NodeKind.MUSIC and key == "brief":
+        return change("music", f"Music: {_quote(new)}")
+    if kind is NodeKind.THUMBNAIL and key == "prompt":
+        return change("thumbnail", f"Thumbnail: {_quote(new)}")
+    if kind is NodeKind.TIMELINE:
+        return _timeline_changes(graph, key, old, new, removed)
+    if kind is NodeKind.EXPORT:
+        return [_export_change(key, old, new)]
+    return change("other", f"{node_id} {key} changed")
+
+
+def _edit_changes(before: StoryGraph, ops: list[PatchOp]) -> list[_Change]:
+    """One change per param an op actually moves, then one per removed
+    scene. A param set to the value it already has is no change at all, and
+    is left out rather than counted."""
+    removed = {
+        op.node_id.split(".")[0] for op in ops if op.op == "remove_node" and "." in op.node_id
+    }
+    changes: list[_Change] = []
+    for op in ops:
+        if op.op != "set_params" or op.node_id not in before.nodes:
+            continue
+        current = before.nodes[op.node_id].params
+        for key, new in (op.params or {}).items():
+            old = current.get(key)
+            if new != old:
+                changes.extend(_param_changes(before, op.node_id, key, old, new, removed))
+    changes.extend(
+        _Change(subject="removal", scenes=frozenset({sid}), line=f"{_scene_label(sid)} removed")
+        for sid in sorted(removed, key=scene_sort_key)
+    )
+    return changes
+
+
+def _runtime_s(narration: dict[str, str]) -> float:
+    """The cut's length as its narration sets it: the same measure the
+    script's length check uses."""
+    from ..backends.llm import NARRATION_PAD_S, spoken_seconds
+
+    lines = [text for text in narration.values() if text.strip()]
+    return sum(spoken_seconds(text) for text in lines) + NARRATION_PAD_S * len(lines)
+
+
+def _claim_problems(
+    claim: str, before: StoryGraph, after: StoryGraph, ops: list[PatchOp], changes: list[_Change]
+) -> list[str]:
+    """What in the model's summary the ops show to be wrong, as clauses
+    that follow "but". Empty when nothing in it can be checked or nothing
+    checked is wrong."""
+    problems: list[str] = []
+    touched = {change.subject for change in changes}
+
+    untouched = [
+        what
+        for pattern, subjects, what in _SUBJECTS
+        if not touched & subjects
+        and any(
+            not _PLACE.search(claim[: match.start()].lower()) for match in pattern.finditer(claim)
+        )
+    ]
+    if untouched:
+        problems.append(f"nothing in it changes {_joined(untouched)}")
+
+    named: set[str] = set()
+    for match in _SCENE_REF.finditer(claim):
+        numbers = [int(n) for n in re.findall(r"\d+", match.group(1))]
+        if len(numbers) == 2 and re.search(r"to|through|-", match.group(1)):
+            numbers = list(range(numbers[0], min(numbers[1], numbers[0] + 50) + 1))
+        named |= {f"s{n}" for n in numbers}
+    changed_scenes = set().union(*(change.scenes for change in changes)) if changes else set()
+    if left := sorted(named - changed_scenes, key=scene_sort_key):
+        problems.append(f"it does not change {_scene_list(left)}")
+    # gemma4:e2b: "Trimmed narration for each scene" over a plan that
+    # touched three scenes of eight.
+    scenes = _scene_ids(before)
+    if _EVERY_SCENE.search(claim) and len(changed_scenes & set(scenes)) < len(scenes):
+        problems.append(
+            f"it changes {len(changed_scenes & set(scenes))} of the {len(scenes)} scenes"
+        )
+
+    removed = sorted(
+        {sid for change in changes if change.subject == "removal" for sid in change.scenes},
+        key=scene_sort_key,
+    )
+    if removed and not _REMOVAL_WORDS.search(claim):
+        verb = "is" if len(removed) == 1 else "are"
+        problems.append(f"it does not say that {_scene_list(removed)} {verb} removed")
+
+    was, now = _narration_by_scene(before), _narration_by_scene(after)
+    total_was = sum(_word_count(text) for text in was.values())
+    total_now = sum(_word_count(text) for text in now.values())
+    word_counts = {float(total_was), float(total_now)}
+    for lines in (was, now):
+        if lines:
+            word_counts |= {float(_word_count(text)) for text in lines.values()}
+            word_counts.add(round(sum(_word_count(t) for t in lines.values()) / len(lines)))
+    for match in _WORDS_CLAIM.finditer(claim):
+        said = float(match.group(1))
+        if not any(abs(said - count) <= max(3.0, 0.1 * said) for count in word_counts):
+            per_scene = round(total_now / len(now)) if now else 0
+            problems.append(f"the narration comes to {total_now} words, about {per_scene} a scene")
+            break
+
+    runtime_now = _runtime_s(now)
+    seconds = {_runtime_s(was), runtime_now}
+    for lines in (was, now):
+        seconds |= {_runtime_s({sid: text}) for sid, text in lines.items()}
+    # A number of seconds the edit itself sets or replaces (a clip's length)
+    # is one the summary may name, and so is the length the video was asked
+    # to run.
+    for op in ops:
+        if op.op != "set_params" or op.node_id not in before.nodes:
+            continue
+        current = before.nodes[op.node_id].params
+        for key, value in (op.params or {}).items():
+            for number in (value, current.get(key)):
+                if isinstance(number, int | float) and not isinstance(number, bool):
+                    seconds.add(float(number))
+    script = before.nodes.get("script")
+    target = script.params.get("target_duration_s") if script is not None else None
+    if isinstance(target, int | float) and not isinstance(target, bool):
+        seconds.add(float(target))
+    for match in _SECONDS_CLAIM.finditer(claim):
+        said = float(match.group(1))
+        if not any(abs(said - value) <= max(2.0, 0.15 * said) for value in seconds):
+            problems.append(f"the narration runs about {runtime_now:.0f} s")
+            break
+    return problems
+
+
+def _headline(changes: list[_Change], before: StoryGraph, after: StoryGraph) -> str:
+    """The summary the ops themselves give. Removed scenes lead, since they
+    are the change least easy to spot afterwards, then the narration as one
+    change when several scenes' lines move (its total is what a user asks
+    about), or else the first other change, and a count of the rest."""
+    if not changes:
+        return "Nothing in the project changes"
+    removed = [sid for change in changes if change.subject == "removal" for sid in change.scenes]
+    narrated = [change for change in changes if change.subject == "narration"]
+    lead: list[str] = []
+    if removed:
+        listed = _scene_list(removed)
+        lead.append(f"{listed[0].upper()}{listed[1:]} removed")
+    if len(narrated) > 1:
+        was = sum(_word_count(t) for t in _narration_by_scene(before).values())
+        now = sum(_word_count(t) for t in _narration_by_scene(after).values())
+        lead.append(f"Narration in {len(narrated)} scenes: {was} words to {now} in all")
+    elif narrated:
+        lead.append(narrated[0].line)
+    others = [change.line for change in changes if change.subject not in ("removal", "narration")]
+    if not lead:
+        lead, others = others[:1], others[1:]
+    text = ". ".join(lead)
+    if others:
+        text += f" and {len(others)} other change{'' if len(others) == 1 else 's'}"
+    return text
+
+
+def describe_edit(
+    before: StoryGraph, after: StoryGraph, ops: list[PatchOp], plan: EditPlan
+) -> dict:
+    """What an edit does, for the person deciding whether to apply it.
+
+    `before` is the graph the ops were compiled against and `after` the same
+    graph with them applied. Returns:
+
+    - `summary`: the headline. The model's own sentence when nothing in it is
+      wrong against the ops, otherwise one built from them. A plan that
+      compiled to nothing keeps the model's reason when it proposed nothing,
+      and has no summary when everything it proposed was refused.
+    - `changes`: one line per change the ops make, in plain words.
+    - `mismatch`: when the model's sentence was set aside, that sentence
+      quoted with what the ops show instead. None otherwise.
+    """
+    claim = " ".join(plan.summary.split())
+    if not ops:
+        if plan.edits and claim:
+            return {
+                "summary": "",
+                "changes": [],
+                "mismatch": f'The model described this as "{claim}", but none of the '
+                "changes it proposed can be made.",
+            }
+        return {"summary": claim, "changes": [], "mismatch": None}
+    changes = _edit_changes(before, ops)
+    lines = [change.line for change in changes]
+    if not changes:
+        # Every op sets a value the project already has.
+        problems = ["it changes nothing in the project"]
+    else:
+        problems = _claim_problems(claim, before, after, ops, changes) if claim else []
+    if claim and not problems:
+        return {"summary": claim, "changes": lines, "mismatch": None}
+    mismatch = f'The model described this as "{claim}", but {_joined(problems)}.' if claim else None
+    return {"summary": _headline(changes, before, after), "changes": lines, "mismatch": mismatch}

@@ -51,7 +51,8 @@ let undoEdit: ReturnType<typeof vi.fn>;
  * refresh (which re-reads /history) before it resolves, so by the time the
  * reply is on screen the store already knows whether a snapshot was pushed.
  * Only a mutation that actually changed the graph pushes one. */
-function mount(result: EditResult, recorded = false) {
+function mount(reply: Omit<EditResult, "changes" | "mismatch">, recorded = false) {
+  const result: EditResult = { changes: [], mismatch: null, ...reply };
   proposeEdit = vi.fn().mockResolvedValue({
     summary: result.summary,
     plan: { summary: result.summary, edits: [] },
@@ -60,6 +61,8 @@ function mount(result: EditResult, recorded = false) {
     planned: [],
     dirty: result.dirty,
     warnings: result.warnings,
+    changes: result.changes,
+    mismatch: result.mismatch,
   } satisfies EditProposal);
   applyEditPlan = vi.fn().mockImplementation(() => {
     if (recorded) {
