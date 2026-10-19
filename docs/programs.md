@@ -145,13 +145,29 @@ for older drivers can then be asked for by name.
 The copy is the whole portable folder: 61,925 files and about 4.1 GiB for
 NVIDIA's usual build, 4.96 to 5.75 GiB for the others. LocalCut starts it the
 way the build's own `run_nvidia_gpu.bat` does, with the address the engine
-asks for, no browser and the model paths file it writes beside the copy:
+asks for, no browser, the model paths file it writes beside the copy and
+every folder ComfyUI writes to while it runs in a working folder of
+LocalCut's, `<data_dir>\work\comfyui`:
 
 ```
 python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build
     --disable-auto-launch --listen 127.0.0.1 --port 8188
     --extra-model-paths-config <data_dir>\programs\comfyui\extra_model_paths.yaml
+    --output-directory <data_dir>\work\comfyui\output
+    --input-directory <data_dir>\work\comfyui\input
+    --temp-directory <data_dir>\work\comfyui
+    --user-directory <data_dir>\work\comfyui\user
+    --previews-directory <data_dir>\work\comfyui\previews
 ```
+
+Those are ComfyUI 0.40.0's own flags. `--temp-directory` names the folder
+ComfyUI puts its `temp` folder in, so the scratch files land in
+`<data_dir>\work\comfyui\temp`. `user` holds ComfyUI's settings and its asset
+database and `previews` the previews that database makes. With all of them
+outside the copy, the copy stays the pinned build at the size Settings >
+Programs reports, an update replaces it without losing anything and a
+removal walks only the build. [Below](#what-renders-leave-in-comfyuis-folders)
+is what ComfyUI keeps in the working folder and when LocalCut deletes it.
 
 `extra_model_paths.yaml` points ComfyUI at `<data_dir>/models`. A start
 writes it again whenever it would say something else, so it follows the
@@ -164,6 +180,58 @@ limit, logged to `<data_dir>/logs/comfyui.log` and left stopped when a
 ComfyUI of your own answers at the address. Its first start loads PyTorch and
 every node, so it has ten minutes to answer rather than one and jobs wait
 for it when the engine starts.
+
+## What renders leave in ComfyUI's folders
+
+ComfyUI keeps every file a workflow saves in its `output` folder and every
+image sent to it in its `input` folder. The engine fetches each result into
+the project over HTTP, so what ComfyUI kept is a second copy LocalCut never
+reads again. A 60-second video is nine clips, their keyframes and a music
+bed, so a few projects come to gigabytes.
+
+Every render saves its files under `localcut/` in ComfyUI's output folder,
+named with a token of its own, such as
+`localcut/keyframe_3f9c2a7d1e04_00001_.png`. A clip sends its keyframe to
+`localcut/` in the input folder. An imported workflow's save nodes get the
+same: `localcut/` in front of their `filename_prefix` and the token after it.
+The token also makes ComfyUI save again for a render it has seen before. Its
+cache would otherwise answer with the file an earlier render wrote, which
+LocalCut's own copy has deleted by then.
+
+In LocalCut's own copy the engine deletes:
+
+- the files a render wrote under `output/localcut` once the render is done
+  with them: its result is in the project, or it failed and nothing will
+  fetch them;
+- the keyframe a clip sent to `input/localcut` once that clip's render is
+  done;
+- when the engine starts, whatever in `output/localcut`, `input/localcut` and
+  `temp` was last written before that start. A render an earlier engine never
+  finished (cancelled, failed or cut off when it stopped) leaves files there
+  that nothing will fetch.
+
+ComfyUI empties `temp` itself each time it starts and stops. LocalCut deletes
+only regular files inside the working folder and treats the filename and
+subfolder ComfyUI reports as untrusted text. A name with `..`, a separator, a
+drive or an absolute path deletes nothing. A link is neither followed nor
+removed. An output is deleted only when it is under `localcut/` with the
+render's own token in its name. A file in `output` or `input` that is not
+under `localcut/`, such as an image you made in the copy's own page in a
+browser, is never touched. `user` and `previews` are left alone too.
+
+What is left shows in Settings > Storage as ComfyUI's working files, with a
+button that clears it. Over the API that is `comfyui_bytes` in `GET
+/storage` (null when LocalCut's copy has never run on that engine) and
+`POST /storage/comfyui/cleanup`, which answers `{"ok": true, "freed_bytes":
+N}` or `409` while a render is using LocalCut's copy. Removing the program
+leaves the working folder where it is.
+
+A ComfyUI of your own, on this machine or another, is never touched. Its
+folders are yours. On another machine the engine could not reach them
+anyway. LocalCut leaves its renders under `localcut/` in that ComfyUI's `output`
+folder and the keyframes it sent under `localcut/` in its `input` folder.
+Every result is already in its project, so you can delete both whenever you
+like.
 
 ## The API
 
@@ -502,7 +570,8 @@ Removes LocalCut's own copy, `200 {"ok": true, "freed_bytes": N}`, and 0 when
 there was none. It never touches an install of yours, on `PATH`, in
 `<data_dir>/bin` or at a configured path. The engine uses the next FFmpeg it
 finds from the next job on. LocalCut's Ollama is stopped first. The models it
-pulled stay in `<models_dir>/ollama`. `409` while a setup of the program
+pulled stay in `<models_dir>/ollama` and ComfyUI's working folder stays in
+`<data_dir>/work/comfyui`. `409` while a setup of the program
 runs, while a render is running LocalCut's copy, or when another process
 holds one of its files open (Windows will not move the folder then).
 

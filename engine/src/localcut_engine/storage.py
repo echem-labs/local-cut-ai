@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 from .config import EngineConfig
+from .programs import comfyui as comfyui_program
 from .project.store import ProjectStore
 
 
@@ -60,6 +61,7 @@ def compute_storage(config: EngineConfig, store: ProjectStore) -> dict:
         "projects": projects,
         "models_bytes": _dir_size(config.resolved_models_dir),
         "cache_bytes": cache_bytes,
+        "comfyui_bytes": comfyui_work_bytes(config),
         "disk_free_bytes": usage.free,
         "disk_total_bytes": usage.total,
     }
@@ -75,3 +77,22 @@ def clear_caches(store: ProjectStore) -> int:
         shutil.rmtree(cache_dir, ignore_errors=True)
         cache_dir.mkdir(exist_ok=True)
     return freed
+
+
+def comfyui_work_bytes(config: EngineConfig) -> int | None:
+    """The disk what renders left in LocalCut's ComfyUI's working folder
+    takes: what `clear_comfyui_work` would free. None when there is no
+    working folder, because LocalCut's copy has never run on this engine."""
+    work = comfyui_program.work_dir(config)
+    if not work.is_dir():
+        return None
+    return sum(_dir_size(root) for root in comfyui_program.working_roots(work))
+
+
+def clear_comfyui_work(config: EngineConfig) -> int:
+    """Delete what renders left in LocalCut's ComfyUI's working folder: its
+    folders of the output and input and the scratch folder. The engine has
+    fetched every result it needs into the project, so none of it is read
+    again. Returns bytes freed."""
+    work = comfyui_program.work_dir(config)
+    return comfyui_program.clear_working_folder(work) if work.is_dir() else 0

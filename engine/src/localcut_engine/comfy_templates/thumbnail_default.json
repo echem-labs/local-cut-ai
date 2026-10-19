@@ -76,7 +76,7 @@
   "save": {
     "class_type": "SaveImage",
     "inputs": {
-      "filename_prefix": "localcut_thumbnail",
+      "filename_prefix": "thumbnail",
       "images": [
         "decode",
         0
