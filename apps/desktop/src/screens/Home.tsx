@@ -21,6 +21,7 @@ import type { Job, LlmModels, Project, ReadinessRow, ToolKind } from "../api/typ
 import { m, plural, t } from "../i18n";
 import { FOCUS_PROMPT_EVENT } from "../components/Palette";
 import { DurationPicker } from "../components/DurationPicker";
+import { addBytes, setupsBytes } from "../lib/downloads";
 import { ASPECTS, TOOL_CLIP_SECONDS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
 import { settingsTabFor } from "../lib/programs";
@@ -127,6 +128,7 @@ export function Home() {
     readiness,
     programs,
     programQueue,
+    setupPlans,
   } = useApp();
   const [busy, setBusy] = useState(false);
   const [startTemplate, setStartTemplate] = useState(false);
@@ -361,8 +363,10 @@ export function Home() {
   const dlReady = readyStages(downloadStages);
   // Only while bytes are actually moving: a stage nobody picked reads
   // "not downloaded" forever, and gating on that would pin this strip to
-  // Home for the life of the install.
-  const downloading = models.some((row) => row.downloading);
+  // Home for the life of the install. A program setup moves bytes too.
+  const settingUp =
+    programQueue.length > 0 || (programs?.programs ?? []).some((row) => row.setup.job);
+  const downloading = models.some((row) => row.downloading) || settingUp;
   const [dlOpen, setDlOpen] = useState(false);
   let dlDone = 0;
   let dlTotal = 0;
@@ -374,6 +378,14 @@ export function Home() {
     dlTotal += row.size_bytes;
     dlDone += row.downloaded ? row.size_bytes : (row.progress?.done ?? 0);
   }
+  // The program setups and the model Ollama pulls come down the same line
+  // and count in the same total (lib/downloads).
+  const all = addBytes(
+    { done: dlDone, total: dlTotal },
+    setupsBytes(programs, programQueue, setupPlans),
+  );
+  dlDone = all.done;
+  dlTotal = all.total;
 
   return (
     <div className="home">

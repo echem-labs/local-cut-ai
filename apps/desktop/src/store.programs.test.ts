@@ -558,3 +558,87 @@ describe("LocalCut's own server", () => {
     expect(await all).toBeNull();
   });
 });
+
+/**
+ * What the download totals count of the setups (lib/downloads): each one in
+ * the batch from the click, kept once it is in so it stays in the total as
+ * all done, and gone when it fails, since its bytes are no longer coming.
+ */
+describe("what a setup brings down", () => {
+  const big = (id: "ollama" | "comfyui", size: number, pull: number | null = null) => ({
+    ...ffmpeg({ id }),
+    setup: {
+      ...ffmpeg().setup,
+      download_bytes: size,
+      pull: pull === null ? null : { model: "qwen3:8b", bytes: pull },
+    },
+  });
+
+  it("counts every setup in the batch from the click, and keeps the ones that finish", async () => {
+    const send = await connected(
+      report([ffmpeg(), big("comfyui", 3700 * MB), big("ollama", 1370 * MB, 5000 * MB)]),
+    );
+    engine.setupProgram.mockImplementation(async (id: unknown) => ({
+      status: "started",
+      job: `job-${String(id)}`,
+    }));
+    const all = useApp.getState().setupPrograms(["ffmpeg", "comfyui", "ollama"]);
+    // Ollama's is its download and the script model it pulls after.
+    expect(useApp.getState().setupPlans).toEqual({
+      ffmpeg: 130 * MB,
+      comfyui: 3700 * MB,
+      ollama: 6370 * MB,
+    });
+
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledWith("ffmpeg"));
+    send({
+      type: "program.setup.done",
+      program: "ffmpeg",
+      version: "8.1.3",
+      location: "/x/ffmpeg",
+      in_use: true,
+      draws_text: true,
+    });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledWith("comfyui"));
+    send({ type: "program.setup.failed", program: "comfyui", reason: "download_failed", error: "x" });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledWith("ollama"));
+    send({ type: "program.setup.cancelled", program: "ollama" });
+    expect(await all).toBeNull();
+    expect(useApp.getState().setupPlans).toEqual({ ffmpeg: 130 * MB });
+  });
+
+  it("measures the line from every download arriving together", async () => {
+    const send = await connected(report([running(0)]));
+    // The meter carries on across a gap of under a minute, and the tests
+    // above left it running.
+    useApp.setState({ lineMeter: null });
+    const { lineSpeedOf } = await import("./lib/downloads");
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    try {
+      // FFmpeg's download at 1 MB/s beside a model at 2.5 MB/s, for 20 s.
+      for (let step = 0; step <= 40; step++) {
+        clock.mockReturnValue(start + step * 500);
+        send({
+          type: "program.setup.progress",
+          program: "ffmpeg",
+          phase: "downloading",
+          done: step * 0.5 * MB,
+          total: 130 * MB,
+          bytes_per_s: 1 * MB,
+        });
+        clock.mockReturnValue(start + step * 500 + 250);
+        send({
+          type: "model.download.progress",
+          model: "sdxl-base-1.0",
+          file: "sdxl.safetensors",
+          done: step * 1.25 * MB,
+          total: 6500 * MB,
+        });
+      }
+      expect(lineSpeedOf(useApp.getState().lineMeter)! / MB).toBeCloseTo(3.5, 1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});

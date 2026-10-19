@@ -74,6 +74,7 @@ const seed = (over: Record<string, unknown> = {}) =>
     system: null,
     programs: null,
     programQueue: [],
+    setupPlans: {},
     templates: [],
     libraryOpen: false,
     settingsOpen: false,
@@ -283,5 +284,88 @@ describe("the download bridge", () => {
     expect(script).toHaveTextContent(t("firstRun.statusWaiting"));
     expect(script).not.toHaveTextContent(t("firstRun.statusNeedsOllama"));
     expect(script.querySelector(".pdot")).toHaveClass("wait");
+  });
+
+  /** "Set up all three" on a fresh install, left mid-way for Home: ComfyUI
+   * downloading, Ollama and the script model it pulls waiting their turn.
+   * They come down the same line as the models. */
+  const MiB = 2 ** 20;
+  const setup = (id: "ollama" | "comfyui", download: number, over: object = {}): ProgramInfo =>
+    ({
+      id,
+      state: "missing",
+      problem: "unreachable",
+      source: "default",
+      location: "http://127.0.0.1:8188",
+      setting: "LOCALCUT_X",
+      version: null,
+      checks: {},
+      managed: null,
+      setup: {
+        available: true,
+        unavailable_reason: null,
+        takes_effect: true,
+        version: "1",
+        url: null,
+        download_bytes: download,
+        install_bytes: download,
+        pull: null,
+        job: null,
+        last: null,
+        ...over,
+      },
+    }) as ProgramInfo;
+  const programs = (rows: ProgramInfo[]) => ({
+    platform: "linux-x64",
+    programs_dir: "/p",
+    programs_bytes: 0,
+    disk_free_bytes: 2 ** 40,
+    programs: rows,
+  });
+  const comfyui = setup("comfyui", 3700 * MiB, {
+    job: { id: "c", phase: "downloading", done: 500 * MiB, total: 3700 * MiB, bytes_per_s: null },
+  });
+  const ollama = setup("ollama", 1370 * MiB, { pull: { model: "qwen3:8b", bytes: 5000 * MiB } });
+
+  it("counts the program setups and the model Ollama pulls beside the models", () => {
+    seed({
+      models: downloading,
+      system: SYSTEM(downloading),
+      programs: programs([comfyui, ollama]),
+      programQueue: ["ollama"],
+      setupPlans: { comfyui: 3700 * MiB, ollama: 6370 * MiB },
+    });
+    render(<Home />);
+    // The models' 1.5 of 2 GB, ComfyUI's 500 MB of 3.6 GB, and Ollama's
+    // 6.2 GB still to come.
+    expect(
+      screen.getByText(
+        t("home.dlSummaryBytes", {
+          done: formatSize(1.5 * 2 ** 30 + 500 * MiB),
+          total: formatSize(2 * 2 ** 30 + 3700 * MiB + 6370 * MiB),
+        }),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("stays while a program is still setting up after the models are in", () => {
+    const settled = downloading.map((row) => ({ ...row, downloading: false }));
+    seed({
+      models: settled,
+      system: SYSTEM(settled),
+      programs: programs([comfyui]),
+      setupPlans: { comfyui: 3700 * MiB },
+    });
+    render(<Home />);
+    // The keyframes and the clips wait on ComfyUI, so one stage is ready.
+    expect(screen.getByText(t("home.dlSummary", { ready: 1, total: 3 }))).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        t("home.dlSummaryBytes", {
+          done: formatSize(2 ** 30 + 500 * MiB),
+          total: formatSize(2 ** 30 + 3700 * MiB),
+        }),
+      ),
+    ).toBeInTheDocument();
   });
 });

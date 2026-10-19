@@ -115,6 +115,9 @@ beforeEach(() => {
     programs: null,
     setupSpeeds: {},
     networkSpeed: null,
+    models: [],
+    programQueue: [],
+    lineMeter: null,
     programStepsFocus: null,
     refreshPrograms: vi.fn(async () => {}),
     refreshReadiness: vi.fn(async () => {}),
@@ -415,6 +418,39 @@ describe("LocalCut's own Ollama", () => {
     );
     // 1136 MB of Ollama and 9 GB of qwen3:14b at 4 MB/s: 43 minutes.
     expect(well()).toHaveTextContent("300 MB of 1.4 GB, 4.0 MB/s, about 45 min left in all");
+  });
+
+  it("takes no longer than everything sharing the line with it would", () => {
+    // Beside a 10 GB model download Ollama gets 0.1 MB/s, which on its own
+    // reads as most of a day. The model ends first and hands it the line:
+    // 20 GB in all at the line's 3.5 MB/s is 98 minutes.
+    useApp.setState({
+      models: [
+        {
+          id: "ltx-video-0.9-i2v",
+          size_bytes: 10240 * MB,
+          downloaded: false,
+          downloading: true,
+          progress: { done: 0, total: 10240 * MB },
+        },
+      ],
+      lineMeter: { bytes: 3.5 * MB * 60, seconds: 60, at: Date.now() },
+    } as never);
+    mount(
+      settable({
+        setup: {
+          ...settable().setup,
+          job: {
+            id: "j",
+            phase: "downloading",
+            done: 300 * MB,
+            total: 1436 * MB,
+            bytes_per_s: 0.1 * MB,
+          },
+        },
+      }),
+    );
+    expect(well()).toHaveTextContent("about 1 h 40 min left in all");
   });
 
   it("keeps counting the pull down while its copy starts", () => {

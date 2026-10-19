@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ModelRow } from "../api/types";
 import { BrandMark } from "../components/BrandMark";
 import { FilterTabs } from "../components/FilterTabs";
@@ -20,6 +20,16 @@ import {
   programNotSetUp,
   setupOffer,
 } from "../lib/programs";
+import {
+  addBytes,
+  bytesLeft,
+  inFlightBytes,
+  lineSecondsLeft,
+  modelBytes,
+  NO_BYTES,
+  setupsBytes,
+  sharedSecondsLeft,
+} from "../lib/downloads";
 import { networkSpeedOf, phaseSpeedOf, queueSecondsLeft, timePhrase } from "../lib/setupTime";
 import { finalVideoRow, scriptRailMeta, stageRows, type StageRow } from "../lib/stages";
 import { useVoices } from "../lib/useVoices";
@@ -401,6 +411,8 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
   const setupPrograms = useApp((state) => state.setupPrograms);
   const setupSpeeds = useApp((state) => state.setupSpeeds);
   const latestSpeed = useApp((state) => state.networkSpeed);
+  const models = useApp((state) => state.models);
+  const lineMeter = useApp((state) => state.lineMeter);
   const voices = useVoices();
   const [error, setError] = useState<string | null>(null);
 
@@ -419,14 +431,20 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
   const running = rows.find((row) => row.setup.job) ?? null;
   const busy = running !== null || queue.length > 0;
   // How long everything "Set up both" started has left: the running setup
-  // through its last download, then each one still waiting its turn.
+  // through its last download, then each one still waiting its turn. Model
+  // downloads share the line with them, so no later than everything in
+  // flight would take at the line's speed (lib/downloads).
   const waiting = queue.flatMap((id) => rows.filter((row) => row.id === id));
   const secondsLeft = busy
-    ? queueSecondsLeft(
-        running,
-        waiting,
-        running ? phaseSpeedOf(running, setupSpeeds) : null,
-        networkSpeedOf(programs, setupSpeeds, latestSpeed),
+    ? sharedSecondsLeft(
+        queueSecondsLeft(
+          running,
+          waiting,
+          running ? phaseSpeedOf(running, setupSpeeds) : null,
+          networkSpeedOf(programs, setupSpeeds, latestSpeed),
+        ),
+        bytesLeft(inFlightBytes(models, programs, queue)),
+        lineMeter,
       )
     : null;
   const setups = (running ? 1 : 0) + waiting.length;
@@ -554,26 +572,26 @@ function ReadyStep({
   pendingIds: Set<string>;
   onDone: () => void;
 }) {
-  // Overall progress across everything this wizard set downloading —
-  // including extra library picks that aren't a pipeline stage.
+  const programs = useApp((state) => state.programs);
+  const queue = useApp((state) => state.programQueue);
+  const plans = useApp((state) => state.setupPlans);
+  const lineMeter = useApp((state) => state.lineMeter);
+  // Overall progress across everything this wizard set downloading,
+  // including extra library picks that aren't a pipeline stage, and the
+  // program setups beside them: they come down the same line
+  // (lib/downloads).
   const watched = models.filter((row) => pendingIds.has(row.id));
-  const totalBytes = watched.reduce((sum, row) => sum + row.size_bytes, 0);
-  const doneBytes = watched.reduce(
-    (sum, row) => sum + (row.downloaded ? row.size_bytes : (row.progress?.done ?? 0)),
-    0,
+  const all = addBytes(
+    watched.map(modelBytes).reduce(addBytes, NO_BYTES),
+    setupsBytes(programs, queue, plans),
   );
-  const remaining = Math.max(0, totalBytes - doneBytes);
+  const totalBytes = all.total;
+  const doneBytes = all.done;
+  const remaining = bytesLeft(all);
+  // At the line's speed, once it has been watched long enough to have one.
+  const secondsLeft = lineSecondsLeft(remaining, lineMeter);
 
-  // Simple rate-based time-left (per-median ETAs arrive in U5): bytes per
-  // second since the step mounted, smoothed by using the whole elapsed
-  // window rather than instantaneous deltas.
-  const started = useRef<{ at: number; bytes: number } | null>(null);
-  if (started.current === null) started.current = { at: Date.now(), bytes: doneBytes };
-  const elapsed = (Date.now() - started.current.at) / 1000;
-  const rate = elapsed > 3 ? (doneBytes - started.current.bytes) / elapsed : 0;
-  const minutesLeft = rate > 0 ? Math.max(1, Math.round(remaining / rate / 60)) : null;
-
-  const anyPending = watched.some((row) => !row.downloaded);
+  const anyPending = remaining > 0;
   const skipped = stages.filter((stage) => stage.status.kind === "notDownloaded").length;
 
   return (
@@ -608,7 +626,11 @@ function ReadyStep({
           >
             <i style={{ width: `${(doneBytes / totalBytes) * 100}%` }} />
           </span>
-          <span>{minutesLeft !== null ? t("firstRun.timeLeft", { minutes: minutesLeft }) : ""}</span>
+          <span>
+            {secondsLeft !== null
+              ? t("firstRun.timeLeft", { time: timePhrase(secondsLeft) })
+              : t("firstRun.timeMeasuring")}
+          </span>
         </div>
       )}
       {/* No download button for a skipped stage: the user unticked it one

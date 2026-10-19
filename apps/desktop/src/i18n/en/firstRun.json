@@ -71,7 +71,8 @@
   "readySkipped_one": "{count} stage isn't downloaded. Get it any time from Settings > Models.",
   "readySkipped_other": "{count} stages aren't downloaded. Get them any time from Settings > Models.",
   "overallOf": "{done} of {total}",
-  "timeLeft": "about {minutes} min left",
+  "timeLeft": "{time} left",
+  "timeMeasuring": "working out the time left",
   "startCreating": "Start creating",
   "stages": {
     "text.llm": "Script",

@@ -126,6 +126,8 @@ function seedStore(models: ModelRow[], overrides: Record<string, unknown> = {}) 
     refreshPrograms: vi.fn(async () => {}),
     refreshReadiness: vi.fn(async () => {}),
     setupPrograms: vi.fn(async () => null),
+    setupPlans: {},
+    lineMeter: null,
     ...overrides,
   } as never);
 }
@@ -1043,5 +1045,112 @@ describe("the ready step", () => {
     const last = [...document.querySelectorAll(".sumrail .srow")].at(-1)!;
     expect(last).toHaveTextContent(t("firstRun.statusWaiting"));
     expect(last).not.toHaveTextContent(t("firstRun.statusNotFound"));
+  });
+});
+
+/* ---- what is still to come down, all of it ---- */
+
+/**
+ * The 2026-10-19 fresh install, scaled to this catalog: "Set up all three"
+ * pressed, FFmpeg in, ComfyUI downloading, Ollama and the model it pulls
+ * waiting their turn, and the models downloading beside them on one line.
+ * The Ready step said "15 MB of 25 GB" and "about 109 min left" for the
+ * models alone while 10.6 GB of programs came down the same line.
+ */
+describe("the download totals, programs and all", () => {
+  const ffmpegDone = program("ffmpeg", {
+    state: "ready",
+    problem: null,
+    source: "managed",
+    version: "8.1.3",
+    checks: { draws_text: true },
+  });
+  const comfyui = program("comfyui", {
+    setup: {
+      ...settableToo("comfyui", 3.6 * GB).setup,
+      job: { id: "c", phase: "downloading", done: 0, total: 3.6 * GB, bytes_per_s: 0.1 * MB },
+    },
+  });
+  const ollama = program("ollama", {
+    setup: {
+      ...settableToo("ollama", 1.34 * GB).setup,
+      pull: { model: "qwen3:8b", bytes: 5 * GB },
+    },
+  });
+  const PLANS = { ffmpeg: 131 * MB, comfyui: 3.6 * GB, ollama: 6.34 * GB };
+  /** The line, watched for a minute at 3.5 MB/s in all. */
+  const LINE = () => ({ bytes: 3.5 * MB * 60, seconds: 60, at: Date.now() });
+
+  const toReady = () => {
+    toStep2();
+    next();
+    next();
+    fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
+  };
+  const overall = () => document.querySelector(".overall") as HTMLElement;
+
+  it("counts the program setups and the script model beside the models", () => {
+    seedStore(CATALOG(), {
+      programs: report([ffmpegDone, ollama, comfyui]),
+      programQueue: ["ollama"],
+      setupPlans: PLANS,
+    });
+    render(<FirstRun />);
+    toReady();
+    // 18 GB of models, and 10 GB of programs: FFmpeg's 131 MB already in.
+    expect(overall()).toHaveTextContent(
+      t("firstRun.overallOf", { done: "131 MB", total: "28 GB" }),
+    );
+  });
+
+  it("says it is still working the time out before the line has a speed", () => {
+    seedStore(CATALOG(), {
+      programs: report([ffmpegDone, ollama, comfyui]),
+      programQueue: ["ollama"],
+      setupPlans: PLANS,
+    });
+    render(<FirstRun />);
+    toReady();
+    expect(overall()).toHaveTextContent(t("firstRun.timeMeasuring"));
+  });
+
+  it("says how long all of it has left at the line's speed", () => {
+    seedStore(CATALOG(), {
+      programs: report([ffmpegDone, ollama, comfyui]),
+      programQueue: ["ollama"],
+      setupPlans: PLANS,
+      lineMeter: LINE(),
+    });
+    render(<FirstRun />);
+    toReady();
+    // 28 GB less FFmpeg's 131 MB, at 3.5 MB/s: 137 minutes, which past two
+    // hours reads to the half hour.
+    expect(overall()).toHaveTextContent(
+      t("firstRun.timeLeft", { time: "about 2 h 30 min" }),
+    );
+  });
+
+  it("prices the programs no later than everything sharing the line would take", () => {
+    // ComfyUI gets 0.1 MB/s beside the models, which on its own would put
+    // the programs a day out. The models end first and hand it the line.
+    const downloading = CATALOG().map((r) =>
+      r.id === "ltx-video-0.9-i2v" || r.id === "ace-step-v1-3.5b"
+        ? { ...r, downloading: true, progress: { done: 0, total: r.size_bytes } }
+        : r,
+    );
+    seedStore(downloading, {
+      programs: report([ffmpegDone, ollama, comfyui]),
+      programQueue: ["ollama"],
+      setupPlans: PLANS,
+      setupSpeeds: {},
+      networkSpeed: 0.1 * MB,
+      lineMeter: LINE(),
+    });
+    render(<FirstRun />);
+    toPrograms();
+    // 18 GB of models and 10 GB of programs at 3.5 MB/s: 137 minutes.
+    expect(
+      screen.getByText(t("programs.wizard.leftBoth", { time: "about 2 h 30 min" })),
+    ).toBeInTheDocument();
   });
 });
