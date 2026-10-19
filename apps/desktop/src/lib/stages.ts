@@ -55,12 +55,15 @@ export function stageRows(
   const short = m().firstRun.stages as Record<string, string>;
   const taskLabels = m().models.taskLabels as Record<string, string>;
   const server = programs?.programs.find((row) => row.id === "ollama");
+  const comfyui = programs?.programs.find((row) => row.id === "comfyui");
   return system.recommendations
     .filter((rec) => rec.model !== null)
     .map((rec) => {
       const model = rec.model!;
       const row = byId.get(model.id);
       const script = rec.task === OLLAMA_TASK && server ? server : null;
+      const weights = stageStatus(row, rec.task, requested.has(model.id));
+      const drawer = RUNNERS[rec.task] === "firstRun.runners.comfyui" ? comfyui : undefined;
       return {
         task: rec.task,
         stage: short[rec.task] ?? taskLabels[rec.task] ?? rec.task,
@@ -71,7 +74,9 @@ export function stageRows(
         id: model.id,
         status: script
           ? scriptStatus(script, queued.has("ollama"))
-          : stageStatus(row, rec.task, requested.has(model.id)),
+          : drawer
+            ? comfyuiStageStatus(weights, drawer, queued.has("comfyui"))
+            : weights,
       };
     });
 }
@@ -92,6 +97,25 @@ function scriptStatus(server: ProgramInfo, queued: boolean): StageStatus {
     return { kind: "missing", note: t("firstRun.statusNotPulled"), light: "fail" };
   }
   return { kind: "installed" };
+}
+
+/** A stage ComfyUI runs. Its weights' download comes first; once they are
+ * in, the stage is ComfyUI's state, read like the script's row reads
+ * Ollama's. Weights on disk draw nothing while ComfyUI is still being set
+ * up, waits its turn or is not there at all. */
+function comfyuiStageStatus(
+  weights: StageStatus,
+  comfyui: ProgramInfo,
+  queued: boolean,
+): StageStatus {
+  if (weights.kind !== "installed") return weights;
+  const job = comfyui.setup.job;
+  if (job) return { kind: "settingUp", pct: Math.round(setupFraction(job) * 100) };
+  if (queued) return { kind: "waiting" };
+  if (comfyui.state !== "ready") {
+    return { kind: "missing", note: t("firstRun.statusNeedsComfyUI"), light: "ph" };
+  }
+  return weights;
 }
 
 /** What the Models step's rail says about getting the script model. Ollama

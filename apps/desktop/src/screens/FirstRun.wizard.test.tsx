@@ -978,6 +978,55 @@ describe("the ready step", () => {
     expect(rows.at(-1)).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 31 }));
   });
 
+  describe("a stage ComfyUI runs, with its weights already in", () => {
+    // CATALOG has SDXL on disk. The weights draw nothing until ComfyUI runs.
+    const keyframes = () => screen.getByText("Keyframes").closest(".srow")!;
+    const comfyuiJob = {
+      id: "c",
+      phase: "downloading" as const,
+      done: 960 * MB,
+      total: 3840 * MB,
+      bytes_per_s: null,
+    };
+
+    it("is setting up while ComfyUI is", () => {
+      const comfyui = program("comfyui", {
+        setup: { ...settableToo("comfyui", 3840 * MB).setup, job: comfyuiJob },
+      });
+      seedStore(CATALOG(), { programs: report([program("ffmpeg"), program("ollama"), comfyui]) });
+      render(<FirstRun />);
+      toReady();
+      expect(keyframes()).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 25 }));
+      expect(keyframes()).not.toHaveTextContent(t("firstRun.statusInstalled"));
+    });
+
+    it("waits while ComfyUI's setup is queued behind another", () => {
+      seedStore(CATALOG(), {
+        programs: report([program("ffmpeg"), program("ollama"), settableToo("comfyui", 3840 * MB)]),
+        programQueue: ["comfyui"],
+      });
+      render(<FirstRun />);
+      toReady();
+      expect(keyframes()).toHaveTextContent(t("firstRun.statusWaiting"));
+    });
+
+    it("needs ComfyUI when nothing is setting it up", () => {
+      seedStore(CATALOG(), { programs: FRESH() });
+      render(<FirstRun />);
+      toReady();
+      expect(keyframes()).toHaveTextContent(t("firstRun.statusNeedsComfyUI"));
+      expect(keyframes().querySelector(".pdot")).toHaveClass("ph");
+    });
+
+    it("is ready once ComfyUI runs", () => {
+      const comfyui = program("comfyui", { state: "ready", problem: null });
+      seedStore(CATALOG(), { programs: report([program("ffmpeg"), program("ollama"), comfyui]) });
+      render(<FirstRun />);
+      toReady();
+      expect(keyframes()).toHaveTextContent(t("firstRun.statusInstalled"));
+    });
+  });
+
   it("shows the final video waiting while FFmpeg's setup is queued", () => {
     const ollama = program("ollama", {
       setup: {
