@@ -1098,20 +1098,6 @@ def test_the_launch_is_the_one_windows_has_with_the_linux_python(tmp_path):
         assert launch.cwd == copy
 
 
-def test_a_frozen_engine_gives_the_copy_back_the_library_path_it_started_with(monkeypatch):
-    """PyInstaller points LD_LIBRARY_PATH at the freeze's own libraries and
-    keeps what it was in LD_LIBRARY_PATH_ORIG. Windows has no such path."""
-    monkeypatch.delattr(sys, "frozen", raising=False)
-    assert comfyui.child_environment() == {}
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setenv("LD_LIBRARY_PATH", "/tmp/_MEI1234")
-    monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", "/opt/cuda/lib64")
-    posix = os.name != "nt"
-    assert comfyui.child_environment() == ({"LD_LIBRARY_PATH": "/opt/cuda/lib64"} if posix else {})
-    monkeypatch.delenv("LD_LIBRARY_PATH_ORIG")
-    assert comfyui.child_environment() == ({"LD_LIBRARY_PATH": ""} if posix else {})
-
-
 FAKE_TORCH = textwrap.dedent(
     """\
     __version__ = "2.14.1+cpu"

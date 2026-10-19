@@ -80,6 +80,7 @@ _DOCUMENT_INPUTS = (
     "apps/desktop/electron/engine.ts",
     ".github/workflows/ci-engine.yml",
     ".github/workflows/ci-desktop.yml",
+    ".github/workflows/package.yml",
 )
 
 #: A markdown inline link's target. `[^)\s]+` rather than `[^)]*`: a target
@@ -427,6 +428,45 @@ def test_the_readme_names_the_platforms_ci_actually_runs_on() -> None:
             f"the README says the {suite} suite runs on {named}, but {workflow}'s "
             f"matrix runs it on {runs_on}"
         )
+
+
+def _linux_build() -> tuple[str, str]:
+    """The Ubuntu release package.yml builds the Linux installers in, with the
+    glibc it holds their engine to."""
+    text = (_WORKFLOWS / "package.yml").read_text(encoding="utf-8")
+    images = re.findall(r"^[ ]*container:[ ]*ubuntu:(\d+\.\d+)[ ]*$", text, re.M)
+    floors = re.findall(r'^[ ]*glibc_floor:[ ]*"(\d+\.\d+)"[ ]*$', text, re.M)
+    assert len(images) == 1 and len(floors) == 1, (
+        f"package.yml names {len(images)} ubuntu containers and {len(floors)} glibc "
+        "floors; this test reads the Linux row's one of each"
+    )
+    return images[0], floors[0]
+
+
+def test_the_readme_states_the_linux_floor_the_installers_are_built_for() -> None:
+    """The oldest Linux a reader can install on, against the one CI builds on.
+
+    The engine in the Linux packages carries libraries from the system that
+    froze it. They need that system's glibc, so the build image IS the floor.
+    A README that names an older one sends someone to an engine that stops at
+    its first start with ``version `GLIBC_2.38' not found``. Nothing between
+    the two files would notice: the image is chosen in package.yml and the
+    README is prose. package.yml's own check holds the freeze to `glibc_floor`
+    and `glibc_floor` to the image, so this holds the README to both.
+    """
+    ubuntu, glibc = _linux_build()
+    prose = " ".join(_README.read_text(encoding="utf-8").split())
+    stated_ubuntu = set(re.findall(r"Ubuntu (\d+\.\d+) or later", prose))
+    stated_glibc = set(re.findall(r"glibc (\d+\.\d+) or newer", prose))
+    assert stated_ubuntu and stated_glibc, (
+        "the README no longer states the oldest Ubuntu and glibc the Linux packages "
+        "run on - update this test with the sentence that replaced it"
+    )
+    assert (stated_ubuntu, stated_glibc) == ({ubuntu}, {glibc}), (
+        f"the README says Ubuntu {sorted(stated_ubuntu)} and glibc {sorted(stated_glibc)}, "
+        f"but package.yml builds the Linux packages on Ubuntu {ubuntu} and holds them "
+        f"to glibc {glibc}"
+    )
 
 
 def test_the_documented_clone_setup_is_the_one_the_dev_shell_runs() -> None:

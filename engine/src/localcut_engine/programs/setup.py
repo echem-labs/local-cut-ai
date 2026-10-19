@@ -465,7 +465,7 @@ class ComfyUIInstaller:
                 *comfyui.server_argv(folder, host=host, port=port, cpu=cpu),
                 *comfyui.working_argv(work),
             ],
-            env=comfyui.child_environment(),
+            env={},
             cwd=folder,
             url=f"http://{host if ':' not in host else f'[{host}]'}:{port}",
             host=host,
@@ -502,7 +502,6 @@ class ComfyUIInstaller:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=folder,
-                env={**os.environ, **comfyui.child_environment()},
             )
         except OSError as exc:
             raise SetupFailed("does_not_run", f"the ComfyUI it unpacked does not run: {exc}")
