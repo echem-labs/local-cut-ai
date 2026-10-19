@@ -2,6 +2,7 @@ import { Pencil, Pin, Play, RotateCw, SlidersHorizontal, Trash2 } from "lucide-r
 import { useRef, useState } from "react";
 import type { SceneCardModel } from "../api/types";
 import { t } from "../i18n";
+import { newTakeNode } from "../lib/checkpoints";
 import { remainingLabel } from "../lib/eta";
 import { displaySeconds } from "../lib/formats";
 import { useIsDropTarget } from "../lib/dropTarget";
@@ -93,6 +94,9 @@ export function SceneCard({
   const [wordsDraft, setWordsDraft] = useState("");
   const scrubRef = useRef<HTMLVideoElement>(null);
   const clip = scene.clip;
+  // What Regenerate and the R key re-roll: the keyframe at the storyboard
+  // checkpoint, the clip everywhere else.
+  const take = newTakeNode(scene);
   // The picture this scene will actually be built from: the image the user
   // supplied when there is one, and the generated keyframe otherwise. Drawing
   // `keyframe` unconditionally showed the model's render over a clip made
@@ -193,8 +197,8 @@ export function SceneCard({
         // making every one of them remember.
         if (event.target !== event.currentTarget) return;
         if (event.key === "Enter") select(primary.node_id);
-        if (event.key.toLowerCase() === "r" && !clip.pinned)
-          void regenerate(clip.node_id).then(reportActionError);
+        if (event.key.toLowerCase() === "r" && !take.pinned)
+          void regenerate(take.node_id).then(reportActionError);
         if (event.key.toLowerCase() === "p")
           void togglePin(clip.node_id, !clip.pinned).then(reportActionError);
       }}
@@ -365,10 +369,10 @@ export function SceneCard({
             >
               <button
                 aria-label={t("scene.actions.regenerate.aria")}
-                disabled={clip.pinned}
+                disabled={take.pinned}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void regenerate(clip.node_id).then(reportActionError);
+                  void regenerate(take.node_id).then(reportActionError);
                 }}
               >
                 <RotateCw size={12} strokeWidth={2} />
