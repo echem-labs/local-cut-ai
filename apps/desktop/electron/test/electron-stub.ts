@@ -84,6 +84,8 @@ export function resetElectron(): void {
   dialog.result = { canceled: false, filePath: "" };
   windows.length = 0;
   certificateVerifyProc = null;
+  defaultSession = null;
+  spellcheckerCalls.length = 0;
   quitCalls = 0;
   applicationMenu = undefined;
   notifications.length = 0;
@@ -238,6 +240,13 @@ export class BrowserWindow {
    * a property of the window, not something the id list can show on its own.
    */
   readonly appUserModelIdsAtCreation: number = appUserModelIds.length;
+  /**
+   * The spellchecker settings in place when this window was built. A window
+   * belongs to the default session, so building one makes that session if
+   * nothing has yet. Read after that, which is why this is assigned in the
+   * constructor rather than here.
+   */
+  readonly spellcheckerAtCreation: unknown[][];
 
   setProgressBar(fraction: number): void {
     this.progressBars.push(fraction);
@@ -264,6 +273,8 @@ export class BrowserWindow {
 
   constructor(options: Record<string, unknown> = {}) {
     this.options = options;
+    theDefaultSession();
+    this.spellcheckerAtCreation = [...spellcheckerCalls];
     windows.push(this);
   }
 
@@ -393,11 +404,47 @@ type VerifyRequest = { hostname: string; certificate?: { data?: string } };
 type VerifyProc = (request: VerifyRequest, callback: (verdict: number) => void) => void;
 let certificateVerifyProc: VerifyProc | null = null;
 
-export const session = {
-  defaultSession: {
+/** Every spellchecker setting main made on a session, in order, as
+ * `[method, ...args]`. */
+export const spellcheckerCalls: unknown[][] = [];
+
+function createSession() {
+  return {
     setCertificateVerifyProc(proc: VerifyProc): void {
       certificateVerifyProc = proc;
     },
+    setSpellCheckerLanguages(languages: string[]): void {
+      spellcheckerCalls.push(["setSpellCheckerLanguages", languages]);
+    },
+    setSpellCheckerDictionaryDownloadURL(url: string): void {
+      spellcheckerCalls.push(["setSpellCheckerDictionaryDownloadURL", url]);
+    },
+    setSpellCheckerEnabled(enabled: boolean): void {
+      spellcheckerCalls.push(["setSpellCheckerEnabled", enabled]);
+    },
+  };
+}
+
+let defaultSession: ReturnType<typeof createSession> | null = null;
+
+/**
+ * Made on first use, the way Electron makes it: the first read of
+ * `defaultSession` or the first window, whichever comes first. Electron emits
+ * `session-created` before it hands the session to anyone. Its spellchecker
+ * has started setting up by then, so a listener there is the earliest
+ * anything can change it.
+ */
+function theDefaultSession(): ReturnType<typeof createSession> {
+  if (!defaultSession) {
+    defaultSession = createSession();
+    emitApp("session-created", defaultSession);
+  }
+  return defaultSession;
+}
+
+export const session = {
+  get defaultSession() {
+    return theDefaultSession();
   },
 };
 
