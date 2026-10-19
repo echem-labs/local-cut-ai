@@ -11,3 +11,13 @@ export function formatSize(bytes: number): string {
   if (gb >= 1) return t("common.sizeGb", { value: gb.toFixed(1) });
   return t("common.sizeMb", { value: Math.max(1, Math.round(bytes / 2 ** 20)) });
 }
+
+/** A transfer's speed: kilobytes a second under one megabyte a second, then
+ * megabytes with one decimal under ten. `formatSize` never goes below 1 MB,
+ * which would read a 150 KB/s download as 1 MB/s. */
+export function formatSpeed(bytesPerS: number): string {
+  const mb = bytesPerS / 2 ** 20;
+  if (mb >= 10) return t("common.speedMb", { value: Math.round(mb) });
+  if (mb >= 1) return t("common.speedMb", { value: mb.toFixed(1) });
+  return t("common.speedKb", { value: Math.max(1, Math.round(bytesPerS / 1024)) });
+}

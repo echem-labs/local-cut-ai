@@ -113,6 +113,7 @@
   "wellAria": "{name}, {state}",
   "versionAria": "version {version}",
   "queued": "Next, once {name} is done.",
+  "queuedFor": "Next, once {name} is done. It takes {time} after that.",
   "checks": {
     "drawsText": "Captions and titles render.",
     "noText": "It can't draw captions or titles, so a video with them won't export.",
@@ -144,9 +145,16 @@
     "cancelLateTip": "Almost done",
     "cancelLateTipHint": "Moving it into place can't be stopped",
     "progress": "{done} of {total}",
-    "progressEta": "{done} of {total}, {eta}",
-    "etaMinutes": "about {minutes} min",
-    "etaUnderMinute": "less than a minute",
+    "progressSpeed": "{done} of {total}, {speed}",
+    "progressLeft": "{done} of {total}, {speed}, {left}",
+    "left": "{time} left",
+    "leftInAll": "{time} left in all",
+    "time": {
+      "underMinute": "less than a minute",
+      "minutes": "about {minutes} min",
+      "hours": "about {hours} h",
+      "hoursMinutes": "about {hours} h {minutes} min"
+    },
     "progressAria": "Setting up {name}",
     "pull": "Get {model}",
     "pullTip": "Download {model} into {name}",
@@ -319,7 +327,10 @@
     "setupBoth": "Set up both",
     "skip": "Skip for now",
     "hintSetup": "Each download comes from that project's own releases and stays in LocalCut's folder. Nothing asks for admin rights.",
-    "hintRunning": "Setup keeps going in the background. The Ready step shows where each one has got to."
+    "hintRunning": "Setup keeps going in the background. The Ready step shows where each one has got to.",
+    "leftOne": "{name} should be set up in {time}.",
+    "leftBoth": "Both should be set up in {time}.",
+    "leftAll": "All three should be set up in {time}."
   },
   "server": {
     "starting": "Starting LocalCut's copy of {name}…",

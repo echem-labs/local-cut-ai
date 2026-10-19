@@ -191,6 +191,57 @@ describe("a setup's progress", () => {
   });
 });
 
+describe("a setup's speed", () => {
+  const tick = (phase: "downloading" | "checking", done: number, bytes_per_s: number | null) => ({
+    type: "program.setup.progress" as const,
+    program: "ffmpeg" as const,
+    phase,
+    done,
+    total: 130 * MB,
+    bytes_per_s,
+  });
+
+  it("is averaged over the readings and kept for the downloads still to come", async () => {
+    const send = await connected(report([running(10 * MB)]));
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now");
+    try {
+      // Half a minute at 4 MB/s, then one reading of 100 KB/s.
+      for (let at = 1; at <= 60; at++) {
+        clock.mockReturnValue(start + at * 500);
+        send(tick("downloading", 10 * MB + at * 2 * MB, 4 * MB));
+      }
+      clock.mockReturnValue(start + 61 * 500);
+      send(tick("downloading", 130 * MB, 100 * 1024));
+      const { speedOf } = await import("./lib/setupTime");
+      const average = speedOf(useApp.getState().setupSpeeds.ffmpeg);
+      expect(average).toBeGreaterThan(3.5 * MB);
+      expect(useApp.getState().networkSpeed).toBe(average);
+      // The engine's own reading is still what the job carries.
+      expect(row().setup.job?.bytes_per_s).toBe(100 * 1024);
+
+      // A phase that moves no bytes has no speed and leaves the download's.
+      clock.mockReturnValue(start + 62 * 500);
+      send(tick("checking", 0, null));
+      expect(speedOf(useApp.getState().setupSpeeds.ffmpeg)).toBeNull();
+      expect(useApp.getState().networkSpeed).toBe(average);
+
+      send({
+        type: "program.setup.done",
+        program: "ffmpeg",
+        version: "8.1.3",
+        location: "/x/ffmpeg",
+        in_use: true,
+        draws_text: true,
+      });
+      expect(useApp.getState().setupSpeeds.ffmpeg).toBeUndefined();
+      expect(useApp.getState().networkSpeed).toBe(average);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
 describe("a setup that ends", () => {
   it("re-reads the programs, /system and readiness once FFmpeg is set up", async () => {
     const send = await connected(report([running(130 * MB)]));

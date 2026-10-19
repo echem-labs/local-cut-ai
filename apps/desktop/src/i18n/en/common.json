@@ -23,6 +23,8 @@
   "open": "Open",
   "sizeGb": "{value} GB",
   "sizeMb": "{value} MB",
+  "speedMb": "{value} MB/s",
+  "speedKb": "{value} KB/s",
   "keys": {
     "escape": "esc",
     "rename": "F2"

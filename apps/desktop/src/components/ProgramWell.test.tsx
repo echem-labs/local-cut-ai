@@ -112,6 +112,9 @@ beforeEach(() => {
   useApp.setState({
     readiness: [exportFails],
     system: null,
+    programs: null,
+    setupSpeeds: {},
+    networkSpeed: null,
     refreshPrograms: vi.fn(async () => {}),
     refreshReadiness: vi.fn(async () => {}),
     ...actions,
@@ -184,12 +187,29 @@ describe("a setup that is running", () => {
     },
   });
 
-  it("shows the phase, the bytes, the time left and a bar", () => {
+  it("shows the phase, the bytes, the speed, the time left and a bar", () => {
     mount(running);
     expect(well().className).toContain("edge-busy");
     expect(well()).toHaveTextContent("Downloading FFmpeg");
-    expect(well()).toHaveTextContent("68 MB of 131 MB, less than a minute");
+    expect(well()).toHaveTextContent("68 MB of 131 MB, 2.0 MB/s, less than a minute left");
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "52");
+  });
+
+  it("says the speed averaged over the last minute, not the engine's last reading", () => {
+    // A minute at 2 MB/s, then a reading of 50 KB/s from a burst-and-wait
+    // CDN: the engine's last five seconds, not how fast this is going.
+    useApp.setState({
+      setupSpeeds: { ffmpeg: { phase: "downloading", sum: 120 * MB, weight: 60, at: 0 } },
+    } as never);
+    mount(
+      ffmpeg({
+        setup: {
+          ...ffmpeg().setup,
+          job: { ...running.setup.job!, bytes_per_s: 50 * 1024 },
+        },
+      }),
+    );
+    expect(well()).toHaveTextContent("68 MB of 131 MB, 2.0 MB/s, less than a minute left");
   });
 
   it("can be stopped", () => {
@@ -365,6 +385,55 @@ describe("LocalCut's own Ollama", () => {
     expect(button).toHaveTextContent(formatSize((1436 + 9216) * MB));
     fireEvent.click(button);
     expect(actions.setupProgram).toHaveBeenCalledWith("ollama");
+  });
+
+  it("says how long it has left in all, the model's pull included", () => {
+    mount(
+      settable({
+        setup: {
+          ...settable().setup,
+          job: {
+            id: "j",
+            phase: "downloading",
+            done: 300 * MB,
+            total: 1436 * MB,
+            bytes_per_s: 4 * MB,
+          },
+        },
+      }),
+    );
+    // 1136 MB of Ollama and 9 GB of qwen3:14b at 4 MB/s: 43 minutes.
+    expect(well()).toHaveTextContent("300 MB of 1.4 GB, 4.0 MB/s, about 45 min left in all");
+  });
+
+  it("keeps counting the pull down while its copy starts", () => {
+    useApp.setState({ networkSpeed: 4 * MB } as never);
+    mount(
+      settable({
+        setup: {
+          ...settable().setup,
+          job: { id: "j", phase: "starting", done: 0, total: 0, bytes_per_s: null },
+        },
+      }),
+    );
+    expect(well()).toHaveTextContent("Starting Ollama");
+    expect(well()).toHaveTextContent("about 40 min left in all");
+  });
+
+  it("says how long it takes once the setup before it is done", () => {
+    useApp.setState({ networkSpeed: 4 * MB } as never);
+    render(
+      <ProgramWell
+        program={settable()}
+        report={report([settable()])}
+        context="wizard"
+        host={null}
+        queuedBehind="ffmpeg"
+      />,
+    );
+    expect(well()).toHaveTextContent(
+      t("programs.queuedFor", { name: "FFmpeg", time: "about 45 min" }),
+    );
   });
 
   it("names the model while it pulls it", () => {
@@ -636,6 +705,6 @@ describe("ComfyUI, built for the machine's graphics card", () => {
       { platform: "windows-x64" },
     );
     expect(well()).toHaveTextContent("Unpacking ComfyUI");
-    expect(well()).toHaveTextContent("1.0 GB of 4.1 GB, about 3 min");
+    expect(well()).toHaveTextContent("1.0 GB of 4.1 GB, 20 MB/s, about 3 min left");
   });
 });
