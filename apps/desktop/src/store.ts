@@ -365,6 +365,9 @@ interface AppState {
   // waits here rather than being acted on at the click because the row
   // appears only after the LLM server's model list arrives.
   defaultPickerFocus: string | null;
+  // The program whose "Do it myself" steps a readiness fix asked for:
+  // Settings > Programs opens with them unfolded while Settings stays open.
+  programStepsFocus: ProgramId | null;
   // One natural-language edit at a time — the LLM call is slow and a second
   // plan compiled against the pre-edit view would fight the first.
   editBusy: boolean;
@@ -655,6 +658,9 @@ interface AppState {
   openDefaultPicker: (task: string) => void;
   /** The picker took the focus `openDefaultPicker` asked for. */
   defaultPickerFocused: () => void;
+  /** Open Settings on Programs with `program`'s steps for setting it up by
+   * hand unfolded: the fix for a program LocalCut cannot set up here. */
+  openProgramSteps: (program: ProgramId) => void;
   closeSettings: () => void;
   /** Lifecycle actions return the error message to show, or null on success. */
   deleteProject: (id: string) => Promise<string | null>;
@@ -1809,6 +1815,7 @@ export const useApp = create<AppState>((set, get) => {
     settingsOpen: false,
     settingsTab: "general",
     defaultPickerFocus: null,
+    programStepsFocus: null,
     editBusy: false,
     remoteEngine: false,
     remotePaired: false,
@@ -3304,7 +3311,12 @@ export const useApp = create<AppState>((set, get) => {
     // Library and Set up again close Settings without closeSettings, so
     // every other way in drops it too.
     openSettings: (tab) =>
-      set({ settingsOpen: true, defaultPickerFocus: null, ...(tab ? { settingsTab: tab } : {}) }),
+      set({
+        settingsOpen: true,
+        defaultPickerFocus: null,
+        programStepsFocus: null,
+        ...(tab ? { settingsTab: tab } : {}),
+      }),
 
     setSettingsTab: (tab) => set({ settingsTab: tab }),
 
@@ -3313,7 +3325,16 @@ export const useApp = create<AppState>((set, get) => {
 
     defaultPickerFocused: () => set({ defaultPickerFocus: null }),
 
-    closeSettings: () => set({ settingsOpen: false, defaultPickerFocus: null }),
+    openProgramSteps: (program) =>
+      set({
+        settingsOpen: true,
+        settingsTab: "programs",
+        defaultPickerFocus: null,
+        programStepsFocus: program,
+      }),
+
+    closeSettings: () =>
+      set({ settingsOpen: false, defaultPickerFocus: null, programStepsFocus: null }),
 
     // -- project lifecycle (review 4) — optimistic, with rollback ----------
 

@@ -17,6 +17,7 @@ import type { ProgramId, ReadinessRow } from "../api/types";
 import { m, plural, t, type MessageKey } from "../i18n";
 import {
   programFixes,
+  programStepFixes,
   pullFixes,
   programName,
   setupFraction,
@@ -373,6 +374,7 @@ export function ReadinessBanner() {
   const setupProgram = useApp((state) => state.setupProgram);
   const pullModel = useApp((state) => state.pullModel);
   const openSettings = useApp((state) => state.openSettings);
+  const openProgramSteps = useApp((state) => state.openProgramSteps);
   const [folded, setFolded] = useState(readFolded);
   const [error, setError] = useState<string | null>(null);
   const gaps = noteworthyGaps(projectReadiness);
@@ -408,6 +410,11 @@ export function ReadinessBanner() {
   const downloading =
     directFix != null && models.some((row) => row.id === directFix.model_id && row.downloading);
   const tab = settingsTabFor(gaps);
+  // A program LocalCut cannot set up here, alone among the fixes: the
+  // button goes straight to its steps.
+  const stepsOnly = setups.length === 0 && pulls.length === 0 ? programStepFixes(gaps) : [];
+  const openFix = () =>
+    stepsOnly.length === 1 ? openProgramSteps(stepsOnly[0]!) : openSettings(tab);
 
   // The strip's own edge repeats the worst light inside it, so the board
   // can be read from the corner of the eye without expanding anything.
@@ -489,7 +496,7 @@ export function ReadinessBanner() {
             )}
           </button>
         )}
-        <button className="btn-ghost" onClick={() => openSettings(tab)}>
+        <button className="btn-ghost" onClick={openFix}>
           {tab === "programs" ? (
             <SettingsIcon size={14} strokeWidth={1.8} aria-hidden="true" />
           ) : (
@@ -645,6 +652,7 @@ export function ReadinessDialog({
   const suppressReadiness = useApp((state) => state.suppressReadiness);
   const recheckGaps = useApp((state) => state.recheckGaps);
   const openSettings = useApp((state) => state.openSettings);
+  const openProgramSteps = useApp((state) => state.openProgramSteps);
   const epoch = useApp((state) => state.readinessEpoch);
   const [rows, setRows] = useState(asked);
   const [scope, setScope] = useState<"session" | "project" | "always">("session");
@@ -667,6 +675,9 @@ export function ReadinessDialog({
   );
   const setups = programFixes(rows);
   const pulls = pullFixes(rows);
+  // Programs whose fix is doing it by hand, offered as their steps where a
+  // model download would otherwise stand in for them.
+  const steps = programStepFixes(rows);
   const groups = gapGroups(rows);
   const stages = groups.reduce((count, group) => count + group.items.length, 0);
   const tab = settingsTabFor(rows);
@@ -697,7 +708,11 @@ export function ReadinessDialog({
             ref={setupRef}
             onClick={() => {
               onClose();
-              openSettings(tab);
+              if (steps.length === 1 && setups.length === 0 && pulls.length === 0) {
+                openProgramSteps(steps[0]!);
+              } else {
+                openSettings(tab);
+              }
             }}
           >
             {tab === "programs" ? (
@@ -727,13 +742,13 @@ export function ReadinessDialog({
         <IntroSentence stages={stages} />
       )}
       <GapList rows={rows} onLeave={onClose} />
-      {(downloadIds.size > 0 || setups.length > 0 || pulls.length > 0) && (
+      {(downloadIds.size > 0 || setups.length > 0 || pulls.length > 0 || steps.length > 0) && (
         <div className="well gate-downloads">
           <div className="whead label">
             <Wrench size={14} strokeWidth={1.8} aria-hidden="true" />
             <span>{t("readiness.dialog.fixes")}</span>
           </div>
-          {(setups.length > 0 || pulls.length > 0) && (
+          {(setups.length > 0 || pulls.length > 0 || steps.length > 0) && (
             <ul className="plist gate-programs">
               {setups.map((fix) => (
                 <ProgramFixRow key={fix.program} program={fix.program} size={fix.size} />
@@ -745,6 +760,26 @@ export function ReadinessDialog({
                   size={fix.size}
                   model={fix.model}
                 />
+              ))}
+              {steps.map((program) => (
+                <li className="prow gate-program" key={`steps:${program}`}>
+                  <span className="pname">{programName(program)}</span>
+                  <span className="price">{t("readiness.dialog.byHand")}</span>
+                  <Tip
+                    label={t("readiness.dialog.showStepsTip", { name: programName(program) })}
+                    hint={t("readiness.dialog.showStepsTipHint")}
+                  >
+                    <button
+                      className="btn-outline sm"
+                      onClick={() => {
+                        onClose();
+                        openProgramSteps(program);
+                      }}
+                    >
+                      {t("readiness.dialog.showSteps")}
+                    </button>
+                  </Tip>
+                </li>
               ))}
             </ul>
           )}

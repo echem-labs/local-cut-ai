@@ -77,6 +77,19 @@ export function programFixes(
   }));
 }
 
+/** The programs that are a cause in `rows` and that nothing in them offers
+ * to set up or pull into: LocalCut has no setup for them on this machine,
+ * so their fix is the steps for doing it by hand. In the engine's order. */
+export function programStepFixes(rows: readonly ReadinessRow[]): ProgramId[] {
+  const offered = new Set(
+    rows.flatMap((row) =>
+      row.fix?.type === "setup_program" || row.fix?.type === "pull_model" ? [row.fix.program] : [],
+    ),
+  );
+  const causes = new Set(rows.map(programCause).filter((id): id is ProgramId => id !== null));
+  return PROGRAM_ORDER.filter((id) => causes.has(id) && !offered.has(id));
+}
+
 /** The distinct models `rows` offer to pull, each with the program that
  * pulls it and the catalog's estimate of its size (null when it has none),
  * in the engine's order. */
@@ -96,6 +109,33 @@ export function pullFixes(
   return [...seen.values()].sort(
     (a, b) => PROGRAM_ORDER.indexOf(a.program) - PROGRAM_ORDER.indexOf(b.program),
   );
+}
+
+/** The program each task's model runs in, for the tasks whose model needs
+ * one that LocalCut does not ship. The ComfyUI ones mirror the engine's
+ * `COMFY_TASKS`, which `test_ui_contract.py` holds them to. */
+export const PROGRAM_OF_TASK: Readonly<Record<string, ProgramId>> = {
+  "text.llm": "ollama",
+  "image.gen": "comfyui",
+  "video.i2v": "comfyui",
+  "video.t2v": "comfyui",
+  "music.gen": "comfyui",
+};
+
+/** The program a task's model needs and that cannot run it yet: not there,
+ * no copy of LocalCut's and no setup of it running or waiting its turn.
+ * Null when the task needs none. Null too before the report says, when the
+ * first-run step ticks everything. */
+export function programNotSetUp(
+  task: string,
+  report: ProgramsReport | null,
+  queue: readonly ProgramId[],
+): ProgramId | null {
+  const id = PROGRAM_OF_TASK[task];
+  const row = id ? report?.programs.find((program) => program.id === id) : undefined;
+  if (!id || !row) return null;
+  const coming = Boolean(row.setup.job) || queue.includes(id);
+  return row.state === "ready" || Boolean(row.managed) || coming ? null : id;
 }
 
 /** The node kinds each program makes, for the stage rows under its well.

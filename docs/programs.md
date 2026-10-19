@@ -821,6 +821,13 @@ hardware probe itself) and the copy is not set up yet. On Linux a card
 nobody has looked for yet is not taken for none, so the processor's build
 is not offered before the probe has run either.
 
+A keyframe, clip or music row whose weights are not downloaded either is a
+`comfyui_down` row too, while ComfyUI does not answer: a model download would
+land and change nothing until it does. Its `data.weights_installed` says
+whether the stage's weights are on disk. Once ComfyUI answers, the same row
+becomes `no_model_installed`, or `still_clip_tier` for clips, with the
+download as its fix.
+
 ## From a terminal
 
 The CLI is a client of a running engine like the desktop, so a headless GPU

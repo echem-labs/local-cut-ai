@@ -243,7 +243,8 @@ async def test_every_backend_that_runs_ffmpeg_finds_one_that_lands_later(tmp_pat
     managed = _plant(tmp_path / "bin" / f"ffmpeg{_EXE}", b"")
 
     assert await served() == {
-        "clip": ("degraded", "still_clip_tier", "ffmpeg"),
+        # Stills now. ComfyUI (down at port 9) is what clips lack.
+        "clip": ("degraded", "comfyui_down", "ffmpeg"),
         "captions": ("ready", "ok", "align"),
         "export": ("ready", "ok", "ffmpeg"),
     }

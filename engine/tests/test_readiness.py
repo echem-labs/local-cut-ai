@@ -64,7 +64,7 @@ def _bare_config(tmp_path) -> EngineConfig:
 async def test_bare_machine_reports_every_fallback_tier(tmp_path):
     """One row per kind, each naming today's silent behavior out loud:
     placeholders for the generative kinds, a hard failure for assembly -
-    and a download fix wherever the packaged manifest has a candidate."""
+    and a download fix wherever a download is what the stage lacks."""
     config = _bare_config(tmp_path)
     backends = _build_backends(config)
     kinds = [
@@ -82,22 +82,14 @@ async def test_bare_machine_reports_every_fallback_tier(tmp_path):
     assert rows["script"]["verdict"] == "placeholder"
     assert rows["script"]["reason"] == "llm_server_down"
 
-    # No weights: mock placeholders, each with the packaged manifest's
-    # first downloadable candidate as the fix.
-    assert rows["keyframe"]["verdict"] == "placeholder"
-    assert rows["keyframe"]["reason"] == "no_model_installed"
-    assert rows["keyframe"]["fix"]["type"] == "download"
-    assert rows["keyframe"]["fix"]["model_id"] == "sdxl-base-1.0"
-    assert rows["keyframe"]["fix"]["size_bytes"] > 0
-
-    assert rows["music"]["verdict"] == "placeholder"
-    assert rows["music"]["reason"] == "no_model_installed"
-    assert rows["music"]["fix"]["model_id"] == "ace-step-v1-3.5b"
-
-    # No video model AND no ffmpeg: even the still-clip tier is gone.
-    assert rows["clip"]["verdict"] == "placeholder"
-    assert rows["clip"]["reason"] == "no_model_installed"
-    assert rows["clip"]["fix"]["model_id"] == "wan2.2-i2v-14b-fp8"
+    # No weights and no ComfyUI: mock placeholders. ComfyUI is what they
+    # lack first. No download changes them while it does not answer.
+    # This machine's card is not known, so no setup is offered either.
+    for kind in ("keyframe", "music", "clip"):
+        assert rows[kind]["verdict"] == "placeholder", kind
+        assert rows[kind]["reason"] == "comfyui_down", kind
+        assert rows[kind]["fix"] is None, kind
+        assert rows[kind]["data"]["weights_installed"] is False, kind
 
     assert rows["narration"]["verdict"] == "placeholder"
     assert rows["narration"]["fix"]["model_id"] == "kokoro-82m"
@@ -187,6 +179,52 @@ async def test_installed_weights_with_comfyui_down_read_comfyui_down(tmp_path):
     assert row["verdict"] == "degraded"
     assert row["reason"] == "comfyui_down"
     assert row["fix"] is None
+    assert row["data"]["weights_installed"] is True
+
+
+async def test_without_comfyui_its_stages_lack_comfyui_not_a_model(tmp_path, monkeypatch):
+    """With no ComfyUI weights and no ComfyUI answering, a model download
+    finishes and changes nothing: the stages still render stand-ins, or
+    stills, until ComfyUI runs. So ComfyUI is the gap the rows name, with its setup as
+    the fix where LocalCut has one for this machine. The download comes back
+    as the fix once ComfyUI answers."""
+    from localcut_engine import readiness as readiness_module
+
+    managed_ffmpeg = tmp_path / "bin" / _FFMPEG_EXE
+    managed_ffmpeg.parent.mkdir(parents=True)
+    managed_ffmpeg.touch()
+    up = {"comfyui": False}
+    monkeypatch.setattr(ServiceProbe, "available", lambda self: up["comfyui"])
+    monkeypatch.setattr(readiness_module, "_comfy_alive", lambda config: up["comfyui"])
+    offered = {"type": "setup_program", "program": "comfyui", "size_bytes": 2_000_000_000}
+    monkeypatch.setattr(
+        readiness_module,
+        "setup_fix",
+        lambda config, program: offered if program == "comfyui" else None,
+    )
+    config = EngineConfig(data_dir=tmp_path, backend="comfy,ffmpeg,mock")
+    backends = _build_backends(config)
+    kinds = [NodeKind.KEYFRAME, NodeKind.CLIP, NodeKind.MUSIC]
+
+    rows = _by_kind(await readiness_rows(config, backends, [(kind, None) for kind in kinds]))
+    assert rows["keyframe"]["verdict"] == "placeholder"
+    assert rows["music"]["verdict"] == "placeholder"
+    # FFmpeg is here, so clips fall to stills rather than to a stand-in.
+    assert (rows["clip"]["verdict"], rows["clip"]["backend"]) == ("degraded", "ffmpeg")
+    for kind, row in rows.items():
+        assert row["reason"] == "comfyui_down", kind
+        assert row["fix"] == offered, kind
+        assert row["data"]["weights_installed"] is False, kind
+
+    up["comfyui"] = True
+    rows = _by_kind(await readiness_rows(config, backends, [(kind, None) for kind in kinds]))
+    assert (rows["keyframe"]["reason"], rows["keyframe"]["fix"]["type"]) == (
+        "no_model_installed",
+        "download",
+    )
+    assert rows["music"]["fix"]["model_id"] == "ace-step-v1-3.5b"
+    assert rows["clip"]["reason"] == "still_clip_tier"
+    assert rows["clip"]["fix"]["type"] == "download"
 
 
 async def test_a_named_model_that_is_not_downloaded_will_fail(tmp_path, monkeypatch):
