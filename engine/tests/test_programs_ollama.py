@@ -609,6 +609,13 @@ def test_a_pull_ollama_refuses_fails_the_setup_and_keeps_the_program(
         assert last["reason"] in SETUP_FAILURES
         assert (row["state"], row["source"]) == ("ready", "managed")
         assert row["checks"]["model_present"] is False
+        # The gate and the board say what the Programs well says: the copy
+        # runs and the model is the thing to get, not a server that is down.
+        script = http.get("/readiness", params={"kinds": "script"}).json()["rows"][0]
+        assert (script["reason"], script["fix"]["type"]) == ("llm_model_missing", "pull_model")
+        picker = http.get("/llm/models")
+        assert picker.status_code == 200
+        assert picker.json()["models"] == []
         served = len(archives.requests)
 
         # The copy restarts with the error gone, the way a fixed link would

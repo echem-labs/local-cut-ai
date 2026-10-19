@@ -399,9 +399,14 @@ class LLMScriptBackend(ExecutionBackend):
             if response.status_code != 200:
                 return []
             try:
-                data = response.json().get("data", [])
+                payload = response.json()
             except ValueError:
                 return []
+        # Ollama answers a server with no models as `"data": null`, which is
+        # the state LocalCut's own copy is in until its first pull finishes.
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return []
         return sorted(str(row["id"]) for row in data if isinstance(row, dict) and row.get("id"))
 
     async def resident_models(self) -> set[str] | None:
