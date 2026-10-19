@@ -301,6 +301,11 @@ class ManagedServer:
             answered = await self._wait_until_answering(run, launch)
             timed_out = not answered and run.process.returncode is None
             if answered:
+                # Written again now that it serves: a launcher that becomes
+                # the program in the same process has done so by the time
+                # it answers, and the binary it answers from is the one the
+                # next engine finds.
+                await asyncio.to_thread(self._remember_run, run.process.pid, launch)
                 self._set("running")
                 self.on_ready()
             elif timed_out and not self._stopping:
@@ -418,7 +423,9 @@ class ManagedServer:
             # The binary as the system names it, which is what an engine
             # after this one compares against: argv[0] can be a launcher
             # that runs something else (a macOS framework Python re-executes
-            # its app bundle, a venv's python is a link).
+            # its app bundle, a venv's python is a link). Read just after
+            # the start, a launcher may not have become the program yet, so
+            # the record is written again once the copy answers.
             binary = process.exe()
         except psutil.Error:
             binary = launch.argv[0]
