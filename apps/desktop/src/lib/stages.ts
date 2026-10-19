@@ -2,7 +2,8 @@ import type { ModelRow, ProgramInfo, ProgramsReport, SystemInfo } from "../api/t
 import type { StageStatus } from "../components/StageSummaryRow";
 import { m, t, type MessageKey } from "../i18n";
 import { displayModelName, OLLAMA_TASK } from "../components/ModelLibrary";
-import { programName, setupFraction } from "./programs";
+import { programName, setupFraction, setupOffer } from "./programs";
+import { formatSize } from "./size";
 
 export interface StageRow {
   task: string;
@@ -85,6 +86,38 @@ function scriptStatus(server: ProgramInfo): StageStatus {
     return { kind: "missing", note: t("firstRun.statusNotPulled"), light: "fail" };
   }
   return { kind: "installed" };
+}
+
+/** What the Models step's rail says about getting the script model. Ollama
+ * downloads it, not this step: as part of LocalCut's setup of Ollama, as a
+ * pull into an Ollama that runs without it, or once an Ollama someone else
+ * starts runs. Sized by the model a setup or a pull would fetch, else by the
+ * rail's own catalog entry. Null `server` is GET /programs not answered
+ * yet, which says nothing about a download either way. */
+export function scriptRailMeta(
+  server: ProgramInfo | null | undefined,
+  catalogBytes: number,
+): string {
+  if (!server) return t("models.ollamaMeta");
+  if (server.checks.server === "other") return t("firstRun.railOutside");
+  const pull = server.setup.pull;
+  const size = formatSize(pull?.bytes ?? catalogBytes);
+  if (server.state === "ready") {
+    return server.checks.model_present === false
+      ? t("firstRun.railScriptPull", { size })
+      : t("firstRun.railScriptPresent");
+  }
+  // Nothing answers yet. LocalCut's own store has the model already.
+  if (pull === null) return t("firstRun.railScriptPresent");
+  const offer = setupOffer(server);
+  const viaSetup =
+    server.setup.job !== null ||
+    offer?.kind === "setup" ||
+    offer?.kind === "retry" ||
+    offer?.kind === "update";
+  return viaSetup
+    ? t("firstRun.railScriptSetup", { size })
+    : t("firstRun.railScriptLater", { size });
 }
 
 /**

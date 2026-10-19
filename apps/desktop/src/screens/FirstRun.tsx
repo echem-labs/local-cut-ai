@@ -19,7 +19,7 @@ import {
   programName,
   setupOffer,
 } from "../lib/programs";
-import { finalVideoRow, stageRows, type StageRow } from "../lib/stages";
+import { finalVideoRow, scriptRailMeta, stageRows, type StageRow } from "../lib/stages";
 import { useVoices } from "../lib/useVoices";
 import { useApp } from "../store";
 
@@ -117,7 +117,12 @@ export function FirstRun() {
   const railMeta = (row: ModelRow | undefined, task: string): string => {
     const external = row ? row.files.length === 0 : false;
     if (external) {
-      return task === OLLAMA_TASK ? t("firstRun.railOllama") : t("firstRun.railOutside");
+      return task === OLLAMA_TASK
+        ? scriptRailMeta(
+            programs?.programs.find((program) => program.id === "ollama"),
+            (row?.requirements.disk_gb ?? 0) * 2 ** 30,
+          )
+        : t("firstRun.railOutside");
     }
     const size = formatSize(row?.size_bytes ?? 0);
     return row?.downloaded
