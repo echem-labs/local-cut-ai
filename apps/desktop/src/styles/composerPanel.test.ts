@@ -31,14 +31,14 @@ const read = (name: string): string =>
 
 const APP = read("./app.css");
 
-/** The declarations of the first rule whose selector is exactly `selector`. */
+/** The declarations of the rule that starts a line with `selector {`. */
 function rule(selector: string): Record<string, string> {
-  const match = new RegExp(`(^|\\})\\s*${selector.replace(/\./g, "\\.")}\\s*\\{([^}]*)\\}`).exec(
-    APP,
-  );
-  expect(match, `${selector} is gone from app.css`).not.toBeNull();
+  const at = APP.indexOf(`\n${selector} {`);
+  expect(at, `${selector} is gone from app.css`).toBeGreaterThan(-1);
+  const open = APP.indexOf("{", at);
+  const body = APP.slice(open + 1, APP.indexOf("}", open));
   return Object.fromEntries(
-    match![2]
+    body
       .split(";")
       .map((decl) => decl.split(":").map((part) => part.trim()))
       .filter(([property, value]) => property && value)
