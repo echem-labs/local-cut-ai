@@ -1063,6 +1063,58 @@ describe("the window", () => {
 });
 
 /**
+ * The spellchecker in the window, which Chromium sets up with nothing typed.
+ *
+ * Where the system has no spellchecker for a language, Chromium uses Hunspell
+ * and downloads its dictionary from Google. On Linux that happens at the first
+ * launch. On Windows it happens for a language Windows cannot check. That is a
+ * request the user never made, so these refuse it. The settings have to be in
+ * place before the window exists. The session starts on the dictionary as
+ * soon as it is made. A new window makes it.
+ */
+describe("the window's spellchecker", () => {
+  const downloadURL = (calls: unknown[][]): string | undefined =>
+    calls.find(([method]) => method === "setSpellCheckerDictionaryDownloadURL")?.[1] as
+      | string
+      | undefined;
+
+  it("on Linux, has no dictionary to download, from before the window exists", async () => {
+    // Linux has no system spellchecker for Chromium to use. Hunspell is all
+    // there is. Hunspell would need the download.
+    const { electron } = await loadMain({ platform: "linux" });
+    const atCreation = electron.BrowserWindow.instances[0]!.spellcheckerAtCreation;
+    expect(atCreation).toContainEqual(["setSpellCheckerLanguages", []]);
+  });
+
+  it.each(["linux", "win32"] as const)(
+    "on %s, sends Hunspell nowhere a download could reach",
+    async (platform) => {
+      // On Windows this is the only setting. Windows' own spellchecker stays,
+      // and a language it has no dictionary for goes unchecked instead of
+      // being fetched.
+      const { electron } = await loadMain({ platform });
+      const url = downloadURL(electron.BrowserWindow.instances[0]!.spellcheckerAtCreation);
+      expect(url).toBeDefined();
+      expect(new URL(url!).protocol).not.toMatch(/^(https?|wss?|ftp):$/);
+    },
+  );
+
+  it("on Windows, keeps the system's spellchecker", async () => {
+    const { electron } = await loadMain({ platform: "win32" });
+    expect(electron.spellcheckerCalls.map(([method]) => method)).toEqual([
+      "setSpellCheckerDictionaryDownloadURL",
+    ]);
+  });
+
+  it("on macOS, leaves the system's spellchecker as it is", async () => {
+    // Chromium never uses Hunspell on macOS. Electron has neither the
+    // languages nor the download address to set there.
+    const { electron } = await loadMain({ platform: "darwin" });
+    expect(electron.spellcheckerCalls).toEqual([]);
+  });
+});
+
+/**
  * The app icon at RUNTIME, which is a different question from the icon the
  * installer stamps on the exe.
  *

@@ -264,7 +264,7 @@ The desktop app never reads the engine's files. That is why an engine on another
 - It looks for an update only when you press **Check for updates** in Settings > About. That asks GitHub for the latest release and downloads nothing.
 - A cloud model needs a key you add in Settings > Providers, for Anthropic, OpenAI, Google or fal.ai. It runs only for the steps you pick it for. Only what those steps need goes to that provider. Keys stay on your computer and go only to your own engine, which uses them to call the provider.
 - LocalCut's own Ollama runs with Ollama's cloud features off. An Ollama of your own keeps its own settings. A cloud model you pick in it runs on Ollama's servers.
-- On Windows and Linux, the spellchecker built into the app window downloads a dictionary for your language from Google the first time the app opens.
+- The app window checks spelling with the spellchecker built into Windows or macOS and never downloads a dictionary. Linux has none it can use, so spelling goes unchecked there.
 - Cloning a voice needs you to confirm you have the speaker's permission.
 
 Settings > About says the same.

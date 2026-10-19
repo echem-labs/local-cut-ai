@@ -59,6 +59,37 @@ const LOGS_DIR = path.join(app.getPath("userData"), "logs");
 installLogSink(LOGS_DIR);
 
 /**
+ * Where the spellchecker may download a Hunspell dictionary from: a scheme
+ * nothing in the app or the OS serves, so the download fails at once with no
+ * connection made.
+ */
+const NO_DICTIONARY_DOWNLOADS = "localcut-no-download:/";
+
+/**
+ * The window's spellchecker never downloads a dictionary.
+ *
+ * Chromium checks spelling with the system's spellchecker on macOS. It does
+ * on Windows too, for every language Windows has a dictionary for. Anywhere
+ * else it uses Hunspell and fetches Hunspell's dictionary from Google the
+ * first time it needs one. On Linux that is the first launch, before anything
+ * is typed.
+ *
+ * So Hunspell's download address goes nowhere. Linux has no system
+ * spellchecker to fall back on, so there the spellchecker is off as well:
+ * there is no dictionary for it to check with. Electron has neither setting
+ * on macOS and needs neither.
+ *
+ * On `session-created` because the session starts on the dictionary the
+ * moment it exists, which a window brings about. Electron emits the event
+ * before it hands the session to anyone, so before the download can begin.
+ */
+app.on("session-created", (created: Electron.Session) => {
+  if (process.platform === "darwin") return;
+  created.setSpellCheckerDictionaryDownloadURL(NO_DICTIONARY_DOWNLOADS);
+  if (process.platform !== "win32") created.setSpellCheckerLanguages([]);
+});
+
+/**
  * The release feed the update check reads, or "" for none. The rules are
  * `resolveUpdateFeed`'s: an installed build asks GitHub for this repository's
  * latest release, a dev run asks nothing, and LOCALCUT_UPDATE_FEED overrides

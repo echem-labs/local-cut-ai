@@ -125,8 +125,8 @@ whatever the engine's own environment says. So does the `ollama serve` a
 setup starts to check the build. With them on, Ollama 0.40.4 calls
 ollama.com by itself. It fetches model recommendations as it starts and
 again every few hours. It also lists Ollama's cloud models and their details
-as it starts. LocalCut uses none of it and tells people nothing leaves their
-machine. The same setting stops the copy from running a model on Ollama's
+as it starts. LocalCut uses none of it and tells people it goes online only
+when they ask. The same setting stops the copy from running a model on Ollama's
 servers. What the copy still fetches is a model someone asked for, from
 Ollama's registry. An Ollama of your own keeps its own settings, which
 LocalCut does not change. A cloud model you pick in it runs on Ollama's

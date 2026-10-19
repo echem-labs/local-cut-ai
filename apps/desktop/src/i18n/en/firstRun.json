@@ -6,7 +6,7 @@
   "stepModels": "Models",
   "stepReady": "Ready",
   "welcomeTitle": "Welcome to LocalCut AI",
-  "welcomeSub": "Script, storyboard, clips, narration and music — a full video made end to end on this machine. No cloud, no accounts, nothing leaves your computer.",
+  "welcomeSub": "Script, storyboard, clips, narration and music — a full video made end to end on this machine. No accounts, no telemetry. It goes online only when you ask it to.",
   "getStarted": "Get started",
   "skip": "Skip setup",
   "welcomeHint": "Takes about a minute. Model downloads run in the background.",
