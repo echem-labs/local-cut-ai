@@ -90,17 +90,23 @@
     "pull_failed": "{name} itself is set up. Check the connection, then try again."
   },
   "builds": {
-    "older_drivers": "Use the build for older drivers"
+    "older_drivers": "Use the build for older drivers",
+    "cpu": "Use the processor instead"
   },
   "build": {
     "picks": "LocalCut picks the build for {vendor} graphics cards.",
     "picksOlder": "LocalCut picks the build for {vendor} graphics cards on older drivers.",
+    "picksCpu": "LocalCut found no graphics card it has a build for, so it picks the build that runs on the processor. Pictures and clips take much longer there.",
     "olderAdvice": "Nothing was kept. Update the NVIDIA driver, or use the build made for older drivers.",
     "olderAdviceDriver": "Nothing was kept. Your NVIDIA driver is {driver}. Update it, or use the build made for older drivers.",
+    "cpuAdvice": "Nothing was kept. Update the graphics card's driver and try again, or use the build that runs on the processor, which is much slower.",
     "driverLink": "NVIDIA's drivers",
     "driverTip": "Opens NVIDIA's driver downloads in your browser",
     "olderTip": "Set up the build made for older drivers",
-    "olderTipHint": "Downloads {size} instead of the usual build"
+    "olderTipHint": "Downloads {size} instead of the usual build",
+    "cpuTip": "Set up the build that runs on the processor",
+    "cpuTipHint": "Downloads {size}. Works without the graphics card, much more slowly",
+    "onCpu": "It runs on the processor, so pictures and clips take much longer."
   },
   "here": "this computer",
   "on": "On {where}",

@@ -8,7 +8,9 @@ and ComfyUI. `status.py` reports each one as this engine finds it, and
 request, while the engine runs. The pins are data (`manifest.py`) and
 `builds.py` picks between a program's builds for the machine's graphics card.
 A 7z archive is unpacked by a pinned 7-Zip extractor (`sevenzip.py`). A
-program that runs as a server is run from that folder by `server.py` while
+program with no build to download (ComfyUI on Linux) has its environment
+built from pinned pieces instead: a standalone Python and the wheels a lock
+pins (`environment.py`). A program that runs as a server is run from that folder by `server.py` while
 the engine runs; `ollama.py` and `comfyui.py` hold what is particular to
 Ollama and to ComfyUI.
 
@@ -72,6 +74,9 @@ SETUP_UNAVAILABLE = (
 BUILDS = (
     # A CUDA build for drivers and cards, older than the usual build needs.
     "older_drivers",
+    # A build that runs on the processor, for a machine with no card a build
+    # is pinned for, or one whose card the vendor's builds could not use.
+    "cpu",
 )
 
 #: What a running setup is doing, in the order it does it. A program that

@@ -699,7 +699,8 @@ def _add_automation_commands(subcommands) -> None:
         choices=PROGRAM_BUILDS,
         default=None,
         help="one of the other builds pinned for this machine's graphics card, instead of "
-        "the one LocalCut picks (older_drivers: ComfyUI's NVIDIA build for older drivers)",
+        "the one LocalCut picks (older_drivers: ComfyUI's NVIDIA build for older drivers; "
+        "cpu: ComfyUI's build for the processor, on Linux)",
     )
     for waits in (programs_setup, programs_pull):
         waits.add_argument(
@@ -1023,9 +1024,9 @@ def _program_line(row: dict) -> str:
             f"`localcut programs setup {row['id']}` downloads {_mib(setup['download_bytes'])}"
             + (f", {build}" if build else "")
         )
-        if last.get("reason") == "gpu_not_usable" and not last.get("build"):
+        if last.get("reason") == "gpu_not_usable":
             for other in setup.get("builds") or []:
-                if not other["build"]:
+                if not other["build"] or other["build"] == last.get("build"):
                     continue
                 notes.append(
                     f"or `localcut programs setup {row['id']} --build {other['build']}` "
@@ -1039,6 +1040,8 @@ def _program_line(row: dict) -> str:
 
 def _build_words(gpu: str | None, build: str | None) -> str:
     """Which build a setup fetches, for a program with one per GPU vendor."""
+    if build == "cpu":
+        return "the build for the processor, which renders much more slowly"
     if gpu is None:
         return ""
     vendor = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel"}.get(gpu, gpu)
@@ -1166,6 +1169,7 @@ def _programs_command(args: argparse.Namespace, client) -> int:
             f"{args.program} has {what}"
             if args.action == "pull"
             else f"{args.program} is set up: {row['location']}"
+            + (", on the processor" if last.get("build") == "cpu" else "")
         )
         automation.emit(payload, as_json=args.json, lines=[done])
         return automation.EXIT_OK

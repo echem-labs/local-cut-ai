@@ -66,16 +66,22 @@ Packaged defaults cover SDXL keyframes and thumbnails, LTX-Video clips, Wan
 `~/.localcut/comfy-templates/`. Every node they use is in ComfyUI's core, so
 they need no custom node pack.
 
-On Windows, LocalCut can set up and run its own ComfyUI: Settings > Programs,
-the first-run Programs step, or `localcut programs setup comfyui`. It is the
-official portable build for your graphics card, kept in
+On Windows x64 and Linux x64, LocalCut can set up and run its own ComfyUI:
+Settings > Programs, the first-run Programs step, or `localcut programs setup
+comfyui`. On Windows it is the official portable build for your graphics
+card. On Linux, where ComfyUI publishes no build, it is one LocalCut puts
+together from pinned pieces: a standalone Python, ComfyUI's source and the
+wheels for your card's PyTorch (CUDA, ROCm or XPU), each checked against its
+SHA-256, with no system Python and no sudo. A Linux machine with no card
+from those vendors gets the build that runs on the processor, which works
+and is much slower. Either way the copy is kept in
 `~/.localcut/programs/comfyui`, started while the engine runs and stopped
 with it and already pointed at LocalCut's models. A ComfyUI of your own that
 answers at the address is used instead and LocalCut's copy stays stopped.
-[programs.md](programs.md#comfyui) has the details, including the build for
-older NVIDIA drivers.
+[programs.md](programs.md#localcuts-own-comfyui) has the details, including
+the build for older NVIDIA drivers and what each build downloads.
 
-Elsewhere, or with your own install, point ComfyUI at the shared weights
+On macOS and Linux for ARM, or with your own install, point ComfyUI at the shared weights
 directory with an `extra_model_paths.yaml` whose `base_path` is
 `~/.localcut/models`, naming the folders the engine downloads into:
 

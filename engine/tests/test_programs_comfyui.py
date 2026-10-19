@@ -340,14 +340,16 @@ def test_comfyui_is_pinned_per_gpu_vendor_from_one_release():
     assert pin is not None and pin.version == "0.40.0"
     assert pin.license == "GPL-3.0-only"
     release = f"https://github.com/Comfy-Org/ComfyUI/releases/download/v{pin.version}/"
-    names = {(asset.gpu, asset.build): asset.url.removeprefix(release) for asset in pin.assets}
+    # Linux's builds are made of pinned pieces (test_programs_comfyui_linux.py).
+    portable = [asset for asset in pin.assets if asset.platform.startswith("windows")]
+    names = {(asset.gpu, asset.build): asset.url.removeprefix(release) for asset in portable}
     assert names == {
         ("nvidia", None): "ComfyUI_windows_portable_nvidia.7z",
         ("nvidia", "older_drivers"): "ComfyUI_windows_portable_nvidia_cu126.7z",
         ("amd", None): "ComfyUI_windows_portable_amd.7z",
         ("intel", None): "ComfyUI_windows_portable_intel.7z",
     }
-    for asset in pin.assets:
+    for asset in portable:
         assert asset.platform == "windows-x64"
         assert asset.format == "7z" and asset.files == []
         assert asset.tree is not None and asset.tree.root == ROOT
@@ -451,8 +453,8 @@ def test_the_card_picks_the_build(vendor, driver, compute, picked):
         )
     asset = builds.choose(pin, "windows-x64", gpu)
     assert (None if asset is None else (asset.gpu, asset.build)) == picked
-    # And nothing is pinned for ComfyUI anywhere else yet.
-    assert builds.choose(pin, "linux-x64", gpu) is None
+    # Linux has its own builds (test_programs_comfyui_linux.py) and macOS none.
+    assert builds.choose(pin, "macos-arm64", gpu) is None
 
 
 def test_another_build_is_only_one_pinned_for_the_cards_vendor():
@@ -463,7 +465,9 @@ def test_another_build_is_only_one_pinned_for_the_cards_vendor():
     assert (chosen.gpu, chosen.build) == ("nvidia", "older_drivers")
     assert builds.choose(pin, "windows-x64", amd, "older_drivers") is None
     assert [other.build for other in builds.others(pin, "windows-x64", chosen)] == [None]
-    assert set(BUILDS) == {"older_drivers"}
+    # Windows pins no build for the processor.
+    assert builds.choose(pin, "windows-x64", amd, "cpu") is None
+    assert set(BUILDS) == {"older_drivers", "cpu"}
 
 
 # -- reading a 7z listing ------------------------------------------------------------
@@ -656,6 +660,8 @@ def test_the_copy_starts_the_way_its_own_launch_script_does(tmp_path):
     """run_nvidia_gpu.bat's line, plus the address, the model paths file and
     no browser: the standalone build opens one otherwise."""
     folder = tmp_path / "comfyui"
+    (folder / "python_embeded").mkdir(parents=True)
+    (folder / "python_embeded" / "python.exe").write_bytes(b"MZ")
     argv = comfyui.server_argv(folder, host="127.0.0.1", port=8190)
     assert argv[:4] == [
         str(folder / "python_embeded" / "python.exe"),
@@ -767,6 +773,9 @@ async def test_the_builds_own_python_has_to_use_the_card(
     site = tmp_path / "site"
     (site / "torch").mkdir(parents=True)
     (site / "torch" / "__init__.py").write_text(FAKE_TORCH, encoding="utf-8")
+    # The folder is a portable build's, whose Python honours PYTHONPATH.
+    (tmp_path / "python_embeded").mkdir()
+    (tmp_path / "python_embeded" / "python.exe").write_bytes(b"MZ")
     monkeypatch.setenv("PYTHONPATH", str(site))
     monkeypatch.setenv("FAKE_TORCH_DEVICE", device)
     if broken:

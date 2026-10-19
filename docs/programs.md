@@ -6,13 +6,13 @@ OpenAI-compatible LLM server, Ollama by default, which writes the script; and
 ComfyUI, which draws the keyframes, animates the clips and makes the music.
 
 The engine reports each of them as it finds them, and on Windows x64 and Linux
-x64 it can download and set up its own copy of FFmpeg and of Ollama. Ollama's
-copy runs while the engine runs, with the script model pulled into it. On
-Windows x64 it sets up its own ComfyUI too, the official portable build for
-the machine's graphics card, which also runs while the engine runs.
-Everything below happens on the machine the engine runs on, so a desktop
-paired with a GPU box sees that box's programs and sets them up there, over
-the same HTTP API.
+x64 it can download and set up its own copy of each. Ollama's copy runs while
+the engine runs, with the script model pulled into it. ComfyUI's runs the
+same way: on Windows the official portable build for the machine's graphics
+card, on Linux one LocalCut builds from pinned pieces, since ComfyUI
+publishes no Linux build. Everything below happens on the machine the engine
+runs on, so a desktop paired with a GPU box sees that box's programs and sets
+them up there, over the same HTTP API.
 
 ## Where the engine finds FFmpeg
 
@@ -110,6 +110,8 @@ the data dir.
 
 ## LocalCut's own ComfyUI
 
+### On Windows
+
 On Windows x64, LocalCut's ComfyUI is the official portable build from
 [Comfy-Org/ComfyUI's releases](https://github.com/Comfy-Org/ComfyUI/releases),
 version 0.40.0, pinned by URL, size and SHA-256. There is one per GPU vendor
@@ -119,9 +121,10 @@ hardware probe picks the build. An NVIDIA card gets the usual build, on CUDA
 build for older drivers (CUDA 12.6, from driver 525) when nvidia-smi says it is
 not. A figure the probe could not read counts as met. A machine with no card
 from one of those vendors gets no build (`gpu_not_supported`). There is no
-portable build for Linux or macOS, so there the setup is yours to do and the
-Programs screen gives the steps. ComfyUI is GPL-3.0; LocalCut runs it as a
-separate program and talks to it over HTTP.
+portable build for Linux or macOS. On Linux x64 LocalCut builds the same
+folder itself ([below](#on-linux)); on macOS and on Linux for ARM the setup
+is yours to do and the Programs screen gives the steps. ComfyUI is GPL-3.0;
+LocalCut runs it as a separate program and talks to it over HTTP.
 
 A portable build is a 7z archive, packed with the BCJ2 filter, which Python's
 standard library cannot read and no pure-Python reader decodes. The same
@@ -168,6 +171,142 @@ outside the copy, the copy stays the pinned build at the size Settings >
 Programs reports, an update replaces it without losing anything and a
 removal walks only the build. [Below](#what-renders-leave-in-comfyuis-folders)
 is what ComfyUI keeps in the working folder and when LocalCut deletes it.
+
+### On Linux
+
+ComfyUI publishes no build for Linux, so on Linux x64 LocalCut builds one of
+the same shape from pieces it pins, each by URL, size and SHA-256 like
+everything else here:
+
+- a standalone CPython, 3.13.16 from
+  [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
+  (its `install_only_stripped` build, 35,099,487 bytes), pinned in the manifest's
+  `runtimes`;
+- ComfyUI's source at the v0.40.0 tag, as GitHub's archive of the tag
+  (12,722,767 bytes), the same release the Windows builds are;
+- every wheel that ComfyUI's `requirements.txt` at that tag needs with the
+  PyTorch for the card, from PyPI and PyTorch's own index. They are a lock
+  per build, `engine/src/localcut_engine/programs/locks/pylock.comfyui-<build>.toml`,
+  in the standard lock file format (PEP 751): exactly one wheel per package,
+  with its URL, its size, its SHA-256 and the licence its own metadata
+  states.
+
+Every build has PyTorch 2.14.1:
+
+| Lock (`build`) | PyTorch for | Wheels | Download | Unpacked | Files |
+|---|---|---|---|---|---|
+| `cu130` | NVIDIA, CUDA 13.0 | 103 | 3,832,985,505 | 7,035,024,767 | 50,633 |
+| `cu126` (`older_drivers`) | NVIDIA, CUDA 12.6 | 103 | 4,479,183,693 | 8,093,388,773 | 50,684 |
+| `rocm72` | AMD, ROCm 7.2 | 85 | 7,417,020,765 | 17,189,252,421 | 55,517 |
+| `xpu` | Intel, XPU | 108 | 3,258,233,446 | 8,670,502,369 | 52,129 |
+| `cpu` (`cpu`) | the processor | 84 | 1,024,764,154 | 2,282,132,615 | 49,770 |
+
+The download counts the Python and the source; the unpacked size is the
+whole copy. Both are what the setup screen shows and what a setup checks. The
+usual NVIDIA build is CUDA 13, which needs a 580 driver and a Turing card or
+newer, as on Windows; the build for older drivers is CUDA 12.6, from 525.
+The probe finds an AMD card through rocm-smi, or without it through sysfs:
+ROCm's PyTorch wheels carry the ROCm libraries they load, so the kernel's
+amdgpu driver is all they need. Most Radeons on Linux have no rocm-smi.
+A Radeon that reports less than 4 GiB of its own memory is an integrated one
+and is left out. An Intel card is found through xpu-smi. Its PyTorch needs
+Intel's GPU compute runtime and Level Zero from the distribution. Without
+them the check below fails.
+
+A machine with no card from those vendors gets the build that runs on the
+processor rather than none. The Programs screen says so before the click:
+it renders, but a keyframe takes minutes rather than seconds. The same build
+is offered after a card's own builds could not use it (`gpu_not_usable`), on
+NVIDIA after the build for older drivers and on AMD and Intel straight away.
+It is asked for as `?build=cpu`. A copy of it stays that build at the
+next setup, as a copy of the build for older drivers does. Windows pins no
+build for the processor.
+
+A setup downloads the Python, the source and the wheels into its scratch
+folder, four at a time, each through the same download and retry as
+everything else and held to its own size and digest. Then the engine unpacks
+them itself: the Python into `python`, the source into `ComfyUI` and each
+wheel, in the lock's order, into the Python's own site-packages. Nothing
+resolves or installs a package at setup time and nothing is fetched that the
+lock does not name. A wheel is a zip of the files site-packages holds, so
+unpacking one is writing its members: `<name>.data/purelib` and `platlib` go
+into site-packages too and `<name>.data/data` under the Python's folder.
+Console scripts and C headers are left out, since nothing runs one or builds
+against them. A later wheel's file replaces an earlier one's, which is what
+happens to the `nvidia/__init__.py` every NVIDIA library wheel carries. A
+member whose name climbs out, is absolute or would be written through a link
+refuses the setup. So does a link in a wheel. The Python's and the
+source's archives are checked member by member against their pins before
+anything is written: every member under the top folder, no hard link or
+device, every link pointing at something else inside it with nothing written
+through one and the pinned count of files, bytes and links. The source's
+`requirements.txt` has to be the one the lock was made from. Once everything
+is in, the folder is walked and held to the build's count of files, bytes
+and links.
+
+There is no venv. A venv writes the absolute path of its interpreter into
+`pyvenv.cfg` and `bin/python`, so one built in the scratch folder would point
+at nothing once the folder is renamed into place. The standalone Python finds
+its own files from where it is, as the portable build's embedded Python does,
+so the copy moves into place whole like every other one.
+
+The device check is the one Windows has, run by the copy's own Python. The
+processor's build sums on the processor and its `done` says `device: "CPU"`.
+LocalCut starts the copy the way it starts the portable build, without the
+Windows flag:
+
+```
+python/bin/python3 -s -E ComfyUI/main.py --disable-auto-launch
+    --listen 127.0.0.1 --port 8188
+    --extra-model-paths-config <data_dir>/programs/comfyui/extra_model_paths.yaml
+    --output-directory <data_dir>/work/comfyui/output
+    --input-directory <data_dir>/work/comfyui/input
+    --temp-directory <data_dir>/work/comfyui
+    --user-directory <data_dir>/work/comfyui/user
+    --previews-directory <data_dir>/work/comfyui/previews
+```
+
+`-E` keeps a `PYTHONPATH` or `PYTHONHOME` set for another project out of it.
+The processor's build adds `--cpu`. A frozen engine runs it with the
+`LD_LIBRARY_PATH` the engine itself was started with, not the one PyInstaller
+points at the engine's own libraries. The first start compiles every module
+it imports and keeps the bytecode beside them, so the copy grows past the
+size its setup recorded: by 105 MB for the CUDA 13 build.
+
+Everything a lock names is downloaded on the click, onto the engine's
+machine, from the index that publishes it. Nothing of it ships in
+LocalCut's installer. These are the files `pip install` fetches for ComfyUI
+and that card's PyTorch. ComfyUI itself, its frontend, its docs and
+`comfy-aimdo` are GPL-3.0; the frontend and `comfy-aimdo` state no licence in
+their metadata; their repositories say GPL-3.0. PyTorch, torchvision,
+NumPy, SciPy and most of the rest are BSD, MIT, Apache-2.0, PSF or MPL-2.0.
+The standalone Python is PSF-2.0, with the licences of the libraries it
+bundles listed in its own `PYTHON.json`. The CUDA builds bring NVIDIA's CUDA
+libraries (cuBLAS, cuDNN, NCCL and the rest) under NVIDIA's proprietary
+licence, which allows redistributing them with an application. The XPU build
+brings Intel's oneAPI runtime under the Intel Simplified Software License and
+the ROCm build's PyTorch carries AMD's ROCm libraries, mostly MIT. Each lock
+names each wheel's licence.
+
+When ComfyUI's pin moves, the locks move with it:
+
+```bash
+cd engine
+uv run python scripts/lock-comfyui-linux.py --comfyui 0.40.0 \
+    --python 3.13.16 --python-release 20261013 --torch 2.14.1
+```
+
+It needs `uv` on `PATH`. It resolves the new tag's `requirements.txt` with
+`uv pip compile --torch-backend <backend> --generate-hashes --only-binary
+:all:` for each build, keeps the wheel CPython 3.13.16 on x86_64 Linux
+prefers for each package, reads what each wheel unpacks to from its zip
+directory with Range requests and writes the locks and the linux-x64 assets
+in `programs-manifest.json`. `test_programs_comfyui_linux.py` fails until it
+has run: every lock has to be the lock for the ComfyUI version and source
+archive pinned, meet every requirement of that source's `requirements.txt`
+and hold only wheels that install on the target.
+
+### Running it
 
 `extra_model_paths.yaml` points ComfyUI at `<data_dir>/models`. A start
 writes it again whenever it would say something else, so it follows the
@@ -336,16 +475,19 @@ setup or a pull ends, or when LocalCut's copy of the server starts or stops.
       "checks": {},
       "managed": null,
       "setup": {
-        "available": false,
-        "unavailable_reason": "platform_not_supported",
-        "takes_effect": false,
-        "version": null,
-        "url": null,
-        "download_bytes": null,
-        "install_bytes": null,
-        "gpu": null,
+        "available": true,
+        "unavailable_reason": null,
+        "takes_effect": true,
+        "version": "0.40.0",
+        "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+        "download_bytes": 3832985505,
+        "install_bytes": 7035024767,
+        "gpu": "nvidia",
         "build": null,
-        "builds": [],
+        "builds": [
+          { "build": "older_drivers", "download_bytes": 4479183693, "install_bytes": 8093388773 },
+          { "build": "cpu", "download_bytes": 1024764154, "install_bytes": 2282132615 }
+        ],
         "job": null,
         "last": null
       }
@@ -409,7 +551,8 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   outranks LocalCut's copy, so setting it up would not change what the
   engine runs, which for Ollama and ComfyUI is an address on another
   machine. `download_bytes` and `install_bytes` are exact; a setup needs both
-  free at once and `download_bytes` counts the extractor a 7z comes with. For Ollama, `pull` is the model a setup
+  free at once and `download_bytes` counts the extractor a 7z comes with, or
+  for ComfyUI on Linux the Python, the source and every wheel. For Ollama, `pull` is the model a setup
   would pull into LocalCut's copy and about how much disk it takes (`bytes`,
   the model catalog's figure, or null for a model the catalog does not hold),
   or null when the copy has it already. `job` is the setup running now (`id`,
@@ -422,8 +565,11 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   `amd`, `intel`), which of that vendor's builds (null for the usual one,
   `older_drivers` for NVIDIA's build for older drivers) and the vendor's
   other builds, each with its `build` and sizes, which a client can ask for
-  instead. For FFmpeg and Ollama they are null, null and empty. On a Windows
-  machine with an NVIDIA card on a current driver, ComfyUI's reads:
+  instead. On Linux the processor's build (`cpu`, with `gpu` null) comes
+  last among those and is the one a machine with no card from those
+  vendors gets. For FFmpeg and Ollama they are null, null and empty. The
+  report above is Linux's; on a Windows machine with an NVIDIA card on a
+  current driver, ComfyUI's reads:
 
   ```json
   {
@@ -449,8 +595,9 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
 Starts a setup in the background and returns at once. It takes no body, and
 nothing a client sends names what is downloaded. A program with more than
 one build for this machine's card takes `?build=` with one of their names
-(`older_drivers`, ComfyUI's NVIDIA build for older drivers), which picks
-between the builds pinned for that card and nothing else. Without it the
+(`older_drivers`, ComfyUI's NVIDIA build for older drivers, or `cpu`, its
+Linux build for the processor), which picks between the builds pinned for
+that card and nothing else. Without it the
 engine picks and a copy already set up from another build keeps that
 build.
 
@@ -484,10 +631,11 @@ An ffmpeg that runs and draws no text is still installed, and `done` says
 `draws_text: false`.
 
 A ComfyUI build is unpacked whole by the extractor it was downloaded with
-and checked as [above](#localcuts-own-comfyui) and its PyTorch has to use
-the card before anything is replaced. Then, like Ollama, it goes on to
+and checked as [above](#on-windows), or on Linux built from its Python, its
+source and its wheels as [above](#on-linux). Its PyTorch has to use the card
+before anything is replaced. Then, like Ollama, it goes on to
 `starting`, which has ten minutes for a first start. `done` names the card
-PyTorch found as `device`.
+PyTorch found as `device`, or `CPU` for the processor's build.
 
 Ollama's check is a real start. The unpacked `ollama serve` runs on a free
 loopback port with an empty model store and has to answer `/api/version`
@@ -591,9 +739,11 @@ holds one of its files open (Windows will not move the folder then).
 `installing`, then for Ollama `starting` and `pulling` and for ComfyUI
 `starting`. Each phase is announced as it starts. A pull on its own is the
 one phase `pulling`. `done` and `total` are bytes of the archive while
-downloading and verifying (with the extractor's, for a 7z) and bytes of the
-kept files while unpacking, which for a tree the extractor unpacks move with
-the percentage it reports. While pulling they are bytes of
+downloading and verifying (with the extractor's for a 7z; for ComfyUI on Linux
+they are every file it downloads, counted together) and bytes of the kept
+files while unpacking, which for a tree the extractor unpacks move with the
+percentage it reports and for ComfyUI on Linux count every file written into
+the copy. While pulling they are bytes of
 every layer Ollama has named so far, so a pull's total grows as it finds
 them. The other
 phases report 0 of 0. Progress is throttled to one event every half second.
@@ -637,12 +787,15 @@ out; `size_bytes` is the catalog's figure, null for a model it does not hold.
 A server that is not Ollama cannot pull, so its row keeps the `pick_model`
 fix.
 
-A `comfyui_down` row carries the setup for ComfyUI, with the size of the
-build for this machine's card plus its extractor, where LocalCut's copy
-would be the ComfyUI the engine renders with: the address is on this
-machine, a build is pinned for the card, the report already knows which card
-that is (from `GET /system` or `GET /programs`; the readiness report never
-runs the hardware probe itself) and the copy is not set up yet.
+A `comfyui_down` row carries the setup for ComfyUI, with everything it
+downloads for this machine's card (the build and its extractor, or on Linux
+the Python, the source and the wheels), where LocalCut's copy would be the
+ComfyUI the engine renders with: the address is on this machine, a build is
+pinned for the card, the report already knows which card that is (from
+`GET /system` or `GET /programs`; the readiness report never runs the
+hardware probe itself) and the copy is not set up yet. On Linux a card
+nobody has looked for yet is not taken for none, so the processor's build
+is not offered before the probe has run either.
 
 ## From a terminal
 
@@ -655,6 +808,7 @@ localcut programs setup ffmpeg        # download LocalCut's copy, and wait
 localcut programs setup ollama        # the same, then start it and pull the script model
 localcut programs setup comfyui       # the build for this machine's card, then start it
 localcut programs setup comfyui --build older_drivers
+localcut programs setup comfyui --build cpu   # Linux: the build for the processor
 localcut programs pull ollama         # pull the script model through whichever Ollama runs
 localcut programs pull ollama --model llama3.2
 localcut programs stop ollama         # stop LocalCut's copy, never your own
@@ -671,6 +825,6 @@ seconds (7200 by default, since Ollama and its model are several gigabytes)
 and then exit 1 too. Only the wait ends there: the work carries on in the
 engine while `localcut programs list` shows how far it has got. `list` says
 which build a ComfyUI setup would fetch and after a build whose PyTorch could
-not use the card, the command that fetches the other one. `start` exits
+not use the card, the commands that fetch the others, the processor's last. `start` exits
 0 once the copy runs and `stop` once it has stopped; either exits 1 when it
 did not.

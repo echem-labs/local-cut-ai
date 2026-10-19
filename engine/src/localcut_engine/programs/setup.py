@@ -92,10 +92,10 @@ from ..hardware.probe import GPU, known_profile, machine_profile
 from ..manifest import downloads
 from ..manifest.model import ModelFile
 from ..project.store import _write_atomic
-from . import PROGRAM_IDS, builds, comfyui, ollama, sevenzip
+from . import PROGRAM_IDS, builds, comfyui, environment, ollama, sevenzip
 from . import manifest as program_manifest
 from . import server as managed_server
-from .manifest import ExtractorPin, KeptFile, ProgramAsset, ProgramPin
+from .manifest import ExtractorPin, KeptFile, ProgramAsset, ProgramPin, RuntimePin
 from .server import ManagedServers, ServerLaunch
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,9 @@ RECORD_VERSION = 1
 # How long the device check may take: the first import of PyTorch reads a few
 # gigabytes of libraries and a virus scanner looks at each one first.
 _DEVICE_CHECK_TIMEOUT_S = 600.0
+
+# How many of an environment's wheels download at once.
+_WHEELS_AT_ONCE = 4
 
 _PROGRESS_INTERVAL_S = 0.5  # the bus throttle model downloads use
 _RATE_WINDOW_S = 5.0  # bytes_per_s is measured over the last few seconds
@@ -389,21 +392,28 @@ def _free_port() -> int:
 
 
 class ComfyUIInstaller:
-    """ComfyUI as a setup sees it: the official Windows portable build for
-    the machine's GPU vendor, a whole folder unpacked from a 7z, whose
-    PyTorch has to be able to use the card before it replaces anything."""
+    """ComfyUI as a setup sees it: a whole folder for the machine's GPU
+    vendor, whose PyTorch has to be able to use the card before it replaces
+    anything. On Windows that is the official portable build, unpacked from
+    a 7z. On Linux it is built from pinned pieces (environment.py)."""
 
     program = "comfyui"
     serves = True
     #: ComfyUI imports PyTorch and every node before it answers. A first
     #: start on Windows, with a virus scanner looking at each new library,
-    #: takes minutes rather than seconds.
+    #: takes minutes rather than seconds. So does a first start on Linux,
+    #: which compiles every module it imports.
     start_timeout_s = 600.0
 
     def fits(self, asset: ProgramAsset) -> bool:
-        """Whether a pinned build is a portable build LocalCut can start:
-        a whole tree, for Windows, where the embedded Python is a .exe."""
-        return asset.tree is not None and asset.platform.startswith("windows")
+        """Whether a pinned build is one LocalCut can start: a portable
+        build on Windows, where the embedded Python is a .exe, or on Linux
+        an environment whose lock is the one pinned."""
+        if asset.platform.startswith("windows"):
+            return asset.tree is not None and asset.format == "7z"
+        if asset.platform.startswith("linux"):
+            return environment.lock_ok(asset)
+        return False
 
     def takes_effect(self, config: EngineConfig) -> bool:
         """Whether LocalCut's copy could be the ComfyUI the engine renders
@@ -422,11 +432,11 @@ class ComfyUIInstaller:
         return config.comfyui_url
 
     def launch(self, config: EngineConfig) -> ServerLaunch | None:
-        """The portable build's own command line, bound to the address the
-        engine asks, with the file that points it at LocalCut's models
-        written first and everything it writes while it runs in LocalCut's
-        working folder. None without a copy here, or for an address on
-        another machine."""
+        """The copy's own command line, bound to the address the engine
+        asks, with the file that points it at LocalCut's models written
+        first, everything it writes while it runs in LocalCut's working
+        folder and for the processor's build, told to run there. None
+        without a copy here, or for an address on another machine."""
         address = comfyui.local_address(config.comfyui_url)
         folder = config.programs_dir / self.program
         if address is None or not comfyui.python_of(folder).is_file():
@@ -434,12 +444,14 @@ class ComfyUIInstaller:
         host, port = address
         comfyui.write_model_paths(folder, config.resolved_models_dir)
         work = comfyui.make_working_folder(config)
+        record = read_record(folder)
+        cpu = record is not None and record.get("build") == "cpu"
         return ServerLaunch(
             argv=[
-                *comfyui.server_argv(folder, host=host, port=port),
+                *comfyui.server_argv(folder, host=host, port=port, cpu=cpu),
                 *comfyui.working_argv(work),
             ],
-            env={},
+            env=comfyui.child_environment(),
             cwd=folder,
             url=f"http://{host if ':' not in host else f'[{host}]'}:{port}",
             host=host,
@@ -458,13 +470,17 @@ class ComfyUIInstaller:
         few numbers on the card. A build whose PyTorch cannot use the card
         (a driver older than its CUDA needs, a card it has no kernels for)
         fails here, with nothing kept; one whose Python does not run at all
-        fails as not running."""
+        fails as not running. The processor's build sums on the processor
+        and says so: its `device` is "CPU"."""
         python = comfyui.python_of(folder)
-        vendor = (asset.gpu if asset is not None else None) or "nvidia"
+        if asset is not None and asset.build == "cpu":
+            vendor = "cpu"
+        else:
+            vendor = (asset.gpu if asset is not None else None) or "nvidia"
         try:
             process = await asyncio.create_subprocess_exec(
                 str(python),
-                "-s",
+                *comfyui.python_flags(folder),
                 "-c",
                 comfyui.DEVICE_CHECK,
                 vendor,
@@ -472,6 +488,7 @@ class ComfyUIInstaller:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=folder,
+                env={**os.environ, **comfyui.child_environment()},
             )
         except OSError as exc:
             raise SetupFailed("does_not_run", f"the ComfyUI it unpacked does not run: {exc}")
@@ -493,6 +510,12 @@ class ComfyUIInstaller:
         if answer["torch"] is None:
             raise SetupFailed(
                 "does_not_run", f"the ComfyUI it unpacked cannot load PyTorch: {answer['error']}"
+            )
+        if answer["device"] is None and vendor == "cpu":
+            raise SetupFailed(
+                "does_not_run",
+                f"PyTorch {answer['torch'] or ''} in this ComfyUI build does not compute on "
+                f"the processor: {answer['error']}",
             )
         if answer["device"] is None:
             raise SetupFailed(
@@ -544,15 +567,16 @@ def pinned_here(
     config: EngineConfig, program_id: str, gpu: GPU | None, build: str | None = None
 ) -> tuple[ProgramPin | None, ProgramAsset | None, str | None]:
     """`pinned`, for this engine: with no build asked for, a copy already
-    set up from one of the vendor's other builds keeps that build. Someone
-    who moved to the build for older drivers because the usual one could
-    not use their card is not moved back by the next setup."""
+    set up from one of the vendor's other builds, or from the processor's,
+    keeps that build. Someone who moved to the build for older drivers
+    because the usual one could not use their card is not moved back by the
+    next setup."""
     if build is None:
         record = read_record(config.programs_dir / program_id)
         if (
             record is not None
             and record.get("build") is not None
-            and record.get("gpu") == builds.vendor_of(gpu)
+            and (record.get("gpu") == builds.vendor_of(gpu) or record.get("build") == "cpu")
         ):
             kept = pinned(program_id, gpu, record["build"])
             if kept[1] is not None:
@@ -581,11 +605,70 @@ def extractor_for(asset: ProgramAsset) -> ExtractorPin | None:
     return program_manifest.load_programs_manifest().extractor(asset.format, asset.platform)
 
 
+def runtime_for(asset: ProgramAsset) -> RuntimePin | None:
+    """The Python a build made of pinned pieces runs on."""
+    if asset.environment is None:
+        return None
+    return program_manifest.load_programs_manifest().runtime(
+        asset.environment.runtime, asset.platform
+    )
+
+
 def download_bytes(asset: ProgramAsset) -> int:
     """Everything a setup of this build downloads: the archive and the
-    extractor that unpacks it where Python cannot."""
+    extractor that unpacks it where Python cannot, or for a build made of
+    pinned pieces, its source, its Python and its wheels."""
     extractor = extractor_for(asset)
-    return asset.size + (extractor.size if extractor is not None else 0)
+    runtime = runtime_for(asset)
+    total = asset.size + (extractor.size if extractor is not None else 0)
+    if asset.environment is not None and runtime is not None:
+        total += runtime.size + asset.environment.wheel_bytes
+    return total
+
+
+def _pieces(program_id: str, asset: ProgramAsset) -> list[ModelFile]:
+    """What a setup of this build downloads, in order: the extractor and
+    then the archive, or the runtime, the source and then each wheel."""
+    extractor = extractor_for(asset)
+    pieces = []
+    if extractor is not None:
+        pieces.append(
+            ModelFile(
+                url=extractor.url,
+                dest=_file_name(extractor.url, "extractor"),
+                sha256=extractor.sha256,
+                size=extractor.size,
+            )
+        )
+    if asset.environment is None:
+        pieces.append(
+            ModelFile(
+                url=asset.url,
+                dest=_file_name(asset.url, f"{program_id}-download"),
+                sha256=asset.sha256,
+                size=asset.size,
+            )
+        )
+        return pieces
+    runtime = runtime_for(asset)
+    if runtime is None:
+        raise SetupFailed("download_failed", f"no runtime is pinned for {program_id} here")
+    lock = environment.load_lock(asset.environment)
+    pieces.append(
+        ModelFile(url=runtime.url, dest="python.tar.gz", sha256=runtime.sha256, size=runtime.size)
+    )
+    pieces.append(
+        ModelFile(url=asset.url, dest="source.tar.gz", sha256=asset.sha256, size=asset.size)
+    )
+    # Numbered rather than named after the wheel: a name is the lock's to
+    # say and a number is all the scratch folder needs.
+    pieces.extend(
+        ModelFile(
+            url=wheel.url, dest=f"wheels/{index:04d}.whl", sha256=wheel.sha256, size=wheel.size
+        )
+        for index, wheel in enumerate(lock.wheels)
+    )
+    return pieces
 
 
 def setup_fix(config: EngineConfig, program_id: str) -> dict | None:
@@ -593,8 +676,19 @@ def setup_fix(config: EngineConfig, program_id: str) -> dict | None:
     change nothing: no build is pinned for this machine, something outranks
     LocalCut's copy, or that copy is already the one in use. Carries the
     download's size, for the button to show. A program whose build depends
-    on the card is offered only once the card is known."""
+    on the card is offered only once the card is known: where the
+    processor's build is what a machine with no card gets, a card nobody has
+    looked for yet is not the same as none."""
     installer = INSTALLERS.get(program_id)
+    pin = program_manifest.load_programs_manifest().program(program_id)
+    platform_key = program_manifest.platform_key()
+    if (
+        pin is not None
+        and platform_key is not None
+        and pin.per_vendor(platform_key)
+        and known_profile(str(config.data_dir)) is None
+    ):
+        return None
     _, asset, _ = pinned_here(config, program_id, main_gpu(config))
     if installer is None or asset is None:
         return None
@@ -667,6 +761,8 @@ def is_current(folder: Path, asset: ProgramAsset | None) -> bool:
         return False
     record = read_record(folder)
     if record is None or record.get("sha256") != asset.sha256:
+        return False
+    if asset.environment is not None and record.get("lock_sha256") != asset.environment.lock_sha256:
         return False
     for kept in asset.files:
         target = folder.joinpath(*kept.path.split("/"))
@@ -1161,44 +1257,24 @@ class ProgramSetup:
         scratch = self.config.programs_dir / f".setup-{job.program}-{job.id}"
         live = self.folder(job.program)
         try:
-            extractor_pin = extractor_for(asset)
+            pieces = _pieces(job.program, asset)
             self._phase(job, "downloading", download_bytes(asset))
-            extractor = None
-            if extractor_pin is not None:
-                # The small one first, so a refused extractor costs seconds
-                # rather than the archive's whole download.
-                extractor = await self._download(
-                    job,
-                    ModelFile(
-                        url=extractor_pin.url,
-                        dest=_file_name(extractor_pin.url, "extractor"),
-                        sha256=extractor_pin.sha256,
-                        size=extractor_pin.size,
-                    ),
-                    scratch,
-                    before=0,
-                    last=False,
-                )
-                if os.name != "nt":
-                    await asyncio.to_thread(extractor.chmod, 0o755)
-            archive = await self._download(
-                job,
-                ModelFile(
-                    url=asset.url,
-                    dest=_file_name(asset.url, f"{job.program}-download"),
-                    sha256=asset.sha256,
-                    size=asset.size,
-                ),
-                scratch,
-                before=extractor_pin.size if extractor_pin is not None else 0,
-                last=True,
+            # One at a time for a build and its extractor, the small one
+            # first, so a refused extractor costs seconds rather than the
+            # archive's whole download. An environment's wheels a few at a
+            # time: most of them are small and one after another each would
+            # wait out its own round trips.
+            paths = await self._download_all(
+                job, pieces, scratch, at_once=_WHEELS_AT_ONCE if asset.environment else 1
             )
+            extractor = paths[0] if extractor_for(asset) is not None else None
+            if extractor is not None and os.name != "nt":
+                await asyncio.to_thread(extractor.chmod, 0o755)
             staged = scratch / job.program
             self._phase(job, "unpacking", asset.install_bytes)
-            await self._unpack(job, asset, archive, staged, extractor)
-            await asyncio.to_thread(archive.unlink)
-            if extractor is not None:
-                await asyncio.to_thread(extractor.unlink)
+            await self._unpack(job, asset, paths, staged, extractor)
+            for path in paths:
+                await asyncio.to_thread(path.unlink, missing_ok=True)
             self._phase(job, "checking", 0)
             facts = await installer.check(staged, asset)
             await asyncio.to_thread(_write_record, staged, pin, asset)
@@ -1359,42 +1435,77 @@ class ProgramSetup:
                 f"the pull of {model} stopped: {str(exc) or type(exc).__name__}",
             ) from exc
 
-    async def _download(
-        self, job: _Job, target: ModelFile, scratch: Path, *, before: int, last: bool
-    ) -> Path:
-        """One file of the setup's download, its progress counted on from
-        `before` bytes, through the retry policy model downloads use. The
-        last one moves the job to verifying once its bytes are in."""
+    async def _download_all(
+        self, job: _Job, pieces: list[ModelFile], scratch: Path, *, at_once: int
+    ) -> list[Path]:
+        """Every file of the setup's download, `at_once` at a time, each held
+        to its size and digest through the retry policy model downloads use,
+        with their bytes counted together on the job. Once the last byte is
+        in, the job moves to verifying while the last digests are taken."""
+        done = [0] * len(pieces)
+        total = sum(piece.size for piece in pieces)
 
-        async def progress(dest: str, done: int, total: int) -> None:
-            self._progress(job, before + done)
-            if last and done >= target.size and job.phase == "downloading":
-                # The whole download is in; hashing it is what comes next.
-                self._phase(job, "verifying", job.total, job.total)
+        def counted(index: int):  # noqa: ANN202 - a downloads.ProgressFn
+            async def progress(dest: str, got: int, size: int) -> None:
+                done[index] = got
+                arrived = sum(done)
+                self._progress(job, arrived)
+                if arrived >= total and job.phase == "downloading":
+                    # The whole download is in; hashing it is what comes next.
+                    self._phase(job, "verifying", job.total, job.total)
+
+            return progress
 
         # No follow_redirects: download_file walks the redirects itself, so
         # the guard sees every hop (GitHub hands a release asset to its CDN).
         timeout = httpx.Timeout(30, read=_READ_TIMEOUT_S)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            return await downloads.download_file_retrying(
-                target, scratch, progress, client, exact_size=True
-            )
+
+            async def fetch(index: int) -> Path:
+                return await downloads.download_file_retrying(
+                    pieces[index], scratch, counted(index), client, exact_size=True
+                )
+
+            if at_once <= 1:
+                return [await fetch(index) for index in range(len(pieces))]
+            gate = asyncio.Semaphore(at_once)
+
+            async def gated(index: int) -> Path:
+                async with gate:
+                    return await fetch(index)
+
+            try:
+                async with asyncio.TaskGroup() as group:
+                    tasks = [group.create_task(gated(index)) for index in range(len(pieces))]
+            except BaseExceptionGroup as failed:
+                # The first failure is the setup's; the rest were cancelled
+                # by it or failed the same way.
+                raise failed.exceptions[0] from None
+            return [task.result() for task in tasks]
 
     async def _unpack(
         self,
         job: _Job,
         asset: ProgramAsset,
-        archive: Path,
+        paths: list[Path],
         staged: Path,
         extractor: Path | None,
     ) -> None:
         loop = asyncio.get_running_loop()
         stop = threading.Event()
+        archive = paths[1] if extractor is not None else paths[0]
 
         def report(done: int) -> None:
             loop.call_soon_threadsafe(self._progress, job, done)
 
-        if asset.tree is not None:
+        if asset.environment is not None:
+            runtime = runtime_for(asset)
+            assert runtime is not None
+            pieces = environment.Downloads(runtime=paths[0], source=paths[1], wheels=paths[2:])
+            unpack = functools.partial(
+                _unpack_environment, asset, runtime, pieces, staged, report, stop
+            )
+        elif asset.tree is not None:
             if extractor is None:
                 raise SetupFailed(
                     "unpack_failed", f"no extractor is pinned for {asset.format} on this machine"
@@ -1600,6 +1711,26 @@ def _unpack_tree(
         raise SetupFailed("unpack_failed", str(exc)) from exc
 
 
+def _unpack_environment(
+    asset: ProgramAsset,
+    runtime: RuntimePin,
+    pieces: environment.Downloads,
+    folder: Path,
+    report: Callable[[int], None],
+    stop: threading.Event,
+) -> None:
+    """Build the copy from its runtime, its source and its wheels
+    (environment.py), checked against the pin as it goes and walked after."""
+    assert asset.environment is not None
+    try:
+        lock = environment.load_lock(asset.environment)
+        environment.unpack(asset, runtime, lock, pieces, folder, report, stop)
+    except sevenzip.Stopped:
+        raise _Stopped from None
+    except (sevenzip.ArchiveRefused, environment.LockRefused) as exc:
+        raise SetupFailed("unpack_failed", str(exc)) from exc
+
+
 def _file_name(url: str, fallback: str) -> str:
     """The name a download is kept under in the scratch folder: the URL's
     own last segment, where that is a plain file name."""
@@ -1625,6 +1756,10 @@ def _write_record(folder: Path, pin: ProgramPin, asset: ProgramAsset) -> None:
         "files": {kept.path: kept.size for kept in asset.files},
         "bytes": asset.install_bytes,
     }
+    if asset.environment is not None:
+        # Which wheels went in: a lock made again for the same source is
+        # another build.
+        record["lock_sha256"] = asset.environment.lock_sha256
     # The copy's size counts this file too, whose length depends on the
     # number written in it: a couple of rounds settle it. One line, so
     # Windows' newline translation cannot make the file longer than counted.

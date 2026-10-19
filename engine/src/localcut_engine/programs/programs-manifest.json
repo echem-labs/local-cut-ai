@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated": "2026-10-15",
+  "updated": "2026-10-19",
   "programs": [
     {
       "id": "ffmpeg",
@@ -873,6 +873,134 @@
             "files": 64388,
             "bytes": 5328789984
           }
+        },
+        {
+          "platform": "linux-x64",
+          "gpu": "nvidia",
+          "requires": {
+            "nvidia_driver": "580",
+            "compute_capability": "7.5"
+          },
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+          "size": 12722767,
+          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "format": "tar.gz",
+          "tree": {
+            "root": "ComfyUI-0.40.0",
+            "files": 1296,
+            "bytes": 48963698,
+            "links": 0
+          },
+          "environment": {
+            "runtime": "cpython",
+            "lock": "pylock.comfyui-cu130.toml",
+            "lock_sha256": "a9c461165fa263ab439807fffc0e777d37056d5d385a65cc8b0286e760206c18",
+            "wheels": 103,
+            "wheel_bytes": 3785163251,
+            "files": 50633,
+            "bytes": 7035024767,
+            "links": 1048
+          }
+        },
+        {
+          "platform": "linux-x64",
+          "gpu": "nvidia",
+          "build": "older_drivers",
+          "requires": {
+            "nvidia_driver": "525"
+          },
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+          "size": 12722767,
+          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "format": "tar.gz",
+          "tree": {
+            "root": "ComfyUI-0.40.0",
+            "files": 1296,
+            "bytes": 48963698,
+            "links": 0
+          },
+          "environment": {
+            "runtime": "cpython",
+            "lock": "pylock.comfyui-cu126.toml",
+            "lock_sha256": "acf508c490e608b5c8288e7131cbfba803bf6672eacbfd44c5d37f7348ac4c1b",
+            "wheels": 103,
+            "wheel_bytes": 4431361439,
+            "files": 50684,
+            "bytes": 8093388773,
+            "links": 1048
+          }
+        },
+        {
+          "platform": "linux-x64",
+          "gpu": "amd",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+          "size": 12722767,
+          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "format": "tar.gz",
+          "tree": {
+            "root": "ComfyUI-0.40.0",
+            "files": 1296,
+            "bytes": 48963698,
+            "links": 0
+          },
+          "environment": {
+            "runtime": "cpython",
+            "lock": "pylock.comfyui-rocm72.toml",
+            "lock_sha256": "3d6f2c7a4b540dc07eca3c6312fb8437c593ca5d78312651c343193db95ca7f8",
+            "wheels": 85,
+            "wheel_bytes": 7369198511,
+            "files": 55517,
+            "bytes": 17189252421,
+            "links": 1048
+          }
+        },
+        {
+          "platform": "linux-x64",
+          "gpu": "intel",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+          "size": 12722767,
+          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "format": "tar.gz",
+          "tree": {
+            "root": "ComfyUI-0.40.0",
+            "files": 1296,
+            "bytes": 48963698,
+            "links": 0
+          },
+          "environment": {
+            "runtime": "cpython",
+            "lock": "pylock.comfyui-xpu.toml",
+            "lock_sha256": "895de0b8b9679aaf8329a3595ce7517438fce883baf33c5f7c6064f4f18e68ff",
+            "wheels": 108,
+            "wheel_bytes": 3210411192,
+            "files": 52129,
+            "bytes": 8670502369,
+            "links": 1048
+          }
+        },
+        {
+          "platform": "linux-x64",
+          "build": "cpu",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
+          "size": 12722767,
+          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "format": "tar.gz",
+          "tree": {
+            "root": "ComfyUI-0.40.0",
+            "files": 1296,
+            "bytes": 48963698,
+            "links": 0
+          },
+          "environment": {
+            "runtime": "cpython",
+            "lock": "pylock.comfyui-cpu.toml",
+            "lock_sha256": "4bdb31ce20b984c5475db51eb0913df198008426ea5e1b94014b8160ebcffaa5",
+            "wheels": 84,
+            "wheel_bytes": 976941900,
+            "files": 49770,
+            "bytes": 2282132615,
+            "links": 1048
+          }
         }
       ]
     }
@@ -886,6 +1014,25 @@
       "url": "https://github.com/ip7z/7zip/releases/download/26.04/7zr.exe",
       "size": 602624,
       "sha256": "256feca8e274e5da655e2a284fabafd9f554365eb164862089dacd4e8276d282"
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "cpython",
+      "platform": "linux-x64",
+      "version": "3.13.16",
+      "license": "PSF-2.0",
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "size": 35099487,
+      "sha256": "d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be",
+      "format": "tar.gz",
+      "tree": {
+        "root": "python",
+        "files": 3478,
+        "bytes": 99148363,
+        "links": 1048
+      },
+      "site_packages": "lib/python3.13/site-packages"
     }
   ]
 }

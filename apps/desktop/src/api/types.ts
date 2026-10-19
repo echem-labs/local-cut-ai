@@ -453,8 +453,10 @@ export type SetupUnavailableReason =
   | "gpu_not_supported";
 
 /** A build a program has besides its vendor's usual one, which a client may
- * ask a setup for by name. */
-export type ProgramBuild = "older_drivers";
+ * ask a setup for by name. `cpu` runs on the processor: what a Linux machine
+ * with no card a build is pinned for gets, also offered once the card's own
+ * builds could not use it. */
+export type ProgramBuild = "older_drivers" | "cpu";
 
 /** What a running setup is doing, in the order it does it. A program that
  * runs as a server goes on to `starting` it and `pulling` its model, and a
@@ -572,10 +574,11 @@ export interface ProgramSetupInfo {
   pull?: { model: string; bytes: number | null } | null;
   /** A program pinned per GPU vendor (ComfyUI): the vendor whose build this
    * machine gets, as /system names vendors and which of its builds; null
-   * for a build that serves every card. */
+   * for a build that serves every card and for the processor's build. */
   gpu?: string | null;
   build?: ProgramBuild | null;
-  /** The vendor's other builds, which a setup can be asked for instead. */
+  /** The vendor's other builds and the processor's where one is pinned,
+   * which a setup can be asked for instead. */
   builds?: ProgramBuildChoice[];
   job: ProgramJob | null;
   last: ProgramLastSetup | null;
