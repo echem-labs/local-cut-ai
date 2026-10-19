@@ -575,7 +575,8 @@ def test_a_killed_engine_leaves_its_port_to_the_next_one(tmp_path):
     running, for the next engine to stop once it has bound its own port. So
     the copy must hold nothing of the engine's socket: one that does keeps
     the port in LISTEN with the engine gone. The next engine then exits on
-    the bind with the copy still running."""
+    the bind with the copy still running. Once bound, it recognises the
+    copy as LocalCut's by the run file, stops it and runs its own."""
     data = tmp_path / "engine"
     binary = data / "programs" / "ollama" / _BINARY
     binary.parent.mkdir(parents=True)
@@ -638,6 +639,13 @@ def test_a_killed_engine_leaves_its_port_to_the_next_one(tmp_path):
 
         second = start(tmp_path / "second.log")
         assert polled(second, tmp_path / "second.log", answers, "the next engine to answer")
+        own = polled(
+            second,
+            tmp_path / "second.log",
+            lambda http: pid if (pid := running_copy(http)) not in (None, orphan) else None,
+            "the next engine's own Ollama to run",
+        )
+        assert _gone(orphan), f"the next engine left the orphan running beside its own ({own})"
     finally:
         for engine in engines:
             if engine.poll() is None:
@@ -650,6 +658,36 @@ def test_a_killed_engine_leaves_its_port_to_the_next_one(tmp_path):
             with contextlib.suppress(psutil.Error):
                 if planted & set(process.info["cmdline"] or []):
                     process.kill()
+
+
+@pytest.mark.skipif(
+    _WINDOWS, reason="Windows has no exec: a program that runs another gets a new process there"
+)
+def test_a_copy_that_relaunches_itself_is_known_by_the_binary_it_serves_from(
+    tmp_path, monkeypatch, archives
+):
+    """A copy can start as a launcher that becomes the program in the same
+    process: a macOS framework Python re-executes its app bundle. The run
+    file names the binary the copy answers from, which is the one the next
+    engine finds when it looks for an orphan. A shell stands in for the
+    launcher here, pausing first so the engine sees it before it execs."""
+    _pin_ollama(monkeypatch, archives)
+    data = tmp_path / "engine"
+    _install_from(archives.root, data)
+    monkeypatch.setattr(
+        program_setup.OllamaInstaller,
+        "command",
+        lambda self, binary: [
+            *("/bin/sh", "-c", 'sleep 0.2; exec "$0" "$@"'),
+            *(sys.executable, str(binary), "serve"),
+        ],
+    )
+    with _live(_config(data, free_port())) as (_, http):
+        row = _wait_for(http, lambda row: _server_state(row)[0] == "running")
+        pid = row["managed"]["server"]["pid"]
+        record = json.loads((data / "run" / "ollama.json").read_text(encoding="utf-8"))
+        assert record["pid"] == pid
+        assert os.path.samefile(record["binary"], psutil.Process(pid).exe()), record
 
 
 def test_a_copy_that_keeps_stopping_is_restarted_then_left_crashed(tmp_path, monkeypatch, archives):
