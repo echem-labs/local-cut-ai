@@ -19,6 +19,8 @@
   "modelsReady": "ready",
   "manageModels": "Manage models →",
   "getIt": "Get it →",
+  "settingUp": "Setting up {name} now.",
+  "setupQueued": "{name} is waiting its turn to be set up.",
   "pickModel": "Pick a model →",
   "generateTool": "Generate {tool}",
   "toolHeadSuffix": "· no project needed — export directly, or turn it into a video later",
