@@ -100,8 +100,15 @@ function RailEntry({
   count?: number;
   onOpen: () => void;
 }) {
+  // Compact hides the label with display: none, which takes it out of the
+  // accessibility tree too, so the row has to carry its name itself there.
   const button = (
-    <button className={active ? "active" : ""} disabled={disabled} onClick={onOpen}>
+    <button
+      className={active ? "active" : ""}
+      disabled={disabled}
+      aria-label={compact ? label : undefined}
+      onClick={onOpen}
+    >
       <Icon {...ICON} />
       <span className="rail-label">{label}</span>
       {count > 0 && <span className="rail-count">{count}</span>}
@@ -302,6 +309,7 @@ export default function App() {
                   <Tip label={title} side="right">
                     <button
                       className={active ? "active" : ""}
+                      aria-label={compact ? title : undefined}
                       onClick={() => {
                         closeSettings();
                         if (currentProject?.id !== id) void openProject(id);

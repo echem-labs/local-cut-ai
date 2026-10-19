@@ -128,6 +128,30 @@ describe("the compact rail explains itself one way", () => {
     }
   });
 
+  it("names every control without the label that compact hides", () => {
+    // app.css hides `.rail-label` with display: none in compact, which also
+    // takes it out of the accessibility tree. jsdom loads no stylesheet, so
+    // a name read from the text here would pass where Chromium has none: the
+    // name has to come from an attribute.
+    localStorage.setItem(RAIL_KEY, "0");
+    width(false);
+    useApp.setState({
+      projects: [
+        { id: "p1", title: "How Honeybees Make Honey", created_at: 0, updated_at: 0, mode: "prompt", approvals: [] },
+      ],
+      openProjects: ["p1"],
+    } as never);
+    render(<App />);
+    const buttons = railButtons();
+    expect(buttons.length).toBeGreaterThan(4);
+    for (const button of buttons) {
+      const named = button.getAttribute("aria-label") || button.getAttribute("aria-labelledby");
+      expect(named, button.outerHTML.slice(0, 120)).toBeTruthy();
+    }
+    expect(screen.getByRole("button", { name: t("nav.home") })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "How Honeybees Make Honey" })).toBeInTheDocument();
+  });
+
   it("gives Home the home icon, not the brand mark the title bar already carries", () => {
     localStorage.setItem(RAIL_KEY, "0");
     width(false);
