@@ -105,8 +105,10 @@ class _Archives:
     `answer_range` is what a Range gets instead of the rest of the file:
     `ignored` sends the whole file with a 200, `misplaced` a 206 that starts
     somewhere else. `pace` sends the body a piece at a time, as a slow link
-    delivers it. Each entry in `statuses` answers one request with that
-    status and no file, before any of the others."""
+    delivers it, and `paced` notes when the request came in, then when each
+    piece started out and how much of the body had gone once it had. Each
+    entry in `statuses` answers one request with that status and no file,
+    before any of the others."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -116,6 +118,7 @@ class _Archives:
         self.drop_after = _FIRST_CHUNK
         self.answer_range = "honoured"
         self.pace: tuple[int, float] | None = None
+        self.paced: list[tuple[float, int]] = []
         self.statuses: list[int] = []
         self._gate: threading.Event | None = None
         self._closing = threading.Event()
@@ -124,6 +127,7 @@ class _Archives:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - the stdlib's name
+                arrived = time.monotonic()
                 outer.requests.append(self.path)
                 asked = self.headers.get("Range")
                 outer.ranges.append(asked)
@@ -167,7 +171,9 @@ class _Archives:
                             shutil.copyfileobj(source, self.wfile)
                             return
                         piece, every = outer.pace
+                        outer.paced.append((arrived, 0))
                         while chunk := source.read(piece):
+                            outer.paced.append((time.monotonic(), outer.paced[-1][1] + len(chunk)))
                             self.wfile.write(chunk)
                             self.wfile.flush()
                             time.sleep(every)
@@ -841,8 +847,11 @@ def _ws_url(url: str) -> str:
     return url.replace("http://", "ws://", 1) + "/ws"
 
 
-def _program_events(ws, program: str, timeout_s: float = 180) -> list[dict]:
-    """Every event about `program` up to and including its terminal one."""
+def _program_events(
+    ws, program: str, timeout_s: float = 180, received: list[float] | None = None
+) -> list[dict]:
+    """Every event about `program` up to and including its terminal one.
+    `received` gets the time each of them arrived."""
     seen: list[dict] = []
     deadline = time.monotonic() + timeout_s
     while True:
@@ -851,6 +860,8 @@ def _program_events(ws, program: str, timeout_s: float = 180) -> list[dict]:
         event = json.loads(ws.recv(timeout=remaining))
         if event.get("program") != program:
             continue
+        if received is not None:
+            received.append(time.monotonic())
         seen.append(event)
         if event["type"] in _TERMINAL:
             return seen
@@ -1245,37 +1256,51 @@ async def test_cancel_stops_a_setup_that_is_waiting_to_resume(
 
 def test_the_download_speed_is_reported_while_bytes_arrive(tmp_path, monkeypatch, archives):
     """A slow link is when the speed matters most. Every progress event
-    after the one that announces the download has bytes done and a speed
-    near the one the archive is served at, however long a megabyte takes to
-    arrive."""
+    after the one that announces the download has bytes done and a speed:
+    those bytes over the time since the download began. How fast a paced
+    archive arrives depends on how busy the machine is, so each speed is
+    held to when its bytes were sent and its event arrived, not to the pace
+    the server was asked for."""
     from websockets.sync.client import connect
 
     _without_ffmpeg_on_path(tmp_path, monkeypatch)
     _pin(monkeypatch, archives, ffmpeg=b"x" * (384 << 10))
     _stub_check(monkeypatch)
-    piece, every = 8 << 10, 0.05
-    archives.pace = (piece, every)
-    served = piece / every
+    archives.pace = (8 << 10, 0.05)
+    # One window for the whole download, however slowly it arrives, so each
+    # speed counts every byte since the download began.
+    monkeypatch.setattr(program_setup, "_RATE_WINDOW_S", 3600.0)
+    received: list[float] = []
 
     with (
         serve_engine(tmp_path / "engine", TOKEN, backend="ffmpeg,mock") as url,
         httpx.Client(base_url=url, headers={"Authorization": f"Bearer {TOKEN}"}) as http,
     ):
         with connect(_ws_url(url), subprotocols=[WS_TOKEN_SUBPROTOCOL, TOKEN]) as ws:
+            asked = time.monotonic()
             http.post("/programs/ffmpeg/setup")
-            events = _program_events(ws, "ffmpeg")
+            events = _program_events(ws, "ffmpeg", received=received)
 
     assert events[-1]["type"] == "program.setup.done", events[-1]
     announced, *measured = [
-        (event["done"], event["bytes_per_s"])
-        for event in events
+        (event["done"], event["bytes_per_s"], at)
+        for event, at in zip(events, received, strict=True)
         if event["type"] == "program.setup.progress" and event["phase"] == "downloading"
     ]
     assert announced[0] == 0
     assert len(measured) >= 3, measured
-    for done, rate in measured:
+    # The download began after the setup was asked for and before the
+    # request reached the server. Each speed was measured once the piece
+    # holding its last byte had started out, and before its event arrived.
+    # A clock tick either way, for a clock as coarse as Windows' can be.
+    began = archives.paced[0][0]
+    tick = 2 * time.get_clock_info("monotonic").resolution
+    for done, rate, at in measured:
         assert done > 0 and rate is not None, measured
-        assert served / 4 < rate < served * 4, measured
+        sent = next(started for started, through in archives.paced if through >= done)
+        slowest = done / (at - asked + tick)
+        fastest = done / (sent - began - tick) if sent - began > tick else float("inf")
+        assert slowest - 1 <= rate <= fastest + 1, (done, rate, slowest, fastest)
 
 
 async def test_one_setup_of_a_program_runs_at_a_time(tmp_path, monkeypatch, archives):
