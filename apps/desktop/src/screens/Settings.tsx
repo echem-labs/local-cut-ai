@@ -36,6 +36,7 @@ import { InfoDot, Tip } from "../components/Tooltip";
 import { WorkflowsPane } from "../components/WorkflowsPane";
 import { m, type MessageKey, plural, SUPPORTED_LOCALES, t, useLocale } from "../i18n";
 import { DurationPicker } from "../components/DurationPicker";
+import { messageOf } from "../lib/errors";
 import { ASPECTS } from "../lib/formats";
 import { shortcutLabel } from "../lib/platform";
 import { SETTINGS_TABS, type SettingsTab } from "../lib/settingsTabs";
@@ -368,6 +369,7 @@ export function Settings() {
     refreshModels,
     refreshStorage,
     cleanupStorage,
+    clearComfyWork,
     deleteProject,
     deleteToolSessions,
     projects,
@@ -415,6 +417,7 @@ export function Settings() {
     null,
   );
   const [confirmCache, setConfirmCache] = useState(false);
+  const [confirmComfy, setConfirmComfy] = useState(false);
   const [confirmTools, setConfirmTools] = useState(false);
   // A failed delete or cache purge — shown in the storage pane rather than
   // discarded, which is what used to happen to both.
@@ -464,7 +467,8 @@ export function Settings() {
   }, [tab, refreshStorage]);
 
   // Esc closes the overlay — unless a field or a layered dialog owns it.
-  const dialogOpen = confirmProject !== null || confirmCache || confirmTools || showLicenses;
+  const dialogOpen =
+    confirmProject !== null || confirmCache || confirmComfy || confirmTools || showLicenses;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || dialogOpen) return;
@@ -1182,6 +1186,33 @@ export function Settings() {
                       </Tip>
                     </div>
                   </div>
+                  {/* Only where LocalCut's own ComfyUI has run: the engine
+                      says null when it has no working folder. */}
+                  {storage.comfyui_bytes != null && (
+                    <div className="setting-row">
+                      <div className="st">
+                        <AppWindow {...ICON_SUBHEAD} />
+                        {t("settings.storage.comfyHeading")}
+                      </div>
+                      <div className="sd">{t("settings.storage.comfyHint")}</div>
+                      <div className="sc">
+                        <Tip
+                          label={t("settings.storage.comfyHeading")}
+                          hint={t("settings.storage.clearComfyTipHint")}
+                        >
+                          <button
+                            className="btn-ghost"
+                            disabled={storage.comfyui_bytes === 0}
+                            onClick={() => setConfirmComfy(true)}
+                          >
+                            {t("settings.storage.clearComfy", {
+                              size: formatSize(storage.comfyui_bytes),
+                            })}
+                          </button>
+                        </Tip>
+                      </div>
+                    </div>
+                  )}
                   {(() => {
                     // Count from the project list, which is what the action
                     // actually deletes; size from the storage walk, which is
@@ -1594,6 +1625,21 @@ export function Settings() {
               .catch((err) => setStorageError(err instanceof Error ? err.message : String(err)));
           }}
           onCancel={() => setConfirmCache(false)}
+        />
+      )}
+      {confirmComfy && (
+        <ConfirmDialog
+          title={t("settings.storage.clearComfyTitle")}
+          message={t("settings.storage.clearComfyMessage")}
+          confirmLabel={t("settings.storage.clearComfyConfirm")}
+          onConfirm={() => {
+            setConfirmComfy(false);
+            setStorageError(null);
+            void clearComfyWork()
+              .then(setStorageError)
+              .catch((err) => setStorageError(messageOf(err)));
+          }}
+          onCancel={() => setConfirmComfy(false)}
         />
       )}
       {confirmTools && (

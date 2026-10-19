@@ -696,6 +696,12 @@ export class EngineClient {
     return this.request("/storage/cleanup", { method: "POST" });
   }
 
+  /** Clear what renders left in LocalCut's own ComfyUI's working folder.
+   * 409 while a render is using that copy. */
+  storageComfyCleanup(): Promise<{ ok: boolean; freed_bytes: number }> {
+    return this.request("/storage/comfyui/cleanup", { method: "POST" });
+  }
+
   // Key writes go through the shell (keychain persistence + PUT from the
   // main process); the renderer only ever reads provider status.
   listProviders(): Promise<Provider[]> {

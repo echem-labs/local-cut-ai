@@ -751,6 +751,10 @@ export interface StorageInfo {
   projects: { id: string; title: string; bytes: number }[];
   models_bytes: number;
   cache_bytes: number;
+  /** What renders left in the working folder of LocalCut's own ComfyUI
+   * (`POST /storage/comfyui/cleanup` clears it). Null when that copy has
+   * never run on the engine; absent on engines older than the field. */
+  comfyui_bytes?: number | null;
   disk_free_bytes: number;
   disk_total_bytes: number;
 }
