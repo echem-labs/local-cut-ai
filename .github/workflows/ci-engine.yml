@@ -45,11 +45,14 @@ name: CI (engine)
 # pytest.
 #
 # docs/** is the third, for test_readme_contract.py: those pages state the
-# backend chain `local` expands to, the ComfyUI kind gate's default and the
-# Node floor, each of which the engine also states somewhere. They match no
-# other workflow at all, so without these lines a page edited into
+# backend chain `local` expands to, the ComfyUI kind gate's default, the
+# Node and Python floors and the `localcut` commands, each of which the
+# engine also states somewhere, and they link each other by heading. They
+# match no other workflow at all, so without these lines a page edited into
 # disagreement with the code would merge with nothing run -- and prose drifts
-# in the direction that costs a reader most, by staying plausible.
+# in the direction that costs a reader most, by staying plausible. The same
+# module checks that every file the README and docs link exists, which is
+# why the root documents above serve it as well as the licence contract.
 #
 # deploy/** is the fourth, for test_container_contract.py: it reads the
 # compose file for what it hands the engine (no pinned script model, a GPU

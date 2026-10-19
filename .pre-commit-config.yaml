@@ -166,6 +166,11 @@ repos:
       # each claim lives under engine/, which `engine-tests` already carries,
       # and naming it here would run this module twice on every engine push.
       # test_readme_contract.py reconciles this list against ci-engine.yml's.
+      #
+      # The documents the README links are here too, and everything under
+      # docs/ rather than its pages alone: the module checks that each link
+      # resolves, so renaming a linked file or an image beside the pages
+      # breaks a link in a commit that edits no document.
       - id: readme-contract
         name: readme contract (pytest)
         entry: bash -c 'cd engine && uv run pytest -q tests/test_readme_contract.py'
@@ -173,7 +178,9 @@ repos:
         files: |
           (?x)^(
             README\.md
-            |docs/.+\.md
+            |docs/.+
+            |LICENSE
+            |(AGENTS|CLAUDE|CONTRIBUTING|SECURITY|TRADEMARK)\.md
             |apps/desktop/package\.json
             |apps/desktop/electron/engine\.ts
             |\.github/workflows/ci-(engine|desktop)\.yml
