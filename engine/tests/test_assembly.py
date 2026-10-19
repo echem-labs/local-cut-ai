@@ -995,6 +995,52 @@ async def test_ducking_flag_flows_into_the_edl_and_both_mixes_export(tmp_path, m
         assert audio_stream_duration(backend, out) == pytest.approx(expected, abs=0.2)
 
 
+@pytest.mark.parametrize("ducking", [True, False])
+async def test_the_export_keeps_a_stereo_bed_over_mono_narration(tmp_path, media, ducking):
+    # Kokoro speaks at 24 kHz in mono and ACE-Step writes its bed at 44.1 kHz
+    # in stereo. The export is 48 kHz stereo, so the bed keeps both channels
+    # and everything above 12 kHz.
+    backend = FFmpegBackend(ffmpeg_bin=FFMPEG)
+    out_dir = tmp_path / "generated"
+    voice = synth(
+        tmp_path,
+        "voice24k.wav",
+        ["-f", "lavfi", "-i", "sine=frequency=300:duration=1.5", "-ar", "24000", "-ac", "1"],
+    )
+    bed = synth(
+        tmp_path,
+        "bed.flac",
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "aevalsrc=sin(2*PI*220*t)|sin(2*PI*330*t):s=44100:d=4",
+        ],
+    )
+    ctx = ExecutionContext(
+        output_dir=out_dir,
+        input_artifacts={
+            "s1": media["clip1"],
+            "s1.audio": voice,
+            "s2": media["clip2"],
+            "music": bed,
+        },
+    )
+    edl = await backend.execute(
+        make_spec(NodeKind.TIMELINE, {"aspect": "16:9", "ducking": ducking}), ctx
+    )
+    out = await backend.execute(
+        make_spec(NodeKind.EXPORT, {}, output_hash="c" * 64),
+        ExecutionContext(output_dir=out_dir, input_artifacts={"default": edl}),
+    )
+    audio = json.loads(ffprobe(backend, out, "stream=sample_rate,channels", select="a:0"))[
+        "streams"
+    ][0]
+    assert (int(audio["sample_rate"]), audio["channels"]) == (48000, 2)
+    expected = json.loads(edl.read_text())["duration"]
+    assert audio_stream_duration(backend, out) == pytest.approx(expected, abs=0.2)
+
+
 async def test_beat_align_with_crossfade_stays_consistent_and_on_beat(tmp_path):
     """Regression: beat-snap + a crossfade boundary must keep the EDL length
     equal to the OTIO length (no 0.4s drift) AND land the boundary on a beat.
