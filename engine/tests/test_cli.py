@@ -95,6 +95,35 @@ def test_a_free_port_reaches_the_server_with_the_socket_already_bound(tmp_path, 
     listening.close()
 
 
+def test_the_socket_handed_to_uvicorn_is_not_inheritable(tmp_path, monkeypatch):
+    """No program the engine starts may hold its listening socket. uvicorn
+    serves on uvloop on Linux and macOS, whose subprocess_exec ignores
+    close_fds. On Windows any process created to inherit handles takes every
+    inheritable one. A copy of Ollama holding the socket keeps the port in
+    LISTEN after the engine is killed, so the next engine cannot bind it to
+    start up and stop that copy."""
+    import uvicorn
+
+    from localcut_engine.api import app as app_module
+
+    monkeypatch.setattr(app_module, "create_app", lambda config=None: None)
+    served: dict = {}
+    monkeypatch.setattr(
+        uvicorn.Server, "run", lambda self, sockets=None: served.update(sockets=sockets)
+    )
+
+    code = cli.main(
+        ["serve", "--port", str(free_port()), "--data-dir", str(tmp_path), "--backend", "mock"]
+    )
+
+    assert code == 0
+    [listening] = served["sockets"]
+    try:
+        assert not listening.get_inheritable()
+    finally:
+        listening.close()
+
+
 def test_the_connection_line_the_desktop_shell_parses_is_still_printed(tmp_path, monkeypatch):
     """The shell reads `LOCALCUT_ENGINE {json}` off stdout to learn the url
     and token. Moving the bind ahead of it must not have moved it after the

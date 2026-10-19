@@ -284,7 +284,17 @@ def _survive_console_encoding() -> None:
 
 def _bind(host: str, port: int) -> socket.socket:
     """A listening socket for (host, port), or OSError. Handed to uvicorn so
-    the bind happens before the app (and its job-queue recovery) is built."""
+    the bind happens before the app (and its job-queue recovery) is built.
+
+    The socket stays non-inheritable, as Python creates every socket.
+    uvicorn's own bind_socket marks its socket inheritable for the worker
+    processes of --reload and --workers. This engine runs neither: it serves
+    from this process. An inheritable socket here would reach every program
+    the engine starts, since uvloop (uvicorn's loop on Linux and macOS)
+    ignores close_fds. On Windows any process created to inherit handles
+    would take it too. LocalCut's Ollama would then hold the port after the
+    engine was killed. The next engine could not bind it, so it would never
+    get as far as stopping that copy."""
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     try:
@@ -293,7 +303,6 @@ def _bind(host: str, port: int) -> socket.socket:
         # share the port outright.)
         sock.bind((host, port))
         sock.listen(2048)
-        sock.set_inheritable(True)
     except OSError:
         sock.close()
         raise
