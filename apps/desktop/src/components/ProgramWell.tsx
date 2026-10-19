@@ -38,6 +38,7 @@ import {
   setupTimeLeft,
   timePhrase,
 } from "../lib/setupTime";
+import { bytesLeft, inFlightBytes, sharedSecondsLeft } from "../lib/downloads";
 import { formatSpeed } from "../lib/size";
 import { useMenuFit } from "../lib/useMenuFit";
 import { useOutsideClick } from "../lib/useOutsideClick";
@@ -359,6 +360,9 @@ export function ProgramWell({
   const programs = useApp((state) => state.programs);
   const setupSpeeds = useApp((state) => state.setupSpeeds);
   const latestSpeed = useApp((state) => state.networkSpeed);
+  const models = useApp((state) => state.models);
+  const queue = useApp((state) => state.programQueue);
+  const lineMeter = useApp((state) => state.lineMeter);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -538,15 +542,25 @@ export function ProgramWell({
 
   const fraction = job ? setupFraction(job) : 0;
   // The speed and the time left come from averages over the last minute.
-  // The time is for everything this setup still fetches (lib/setupTime).
+  // The time is for everything this setup still fetches (lib/setupTime),
+  // and no longer than everything sharing the line with it would take
+  // (lib/downloads): its speed is only its share while models download.
   const networkSpeed = networkSpeedOf(programs, setupSpeeds, latestSpeed);
   const speed = job ? phaseSpeedOf(program, setupSpeeds) : null;
   const timeLeft = job ? setupTimeLeft(program, speed, networkSpeed) : null;
-  const left = timeLeft
-    ? t(timeLeft.inAll ? "programs.setup.leftInAll" : "programs.setup.left", {
-        time: timePhrase(timeLeft.seconds),
-      })
+  const seconds = timeLeft
+    ? sharedSecondsLeft(
+        timeLeft.seconds,
+        bytesLeft(inFlightBytes(models, report, queue)),
+        lineMeter,
+      )
     : null;
+  const left =
+    timeLeft && seconds !== null
+      ? t(timeLeft.inAll ? "programs.setup.leftInAll" : "programs.setup.left", {
+          time: timePhrase(seconds),
+        })
+      : null;
   const bytes = job ? { done: formatSize(job.done), total: formatSize(job.total) } : null;
   const progress =
     job && bytes && job.total > 0

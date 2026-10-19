@@ -1,6 +1,7 @@
 import { Download, Pause, X } from "lucide-react";
 import { useEffect } from "react";
 import { nodeLabel } from "../help/terms";
+import { inFlightBytes, inFlightCount } from "../lib/downloads";
 import { plural, t } from "../i18n";
 import { useApp } from "../store";
 import { Tip } from "./Tooltip";
@@ -29,6 +30,9 @@ export function QueueTray() {
     cancelJob,
     firstRunDone,
     settingsOpen,
+    programs,
+    programQueue,
+    setupPlans,
   } = useApp();
   // The tray is app-global, so it answers for the whole ENGINE, not the open
   // project — a render started in one project must not read "idle" from Home
@@ -44,6 +48,8 @@ export function QueueTray() {
   // During first-run the setup screen already shows per-model bars —
   // and Settings isn't reachable yet, so the tray link would dead-end.
   const downloads = firstRunDone ? models.filter((row) => row.downloading) : [];
+  // Program setups come down the same line and count beside the models.
+  const inFlight = firstRunDone ? inFlightCount(models, programs, programQueue) : 0;
   // Interrupted downloads (e.g. the app was closed mid-download): partial
   // bytes on disk, nothing running. Resume picks up where they stopped.
   const paused = firstRunDone
@@ -64,16 +70,11 @@ export function QueueTray() {
   // exactly on the Models pane's bottom controls, swallowing their clicks.
   // Settings has its own queue and download surfaces — yield entirely.
   if (settingsOpen) return null;
-  if (!hasJobs && downloads.length === 0 && paused.length === 0) return null;
+  if (!hasJobs && inFlight === 0 && paused.length === 0) return null;
 
   // A row's byte total falls back to its manifest size until the first
   // progress event lands, so the aggregate never jumps from 0.
-  let done = 0;
-  let total = 0;
-  for (const row of downloads) {
-    done += row.progress?.done ?? 0;
-    total += row.progress && row.progress.total > 0 ? row.progress.total : row.size_bytes;
-  }
+  const { done, total } = inFlightBytes(models, programs, programQueue, setupPlans);
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
   const jobProgress = active ? Math.max(0, Math.min(1, active.progress)) : 0;
 
@@ -114,12 +115,15 @@ export function QueueTray() {
           <span className="cost-badge">{t("queue.costBadge")}</span>
         </>
       )}
-      {hasJobs && (downloads.length > 0 || paused.length > 0) && <span className="divider" />}
-      {downloads.length > 0 && (
+      {hasJobs && (inFlight > 0 || paused.length > 0) && <span className="divider" />}
+      {inFlight > 0 && (
         <Tip label={t("queue.downloadsTitle")}>
-          <button className="tray-downloads" onClick={() => openSettings("models")}>
+          <button
+            className="tray-downloads"
+            onClick={() => openSettings(downloads.length > 0 ? "models" : "programs")}
+          >
             <Download size={12} strokeWidth={2} />
-            {plural("queue.downloads", downloads.length, {
+            {plural("queue.downloads", inFlight, {
               pct,
               size: formatSize(Math.max(0, total - done)),
             })}

@@ -2,7 +2,9 @@ import { render, screen } from "@testing-library/react";
 
 import { describe, expect, it, beforeEach } from "vitest";
 
-import type { Job } from "../api/types";
+import type { Job, ModelRow, ProgramInfo } from "../api/types";
+import { plural } from "../i18n";
+import { formatSize } from "./ModelLibrary";
 import { useApp } from "../store";
 import { QueueTray } from "./QueueTray";
 
@@ -33,6 +35,10 @@ beforeEach(() => {
     models: [],
     currentProject: null,
     firstRunDone: true,
+    programs: null,
+    programQueue: [],
+    setupPlans: {},
+    settingsOpen: false,
   } as never);
 });
 
@@ -79,5 +85,66 @@ describe("QueueTray", () => {
     const { container } = render(<QueueTray />);
 
     expect(container.querySelector(".queue-tray")).toBeNull();
+  });
+});
+
+/**
+ * The pill's "left" is what is still coming down, and program setups come
+ * down the same line as the models. On a fresh install it said "4 models ·
+ * 1% · 24 GB left" while ComfyUI and Ollama brought another 10 GB.
+ */
+describe("the tray's downloads", () => {
+  const GiB = 2 ** 30;
+  const model = (id: string, size: number, done: number): ModelRow =>
+    ({
+      id,
+      size_bytes: size,
+      downloaded: false,
+      downloading: true,
+      progress: { done, total: size },
+      partial_bytes: 0,
+    }) as ModelRow;
+  const comfyui = {
+    id: "comfyui",
+    state: "missing",
+    setup: {
+      download_bytes: 3.6 * GiB,
+      pull: null,
+      job: { id: "c", phase: "downloading", done: 0.6 * GiB, total: 3.6 * GiB, bytes_per_s: null },
+    },
+  } as unknown as ProgramInfo;
+  const ollama = {
+    id: "ollama",
+    state: "missing",
+    checks: {},
+    managed: null,
+    setup: {
+      available: true,
+      takes_effect: true,
+      download_bytes: 1.4 * GiB,
+      pull: { model: "qwen3:8b", bytes: 5 * GiB },
+      job: null,
+      last: null,
+    },
+  } as unknown as ProgramInfo;
+
+  it("counts the setups running and waiting beside the models", () => {
+    useApp.setState({
+      models: [model("sdxl", 6 * GiB, 2 * GiB), model("ltx", 10 * GiB, 0)],
+      programs: {
+        platform: null,
+        programs_dir: "",
+        programs_bytes: 0,
+        disk_free_bytes: 0,
+        programs: [comfyui, ollama],
+      },
+      programQueue: ["ollama"],
+      setupPlans: { comfyui: 3.6 * GiB, ollama: 6.4 * GiB },
+    } as never);
+    render(<QueueTray />);
+    // 16 GB of models and 10 GB of programs, 2.6 GB of it in: 10%.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      plural("queue.downloads", 4, { pct: 10, size: formatSize(26 * GiB - 2.6 * GiB) }),
+    );
   });
 });

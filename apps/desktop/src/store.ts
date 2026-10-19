@@ -11,7 +11,14 @@ import { blockingGaps, readinessFingerprint } from "./lib/readiness";
 import { formatSize } from "./lib/size";
 import { usePlayback } from "./lib/playback";
 import { setupOffer, setupSize } from "./lib/programs";
-import { isNetworkPhase, nextSpeed, speedOf, type SetupSpeed } from "./lib/setupTime";
+import {
+  bytesToSetUp,
+  isNetworkPhase,
+  nextSpeed,
+  speedOf,
+  type SetupSpeed,
+} from "./lib/setupTime";
+import { lineArrival, type LineMeter } from "./lib/downloads";
 import {
   loadTemplates,
   refuseReason,
@@ -294,6 +301,15 @@ interface AppState {
    * engine. What is still to download after the phase on screen, or behind
    * the running setup, is priced at it. */
   networkSpeed: number | null;
+  /** What each program setup this window started was to fetch, in bytes:
+   * its download and the model it pulls. Kept once it is done, so it stays
+   * in the download totals as all in; dropped when it fails or is
+   * cancelled, since those bytes are no longer coming (lib/downloads). */
+  setupPlans: Partial<Record<ProgramId, number>>;
+  /** How fast bytes arrive on the line, every model download and every
+   * setup's download or pull together (lib/downloads). Null until the first
+   * arrival. */
+  lineMeter: LineMeter | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -903,6 +919,9 @@ const pendingPatches = new Map<string, PendingPatch>();
 // models whose download already ended so a stale row can't resurrect it.
 const wsProgress = new Map<string, { done: number; total: number }>();
 const terminalDownloads = new Set<string>();
+// The bytes each setup's network phase had reached at its last event, keyed
+// by program and phase, for the line meter. Models use wsProgress.
+const setupArrived = new Map<string, number>();
 // Bumped by every /programs read and by every setup that ends. A read that
 // left before a setup finished would land after it and bring back a job the
 // engine had already cleared; the bump is what tells that read it is stale.
@@ -952,6 +971,7 @@ const resetEngineScopedState = () => {
   pendingPatches.clear();
   wsProgress.clear();
   terminalDownloads.clear();
+  setupArrived.clear();
   // The old engine's programs report is about another machine.
   programsGen++;
   jobsShown.clear();
@@ -1070,8 +1090,14 @@ export const useApp = create<AppState>((set, get) => {
     if (seedFrozen) return;
     // A progress tick means the download is live (again).
     terminalDownloads.delete(event.model);
+    const before = wsProgress.get(event.model)?.done;
     wsProgress.set(event.model, { done: event.done, total: event.total });
     set({
+      lineMeter: lineArrival(
+        get().lineMeter,
+        before === undefined ? 0 : event.done - before,
+        Date.now(),
+      ),
       models: get().models.map((row) =>
         row.id === event.model
           ? { ...row, downloading: true, progress: { done: event.done, total: event.total } }
@@ -1188,7 +1214,21 @@ export const useApp = create<AppState>((set, get) => {
       Date.now(),
     );
     const average = speedOf(speed);
+    // Only a download or a pull moves bytes over the line. The first event
+    // of a phase sets where it starts from.
+    const arrivedKey = `${event.program}:${event.phase}`;
+    const arrivedBefore = known?.phase === event.phase ? setupArrived.get(arrivedKey) : undefined;
+    if (isNetworkPhase(event.phase)) setupArrived.set(arrivedKey, event.done);
     set({
+      ...(isNetworkPhase(event.phase)
+        ? {
+            lineMeter: lineArrival(
+              get().lineMeter,
+              arrivedBefore === undefined ? 0 : event.done - arrivedBefore,
+              Date.now(),
+            ),
+          }
+        : {}),
       setupSpeeds: { ...get().setupSpeeds, [event.program]: speed },
       ...(isNetworkPhase(event.phase) && average !== null ? { networkSpeed: average } : {}),
       programs: {
@@ -1219,9 +1259,14 @@ export const useApp = create<AppState>((set, get) => {
   ) => {
     programsGen++;
     jobsShown.delete(event.program);
+    setupArrived.delete(`${event.program}:downloading`);
+    setupArrived.delete(`${event.program}:pulling`);
     const speeds = { ...get().setupSpeeds };
     delete speeds[event.program];
-    set({ setupSpeeds: speeds });
+    // A setup that did not finish brings nothing more down.
+    const plans = { ...get().setupPlans };
+    if (event.type !== "program.setup.done") delete plans[event.program];
+    set({ setupSpeeds: speeds, setupPlans: plans });
     const report = get().programs;
     if (report && !seedFrozen) {
       const failed = event.type === "program.setup.failed" ? event : null;
@@ -1785,6 +1830,8 @@ export const useApp = create<AppState>((set, get) => {
       programQueue: [],
       setupSpeeds: {},
       networkSpeed: null,
+      setupPlans: {},
+      lineMeter: null,
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1845,6 +1892,8 @@ export const useApp = create<AppState>((set, get) => {
     programQueue: [],
     setupSpeeds: {},
     networkSpeed: null,
+    setupPlans: {},
+    lineMeter: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount
@@ -3115,6 +3164,12 @@ export const useApp = create<AppState>((set, get) => {
           : await client.setupProgram(programId);
         const live = get().client === client && !seedFrozen;
         if (answer.status === "started" && live) {
+          set({
+            setupPlans: {
+              ...get().setupPlans,
+              [programId]: sizes.download_bytes + (row?.setup.pull?.bytes ?? 0),
+            },
+          });
           showJob(
             programId,
             answer.job,
@@ -3152,6 +3207,10 @@ export const useApp = create<AppState>((set, get) => {
       try {
         const answer = await client.pullModel(programId, model);
         if (answer.status === "started" && get().client === client && !seedFrozen) {
+          const row = get().programs?.programs.find((program) => program.id === programId);
+          set({
+            setupPlans: { ...get().setupPlans, [programId]: row?.setup.pull?.bytes ?? 0 },
+          });
           showJob(programId, answer.job, "pulling", 0);
         }
         if (answer.status === "present") afterProgramChange();
@@ -3224,7 +3283,14 @@ export const useApp = create<AppState>((set, get) => {
       };
       const order = [...new Set(programIds)].sort((a, b) => size(a) - size(b));
       const client = get().client;
-      set({ programQueue: order });
+      // Every setup in the batch counts in the download totals from the
+      // click, waiting ones included.
+      const plans = { ...get().setupPlans };
+      for (const id of order) {
+        const row = rows.find((entry) => entry.id === id);
+        if (row) plans[id] = bytesToSetUp(row);
+      }
+      set({ programQueue: order, setupPlans: plans });
       let refused: string | null = null;
       while (get().programQueue.length > 0 && get().client === client) {
         const [next, ...rest] = get().programQueue;
@@ -3239,6 +3305,9 @@ export const useApp = create<AppState>((set, get) => {
               : await get().setupProgram(next);
         if (error) {
           refused ??= error;
+          const plans = { ...get().setupPlans };
+          delete plans[next];
+          set({ setupPlans: plans });
           continue;
         }
         // One at a time: the next starts when this one's job is gone,
