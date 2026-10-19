@@ -907,6 +907,11 @@ const terminalDownloads = new Set<string>();
 // left before a setup finished would land after it and bring back a job the
 // engine had already cleared; the bump is what tells that read it is stale.
 let programsGen = 0;
+// Each job this window put on a row when the engine answered its start,
+// with the read generation current then. A read sent at or before that
+// generation left before the job existed, so its "no job" says nothing
+// about it. The job's own end, or a read sent after the start, settles it.
+const jobsShown = new Map<ProgramId, number>();
 // True while the rig has injected fixture state (see installSeedHook):
 // live model refreshes and WS progress are dropped so the injected frame
 // holds still. Never true outside a rig-driven dev run.
@@ -949,20 +954,27 @@ const resetEngineScopedState = () => {
   terminalDownloads.clear();
   // The old engine's programs report is about another machine.
   programsGen++;
+  jobsShown.clear();
   seedFrozen = false;
 };
 
 /** A fresh report, with the progress of a job the /ws stream has already
  * moved past kept. A read that started a beat before the newest tick would
- * otherwise pull a bar backwards until the next one. */
+ * otherwise pull a bar backwards until the next one. A read that started
+ * before a job did keeps that job too: landing without it would take the bar
+ * down, and `setupPrograms` would start the next program alongside it. */
 const keepLiveProgress = (
   report: ProgramsReport,
   live: ProgramsReport | null,
+  generation: number,
 ): ProgramsReport => ({
   ...report,
   programs: report.programs.map((row) => {
     const job = row.setup?.job;
     const known = live?.programs.find((other) => other.id === row.id)?.setup?.job;
+    if (!job && known && generation <= (jobsShown.get(row.id) ?? -1)) {
+      return { ...row, setup: { ...row.setup, job: known, last: null } };
+    }
     if (!job || !known || known.id !== job.id || known.phase !== job.phase) return row;
     return known.done > job.done ? { ...row, setup: { ...row.setup, job: known } } : row;
   }),
@@ -1145,6 +1157,7 @@ export const useApp = create<AppState>((set, get) => {
         ),
       },
     });
+    jobsShown.set(programId, programsGen);
   };
 
   // A setup's bar moves with the /ws progress events, in place. A tick for a
@@ -1205,6 +1218,7 @@ export const useApp = create<AppState>((set, get) => {
     >,
   ) => {
     programsGen++;
+    jobsShown.delete(event.program);
     const speeds = { ...get().setupSpeeds };
     delete speeds[event.program];
     set({ setupSpeeds: speeds });
@@ -3070,7 +3084,13 @@ export const useApp = create<AppState>((set, get) => {
         // The engine-switch guard every refresh here makes, plus the
         // generation: a newer read, or a setup that ended, outranks this one.
         if (get().client !== client || generation !== programsGen || seedFrozen) return;
-        set({ programs: keepLiveProgress(report, get().programs), programsError: null });
+        set({
+          programs: keepLiveProgress(report, get().programs, generation),
+          programsError: null,
+        });
+        // This read left after those jobs started, so it already says
+        // whether they still run.
+        for (const [id, shown] of jobsShown) if (shown < generation) jobsShown.delete(id);
       } catch (err) {
         if (get().client !== client || generation !== programsGen) return;
         // The last report stays: a blank pane says less than one marked

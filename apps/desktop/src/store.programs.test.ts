@@ -429,6 +429,69 @@ describe("setting up several at once", () => {
     expect(await all).toBeNull();
     expect(useApp.getState().programQueue).toEqual([]);
   });
+
+  it("keeps the next one waiting when a read from before its start lands late", async () => {
+    // FFmpeg's `done` re-reads the programs. That read can still be on its
+    // way when ComfyUI's setup starts, and it describes ComfyUI with no job.
+    const send = await connected(
+      report([ffmpeg(), big("comfyui", 1900 * MB), big("ollama", 2400 * MB)]),
+    );
+    engine.setupProgram.mockImplementation(async (id: unknown) => ({
+      status: "started",
+      job: `job-${String(id)}`,
+    }));
+    const all = useApp.getState().setupPrograms(["ffmpeg", "comfyui", "ollama"]);
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(1));
+
+    let answerStale: (value: ProgramsReport) => void = () => {};
+    engine.programs.mockImplementationOnce(
+      () => new Promise<ProgramsReport>((resolve) => (answerStale = resolve)),
+    );
+    const ready = ffmpeg({ state: "ready", source: "managed", checks: { draws_text: true } });
+    const comfyuiRunning = (): ProgramInfo => {
+      const idle = big("comfyui", 1900 * MB);
+      return {
+        ...idle,
+        setup: {
+          ...idle.setup,
+          job: {
+            id: "job-comfyui",
+            phase: "downloading",
+            done: 0,
+            total: 1900 * MB,
+            bytes_per_s: null,
+          },
+        },
+      };
+    };
+    engine.programs.mockResolvedValue(
+      report([ready, comfyuiRunning(), big("ollama", 2400 * MB)]),
+    );
+    send({
+      type: "program.setup.done",
+      program: "ffmpeg",
+      version: "8.1.3",
+      location: "/x/ffmpeg",
+      in_use: true,
+      draws_text: true,
+    });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(2));
+    expect(engine.setupProgram).toHaveBeenLastCalledWith("comfyui");
+
+    answerStale(report([ready, big("comfyui", 1900 * MB), big("ollama", 2400 * MB)]));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const comfyui = useApp.getState().programs!.programs.find((p) => p.id === "comfyui")!;
+    expect(comfyui.setup.job).toMatchObject({ id: "job-comfyui" });
+    expect(engine.setupProgram).toHaveBeenCalledTimes(2);
+    expect(useApp.getState().programQueue).toEqual(["ollama"]);
+    expect(row().state).toBe("ready");
+
+    send({ type: "program.setup.cancelled", program: "comfyui" });
+    await vi.waitFor(() => expect(engine.setupProgram).toHaveBeenCalledTimes(3));
+    expect(engine.setupProgram).toHaveBeenLastCalledWith("ollama");
+    send({ type: "program.setup.cancelled", program: "ollama" });
+    expect(await all).toBeNull();
+  });
 });
 
 /** An Ollama of the user's own, running without the script model. */
