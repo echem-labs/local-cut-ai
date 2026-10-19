@@ -12,11 +12,31 @@ import { t } from "../i18n";
  * `remainingLabel` can use (a job in flight has no median yet), and it
  * covers the beat before /system/etas has answered. */
 
-// Finals render at full quality — slower than a draft. A GUESS, and used
-// only when the engine has no final-quality median of its own to offer.
-const FINAL_QUALITY_FACTOR = 1.5;
-// Timeline assembly + MP4 export tail, added once — the fallback for the
-// same pair of kinds when the engine has not measured them either.
+/** The quality ladder, as the engine's ComfyUI backend renders it
+ * (`_BASE_STEPS`, `_FINAL_STEPS_SCALE` and `_FINAL_RES_SCALE` in
+ * backends/comfyui.py): each kind's sampler steps at draft and at final
+ * quality, and how many times wider and taller its final frame is. Only a
+ * clip changes size; its draft renders small for reviewing the pacing.
+ * test_ui_contract holds this table to the engine. */
+const LADDER = {
+  keyframe: { draftSteps: 20, finalSteps: 30, scale: 1 },
+  clip: { draftSteps: 25, finalSteps: 38, scale: 1.5 },
+  music: { draftSteps: 27, finalSteps: 40, scale: 1 },
+} as const;
+
+type LadderKind = keyof typeof LADDER;
+
+/** How a render's time grows with its frame's area: as area^1.25. Measured
+ * on an 8 GB RTX 3080 Laptop GPU (hardware tier A) on 2026-10-19, where
+ * LTX-Video's 7 s drafts at 768x448 and 25 steps took a median 105 s and
+ * its finals at 1152x672 and 38 steps took 440 s. That is 4.19 times the
+ * draft: 1.52 for the extra steps, and 2.76 for a frame with 2.25 times the
+ * pixels. The cost outruns the pixels because attention over the video's
+ * latent grows with the square of its token count. */
+const AREA_COST_EXPONENT = 1.25;
+
+// Timeline, captions and MP4 export, added once — the fallback for those
+// kinds when the engine has measured none of them.
 const ASSEMBLY_TAIL_S = 30;
 // A render first observed beyond this progress was joined too late for its
 // duration to be a trustworthy sample.
@@ -34,7 +54,7 @@ interface RenderStart {
 // node ids (s1.clip) repeat across projects.
 const startedAt = new Map<string, RenderStart>();
 // Completed DRAFT clip render durations (seconds), newest last. Finals are
-// excluded: they would be double-counted by FINAL_QUALITY_FACTOR below.
+// excluded: they would be double-counted by `finalCostFactor` below.
 //
 // In memory only, and deliberately no longer persisted. It used to be
 // cached in `localStorage` under one global key so a new session had an
@@ -109,38 +129,63 @@ const formatEta = (secs: number): string =>
     ? t("eta.etaMin", { n: Math.ceil(secs / 60) })
     : t("eta.etaSec", { n: Math.max(10, Math.round(secs / 10) * 10) });
 
-/** Seconds one clip costs at FINAL quality, or null if nothing has measured
- * one. The engine's final-quality median is the only source that needs no
- * arithmetic; everything below it is a draft timing with the factor
- * applied. */
-function finalClipSeconds(): number | null {
-  const measured = engineMedian("clip", "final");
-  if (measured !== null) return measured;
-  const draft = engineMedian("clip", "draft");
-  if (draft !== null) return draft * FINAL_QUALITY_FACTOR;
-  if (clipSeconds.length === 0) return null;
-  const avg = clipSeconds.reduce((sum, s) => sum + s, 0) / clipSeconds.length;
-  return avg * FINAL_QUALITY_FACTOR;
+/** How many times a draft's render time a final render of `kind` takes:
+ * its extra sampler steps, times its larger frame at the measured cost of
+ * area. */
+export function finalCostFactor(kind: LadderKind): number {
+  const { draftSteps, finalSteps, scale } = LADDER[kind];
+  return (finalSteps / draftSteps) * (scale * scale) ** AREA_COST_EXPONENT;
 }
 
+/** Seconds one node of `kind` costs at FINAL quality, or null if nothing has
+ * measured one. The engine's final-quality median is the only source that
+ * needs no arithmetic; everything below it is a draft timing scaled by the
+ * ladder. This window's own draft timings exist for clips alone. */
+function finalSeconds(kind: LadderKind): number | null {
+  const measured = engineMedian(kind, "final");
+  if (measured !== null) return measured;
+  const draft = engineMedian(kind, "draft");
+  if (draft !== null) return draft * finalCostFactor(kind);
+  if (kind !== "clip" || clipSeconds.length === 0) return null;
+  const avg = clipSeconds.reduce((sum, s) => sum + s, 0) / clipSeconds.length;
+  return avg * finalCostFactor(kind);
+}
+
+/** Whether Create final video renders this node again: everything the
+ * ladder covers that is not final yet, pinned, or skipped for the user's own
+ * picture. */
+const rendersAgain = (node: NodeState | null | undefined): boolean =>
+  !!node && node.status !== "final" && node.status !== "skipped" && !node.pinned;
+
 /** "~9 min" for the Create-final-video CTA, or null when no clip render has
- * been measured anywhere — by this session or by the engine. */
+ * been measured anywhere — by this session or by the engine.
+ *
+ * The final pass renders each scene's keyframe and clip again, and the
+ * music, then assembles. Clips are nearly all of it; a keyframe or music
+ * nothing has timed adds nothing rather than a guess. */
 export function finalizeEta(board: Board): string | null {
-  const perClip = finalClipSeconds();
+  const perClip = finalSeconds("clip");
   if (perClip === null) return null;
-  const toRender = board.scenes.filter(
-    (scene) => scene.clip.status !== "final" && !scene.clip.pinned,
-  ).length;
-  // Assembly is two more renders the engine also times. Falling back to one
-  // flat constant for the pair only when it has measured neither: half a
-  // measured tail plus half a guess is a worse number than either.
+  const clips = board.scenes.filter((scene) => rendersAgain(scene.clip)).length;
+  const keyframes = board.scenes.filter((scene) => rendersAgain(scene.keyframe)).length;
+  const music = rendersAgain(board.aux.music) ? 1 : 0;
+  const renders =
+    clips * perClip +
+    keyframes * (finalSeconds("keyframe") ?? 0) +
+    music * (finalSeconds("music") ?? 0);
+  // Assembly is three more renders the engine also times. Falling back to
+  // one flat constant for them only when it has measured none: part a
+  // measured tail and part a guess is a worse number than either.
   const timeline = engineMedian("timeline", "final") ?? engineMedian("timeline", "draft");
+  const captions = board.aux.captions
+    ? (engineMedian("captions", "final") ?? engineMedian("captions", "draft"))
+    : null;
   const exportTail = engineMedian("export", "final") ?? engineMedian("export", "draft");
   const tail =
-    timeline !== null || exportTail !== null
-      ? (timeline ?? 0) + (exportTail ?? 0)
+    timeline !== null || captions !== null || exportTail !== null
+      ? (timeline ?? 0) + (captions ?? 0) + (exportTail ?? 0)
       : ASSEMBLY_TAIL_S;
-  return formatEta(toRender * perClip + tail);
+  return formatEta(renders + tail);
 }
 
 /** "about 40s left" for a node mid-render, projected from the progress

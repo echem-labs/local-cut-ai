@@ -20,7 +20,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { Board, NodeState } from "../api/types";
-import { finalizeEta, setEngineEtas } from "./eta";
+import { finalCostFactor, finalizeEta, setEngineEtas } from "./eta";
 
 const node = (id: string, status = "draft"): NodeState =>
   ({
@@ -59,8 +59,8 @@ describe("the finalize estimate", () => {
 
   it("uses the engine's measured FINAL median, with no quality factor", () => {
     // 60s per clip, measured at the quality the CTA is about to request.
-    // Two clips plus the assembly tail. The 1.5x draft->final factor is a
-    // guess that must not be applied on top of a real final-quality sample.
+    // Two clips plus the assembly tail. The ladder's draft->final factor
+    // must not be applied on top of a real final-quality sample.
     setEngineEtas({
       clip: { final: { seconds: 60, samples: 4 }, draft: { seconds: 20, samples: 9 } },
     });
@@ -69,11 +69,70 @@ describe("the finalize estimate", () => {
   });
 
   it("scales a draft median when the engine has never rendered a final", () => {
-    // The common case: you have watched drafts, never pressed the CTA. The
-    // factor is honest here because there is nothing better to use.
+    // The common case: you have watched drafts, never pressed the CTA. A
+    // final clip has 38 steps to the draft's 25 over a frame 1.5 times as
+    // wide and as tall, which costs 4.19 times the draft here.
     setEngineEtas({ clip: { draft: { seconds: 60, samples: 5 } } });
-    // 2 x 60 x 1.5 = 180s + 30s tail = 210s -> 4 min.
-    expect(finalizeEta(board())).toBe("~4 min");
+    // 2 x 60 x 4.19 = 503s + 30s tail = 533s -> 9 min.
+    expect(finalizeEta(board())).toBe("~9 min");
+  });
+
+  it("prices a final clip by its steps and its frame, not its steps alone", () => {
+    // The 2026-10-19 run on an 8 GB RTX 3080 Laptop GPU: LTX drafts at
+    // 768x448 and 25 steps took a median 105 s, finals at 1152x672 and 38
+    // steps took 440 s. A factor of the steps alone (1.5) said 158 s.
+    expect(finalCostFactor("clip") * 105).toBeGreaterThan(430);
+    expect(finalCostFactor("clip") * 105).toBeLessThan(450);
+  });
+
+  it("prices a final keyframe and music by their extra steps alone", () => {
+    // Their frame and their length stay as drafted. The run's keyframes went
+    // from 18-22 s to 29-32 s.
+    expect(finalCostFactor("keyframe")).toBeCloseTo(1.5, 2);
+    expect(finalCostFactor("music")).toBeCloseTo(40 / 27, 2);
+  });
+
+  it("counts the keyframes and the music the final pass renders again", () => {
+    setEngineEtas({
+      clip: { final: { seconds: 60, samples: 4 } },
+      keyframe: { draft: { seconds: 20, samples: 8 } },
+      music: { final: { seconds: 25, samples: 1 } },
+    });
+    const b = board();
+    b.aux = { music: node("music") };
+    // 2 x 60 + 2 x 20 x 1.5 + 25 + 30 tail = 235s -> 4 min.
+    expect(finalizeEta(b)).toBe("~4 min");
+  });
+
+  it("does not count a keyframe the scene does not render", () => {
+    // A scene built from the user's own picture has no keyframe coming.
+    setEngineEtas({
+      clip: { final: { seconds: 60, samples: 4 } },
+      keyframe: { final: { seconds: 120, samples: 4 } },
+    });
+    const b = board();
+    b.scenes[0].keyframe = node("s1.keyframe", "skipped");
+    b.scenes[1].keyframe = null;
+    // 2 x 60 + 30 tail = 150s -> 3 min, with no keyframe in it.
+    expect(finalizeEta(b)).toBe("~3 min");
+  });
+
+  it("would have said about an hour for the run that took 64 minutes", () => {
+    // Create final video on 2026-10-19, eight scenes, with the medians the
+    // drafts left: clips 105 s, keyframes 20 s, music 21 s, and 33 s for the
+    // timeline, captions and export together. The button said ~23 min and
+    // the pass took 63 min 54 s.
+    setEngineEtas({
+      clip: { draft: { seconds: 105, samples: 8 } },
+      keyframe: { draft: { seconds: 20, samples: 11 } },
+      music: { draft: { seconds: 21, samples: 1 } },
+      timeline: { draft: { seconds: 8, samples: 2 } },
+      captions: { draft: { seconds: 6, samples: 2 } },
+      export: { draft: { seconds: 19, samples: 2 } },
+    });
+    const b = board(8);
+    b.aux = { music: node("music"), captions: node("captions") };
+    expect(finalizeEta(b)).toBe("~64 min");
   });
 
   it("measures the assembly tail too, when the engine knows it", () => {
