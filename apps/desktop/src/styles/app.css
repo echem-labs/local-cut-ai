@@ -2784,7 +2784,11 @@ button.link:hover {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  /* Safe: when a proposed edit's card and the box below it are taller than
+   * the panel, they start at the top and scroll, rather than running out of
+   * the top edge where nothing can scroll to them. */
+  justify-content: safe flex-end;
+  overflow-y: auto;
 }
 
 /* The prompt fills the top; scope, models and send sit on one aligned
