@@ -15,7 +15,12 @@ import { describe, expect, it } from "vitest";
  * parser: a missing `toolsets` block means the legacy runtime, and that is
  * the case this has to see.
  */
-const config = readFileSync(path.join(__dirname, "..", "electron-builder.yml"), "utf8");
+// A Windows checkout has CRLF line endings, which the block pattern below
+// would otherwise stop at.
+const config = readFileSync(path.join(__dirname, "..", "electron-builder.yml"), "utf8").replace(
+  /\r\n/g,
+  "\n",
+);
 
 /** `toolsets.appimage`, or null when the config leaves electron-builder's
  * default in place. */
