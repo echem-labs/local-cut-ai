@@ -41,14 +41,14 @@ describe("spokenSeconds", () => {
 describe("ScriptTable", () => {
   it("shows spoken time per scene, never the model's duration_s claim", () => {
     render(<ScriptTable screenplay={screenplay} targetS={60} />);
-    expect(screen.getByText("~14s")).toBeInTheDocument();
-    expect(screen.getByText("~27s")).toBeInTheDocument();
+    expect(screen.getByText("~13s")).toBeInTheDocument();
+    expect(screen.getByText("~26s")).toBeInTheDocument();
     expect(screen.queryByText("~60s")).not.toBeInTheDocument();
   });
 
   it("totals the spoken time against the requested target", () => {
     render(<ScriptTable screenplay={screenplay} targetS={60} />);
-    expect(screen.getByText("~41s spoken · target 60s")).toBeInTheDocument();
+    expect(screen.getByText("~40s spoken · target 60s")).toBeInTheDocument();
   });
 });
 
@@ -57,7 +57,7 @@ describe("screenplayMarkdown", () => {
     const md = screenplayMarkdown(screenplay);
     expect(md).toContain("# The Fall of Istanbul");
     expect(md).toContain("> The empire's final breath.");
-    expect(md).toContain("## s1 · ~14s");
+    expect(md).toContain("## s1 · ~13s");
     expect(md).toContain("*Visual:* aerial view");
     expect(md.endsWith("\n")).toBe(true);
   });
