@@ -99,3 +99,45 @@ describe("a timeline block's accessible name", () => {
     }
   });
 });
+
+describe("a timeline block's length", () => {
+  // Real lengths come out of decoded audio and estimates out of a division,
+  // so neither is ever a round number.
+  const withLength = (durations: Board["assembled_durations"], text = ""): Board => ({
+    ...board("draft"),
+    scenes: [
+      {
+        ...board("draft").scenes[0],
+        // Not spoken yet, which is when the length is an estimate.
+        narration: text
+          ? { ...node("s1.narration", "queued"), artifact_hash: null, params: { text } }
+          : null,
+      },
+    ],
+    assembled_durations: durations,
+  });
+
+  function mountBoard(value: Board) {
+    useApp.setState({
+      board: value,
+      currentProject: { id: "p1", title: "t", approvals: [] },
+      client: { artifactUrl: () => "" },
+    } as never);
+    return render(<TimelineStrip />);
+  }
+
+  it("prints a measured length to one decimal, as the scene card does", () => {
+    const { container } = mountBoard(withLength({ s1: 5.683 }));
+    expect(container.querySelector(".tl-block .dur")).toHaveTextContent(/^5\.7s$/);
+    expect(blockName()).toMatch(/^Scene 1, 5\.7s,/);
+  });
+
+  it("prints an estimate from the narration to one decimal too", () => {
+    const { container } = mountBoard(
+      withLength({}, "Honeybees use a unique dance to tell their hive mates where flowers are."),
+    );
+    const label = container.querySelector(".tl-block .dur")?.textContent ?? "";
+    expect(label).toMatch(/^\d+(\.\d)?s$/);
+    expect(blockName()).toMatch(/^Scene 1, \d+(\.\d)?s,/);
+  });
+});
