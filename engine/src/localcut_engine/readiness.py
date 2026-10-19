@@ -54,7 +54,7 @@ from .manifest.downloads import is_downloaded
 from .manifest.loader import load_manifest
 from .manifest.recommend import _fits, auto_llm_model
 from .programs import ollama as ollama_program
-from .programs.setup import setup_fix
+from .programs.setup import INSTALLERS, setup_fix
 from .providers.registry import (
     PROVIDERS,
     VISION_MODELS,
@@ -697,8 +697,11 @@ def _script_down_row(
 ) -> dict:
     """Nothing wrote the script because no LLM server answers, or because
     the chain has no `llm` backend to ask one. Where LocalCut's own Ollama
-    would be the server at the address, setting it up is the fix."""
-    if not backends.find("llm"):
+    would be the server at the address, setting it up is the fix, and its
+    size is the program and the script model the setup pulls into it: the
+    figure GET /programs gives the same setup."""
+    llm = backends.find("llm")
+    if not llm:
         return _row(
             NodeKind.SCRIPT,
             verdict=verdict,
@@ -706,13 +709,17 @@ def _script_down_row(
             backend=backend,
             model=model,
         )
+    fix = setup_fix(config, "ollama")
+    if fix is not None:
+        pulled = INSTALLERS["ollama"].pull_bytes(config, llm.resolve_model(model))
+        fix = {**fix, "size_bytes": fix["size_bytes"] + pulled}
     return _row(
         NodeKind.SCRIPT,
         verdict=verdict,
         reason="llm_server_down",
         backend=backend,
         model=model,
-        fix=setup_fix(config, "ollama"),
+        fix=fix,
     )
 
 

@@ -417,6 +417,26 @@ def test_setup_runs_ollama_and_pulls_the_script_model(tmp_path, monkeypatch, arc
     assert _gone(again)
 
 
+def test_the_script_rows_setup_fix_counts_the_model_the_setup_pulls(
+    tmp_path, monkeypatch, archives
+):
+    """The render gate and the board's banner show the readiness fix's size
+    on their Set up Ollama button, and the Programs screens show the
+    setup's: the archive plus the script model it pulls. For `qwen3:8b`
+    that is 1.3 GiB against 6.3, so the two have to be the same figure."""
+    asset = _pin_ollama(monkeypatch, archives)
+    config = _config(tmp_path / "engine", free_port(), llm_model="qwen3:8b")
+    with _live(config) as (_, http):
+        setup = _ollama(http)["setup"]
+        assert setup["pull"]["model"] == "qwen3:8b"
+        assert setup["pull"]["bytes"], "the catalog sizes the model"
+        script = http.get("/readiness", params={"kinds": "script"}).json()["rows"][0]
+        assert script["reason"] == "llm_server_down"
+        assert script["fix"]["type"] == "setup_program"
+        assert script["fix"]["size_bytes"] == setup["download_bytes"] + setup["pull"]["bytes"]
+        assert script["fix"]["size_bytes"] > asset["size"]
+
+
 def test_a_server_of_the_users_own_is_used_and_left_alone(tmp_path, monkeypatch, archives):
     """LocalCut's copy is set up, and the user's own Ollama answers at the
     address when the engine starts: LocalCut uses theirs, never starts its

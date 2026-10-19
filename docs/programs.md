@@ -625,9 +625,11 @@ ffmpeg came from `PATH`. It is not offered where nothing is pinned for this
 machine, where `LOCALCUT_FFMPEG_BIN` or `<data_dir>/bin` would still win, or
 where LocalCut's copy is already the one in use.
 
-An `llm_server_down` row gets the same fix for Ollama, with its download's
-size, where LocalCut's copy would serve `LOCALCUT_LLM_URL` and is not set up
-yet. A copy that is set up and stopped is started from Settings > Programs
+An `llm_server_down` row gets the same fix for Ollama, where LocalCut's copy
+would serve `LOCALCUT_LLM_URL` and is not set up yet. Its `size_bytes` is the
+download plus the script model the setup pulls (the catalog's figure, nothing
+for a model the catalog does not hold), the figure `GET /programs` gives that
+setup as `download_bytes` and `pull.bytes`. A copy that is set up and stopped is started from Settings > Programs
 instead. An `llm_model_missing` row whose server is an Ollama gets
 `{"type": "pull_model", "program": "ollama", "model": "qwen3:8b",
 "size_bytes": N}`, which `POST /programs/ollama/pull` with that model carries
