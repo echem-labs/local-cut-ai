@@ -903,6 +903,26 @@ def test_a_users_ollama_without_the_model_is_offered_the_pull(tmp_path, monkeypa
         theirs.wait()
 
 
+def test_a_row_that_says_the_pull_ended_lists_what_it_pulled(tmp_path, monkeypatch):
+    """GET /programs keeps a server's answer for a few seconds, keyed by
+    what had happened to the setup when it asked, and a row reports the
+    setup as it was then. This server answers /v1/models later than the
+    pull takes, so the pull ends while the first row is being built. That
+    row must not say the pull ended beside an answer from while it ran."""
+    monkeypatch.delenv("FAKE_OLLAMA", raising=False)
+    port = free_port()
+    theirs = _start_fake(port, tmp_path / "their-models", pace=0.05, models_delay=1.0)
+    try:
+        with _live(_config(tmp_path / "engine", port)) as (_, http):
+            assert http.post("/programs/ollama/pull").json()["status"] == "started"
+            row = _wait_for(http, lambda row: row["setup"]["job"] is None)
+            assert row["setup"]["last"]["outcome"] == "done", row["setup"]["last"]
+            assert row["checks"]["model_present"] is True
+    finally:
+        theirs.kill()
+        theirs.wait()
+
+
 def test_the_pull_route_refuses_what_it_cannot_do(tmp_path, monkeypatch):
     port = free_port()
     with _live(_config(tmp_path / "engine", port)) as (_, http):

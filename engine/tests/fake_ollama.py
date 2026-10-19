@@ -15,6 +15,8 @@ environment it inherits, changes how it behaves:
 - "layer": the size of the one layer a pull fetches (default 3000 bytes),
   reported in five steps "pace" seconds apart (default 0.15), slow enough
   for the engine's throttled progress to show one;
+- "models_delay": answer /v1/models this many seconds after reading what
+  it has, the way a busy server answers late;
 - "env_to": a file to which every start adds one line, a JSON object of the
   OLLAMA_ variables it was started with, which is what Ollama reads its
   settings from.
@@ -84,6 +86,7 @@ def main() -> int:
                 self._json(200, {"models": [{"name": name} for name in _pulled(models)]})
             elif self.path == "/v1/models":
                 data = [{"id": name, "object": "model"} for name in _pulled(models)]
+                time.sleep(float(behaviour.get("models_delay", 0)))
                 # Ollama 0.40.4 answers an empty list as null.
                 self._json(200, {"object": "list", "data": data or None})
             else:

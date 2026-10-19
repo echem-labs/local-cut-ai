@@ -406,6 +406,9 @@ Cheap enough to call often. It runs a binary only the first time it sees it,
 asks each server with a two-second timeout and keeps the answer for three
 seconds, and never downloads anything. A kept answer is dropped early when a
 setup or a pull ends, or when LocalCut's copy of the server starts or stops.
+A server's row reads its `setup` and `managed.server` before the server is
+asked, so a row that says a setup or a pull has ended reports the server as it
+answered after the end.
 
 ```json
 {

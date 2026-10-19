@@ -150,6 +150,7 @@ def _setup(
     model: str | None = None,
     *,
     gpu: GPU | None = None,
+    state: dict | None = None,
 ) -> dict:
     """What setting this program up would download and keep here, or why it
     cannot be, and the setup running or last ended. For a program that
@@ -158,7 +159,8 @@ def _setup(
     program whose builds are per GPU vendor, which vendor's build this
     machine gets (`gpu`), which of its builds (`build`, null for the usual
     one) and the vendor's other builds a user could ask for instead
-    (`builds`)."""
+    (`builds`). `state` is the setup as the row's look at it saw it
+    (_look), for a row that has one."""
     pin, asset, unavailable = pinned_here(config, program_id, gpu)
     installer = INSTALLERS.get(program_id)
     platform_key = program_manifest.platform_key() or ""
@@ -190,16 +192,18 @@ def _setup(
             for other in others
         ],
         **extra,
-        **setup.state(program_id),
+        **(state if state is not None else setup.state(program_id)),
     }
 
 
-def _managed(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict | None:
+def _managed(config: EngineConfig, program_id: str, look: dict | None = None) -> dict | None:
     """LocalCut's own copy, when there is one: where, how much disk it took
     when it was set up, which build, whether that is the build pinned now
     for its line (its vendor's build for older drivers is compared with that
     build, not with the usual one) and whether the engine is using it. A
-    copy that runs as a server adds `server`, what it is doing (server.py)."""
+    copy that runs as a server adds `server`, what it is doing (server.py).
+    For a server program, whether it is in use and what it is doing are the
+    row's `look` at it (_look)."""
     folder = config.programs_dir / program_id
     if not folder.is_dir():
         return None
@@ -211,11 +215,12 @@ def _managed(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict
         "version": record.get("version") if record is not None else None,
         "build": record.get("build") if record is not None else None,
         "current": is_current(folder, installed_build(program_id, folder)),
-        "in_use": installer is not None and installer.in_use(config),
+        "in_use": look["in_use"]
+        if look is not None
+        else installer is not None and installer.in_use(config),
     }
-    server = setup.servers.get(program_id) if setup.servers is not None else None
-    if server is not None:
-        row["server"] = server.describe()
+    if look is not None and look["server"] is not None:
+        row["server"] = look["server"]
     return row
 
 
@@ -242,7 +247,7 @@ async def _ffmpeg(config: EngineConfig, setup: ProgramSetup, text_probe: FFmpegB
                 row["checks"]["draws_text"] = await text_probe.supports_drawtext()
     else:
         row["problem"] = "not_found"
-    row["managed"] = await asyncio.to_thread(_managed, config, setup, "ffmpeg")
+    row["managed"] = await asyncio.to_thread(_managed, config, "ffmpeg")
     row["setup"] = _setup(config, setup, "ffmpeg")
     return row
 
@@ -270,11 +275,25 @@ async def _server_answer(
     return answer
 
 
-def _changes(setup: ProgramSetup, program_id: str) -> tuple:
+def _look(config: EngineConfig, setup: ProgramSetup, program_id: str) -> dict:
+    """A server program's own copy and its setup, in one look: whether the
+    copy is the server at the address, what it is doing, and the setup
+    running or last ended. The row reports this look and the server's
+    answer is kept by it, so it is taken before the server is asked. A row
+    then never says a pull has ended beside an answer from while it ran:
+    an answer kept by an ended pull was asked after it ended."""
+    server = setup.servers.get(program_id) if setup.servers is not None else None
+    return {
+        "in_use": INSTALLERS[program_id].in_use(config),
+        "server": server.describe() if server is not None else None,
+        "setup": setup.state(program_id),
+    }
+
+
+def _changes(look: dict) -> tuple:
     """What has happened to a server program since an answer was kept."""
-    running = setup.servers.get(program_id) if setup.servers is not None else None
-    last = setup.state(program_id)["last"]
-    return (running.state if running else None, last["job"] if last else None)
+    server, last = look["server"], look["setup"]["last"]
+    return (server["state"] if server else None, last["job"] if last else None)
 
 
 async def _get_json(client: httpx.AsyncClient, url: str) -> tuple[int, object]:
@@ -302,8 +321,9 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
             )
         return {"version": version, "models": models}
 
-    answer = await _server_answer("llm", url, ask, _changes(setup, "ollama"))
-    ours = INSTALLERS["ollama"].in_use(config)
+    look = _look(config, setup, "ollama")
+    answer = await _server_answer("llm", url, ask, _changes(look))
+    ours = look["in_use"]
     # The address is the same either way; who answers there is not.
     source = "managed" if ours else _source_of(config, "llm_url")
     row = _row("ollama", source, url, "LOCALCUT_LLM_URL")
@@ -330,8 +350,10 @@ async def _llm_server(config: EngineConfig, setup: ProgramSetup, script_model: s
         row["checks"]["model_present"] = _lists_model(names, script_model) if listed else None
     else:
         row.update(state="broken", problem="unexpected_response")
-    row["managed"] = await asyncio.to_thread(_managed, config, setup, "ollama")
-    row["setup"] = await asyncio.to_thread(_setup, config, setup, "ollama", script_model)
+    row["managed"] = await asyncio.to_thread(_managed, config, "ollama", look)
+    row["setup"] = await asyncio.to_thread(
+        _setup, config, setup, "ollama", script_model, state=look["setup"]
+    )
     return row
 
 
@@ -345,9 +367,10 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup, gpu: GPU | None) -
             except Exception as exc:  # noqa: BLE001 - an address nothing answers at, however it fails
                 return {"stats": exc}
 
-    answer = await _server_answer("comfyui", url, ask, _changes(setup, "comfyui"))
+    look = _look(config, setup, "comfyui")
+    answer = await _server_answer("comfyui", url, ask, _changes(look))
     # The address is the same either way; who answers there is not.
-    ours = INSTALLERS["comfyui"].in_use(config)
+    ours = look["in_use"]
     source = "managed" if ours else _source_of(config, "comfyui_url")
     row = _row("comfyui", source, url, "LOCALCUT_COMFYUI_URL")
     stats = answer["stats"]
@@ -361,6 +384,6 @@ async def _comfyui(config: EngineConfig, setup: ProgramSetup, gpu: GPU | None) -
         row["version"] = str(system.get("comfyui_version") or "") or None
     else:
         row.update(state="broken", problem="unexpected_response")
-    row["managed"] = await asyncio.to_thread(_managed, config, setup, "comfyui")
-    row["setup"] = _setup(config, setup, "comfyui", gpu=gpu)
+    row["managed"] = await asyncio.to_thread(_managed, config, "comfyui", look)
+    row["setup"] = _setup(config, setup, "comfyui", gpu=gpu, state=look["setup"])
     return row
