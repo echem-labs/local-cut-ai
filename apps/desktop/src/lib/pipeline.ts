@@ -119,7 +119,13 @@ export function pipelineStages(
 /** What the line under the strip says. */
 export type Narration =
   | { kind: "checking" }
-  | { kind: "settingUp"; current: ProgramId; next: ProgramId | null; ready: ProgramId[] }
+  | {
+      kind: "settingUp";
+      current: ProgramId;
+      /** Every program waiting behind `current`, in the order they will run. */
+      next: ProgramId[];
+      ready: ProgramId[];
+    }
   | { kind: "render"; standIns: number; fails: StageId[] }
   | { kind: "programsReady"; all: boolean }
   | { kind: "noModel"; stages: StageId[] }
@@ -137,7 +143,7 @@ export function narrate(
   const running = rows.find((row) => row.setup.job)?.id ?? null;
   if (running || queue.length > 0) {
     const current = running ?? queue[0];
-    const next = (running ? queue[0] : queue[1]) ?? null;
+    const next = queue.filter((id) => id !== current);
     const ready = rows
       .filter((row) => row.state === "ready" && row.id !== current && !queue.includes(row.id))
       .map((row) => row.id);
