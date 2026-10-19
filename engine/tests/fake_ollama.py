@@ -77,7 +77,8 @@ def main() -> int:
                 self._json(200, {"models": [{"name": name} for name in _pulled(models)]})
             elif self.path == "/v1/models":
                 data = [{"id": name, "object": "model"} for name in _pulled(models)]
-                self._json(200, {"object": "list", "data": data})
+                # Ollama 0.40.4 answers an empty list as null.
+                self._json(200, {"object": "list", "data": data or None})
             else:
                 self._json(404, {"error": "not found"})
 
