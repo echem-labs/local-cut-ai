@@ -240,6 +240,29 @@ jobs:
         working-directory: apps/desktop
         run: ls -lh release/ | grep -vE "^total|builder-debug|\.blockmap$" || ls -lh release/
 
+      - name: The AppImage opens without libfuse2
+        # The runtime at the front of an AppImage is what mounts it, and the
+        # legacy one dlopens libfuse.so.2, which Ubuntu has not installed
+        # since 22.04. An AppImage built with it exits there before the app
+        # starts, saying why only on stderr. electron-builder.yml picks the
+        # static runtime; this reads the runtime the build actually wrote,
+        # which `--appimage-offset` measures without mounting anything.
+        if: runner.os == 'Linux'
+        working-directory: apps/desktop
+        run: |
+          set -euo pipefail
+          for image in release/*.AppImage; do
+            offset=$("$image" --appimage-offset)
+            # A file rather than a pipe: grep -q stops at the first match,
+            # and under pipefail head's SIGPIPE would turn that into a pass.
+            head -c "$offset" "$image" > "$RUNNER_TEMP/appimage-runtime"
+            if grep -aq 'libfuse\.so\.2' "$RUNNER_TEMP/appimage-runtime"; then
+              echo "::error::$image loads libfuse.so.2 to mount itself, so it will not open on Ubuntu 22.04 or later"
+              exit 1
+            fi
+            echo "  $image: runtime of $offset bytes, no libfuse.so.2"
+          done
+
       # The check that the upload below USED to be, kept here because the
       # upload no longer runs on every trigger.
       #
