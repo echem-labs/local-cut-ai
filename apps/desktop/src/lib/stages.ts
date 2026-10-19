@@ -1,4 +1,4 @@
-import type { ModelRow, ProgramInfo, ProgramsReport, SystemInfo } from "../api/types";
+import type { ModelRow, ProgramId, ProgramInfo, ProgramsReport, SystemInfo } from "../api/types";
 import type { StageStatus } from "../components/StageSummaryRow";
 import { m, t, type MessageKey } from "../i18n";
 import { displayModelName, OLLAMA_TASK } from "../components/ModelLibrary";
@@ -47,6 +47,8 @@ export function stageRows(
   /** Models a download was just asked for, which the engine may not report
    * as running yet (see `stageStatus`). */
   requested: ReadonlySet<string> = new Set(),
+  /** Programs waiting their turn behind another program's setup. */
+  queued: ReadonlySet<ProgramId> = new Set(),
 ): StageRow[] {
   if (!system) return [];
   const byId = new Map(models.map((row) => [row.id, row]));
@@ -67,7 +69,9 @@ export function stageRows(
           (model.family ? displayModelName(model.family, model.version) : model.id),
         runner: RUNNERS[rec.task] ? t(RUNNERS[rec.task]) : "",
         id: model.id,
-        status: script ? scriptStatus(script) : stageStatus(row, rec.task, requested.has(model.id)),
+        status: script
+          ? scriptStatus(script, queued.has("ollama"))
+          : stageStatus(row, rec.task, requested.has(model.id)),
       };
     });
 }
@@ -75,10 +79,12 @@ export function stageRows(
 /** The script stage, read off the LLM server's row. A setup of LocalCut's
  * copy, or a pull of the model into a server, is the stage on its way: it
  * reads as setting up through every phase, the pull included, as the final
- * video's row does for FFmpeg. */
-function scriptStatus(server: ProgramInfo): StageStatus {
+ * video's row does for FFmpeg. One queued behind another program's setup
+ * is waiting: nothing is happening to it yet and nothing has gone wrong. */
+function scriptStatus(server: ProgramInfo, queued: boolean): StageStatus {
   const job = server.setup.job;
   if (job) return { kind: "settingUp", pct: Math.round(setupFraction(job) * 100) };
+  if (queued) return { kind: "waiting" };
   if (server.state !== "ready") {
     return { kind: "missing", note: t("firstRun.statusNeedsOllama"), light: "ph" };
   }
@@ -156,17 +162,23 @@ export function stageStatus(
 }
 
 /** The final video, which FFmpeg makes rather than a model: its row on the
- * Ready step, from GET /programs. Null until that has answered. */
-export function finalVideoRow(programs: ProgramsReport | null): StageRow | null {
+ * Ready step, from GET /programs. Null until that has answered. `queued` is
+ * the programs waiting their turn behind another program's setup. */
+export function finalVideoRow(
+  programs: ProgramsReport | null,
+  queued: ReadonlySet<ProgramId> = new Set(),
+): StageRow | null {
   const ffmpeg = programs?.programs.find((row) => row.id === "ffmpeg");
   if (!ffmpeg) return null;
   const job = ffmpeg.setup.job;
   const ready = ffmpeg.state === "ready";
   const status: StageStatus = job
     ? { kind: "settingUp", pct: Math.round(setupFraction(job) * 100) }
-    : ready
-      ? { kind: "installed" }
-      : { kind: "missing", note: t("firstRun.statusNotFound"), light: "fail" };
+    : queued.has("ffmpeg")
+      ? { kind: "waiting" }
+      : ready
+        ? { kind: "installed" }
+        : { kind: "missing", note: t("firstRun.statusNotFound"), light: "fail" };
   return {
     task: "final",
     stage: t("programs.strip.stages.final"),

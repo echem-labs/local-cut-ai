@@ -954,4 +954,45 @@ describe("the ready step", () => {
     expect(first).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 50 }));
     expect(first).not.toHaveTextContent(t("firstRun.statusNotPulled"));
   });
+
+  it("shows Ollama waiting while its setup is queued behind FFmpeg's", () => {
+    // Set up both runs the smaller download first. Until FFmpeg's is done,
+    // nothing is happening to the script yet and nothing is wrong with it.
+    const ffmpeg = program("ffmpeg", {
+      setup: {
+        ...program("ffmpeg").setup,
+        job: { id: "j", phase: "downloading", done: 40 * MB, total: 131 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([ffmpeg, settableToo("ollama", 1370 * MB), program("comfyui")]),
+      programQueue: ["ollama"],
+    });
+    render(<FirstRun />);
+    toReady();
+    const rows = [...document.querySelectorAll(".sumrail .srow")];
+    const script = rows[0];
+    expect(script).toHaveTextContent(t("firstRun.statusWaiting"));
+    expect(script).not.toHaveTextContent(t("firstRun.statusNeedsOllama"));
+    expect(script.querySelector(".pdot")).toHaveClass("wait");
+    expect(rows.at(-1)).toHaveTextContent(t("firstRun.statusSettingUp", { pct: 31 }));
+  });
+
+  it("shows the final video waiting while FFmpeg's setup is queued", () => {
+    const ollama = program("ollama", {
+      setup: {
+        ...program("ollama").setup,
+        job: { id: "j", phase: "downloading", done: 411 * MB, total: 1370 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([program("ffmpeg"), ollama, program("comfyui")]),
+      programQueue: ["ffmpeg"],
+    });
+    render(<FirstRun />);
+    toReady();
+    const last = [...document.querySelectorAll(".sumrail .srow")].at(-1)!;
+    expect(last).toHaveTextContent(t("firstRun.statusWaiting"));
+    expect(last).not.toHaveTextContent(t("firstRun.statusNotFound"));
+  });
 });
