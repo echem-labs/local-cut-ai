@@ -53,6 +53,7 @@
   "statusExternalNone": "External · nothing to download",
   "statusInstalled": "Ready",
   "statusQueued": "Queued",
+  "statusWaiting": "Waiting",
   "statusNotDownloaded": "Not downloaded",
   "statusDownloading": "Downloading, {pct}%",
   "statusSettingUp": "Setting up, {pct}%",

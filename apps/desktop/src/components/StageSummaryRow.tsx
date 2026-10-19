@@ -13,6 +13,8 @@ export type StageStatus =
   | { kind: "downloading"; pct: number }
   | { kind: "settingUp"; pct: number }
   | { kind: "queued" }
+  /** A program the stage needs, waiting its turn behind another setup. */
+  | { kind: "waiting" }
   /** Not downloaded and nobody asked for it: a stage unticked in setup. */
   | { kind: "notDownloaded" }
   /** Something the stage needs is not there: `fail` when its jobs fail,
@@ -25,6 +27,7 @@ const DOT: Record<StageStatus["kind"], string> = {
   downloading: "busy",
   settingUp: "busy",
   queued: "wait",
+  waiting: "wait",
   notDownloaded: "ext",
   missing: "fail",
 };
@@ -57,6 +60,7 @@ export function StageSummaryRow({
         <div className="st ok">{t("firstRun.statusInstalled")}</div>
       )}
       {status.kind === "queued" && <div className="st dl">{t("firstRun.statusQueued")}</div>}
+      {status.kind === "waiting" && <div className="st dl">{t("firstRun.statusWaiting")}</div>}
       {status.kind === "missing" && <div className="st fail">{status.note}</div>}
       {status.kind === "notDownloaded" && (
         <div className="st ext">{t("firstRun.statusNotDownloaded")}</div>

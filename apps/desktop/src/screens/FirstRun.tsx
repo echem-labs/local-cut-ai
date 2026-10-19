@@ -160,6 +160,10 @@ export function FirstRun() {
     ),
   ];
 
+  // Programs waiting their turn behind the setup running now.
+  const waiting = new Set(programQueue);
+  const finalVideo = finalVideoRow(programs, waiting);
+
   return (
     <div className="setup wizard">
       <Stepper labels={stepLabels} current={step - 1} />
@@ -304,8 +308,8 @@ export function FirstRun() {
       {step === 5 && (
         <ReadyStep
           stages={[
-            ...stageRows(system, models, programs, watchedIds),
-            ...(finalVideoRow(programs) ? [finalVideoRow(programs)!] : []),
+            ...stageRows(system, models, programs, watchedIds, waiting),
+            ...(finalVideo ? [finalVideo] : []),
           ]}
           models={models}
           pendingIds={watchedIds}
