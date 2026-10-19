@@ -71,8 +71,13 @@ export function stageRows(
     });
 }
 
-/** The script stage, read off the LLM server's row. */
+/** The script stage, read off the LLM server's row. A setup of LocalCut's
+ * copy, or a pull of the model into a server, is the stage on its way: it
+ * reads as setting up through every phase, the pull included, as the final
+ * video's row does for FFmpeg. */
 function scriptStatus(server: ProgramInfo): StageStatus {
+  const job = server.setup.job;
+  if (job) return { kind: "settingUp", pct: Math.round(setupFraction(job) * 100) };
   if (server.state !== "ready") {
     return { kind: "missing", note: t("firstRun.statusNeedsOllama"), light: "ph" };
   }
