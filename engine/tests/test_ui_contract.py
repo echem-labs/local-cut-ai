@@ -437,6 +437,23 @@ def test_the_comfyui_model_folders_are_the_same_on_both_sides():
     assert tuple(re.findall(r'"([^"]+)"', match.group(1))) == MODEL_FOLDERS
 
 
+def test_the_stages_that_wait_for_comfyui_are_the_engines_comfyui_tasks():
+    """The first-run models step leaves a stage's weights unticked while
+    the program that runs them is not set up. It reads which program that is
+    from lib/programs.ts. Its ComfyUI tasks are the engine's COMFY_TASKS
+    written again: a task left off would pre-tick weights nothing can run,
+    and one the manifest drops would hold back nothing."""
+    from localcut_engine.manifest.capability import COMFY_TASKS
+
+    text = _ts_source(_PROGRAMS_TS)
+    match = re.search(r"const PROGRAM_OF_TASK[^=]*= \{(.*?)\};", text, re.S)
+    assert match, "lib/programs.ts no longer declares PROGRAM_OF_TASK"
+    pairs = dict(re.findall(r'"([^"]+)":\s*"([^"]+)"', match.group(1)))
+    comfy = {task for task, program in pairs.items() if program == "comfyui"}
+    assert comfy == {task for tasks in COMFY_TASKS.values() for task in tasks}
+    assert pairs.get("text.llm") == "ollama"
+
+
 def test_the_video_kinds_home_warns_about_match_the_pipeline():
     """Home scopes its pre-generate warning to what a video renders, so a
     thumbnail model it will never touch cannot interrupt one. That list is

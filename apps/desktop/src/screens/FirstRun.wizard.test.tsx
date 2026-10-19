@@ -6,7 +6,7 @@
  * read live install state — installed / downloading·% / external — from
  * the same store rows the engine updates.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -738,6 +738,121 @@ describe("the models step's script row", () => {
   });
 });
 
+/**
+ * Weights for a program that is not set up. On a machine with no
+ * ComfyUI, its stages' weights are 25 GB that nothing there can run. They
+ * start unticked, say why and stay choosable for someone who will set
+ * ComfyUI up.
+ */
+describe("the models step, with the programs as they are", () => {
+  const ltx = () =>
+    screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Video clips" }) });
+  const music = () =>
+    screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Music" }) });
+  const toModels = () => {
+    toPrograms();
+    fireEvent.click(screen.getByRole("button", { name: t("programs.wizard.skip") }));
+  };
+
+  it("leaves ComfyUI's weights unticked while ComfyUI is not set up and says why", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toModels();
+    expect(ltx()).not.toBeChecked();
+    expect(music()).not.toBeChecked();
+    // Installed weights stay ticked: there is nothing to download.
+    expect(
+      screen.getByRole("checkbox", { name: t("firstRun.railToggleAria", { stage: "Keyframes" }) }),
+    ).toBeChecked();
+    expect(
+      screen.getByText(t("firstRun.railNeedsProgram", { size: "11 GB", program: "ComfyUI" })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(t("firstRun.railHeldBack", { program: "ComfyUI" })),
+    ).toBeInTheDocument();
+    // Nothing that cannot run is priced into the button.
+    expect(screen.getByRole("button", { name: t("common.continue") })).toBeInTheDocument();
+  });
+
+  it("leaves the script model alone, which this step never downloads", () => {
+    // FRESH has no Ollama either. Ollama fetches the script model itself,
+    // so its row keeps its tick and no line says it was held back.
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toModels();
+    expect(
+      screen.getByRole("checkbox", {
+        name: t("firstRun.railToggleAria", { stage: "Script writing" }),
+      }),
+    ).toBeChecked();
+    expect(screen.queryByText(t("firstRun.railHeldBack", { program: "Ollama" }))).toBeNull();
+  });
+
+  it("keeps them choosable for someone who will set ComfyUI up", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toModels();
+    fireEvent.click(ltx());
+    expect(ltx()).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: t("firstRun.downloadContinue", { size: "11 GB" }) }),
+    ).toBeInTheDocument();
+  });
+
+  it("ticks them once ComfyUI runs", () => {
+    const comfy = program("comfyui", { state: "ready", problem: null });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), program("ollama"), comfy]) });
+    render(<FirstRun />);
+    toModels();
+    expect(ltx()).toBeChecked();
+    expect(music()).toBeChecked();
+    expect(screen.queryByText(t("firstRun.railHeldBack", { program: "ComfyUI" }))).toBeNull();
+  });
+
+  it("ticks them while ComfyUI is being set up, or waits its turn to be", () => {
+    const settingUp = program("comfyui", {
+      setup: {
+        ...settableToo("comfyui", 1.9 * 1024 * MB).setup,
+        job: { id: "j", phase: "downloading", done: 1, total: 2 * MB, bytes_per_s: null },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([program("ffmpeg"), program("ollama"), settingUp]),
+    });
+    const { unmount } = render(<FirstRun />);
+    toPrograms();
+    next();
+    expect(ltx()).toBeChecked();
+    unmount();
+
+    seedStore(CATALOG(), {
+      programs: report([program("ffmpeg"), program("ollama"), settableToo("comfyui", MB)]),
+      programQueue: ["comfyui"],
+    });
+    render(<FirstRun />);
+    toPrograms();
+    next();
+    expect(ltx()).toBeChecked();
+  });
+
+  it("follows ComfyUI being set up after the step was first seen", () => {
+    seedStore(CATALOG(), { programs: FRESH() });
+    render(<FirstRun />);
+    toModels();
+    expect(ltx()).not.toBeChecked();
+    act(() =>
+      useApp.setState({
+        programs: report([
+          program("ffmpeg"),
+          program("ollama"),
+          program("comfyui", { state: "ready", problem: null }),
+        ]),
+      }),
+    );
+    expect(ltx()).toBeChecked();
+  });
+});
+
 describe("the ready step", () => {
   const toReady = () => {
     toStep2();
@@ -745,7 +860,12 @@ describe("the ready step", () => {
     // Past the programs step whichever way it offers: on, or skip.
     const skip = screen.queryByRole("button", { name: t("programs.wizard.skip") });
     fireEvent.click(skip ?? screen.getByRole("button", { name: t("common.continue") }));
-    fireEvent.click(screen.getByRole("button", { name: /Download & continue/ }));
+    // Continue, when nothing ticked is left to download: with ComfyUI not
+    // set up its weights start unticked.
+    fireEvent.click(
+      screen.queryByRole("button", { name: /Download & continue/ }) ??
+        screen.getByRole("button", { name: t("common.continue") }),
+    );
   };
 
   it("says what runs each model", () => {

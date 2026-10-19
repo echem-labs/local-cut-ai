@@ -15,6 +15,8 @@ import {
   osOf,
   otherBuildOffer,
   programCause,
+  programNotSetUp,
+  programStepFixes,
   pullFixes,
   rowsCostBy,
   settingsTabFor,
@@ -110,10 +112,68 @@ describe("which program a readiness row blames", () => {
     expect(programCause(gap({ reason: "no_model_installed", kind: "music" }))).toBeNull();
   });
 
+  it("offers the steps for a program that is a cause with no setup offered", () => {
+    const comfy = gap({ kind: "keyframe", reason: "comfyui_down", verdict: "placeholder" });
+    expect(programStepFixes([comfy, gap({ kind: "music", reason: "comfyui_down" })])).toEqual([
+      "comfyui",
+    ]);
+    // One that LocalCut sets up, or pulls into, is offered that instead.
+    const setup = { type: "setup_program", program: "comfyui", size_bytes: 1 } as const;
+    expect(programStepFixes([{ ...comfy, fix: setup }])).toEqual([]);
+    expect(programStepFixes([gap({ fix: { ...setup, program: "ffmpeg" } })])).toEqual([]);
+    expect(programStepFixes([gap({ reason: "no_model_installed", kind: "music" })])).toEqual([]);
+  });
+
   it("sends a gap list to Programs when any of it is a program", () => {
     const music = gap({ kind: "music", reason: "no_model_installed", verdict: "placeholder" });
     expect(settingsTabFor([music])).toBe("models");
     expect(settingsTabFor([music, gap({})])).toBe("programs");
+  });
+});
+
+describe("whether a stage's program can run its model", () => {
+  const report = (rows: ProgramInfo[]): ProgramsReport => ({
+    platform: "linux-x64",
+    programs_dir: "/p",
+    programs_bytes: 0,
+    disk_free_bytes: 1,
+    programs: rows,
+  });
+  const missing = report([program("ffmpeg"), program("ollama"), program("comfyui")]);
+
+  it("names ComfyUI for its stages while ComfyUI is not there", () => {
+    for (const task of ["image.gen", "video.i2v", "video.t2v", "music.gen"]) {
+      expect(programNotSetUp(task, missing, [])).toBe("comfyui");
+    }
+    expect(programNotSetUp("text.llm", missing, [])).toBe("ollama");
+  });
+
+  it("names nothing for the stages the engine runs itself", () => {
+    expect(programNotSetUp("speech.tts", missing, [])).toBeNull();
+    expect(programNotSetUp("transcribe", missing, [])).toBeNull();
+  });
+
+  it("names nothing once the program runs, is LocalCut's, or is on its way", () => {
+    const ready = program("comfyui", { state: "ready", problem: null });
+    expect(programNotSetUp("image.gen", report([ready]), [])).toBeNull();
+    const stopped = program("comfyui", {
+      managed: {
+        location: "/p/comfyui",
+        bytes: 1,
+        version: "0.40.0",
+        current: true,
+        in_use: false,
+      },
+    });
+    expect(programNotSetUp("image.gen", report([stopped]), [])).toBeNull();
+    const job = { id: "j", phase: "downloading" as const, done: 0, total: 1, bytes_per_s: null };
+    const running = program("comfyui", { setup: { ...program("comfyui").setup, job } });
+    expect(programNotSetUp("image.gen", report([running]), [])).toBeNull();
+    expect(programNotSetUp("image.gen", missing, ["comfyui"])).toBeNull();
+  });
+
+  it("names nothing before the report says", () => {
+    expect(programNotSetUp("image.gen", null, [])).toBeNull();
   });
 });
 

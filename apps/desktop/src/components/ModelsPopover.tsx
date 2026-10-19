@@ -43,8 +43,12 @@ export function ModelsPopover({ opens = "down" }: { opens?: "up" | "down" }) {
     // "Not installed" means the weights are absent — nothing else. A model
     // sitting on disk behind a stopped ComfyUI, or one this engine will
     // ignore, is a different sentence, and badging it "not installed" sent
-    // people to re-download tens of gigabytes to fix a server.
-    const installed = row.reason !== "no_model_installed" && row.reason !== "still_clip_tier";
+    // people to re-download tens of gigabytes to fix a server. A stopped
+    // ComfyUI is named before missing weights, so its row says which.
+    const installed =
+      row.reason !== "no_model_installed" &&
+      row.reason !== "still_clip_tier" &&
+      row.data.weights_installed !== false;
     const named = entry ? displayModelName(entry.family, entry.version) : row.model;
     return [
       {

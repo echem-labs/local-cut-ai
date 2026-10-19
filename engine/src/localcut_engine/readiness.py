@@ -446,8 +446,45 @@ def _comfy_claims(backends: BackendRegistry, kind: NodeKind) -> bool:
     return comfy is not None and kind in getattr(comfy, "kinds", set())
 
 
+def _comfy_is_the_gap(
+    snap: _Snapshot, config: EngineConfig, backends: BackendRegistry, kind: NodeKind
+) -> bool:
+    """Whether a ComfyUI kind that nothing real served lacks ComfyUI first.
+
+    With its weights on disk, the server probe is the only thing left that
+    can have declined it. Without them, a download lands and changes nothing
+    while no ComfyUI answers, so the server is still the gap to name: its
+    setup, or its steps, comes before any model."""
+    if not _comfy_claims(backends, kind):
+        return False
+    return bool(snap.installed.get(kind)) or not _comfy_alive(config)
+
+
+def _comfy_down_row(
+    snap: _Snapshot,
+    kind: NodeKind,
+    *,
+    verdict: str,
+    backend: str | None,
+    model: str | None,
+) -> dict:
+    """ComfyUI is not answering. `weights_installed` says whether the kind's
+    weights are there for when it does, which a client that lists models
+    needs: the row's reason no longer says it."""
+    return _row(
+        kind,
+        verdict=verdict,
+        reason="comfyui_down",
+        backend=backend,
+        model=model,
+        extra={"weights_installed": bool(snap.installed.get(kind))},
+        fix=snap.comfy_fix,
+    )
+
+
 def _missing_model_row(
     snap: _Snapshot,
+    config: EngineConfig,
     backends: BackendRegistry,
     kind: NodeKind,
     *,
@@ -464,17 +501,8 @@ def _missing_model_row(
     consumer = _CONSUMING_BACKEND.get(kind)
     in_chain = consumer is not None and backends.find(consumer) is not None
     if kind in COMFY_TASKS:
-        # Weights are installed and ComfyUI is configured for this kind, so
-        # the only thing left that can have declined it is the server probe.
-        if snap.installed.get(kind) and _comfy_claims(backends, kind):
-            return _row(
-                kind,
-                verdict=verdict,
-                reason="comfyui_down",
-                backend=backend,
-                model=model,
-                fix=snap.comfy_fix,
-            )
+        if _comfy_is_the_gap(snap, config, backends, kind):
+            return _comfy_down_row(snap, kind, verdict=verdict, backend=backend, model=model)
         in_chain = in_chain and _comfy_claims(backends, kind)
     if not in_chain:
         return _row(
@@ -542,13 +570,12 @@ def _comfy_row(snap: _Snapshot, config: EngineConfig, kind: NodeKind, model: str
     # whole job is to warn before an expensive render reported `ready` for
     # keyframe, thumbnail, clip and music with nothing listening.
     if not _comfy_alive(config):
-        return _row(
+        return _comfy_down_row(
+            snap,
             kind,
             verdict="will_fail",
-            reason="comfyui_down",
             backend="comfyui",
             model=bare or (installed[0] if installed else None),
-            fix=snap.comfy_fix,
         )
     if not bare:
         if not installed:
@@ -616,7 +643,7 @@ def _local_row(
         if kind is NodeKind.SCRIPT:
             return _script_down_row(config, backends, verdict="will_fail", model=model)
         return _missing_model_row(
-            snap, backends, kind, verdict="will_fail", backend=None, model=model
+            snap, config, backends, kind, verdict="will_fail", backend=None, model=model
         )
 
     name = resolved.name
@@ -626,16 +653,10 @@ def _local_row(
         return _comfy_row(snap, config, kind, model)
     if name == "ffmpeg" and kind is NodeKind.CLIP:
         # The still-clip tier: a real render, one tier down. Which is only
-        # the *interesting* answer when a video model could have served it.
-        if snap.installed.get(kind) and _comfy_claims(backends, kind):
-            return _row(
-                kind,
-                verdict="degraded",
-                reason="comfyui_down",
-                backend=name,
-                model=model,
-                fix=snap.comfy_fix,
-            )
+        # the *interesting* answer when a video model could have served it,
+        # and a video model serves nothing while ComfyUI does not answer.
+        if _comfy_is_the_gap(snap, config, backends, kind):
+            return _comfy_down_row(snap, kind, verdict="degraded", backend=name, model=model)
         return _row(
             kind,
             verdict="degraded",
@@ -674,7 +695,7 @@ def _local_row(
                 fix=setup_fix(config, "ffmpeg"),
             )
         return _missing_model_row(
-            snap, backends, kind, verdict="placeholder", backend=name, model=model
+            snap, config, backends, kind, verdict="placeholder", backend=name, model=model
         )
 
     if name == "kokoro":

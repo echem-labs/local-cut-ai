@@ -17,6 +17,7 @@ import {
   needsAttention,
   PROGRAM_ORDER,
   programName,
+  programNotSetUp,
   setupOffer,
 } from "../lib/programs";
 import { networkSpeedOf, phaseSpeedOf, queueSecondsLeft, timePhrase } from "../lib/setupTime";
@@ -49,10 +50,12 @@ export function FirstRun() {
     finishFirstRun,
     firstRunReturning,
     programs,
+    programQueue,
   } = useApp();
   const [step, setStep] = useState<Step>(firstRunReturning ? 2 : 1);
   const [library, setLibrary] = useState(false);
-  // null until seeded from the recommendations — not an empty selection.
+  // null until the user changes a tick: until then the selection is the
+  // recommended slate, worked out again as the programs change.
   const [selected, setSelected] = useState<Set<string> | null>(null);
   // What "Download & continue" actually started, frozen at that moment:
   // step 4's overall bar must keep counting a model that finishes while
@@ -65,16 +68,30 @@ export function FirstRun() {
 
   const rowById = useMemo(() => new Map(models.map((row) => [row.id, row])), [models]);
 
-  // Seed the selection once: the recommended slate + anything installed.
-  useEffect(() => {
-    if (selected || !system || models.length === 0) return;
-    const ids = new Set<string>();
-    for (const rec of system.recommendations) if (rec.model) ids.add(rec.model.id);
-    for (const row of models) if (row.downloaded) ids.add(row.id);
-    setSelected(ids);
-  }, [selected, system, models]);
+  // The program a stage's weights run in, when that program cannot run them
+  // yet (lib/programs). They would land and do nothing. Only weights this
+  // step downloads: the script model is fetched by Ollama itself.
+  const waitsFor = (task: string, model: { files: readonly unknown[] }) =>
+    model.files.length > 0 ? programNotSetUp(task, programs, programQueue) : null;
 
-  const picked = selected ?? new Set<string>();
+  // The recommended slate and anything installed, less what waits for a
+  // program that is not set up: a ComfyUI model on a machine with no
+  // ComfyUI downloads gigabytes that nothing runs. It follows the programs
+  // (a setup started from the step before) until the user ticks something.
+  const seeded = useMemo(() => {
+    const ids = new Set<string>();
+    if (!system || models.length === 0) return ids;
+    for (const rec of system.recommendations) {
+      const held = rec.model && rec.model.files.length > 0;
+      if (rec.model && !(held && programNotSetUp(rec.task, programs, programQueue))) {
+        ids.add(rec.model.id);
+      }
+    }
+    for (const row of models) if (row.downloaded) ids.add(row.id);
+    return ids;
+  }, [system, models, programs, programQueue]);
+
+  const picked = selected ?? seeded;
   const downloadable = models.filter((row) => picked.has(row.id) && row.files.length > 0);
   const pending = downloadable.filter((row) => !row.downloaded);
   const totalBytes = pending.reduce((sum, row) => sum + row.size_bytes, 0);
@@ -126,10 +143,22 @@ export function FirstRun() {
         : t("firstRun.railOutside");
     }
     const size = formatSize(row?.size_bytes ?? 0);
-    return row?.downloaded
-      ? t("firstRun.railInstalled", { size })
+    if (row?.downloaded) return t("firstRun.railInstalled", { size });
+    const program = row ? waitsFor(task, row) : null;
+    return program
+      ? t("firstRun.railNeedsProgram", { size, program: programName(program) })
       : t("firstRun.railToDownload", { size });
   };
+  // The programs some recommended stage waits for, said once under the rail.
+  const heldBack = [
+    ...new Set(
+      stages.flatMap((rec) => {
+        const row = rowById.get(rec.model!.id);
+        const program = !row || row.downloaded ? null : waitsFor(rec.task, row);
+        return program ? [program] : [];
+      }),
+    ),
+  ];
 
   return (
     <div className="setup wizard">
@@ -248,6 +277,11 @@ export function FirstRun() {
               {plural("firstRun.pending", pending.length, { size: formatSize(totalBytes) })}
             </p>
           )}
+          {heldBack.map((program) => (
+            <p className="hintline" key={program}>
+              {t("firstRun.railHeldBack", { program: programName(program) })}
+            </p>
+          ))}
         </div>
       )}
 

@@ -655,6 +655,76 @@ describe("a program to set up", () => {
   });
 });
 
+/** A ComfyUI stage with no weights and no ComfyUI, as the engine words it:
+ * ComfyUI is the gap, with its setup as the fix where LocalCut has one. */
+const comfyDown = (
+  kind: "keyframe" | "music",
+  fix: ReadinessRow["fix"] = null,
+): ReadinessRow => ({
+  kind,
+  model: null,
+  backend: "mock",
+  verdict: "placeholder",
+  reason: "comfyui_down",
+  data: { task: kind === "music" ? "music.gen" : "image.gen", weights_installed: false },
+  fix,
+});
+
+const comfySetup = { type: "setup_program", program: "comfyui", size_bytes: 2_010_504_119 } as const;
+
+/**
+ * ComfyUI, when it is what the stages lack. A model download changes
+ * nothing while no ComfyUI answers, so the gate offers ComfyUI instead: its setup where
+ * LocalCut can set it up on this machine and its steps where it cannot.
+ */
+describe("ComfyUI, when it is what the stages lack", () => {
+  it("offers ComfyUI's setup in the gate and no model download", async () => {
+    const setupProgram = vi.fn(async () => null);
+    const rows = [comfyDown("keyframe", comfySetup), comfyDown("music", comfySetup)];
+    seed(rows, { setupProgram, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).queryByRole("button", { name: /download/i })).toBeNull();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.setupProgram") }),
+    );
+    expect(setupProgram).toHaveBeenCalledWith("comfyui");
+  });
+
+  it("offers ComfyUI's steps where LocalCut cannot set it up", async () => {
+    const openProgramSteps = vi.fn();
+    seed([comfyDown("keyframe"), comfyDown("music")], { openProgramSteps, programs: null });
+    render(<Harness onRun={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Render" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(t("readiness.dialog.fixes"));
+    expect(within(dialog).queryByRole("button", { name: /download/i })).toBeNull();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: t("readiness.dialog.showSteps") }),
+    );
+    expect(openProgramSteps).toHaveBeenCalledWith("comfyui");
+    // The gate gets out of the way of the steps it opened.
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("opens ComfyUI's steps from the banner when they are the only fix", async () => {
+    const openProgramSteps = vi.fn();
+    const openSettings = vi.fn();
+    seed([comfyDown("keyframe"), comfyDown("music")], {
+      openProgramSteps,
+      openSettings,
+      programs: null,
+    });
+    render(<ReadinessBanner />);
+    await userEvent.click(
+      screen.getByRole("button", { name: t("readiness.banner.setupPrograms") }),
+    );
+    expect(openProgramSteps).toHaveBeenCalledWith("comfyui");
+    expect(openSettings).not.toHaveBeenCalled();
+  });
+});
+
 const scriptModelMissing: ReadinessRow = {
   kind: "script",
   model: "qwen3:14b",

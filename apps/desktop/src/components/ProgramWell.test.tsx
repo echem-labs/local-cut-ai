@@ -115,6 +115,7 @@ beforeEach(() => {
     programs: null,
     setupSpeeds: {},
     networkSpeed: null,
+    programStepsFocus: null,
     refreshPrograms: vi.fn(async () => {}),
     refreshReadiness: vi.fn(async () => {}),
     ...actions,
@@ -170,6 +171,15 @@ describe("a program that is not there", () => {
       t("programs.unavailable.program_not_supported", { name: "Ollama" }),
     );
     expect(within(well()).getByText("ollama pull qwen3:14b")).toBeInTheDocument();
+    expect(well().querySelector("details")).not.toHaveAttribute("open");
+  });
+
+  it("opens its steps when a readiness fix sent someone here for them", () => {
+    // The render gate's "Show the steps", for a program LocalCut cannot
+    // set up on this machine.
+    useApp.setState({ programStepsFocus: "ollama" } as never);
+    mount(ollama());
+    expect(well().querySelector("details")).toHaveAttribute("open");
   });
 });
 
@@ -254,6 +264,7 @@ describe("a setup that failed", () => {
     mount(failed);
     expect(well().querySelector("details")).toHaveAttribute("open");
   });
+
 
   it("stops talking about the failure once the program works", () => {
     mount({ ...failed, state: "ready", problem: null, checks: { draws_text: true } });

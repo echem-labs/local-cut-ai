@@ -161,8 +161,15 @@ function ManualSetup({
     gpuVendor: gpu?.vendor ?? null,
   });
   const name = programName(program.id);
+  const ref = useRef<HTMLDetailsElement>(null);
+  // Sent here for these steps: bring them into view. Optional, since jsdom
+  // implements no scrolling.
+  const focused = useApp((state) => state.programStepsFocus === program.id);
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView?.({ block: "center" });
+  }, [focused]);
   return (
-    <details className="pw-diy" open={open}>
+    <details className="pw-diy" open={open || focused} ref={ref}>
       <summary>
         <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
         {host ? t("programs.diy.summaryOn", { host }) : t("programs.diy.summary")}

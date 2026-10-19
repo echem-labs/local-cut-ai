@@ -33,6 +33,8 @@
   "railOutside": "runs outside the engine",
   "railInstalled": "{size} · already installed",
   "railToDownload": "{size} · to download",
+  "railNeedsProgram": "{size} · runs in {program}, which isn't set up yet",
+  "railHeldBack": "{program} isn't set up, so the stages that run in it start unticked. Tick them if you'll set {program} up later.",
   "railToggleAria": "Include the {stage} stage",
   "downloadContinue": "Download & continue ({size})",
   "openLibrary": "Open full library",
