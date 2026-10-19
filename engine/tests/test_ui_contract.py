@@ -1099,6 +1099,33 @@ def test_eta_reads_node_kinds_and_qualities_the_engine_actually_reports():
     assert JobSpec.model_fields["quality"].default == "draft"
 
 
+def test_the_final_estimate_prices_the_ladder_the_engine_renders():
+    """Create final video renders keyframes, clips and music again with more
+    sampler steps, and clips at a larger size too. lib/eta.ts prices that pass
+    from a draft's measured time and its own copy of the ladder. If the
+    engine's steps or its final scale move, the button's estimate would keep
+    pricing the old ladder: it once priced the steps alone and said 23 min
+    for a pass that took 64."""
+    from localcut_engine.backends import comfyui
+    from localcut_engine.graph.model import NodeKind
+
+    text = _ts_source(_ETA)
+    block = re.search(r"const LADDER = \{(.*?)\} as const;", text, re.S)
+    assert block, "lib/eta.ts no longer declares LADDER - update this test with it"
+    rows = re.findall(
+        r"(\w+): \{ draftSteps: (\d+), finalSteps: (\d+), scale: ([\d.]+) \}", block.group(1)
+    )
+    assert {kind for kind, *_ in rows} == {"keyframe", "clip", "music"}
+    for kind, draft, final, scale in rows:
+        node = NodeKind(kind)
+        steps = comfyui._BASE_STEPS[node]
+        assert int(draft) == steps, f"{kind}: draft steps"
+        assert int(final) == round(steps * comfyui._FINAL_STEPS_SCALE), f"{kind}: final steps"
+        # `_fill_workflow` scales the frame of a final clip and nothing else.
+        expected = comfyui._FINAL_RES_SCALE if node is NodeKind.CLIP else 1
+        assert float(scale) == expected, f"{kind}: final scale"
+
+
 def test_the_smaller_model_chip_offers_tasks_the_engine_can_actually_serve():
     """lib/oom.ts mirrors the engine's COMFY_TASKS to decide which models can
     replace a node's after an out-of-memory failure. The desktop derives the
