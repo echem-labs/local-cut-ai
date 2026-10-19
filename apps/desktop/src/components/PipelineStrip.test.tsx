@@ -115,4 +115,41 @@ describe("the pipeline strip", () => {
       "A render right now would use stand-ins for 4 stages, then fail at the final video.",
     );
   });
+
+  it("shows a program queued behind another as waiting until its own setup starts", () => {
+    // Set up both runs FFmpeg first. Until Ollama's turn comes, nothing is
+    // happening to the script stage. Its program's own well says so.
+    const downloading = {
+      ...ready("ffmpeg"),
+      state: "missing",
+      setup: {
+        available: true,
+        job: { id: "j", phase: "downloading", done: 1, total: 131, bytes_per_s: null },
+        last: null,
+      },
+    };
+    useApp.setState({
+      programQueue: ["ollama"],
+      programs: {
+        platform: "linux-x64",
+        programs_dir: "/p",
+        programs_bytes: 0,
+        disk_free_bytes: 1,
+        programs: [downloading, { ...ready("ollama"), state: "missing" }, ready("comfyui")],
+      },
+      readiness: [
+        row("script", "placeholder", "llm_server_down"),
+        row("export", "will_fail", "no_ffmpeg"),
+      ],
+    } as never);
+    render(<PipelineStrip context="wizard" />);
+    const script = screen.getByText("Script").closest("li")!;
+    expect(script).toHaveTextContent(t("programs.strip.lights.queued"));
+    expect(script).not.toHaveTextContent(t("programs.strip.lights.busy"));
+    expect(script.querySelector(".light")?.className).toContain("queued");
+    expect(screen.getByText("Final video").closest("li")).toHaveTextContent(
+      t("programs.strip.lights.busy"),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Setting up FFmpeg, then Ollama.");
+  });
 });

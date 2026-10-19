@@ -40,10 +40,10 @@ export const PIPELINE: readonly StageDef[] = [
   { id: "final", kinds: ["timeline", "export"], program: "ffmpeg" },
 ];
 
-/** A stage's light: ready, being set up, a stand-in, a job that fails, a
- * lower-quality result, waiting on the next step's models, or not known
- * yet. */
-export type Light = "ok" | "busy" | "ph" | "fail" | "deg" | "wait" | "unknown";
+/** A stage's light: ready, being set up, its program waiting its turn to
+ * be set up, a stand-in, a job that fails, a lower-quality result, waiting
+ * on the next step's models, or not known yet. */
+export type Light = "ok" | "busy" | "queued" | "ph" | "fail" | "deg" | "wait" | "unknown";
 
 export interface StageView {
   id: StageId;
@@ -79,8 +79,9 @@ const MODEL_REASONS = new Set([...NEXT_STEP, "model_ignored"]);
 
 /** Each stage as the strip shows it.
  *
- * `busy` is the programs being set up, running or waiting their turn. In
- * the wizard, a stage whose only problem is a model the next step
+ * `busy` is the programs being set up now. `queued` is the ones waiting
+ * their turn behind them: nothing is happening to a queued program's stages
+ * yet. In the wizard, a stage whose only problem is a model the next step
  * downloads waits on that step rather than reading as a failure: nothing
  * has gone wrong yet, and the next screen is where it is fixed. */
 export function pipelineStages(
@@ -88,6 +89,7 @@ export function pipelineStages(
   programs: ProgramsReport | null,
   context: "wizard" | "settings",
   busy: ReadonlySet<ProgramId>,
+  queued: ReadonlySet<ProgramId> = new Set(),
 ): StageView[] {
   return PIPELINE.map((stage) => {
     const own = (rows ?? []).filter((row) => stage.kinds.includes(row.kind));
@@ -106,6 +108,7 @@ export function pipelineStages(
     const pulled = worst.reason === "llm_model_missing" ? "ollama" : null;
     const program = programCause(worst) ?? pulled ?? (missing ? stage.program : null);
     if (program && busy.has(program)) return { id: stage.id, light: "busy", program, reason };
+    if (program && queued.has(program)) return { id: stage.id, light: "queued", program, reason };
     if (!program && context === "wizard" && NEXT_STEP.has(reason)) {
       return { id: stage.id, light: "wait", program: null, reason };
     }
