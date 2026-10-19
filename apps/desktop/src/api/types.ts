@@ -521,8 +521,9 @@ export interface ProgramJob {
   phase: SetupPhase;
   done: number;
   total: number;
-  /** Measured over the last few seconds of the download or the unpack;
-   * null otherwise. */
+  /** Measured over the last few seconds of the download, the unpack or the
+   * pull; null otherwise. The screens show an average of these readings
+   * (lib/setupTime). */
   bytes_per_s: number | null;
   /** Which of the vendor's builds it sets up; null for the usual one. */
   build?: ProgramBuild | null;

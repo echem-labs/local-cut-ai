@@ -24,7 +24,6 @@ import {
   PROGRAM_SITES,
   programName,
   rowsCostBy,
-  setupEta,
   setupFraction,
   setupOffer,
   setupSize,
@@ -32,6 +31,14 @@ import {
   statusOf,
   type ManualText,
 } from "../lib/programs";
+import {
+  bytesToSetUp,
+  networkSpeedOf,
+  phaseSpeedOf,
+  setupTimeLeft,
+  timePhrase,
+} from "../lib/setupTime";
+import { formatSpeed } from "../lib/size";
 import { useMenuFit } from "../lib/useMenuFit";
 import { useOutsideClick } from "../lib/useOutsideClick";
 import { useApp } from "../store";
@@ -342,6 +349,9 @@ export function ProgramWell({
   const startProgram = useApp((state) => state.startProgram);
   const stopProgram = useApp((state) => state.stopProgram);
   const openSettings = useApp((state) => state.openSettings);
+  const programs = useApp((state) => state.programs);
+  const setupSpeeds = useApp((state) => state.setupSpeeds);
+  const latestSpeed = useApp((state) => state.networkSpeed);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -520,17 +530,35 @@ export function ProgramWell({
     ) : null;
 
   const fraction = job ? setupFraction(job) : 0;
-  const eta = job ? setupEta(job) : null;
+  // The speed and the time left come from averages over the last minute.
+  // The time is for everything this setup still fetches (lib/setupTime).
+  const networkSpeed = networkSpeedOf(programs, setupSpeeds, latestSpeed);
+  const speed = job ? phaseSpeedOf(program, setupSpeeds) : null;
+  const timeLeft = job ? setupTimeLeft(program, speed, networkSpeed) : null;
+  const left = timeLeft
+    ? t(timeLeft.inAll ? "programs.setup.leftInAll" : "programs.setup.left", {
+        time: timePhrase(timeLeft.seconds),
+      })
+    : null;
+  const bytes = job ? { done: formatSize(job.done), total: formatSize(job.total) } : null;
   const progress =
-    job && job.total > 0
-      ? eta
-        ? t("programs.setup.progressEta", {
-            done: formatSize(job.done),
-            total: formatSize(job.total),
-            eta,
-          })
-        : t("programs.setup.progress", { done: formatSize(job.done), total: formatSize(job.total) })
-      : null;
+    job && bytes && job.total > 0
+      ? speed && left
+        ? t("programs.setup.progressLeft", { ...bytes, speed: formatSpeed(speed), left })
+        : speed
+          ? t("programs.setup.progressSpeed", { ...bytes, speed: formatSpeed(speed) })
+          : t("programs.setup.progress", bytes)
+      : left;
+  // A program waiting its turn: how long it takes once it starts.
+  const waiting = queuedBehind && !job ? bytesToSetUp(program) : 0;
+  const queuedLine = queuedBehind
+    ? waiting > 0 && networkSpeed
+      ? t("programs.queuedFor", {
+          name: programName(queuedBehind),
+          time: timePhrase(waiting / networkSpeed),
+        })
+      : t("programs.queued", { name: programName(queuedBehind) })
+    : null;
   const phase = job
     ? t(`programs.phases.${job.phase}` as MessageKey, {
         name,
@@ -595,9 +623,7 @@ export function ProgramWell({
           </div>
         </>
       )}
-      {queuedBehind && !job && (
-        <p className="pw-status">{t("programs.queued", { name: programName(queuedBehind) })}</p>
-      )}
+      {queuedLine && !job && <p className="pw-status">{queuedLine}</p>}
       {failure && (
         <>
           <p className="pw-status fail">

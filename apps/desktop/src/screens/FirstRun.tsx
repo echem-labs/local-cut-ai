@@ -19,6 +19,7 @@ import {
   programName,
   setupOffer,
 } from "../lib/programs";
+import { networkSpeedOf, phaseSpeedOf, queueSecondsLeft, timePhrase } from "../lib/setupTime";
 import { finalVideoRow, scriptRailMeta, stageRows, type StageRow } from "../lib/stages";
 import { useVoices } from "../lib/useVoices";
 import { useApp } from "../store";
@@ -360,6 +361,8 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
   const refreshPrograms = useApp((state) => state.refreshPrograms);
   const refreshReadiness = useApp((state) => state.refreshReadiness);
   const setupPrograms = useApp((state) => state.setupPrograms);
+  const setupSpeeds = useApp((state) => state.setupSpeeds);
+  const latestSpeed = useApp((state) => state.networkSpeed);
   const voices = useVoices();
   const [error, setError] = useState<string | null>(null);
 
@@ -377,6 +380,29 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
     .sort((a, b) => PROGRAM_ORDER.indexOf(a.id) - PROGRAM_ORDER.indexOf(b.id));
   const running = rows.find((row) => row.setup.job) ?? null;
   const busy = running !== null || queue.length > 0;
+  // How long everything "Set up both" started has left: the running setup
+  // through its last download, then each one still waiting its turn.
+  const waiting = queue.flatMap((id) => rows.filter((row) => row.id === id));
+  const secondsLeft = busy
+    ? queueSecondsLeft(
+        running,
+        waiting,
+        running ? phaseSpeedOf(running, setupSpeeds) : null,
+        networkSpeedOf(programs, setupSpeeds, latestSpeed),
+      )
+    : null;
+  const setups = (running ? 1 : 0) + waiting.length;
+  const whole =
+    secondsLeft === null || setups === 0
+      ? null
+      : setups === 1
+        ? t("programs.wizard.leftOne", {
+            name: programName((running ?? waiting[0]!).id),
+            time: timePhrase(secondsLeft),
+          })
+        : t(setups === 2 ? "programs.wizard.leftBoth" : "programs.wizard.leftAll", {
+            time: timePhrase(secondsLeft),
+          });
   // What the button does for each program: set it up, or for an Ollama
   // that runs without the script model, pull it, or start LocalCut's copy.
   const settable = rows.filter((row) => {
@@ -473,6 +499,7 @@ function ProgramsStep({ onBack, onNext }: { onBack: () => void; onNext: () => vo
         </p>
       )}
       {action && <p className="hintline">{t("programs.wizard.hintSetup")}</p>}
+      {whole && <p className="hintline">{whole}</p>}
       {busy && <p className="hintline">{t("programs.wizard.hintRunning")}</p>}
     </div>
   );

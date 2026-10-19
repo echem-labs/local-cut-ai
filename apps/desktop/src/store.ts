@@ -11,6 +11,7 @@ import { blockingGaps, readinessFingerprint } from "./lib/readiness";
 import { formatSize } from "./lib/size";
 import { usePlayback } from "./lib/playback";
 import { setupOffer, setupSize } from "./lib/programs";
+import { isNetworkPhase, nextSpeed, speedOf, type SetupSpeed } from "./lib/setupTime";
 import {
   loadTemplates,
   refuseReason,
@@ -286,6 +287,13 @@ interface AppState {
   programs: ProgramsReport | null;
   /** Why the last /programs read failed, or null. */
   programsError: string | null;
+  /** Each running setup's speed, averaged over its phase's last minute of
+   * progress events (lib/setupTime). */
+  setupSpeeds: Partial<Record<ProgramId, SetupSpeed>>;
+  /** The latest averaged speed of a setup's download or pull, on this
+   * engine. What is still to download after the phase on screen, or behind
+   * the running setup, is priced at it. */
+  networkSpeed: number | null;
   actionError: ActionError | null;
   system: SystemInfo | null;
   projects: Project[];
@@ -1154,7 +1162,16 @@ export const useApp = create<AppState>((set, get) => {
       total: event.total,
       bytes_per_s: event.bytes_per_s,
     };
+    const speed = nextSpeed(
+      known ? get().setupSpeeds[event.program] : undefined,
+      event.phase,
+      event.bytes_per_s,
+      Date.now(),
+    );
+    const average = speedOf(speed);
     set({
+      setupSpeeds: { ...get().setupSpeeds, [event.program]: speed },
+      ...(isNetworkPhase(event.phase) && average !== null ? { networkSpeed: average } : {}),
       programs: {
         ...report,
         programs: report.programs.map((program) =>
@@ -1182,6 +1199,9 @@ export const useApp = create<AppState>((set, get) => {
     >,
   ) => {
     programsGen++;
+    const speeds = { ...get().setupSpeeds };
+    delete speeds[event.program];
+    set({ setupSpeeds: speeds });
     const report = get().programs;
     if (report && !seedFrozen) {
       const failed = event.type === "program.setup.failed" ? event : null;
@@ -1743,6 +1763,8 @@ export const useApp = create<AppState>((set, get) => {
       programs: null,
       programsError: null,
       programQueue: [],
+      setupSpeeds: {},
+      networkSpeed: null,
     });
     // Force a fresh establish for the NEW engine: reusing an in-flight one
     // (e.g. a reconnect already bound to the old connection) would leave the
@@ -1800,6 +1822,8 @@ export const useApp = create<AppState>((set, get) => {
     programs: null,
     programsError: null,
     programQueue: [],
+    setupSpeeds: {},
+    networkSpeed: null,
 
     connect: async () => {
       if (get().client) return; // idempotent under StrictMode double-mount

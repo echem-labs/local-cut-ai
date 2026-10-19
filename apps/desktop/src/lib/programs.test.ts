@@ -18,7 +18,6 @@ import {
   pullFixes,
   rowsCostBy,
   settingsTabFor,
-  setupEta,
   setupFraction,
   setupOffer,
   statusOf,
@@ -499,12 +498,5 @@ describe("a program built per graphics card", () => {
       });
     expect(otherBuildOffer(linux(failedOn(null, "gpu_not_usable")))?.build).toBe("older_drivers");
     expect(otherBuildOffer(linux(failedOn("older_drivers", "gpu_not_usable")))).toEqual(cpu);
-  });
-
-  it("estimates the time left through the unpack as well as the download", () => {
-    const job = { id: "j", done: 0, total: 600 * MB, bytes_per_s: 5 * MB, build: null };
-    expect(setupEta({ ...job, phase: "unpacking" })).toBe("about 2 min");
-    expect(setupEta({ ...job, phase: "downloading" })).toBe("about 2 min");
-    expect(setupEta({ ...job, phase: "checking" })).toBeNull();
   });
 });

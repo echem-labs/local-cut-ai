@@ -592,6 +592,66 @@ describe("the programs step", () => {
     expect(screen.getByText(t("firstRun.modelsTitle"))).toBeInTheDocument();
   });
 
+  it("says how long the whole setup has left, not only the download on screen", () => {
+    // FFmpeg's last 91 MB and then all of Ollama, at the 2 MB/s FFmpeg is
+    // downloading at: 91 + 1024 MB is about 9 minutes.
+    const running = program("ffmpeg", {
+      setup: {
+        ...program("ffmpeg").setup,
+        job: {
+          id: "j",
+          phase: "downloading",
+          done: 40 * MB,
+          total: 131 * MB,
+          bytes_per_s: 2 * MB,
+        },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([running, settableToo("ollama", 1024 * MB), program("comfyui")]),
+      programQueue: ["ollama"],
+      setupSpeeds: {},
+      networkSpeed: null,
+    });
+    render(<FirstRun />);
+    toPrograms();
+    expect(
+      screen.getByText(t("programs.wizard.leftBoth", { time: "about 9 min" })),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(t("programs.queuedFor", { name: "FFmpeg", time: "about 9 min" })),
+    ).toBeInTheDocument();
+  });
+
+  it("names the one setup left when the others are done", () => {
+    const pulling = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:14b", model_present: false },
+      setup: {
+        ...settableToo("ollama", 1024 * MB).setup,
+        pull: { model: "qwen3:14b", bytes: 9 * 1024 * MB },
+        job: {
+          id: "p",
+          phase: "pulling",
+          done: 1024 * MB,
+          total: 9 * 1024 * MB,
+          bytes_per_s: 4 * MB,
+        },
+      },
+    });
+    seedStore(CATALOG(), {
+      programs: report([program("ffmpeg"), pulling, program("comfyui")]),
+      setupSpeeds: {},
+      networkSpeed: null,
+    });
+    render(<FirstRun />);
+    toPrograms();
+    expect(
+      screen.getByText(t("programs.wizard.leftOne", { name: "Ollama", time: "about 35 min" })),
+    ).toBeInTheDocument();
+  });
+
   it("shows a program waiting its turn behind the running one", () => {
     const running = program("ffmpeg", {
       setup: {

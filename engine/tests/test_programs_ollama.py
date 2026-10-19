@@ -368,6 +368,9 @@ def test_setup_runs_ollama_and_pulls_the_script_model(tmp_path, monkeypatch, arc
         ]
         assert any(event["total"] == 3000 for event in pulled)
         assert all(0 <= event["done"] <= event["total"] for event in pulled)
+        # The pull is most of what a setup downloads, so it has a speed like
+        # the archive's: the desktop prices the time left from it.
+        assert any(event["bytes_per_s"] for event in pulled), pulled
         done = events[-1]
         assert done["type"] == "program.setup.done", done
         assert (done["version"], done["model"], done["in_use"]) == ("0.40.4", _MODEL, True)

@@ -239,15 +239,6 @@ export function setupFraction(job: ProgramJob): number {
   return Math.min(1, Math.max(0, job.done / job.total));
 }
 
-/** About how long a download, an unpack or a pull has left, in words, or
- * null before there is a rate to say it from. */
-export function setupEta(job: ProgramJob): string | null {
-  if (!TRANSFERS.includes(job.phase) || !job.bytes_per_s || job.bytes_per_s <= 0) return null;
-  const seconds = Math.max(0, job.total - job.done) / job.bytes_per_s;
-  if (seconds < 60) return t("programs.setup.etaUnderMinute");
-  return t("programs.setup.etaMinutes", { minutes: Math.round(seconds / 60) });
-}
-
 /** The engine's operating system, from its platform key. */
 export type EngineOs = "windows" | "linux" | "macos";
 
