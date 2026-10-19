@@ -605,15 +605,22 @@ export function ProgramWell({
           </p>
           {otherBuild ? (
             <p className="pw-detail">
-              {card?.vendor === "nvidia" && card.driver_version
-                ? t("programs.build.olderAdviceDriver", { driver: card.driver_version })
-                : t("programs.build.olderAdvice")}{" "}
-              <Tip label={t("programs.build.driverLink")} hint={t("programs.build.driverTip")}>
-                <a className="link-out" href={NVIDIA_DRIVERS} target="_blank" rel="noreferrer">
-                  {t("programs.build.driverLink")}
-                  <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
-                </a>
-              </Tip>
+              {otherBuild.build === "cpu"
+                ? t("programs.build.cpuAdvice")
+                : card?.vendor === "nvidia" && card.driver_version
+                  ? t("programs.build.olderAdviceDriver", { driver: card.driver_version })
+                  : t("programs.build.olderAdvice")}
+              {(otherBuild.build !== "cpu" || card?.vendor === "nvidia") && (
+                <>
+                  {" "}
+                  <Tip label={t("programs.build.driverLink")} hint={t("programs.build.driverTip")}>
+                    <a className="link-out" href={NVIDIA_DRIVERS} target="_blank" rel="noreferrer">
+                      {t("programs.build.driverLink")}
+                      <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </a>
+                  </Tip>
+                </>
+              )}
             </p>
           ) : (
             <p className="pw-detail">
@@ -630,10 +637,15 @@ export function ProgramWell({
             <div className="pw-fix">
               {otherBuild && (
                 <Tip
-                  label={t("programs.build.olderTip")}
-                  hint={t("programs.build.olderTipHint", {
-                    size: formatSize(otherBuild.download_bytes),
-                  })}
+                  label={t(
+                    otherBuild.build === "cpu" ? "programs.build.cpuTip" : "programs.build.olderTip",
+                  )}
+                  hint={t(
+                    otherBuild.build === "cpu"
+                      ? "programs.build.cpuTipHint"
+                      : "programs.build.olderTipHint",
+                    { size: formatSize(otherBuild.download_bytes) },
+                  )}
                 >
                   <button
                     className="btn-outline sm"

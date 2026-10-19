@@ -1,17 +1,20 @@
-"""What LocalCut knows about ComfyUI in particular: the official Windows
-portable build it sets up, the file that points it at LocalCut's models, the
-command line it is started with, how to tell it answers and how to tell its
-PyTorch can use the graphics card.
+"""What LocalCut knows about ComfyUI in particular: the copy it sets up, the
+file that points it at LocalCut's models, the command line it is started
+with, how to tell it answers and how to tell its PyTorch can use the
+graphics card.
 
-The portable build is one folder: an embedded Python with PyTorch for one
-GPU vendor (`python_embeded`), ComfyUI's source (`ComfyUI`) and the batch
-files that start it. Those run
+On Windows the copy is the official portable build: one folder with an
+embedded Python carrying PyTorch for one GPU vendor (`python_embeded`),
+ComfyUI's source (`ComfyUI`) and the batch files that start it. Those run
 
     .\\python_embeded\\python.exe -s ComfyUI\\main.py --windows-standalone-build
 
-and LocalCut runs the same, bound to loopback on the configured port, with
-its model paths file, its working folder and without the browser the
-standalone build opens.
+On Linux, where ComfyUI publishes no build, LocalCut builds the same shape
+from pinned pieces (environment.py): a standalone Python in `python` with
+the locked wheels in its site-packages, beside the source in `ComfyUI`.
+Either way LocalCut runs ComfyUI's main.py with the copy's own Python,
+bound to loopback on the configured port, with its model paths file, its
+working folder and without the browser the standalone build opens.
 
 The weights stay where the engine downloads them, in its models folder,
 laid out the way ComfyUI lays out its own `models` (checkpoints/,
@@ -44,6 +47,7 @@ import logging
 import os
 import re
 import stat
+import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -53,6 +57,7 @@ import httpx
 
 from ..config import EngineConfig
 from ..project.store import _write_atomic
+from . import environment
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +111,6 @@ def write_model_paths(folder: Path, models_dir: Path) -> Path:
         pass
     _write_atomic(target, text)
     return target
-
-
-def python_of(folder: Path) -> Path:
-    """The portable build's own Python."""
-    return folder / "python_embeded" / "python.exe"
 
 
 def work_dir(config: EngineConfig) -> Path:
@@ -285,15 +285,59 @@ def clear_working_folder(work: Path) -> int:
     return sum(_sweep(root, None) for root in working_roots(work))
 
 
+def _portable(folder: Path) -> Path:
+    return folder / "python_embeded" / "python.exe"
+
+
+def is_portable(folder: Path) -> bool:
+    """Whether the copy in `folder` is a Windows portable build rather than
+    one LocalCut built itself, by what is there: on Windows before anything
+    is, the portable build is the one a setup would put there."""
+    standalone = folder / environment.RUNTIME_FOLDER / environment.INTERPRETER
+    return _portable(folder).exists() or (os.name == "nt" and not standalone.exists())
+
+
+def python_of(folder: Path) -> Path:
+    """The copy's own Python: the portable build's embedded one, or the
+    standalone one LocalCut unpacked."""
+    if is_portable(folder):
+        return _portable(folder)
+    return folder / environment.RUNTIME_FOLDER / environment.INTERPRETER
+
+
+def python_flags(folder: Path) -> list[str]:
+    """What the copy's Python is started with before the script: no user
+    site-packages (`-s`), as the portable build's own scripts start it.
+    LocalCut's own Python ignores PYTHONPATH and PYTHONHOME too (`-E`): a
+    shell that sets them for another project would otherwise put that
+    project's packages in front of ComfyUI's, or point the interpreter at
+    another Python's library."""
+    return ["-s"] if is_portable(folder) else ["-s", "-E"]
+
+
+def child_environment() -> dict[str, str]:
+    """What the copy's Python is given on top of the engine's environment.
+    A frozen engine on Linux runs with LD_LIBRARY_PATH pointing at its own
+    bundled libraries, which a child would load in place of the system's
+    and PyTorch's; PyInstaller keeps what it was before in
+    LD_LIBRARY_PATH_ORIG. The child gets that back."""
+    if os.name == "nt" or not getattr(sys, "frozen", False):
+        return {}
+    return {"LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH_ORIG", "")}
+
+
 def server_argv(folder: Path, *, host: str, port: int, cpu: bool = False) -> list[str]:
-    """The command line LocalCut starts its copy with: the portable build's
-    own, with the address, the model paths file and no browser. The setup's
+    """The command line LocalCut starts its copy with: ComfyUI's main.py
+    under the copy's own Python, as the portable build's scripts run it,
+    with the address, the model paths file and no browser. `cpu` is the
+    processor's build, which ComfyUI has to be told to run on. The setup's
     launch adds `working_argv` to it, as to every platform's."""
+    portable = is_portable(folder)
     argv = [
         str(python_of(folder)),
-        "-s",
+        *python_flags(folder),
         str(folder / "ComfyUI" / "main.py"),
-        "--windows-standalone-build",
+        *(["--windows-standalone-build"] if portable else []),
         "--disable-auto-launch",
         "--listen",
         host,
@@ -349,10 +393,11 @@ async def identify(url: str) -> str | None:
     return "other"
 
 
-#: Run by the portable build's Python to find out whether its PyTorch can
-#: use the card: one small sum on the device, which is what fails on a card
-#: the build has no kernels for even where `is_available()` says yes. It
-#: prints one line of JSON last.
+#: Run by the copy's own Python to find out whether its PyTorch can use the
+#: card: one small sum on the device, which is what fails on a card the
+#: build has no kernels for even where `is_available()` says yes. The
+#: processor's build sums on the processor, which proves its PyTorch loads
+#: and computes. It prints one line of JSON last.
 DEVICE_CHECK = """
 import json, sys
 out = {"torch": None, "device": None, "error": None}
@@ -360,18 +405,20 @@ try:
     import torch
     out["torch"] = torch.__version__
     vendor = sys.argv[1]
-    if vendor == "intel":
+    if vendor == "cpu":
+        api, kind = None, "cpu"
+    elif vendor == "intel":
         api, kind = getattr(torch, "xpu", None), "xpu"
     else:
         api, kind = torch.cuda, "cuda"
-    if api is None or not api.is_available():
+    if kind != "cpu" and (api is None or not api.is_available()):
         out["error"] = "PyTorch finds no " + kind + " device"
     else:
         value = (torch.ones(4, device=kind) * 2).sum().item()
         if value != 8:
             out["error"] = "the device computed 2 * 4 ones as " + repr(value)
         else:
-            out["device"] = api.get_device_name(0)
+            out["device"] = "CPU" if api is None else api.get_device_name(0)
 except Exception as exc:
     out["error"] = type(exc).__name__ + ": " + str(exc)
 print(json.dumps(out))

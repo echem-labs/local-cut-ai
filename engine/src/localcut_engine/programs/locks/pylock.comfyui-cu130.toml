@@ -1,0 +1,1084 @@
+# LocalCut's ComfyUI on Linux: every wheel a setup unpacks into the
+# standalone Python, for PyTorch's cu130 build. Written by
+# engine/scripts/lock-comfyui-linux.py; do not edit it by hand.
+lock-version = "1.0"
+created-by = "localcut lock-comfyui-linux.py"
+requires-python = "==3.13.16"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[[packages]]
+name = "aiohappyeyeballs"
+version = "2.7.1"
+wheels = [{ name = "aiohappyeyeballs-2.7.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/71/43/1947f06babed6b3f1d7f38b0c767f52df66bfb2bc10b468c4a7de9eceff2/aiohappyeyeballs-2.7.1-py3-none-any.whl", size = 15038, hashes = { sha256 = "9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472" } }]
+
+[packages.tool.localcut]
+licence = "Python Software Foundation License"
+files = 10
+bytes = 40006
+
+[[packages]]
+name = "aiohttp"
+version = "3.14.5"
+wheels = [{ name = "aiohttp-3.14.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/32/51/395d225ef36f5a50d8e548dcd3141bfdbcd31fb6eed859022c573d2c4d66/aiohttp-3.14.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 1911038, hashes = { sha256 = "1ffa3a523a36d8628f98c06492ae16a31a23d14c0b4ec721757b477319f656d6" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0 AND MIT"
+files = 73
+bytes = 7100231
+
+[[packages]]
+name = "aiosignal"
+version = "1.4.0"
+wheels = [{ name = "aiosignal-1.4.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl", size = 7490, hashes = { sha256 = "053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 7
+bytes = 17188
+
+[[packages]]
+name = "alembic"
+version = "1.20.0"
+wheels = [{ name = "alembic-1.20.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/3f/27/78a89b55b0904d222183164e079b4ca56208e94eff1d35ad1f1ad5be9b06/alembic-1.20.0-py3-none-any.whl", size = 268719, hashes = { sha256 = "77eb101048d95f982c0353e9233404889dcd7a6fc244c107836c0e2fc9cf7d9d" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 103
+bytes = 1087553
+
+[[packages]]
+name = "annotated-doc"
+version = "0.0.5"
+wheels = [{ name = "annotated_doc-0.0.5-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/3e/30/e900b21425a860e195f32e37657aa1f7c7f2b1bfb26f03ca209b90933c06/annotated_doc-0.0.5-py3-none-any.whl", size = 5302, hashes = { sha256 = "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 8
+bytes = 9515
+
+[[packages]]
+name = "annotated-types"
+version = "0.8.0"
+wheels = [{ name = "annotated_types-0.8.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/99/91/8acff4f5e50511b911bbccb72b8628a49c68ce14148cd9f6431094859a90/annotated_types-0.8.0-py3-none-any.whl", size = 13427, hashes = { sha256 = "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 7
+bytes = 36347
+
+[[packages]]
+name = "anyio"
+version = "4.15.1"
+wheels = [{ name = "anyio-4.15.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/12/b8/4bd346e22b28902df4d651910f5242c28d84e4a5c2435ca5c3f797ed7e2e/anyio-4.15.1-py3-none-any.whl", size = 132079, hashes = { sha256 = "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 53
+bytes = 539217
+
+[[packages]]
+name = "attrs"
+version = "26.1.0"
+wheels = [{ name = "attrs-26.1.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl", size = 67548, hashes = { sha256 = "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 35
+bytes = 233691
+
+[[packages]]
+name = "av"
+version = "19.0.1"
+wheels = [{ name = "av-19.0.1-cp312-abi3-manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/c8/97/5fb45934ac64e8afc2c6869a7dcb8cb2af1ddab09a725367548856cbb59f/av-19.0.1-cp312-abi3-manylinux_2_28_x86_64.whl", size = 34983451, hashes = { sha256 = "1bea5b6134209305199bce7627ac3d33964de2cf2b09c77d08e7f67cf8bd4170" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 259
+bytes = 131461522
+
+[[packages]]
+name = "blake3"
+version = "1.0.11"
+wheels = [{ name = "blake3-1.0.11-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/ad/a2/ca8c8cd9333914ccb1f1acc3077231d253fd78c06ccc5bd89f6036674b3b/blake3-1.0.11-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", size = 381003, hashes = { sha256 = "dad7fc38101ec6fe0ff4ac1e4f89e0c20ee532d4c042a134b5fe83a2cb93bc2e" } }]
+
+[packages.tool.localcut]
+licence = "CC0-1.0 OR Apache-2.0"
+files = 9
+bytes = 1034901
+
+[[packages]]
+name = "certifi"
+version = "2026.10.18"
+wheels = [{ name = "certifi-2026.10.18-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/08/ba/95dd616042484f7c83a06974388b37b837732740ee70bc5dc715b5fcd55a/certifi-2026.10.18-py3-none-any.whl", size = 134093, hashes = { sha256 = "73191c47aaa79da394e8fee2dbc2ec827432cab56311122c9e47abf79e390f62" } }]
+
+[packages.tool.localcut]
+licence = "Mozilla Public License 2.0 (MPL 2.0)"
+files = 12
+bytes = 242834
+
+[[packages]]
+name = "charset-normalizer"
+version = "3.5.2"
+wheels = [{ name = "charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/4b/85/41d27f234b82e47c167a5f6c0f62501dc0c640585ff4aba79e08a390336a/charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 254660, hashes = { sha256 = "7218e8f32b0956cfcd048fd42d9d5779809745ca1d86113ca56f66e7ae1549c4" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 21
+bytes = 759969
+
+[[packages]]
+name = "click"
+version = "8.5.0"
+wheels = [{ name = "click-8.5.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl", size = 125251, hashes = { sha256 = "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 22
+bytes = 447719
+
+[[packages]]
+name = "comfy-aimdo"
+version = "0.5.6"
+wheels = [{ name = "comfy_aimdo-0.5.6-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/0e/31/1b997a83947c56a9cb30398e5ea04bfca553cd1385528a923a3702920984/comfy_aimdo-0.5.6-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 432887, hashes = { sha256 = "0332bc33b64597aff1b4f79f6bb74df3d5118418f08c66210665834b4ab6246e" } }]
+
+[packages.tool.localcut]
+licence = "not stated"
+files = 16
+bytes = 1169774
+
+[[packages]]
+name = "comfy-angle"
+version = "0.1.1"
+wheels = [{ name = "comfy_angle-0.1.1-py3-none-manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/af/f4/5ddd0416e9619233b20e2a34c47d2359d4ac6b17a17f8bf59e0bfe5b93c3/comfy_angle-0.1.1-py3-none-manylinux_2_28_x86_64.whl", size = 5136221, hashes = { sha256 = "3d2fcab9386ebbb5653d66696fa8bcad329c1d1852ea4b61f286ea99485a840a" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 9
+bytes = 28286981
+
+[[packages]]
+name = "comfy-kitchen"
+version = "0.2.37"
+wheels = [{ name = "comfy_kitchen-0.2.37-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/19/04/d24939d30b077679bfc8bf4a53c7392f9d8650df7ce69164238a673753a1/comfy_kitchen-0.2.37-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 59238324, hashes = { sha256 = "03cca0d10c314aaa13bff8f9422d03974221a344162b23d4f10d27eb2a35d0e8" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 61
+bytes = 171378542
+
+[[packages]]
+name = "comfyui-embedded-docs"
+version = "0.5.14"
+wheels = [{ name = "comfyui_embedded_docs-0.5.14-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/21/99/87493c6a2c90801e949a5fc8e2f35acb45a05f79ba779dabd18c5d07dad0/comfyui_embedded_docs-0.5.14-py3-none-any.whl", size = 24340736, hashes = { sha256 = "eae6c27521b6243250add8fa39f3263df3b5121739a2fe66ff278f2517f499e9" } }]
+
+[packages.tool.localcut]
+licence = "GPL-3.0"
+files = 15717
+bytes = 46459646
+
+[[packages]]
+name = "comfyui-frontend-package"
+version = "1.55.17"
+wheels = [{ name = "comfyui_frontend_package-1.55.17-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/30/82/bc354e027b8a31714c9870999bd67f95e2079d7c5c768f4e4346baea8aae/comfyui_frontend_package-1.55.17-py3-none-any.whl", size = 25543653, hashes = { sha256 = "d90c35f470e7570cf35552a0cd160347beee06c73805f16e18f92a8650edb008" } }]
+
+[packages.tool.localcut]
+licence = "not stated"
+files = 1043
+bytes = 101182386
+
+[[packages]]
+name = "comfyui-workflow-templates"
+version = "0.11.82"
+wheels = [{ name = "comfyui_workflow_templates-0.11.82-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/39/0d/ad05fdf3c742e507840217943b9a9e0e08ac1ffd956f341a470a66c9caf3/comfyui_workflow_templates-0.11.82-py3-none-any.whl", size = 10877, hashes = { sha256 = "0c4cb56f3e47191cbd9d497a080dd35abee08f75372d3da86a2f9d6765a57096" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 6
+bytes = 27599
+
+[[packages]]
+name = "comfyui-workflow-templates-core"
+version = "0.3.373"
+wheels = [{ name = "comfyui_workflow_templates_core-0.3.373-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/cc/ab/1299a0a5ce6e93a38169417cf1f1779325bfbaaf8204247c0428aa4e5eaf/comfyui_workflow_templates_core-0.3.373-py3-none-any.whl", size = 81211, hashes = { sha256 = "28e84d3a68b018ee64fadb49779b3776be9ce3f04fe192d0e1c5600d45407736" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 7
+bytes = 387747
+
+[[packages]]
+name = "comfyui-workflow-templates-json"
+version = "0.1.108"
+wheels = [{ name = "comfyui_workflow_templates_json-0.1.108-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/6d/87/28459ec38d482d4b0338dba10b2ad9e98b9ddba72b67f44f447a2f7432ea/comfyui_workflow_templates_json-0.1.108-py3-none-any.whl", size = 3887908, hashes = { sha256 = "5b899a7c79dc0064ef5282e391d128c13963aa2726b7572168d5f17fe68efab2" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 623
+bytes = 28345651
+
+[[packages]]
+name = "comfyui-workflow-templates-media-api"
+version = "0.3.84"
+wheels = [{ name = "comfyui_workflow_templates_media_api-0.3.84-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/35/47/e4c723615b396f75893049af38a4b53bcb0e8944418819bb0e0d72f342e8/comfyui_workflow_templates_media_api-0.3.84-py3-none-any.whl", size = 100148800, hashes = { sha256 = "c2d6a5999ac39e4f37f47ae231c92557defe5addb2cc6ab5c11410b4d5a2910a" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 151
+bytes = 100253951
+
+[[packages]]
+name = "comfyui-workflow-templates-media-assets-01"
+version = "0.1.48"
+wheels = [{ name = "comfyui_workflow_templates_media_assets_01-0.1.48-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/7c/4c/39858b7dd6036fae44e15baf6eb5e55671291d25b9e0931bc0956ce12055/comfyui_workflow_templates_media_assets_01-0.1.48-py3-none-any.whl", size = 94172110, hashes = { sha256 = "7733ed12867e95e6b8b39be20bcc73579c28e97e5a44086ffb977cc2c1c78c43" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 166
+bytes = 94140756
+
+[[packages]]
+name = "comfyui-workflow-templates-media-assets-02"
+version = "0.1.14"
+wheels = [{ name = "comfyui_workflow_templates_media_assets_02-0.1.14-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/0a/19/8115931916651ebb3dfcc43ed56244959e72b0aaacec439815f50a398888/comfyui_workflow_templates_media_assets_02-0.1.14-py3-none-any.whl", size = 29033974, hashes = { sha256 = "de9288c5af7d4be5ee3d3db8544e31489f108c8ad9eac92178ebaf6e124dc64f" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 76
+bytes = 29026458
+
+[[packages]]
+name = "comfyui-workflow-templates-media-image"
+version = "0.3.160"
+wheels = [{ name = "comfyui_workflow_templates_media_image-0.3.160-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/bd/2e/aa57dc75cc2a73921d8472a398678e1ac40c011756ad0ab2dfe41eb0ba15/comfyui_workflow_templates_media_image-0.3.160-py3-none-any.whl", size = 89401690, hashes = { sha256 = "d4a5c5541c7088f6adb1c7da41f5d7c1c14a037eda6a61cd8b4b76c251faaa93" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 277
+bytes = 89669061
+
+[[packages]]
+name = "comfyui-workflow-templates-media-other"
+version = "0.3.229"
+wheels = [{ name = "comfyui_workflow_templates_media_other-0.3.229-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/a7/46/feed5492a2def46fee71a52fcbb3b7443a048e402c40bedfaaebcc6fa234/comfyui_workflow_templates_media_other-0.3.229-py3-none-any.whl", size = 89097925, hashes = { sha256 = "ce3d98fa9d84b914c335fe5c9bc903cfefbe1932b1bc3cb6baef7f371b4bd435" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 166
+bytes = 89945933
+
+[[packages]]
+name = "comfyui-workflow-templates-media-video"
+version = "0.3.101"
+wheels = [{ name = "comfyui_workflow_templates_media_video-0.3.101-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/e5/9e/49e1fbe9f05df7e4410a8d485af2a2d6fe80b247d44b3bfa7166c54012ef/comfyui_workflow_templates_media_video-0.3.101-py3-none-any.whl", size = 104342671, hashes = { sha256 = "6270fd61c8c3931b6f0031abac7d4c90ced624de6c7918bff85b89e6c3d7493c" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 86
+bytes = 104378957
+
+[[packages]]
+name = "cuda-bindings"
+version = "13.4.4"
+wheels = [{ name = "cuda_bindings-13.4.4-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/ba/8f/aedec367fea64267594a26ede3704f241e1bee465962f3a92d6186c774b7/cuda_bindings-13.4.4-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", size = 6929120, hashes = { sha256 = "5d6adc44f098472d8ac2d6211923eea6081830521852dc77f8c9237bf9320a59" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 89
+bytes = 26651661
+
+[[packages]]
+name = "cuda-pathfinder"
+version = "1.8.3"
+wheels = [{ name = "cuda_pathfinder-1.8.3-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/b9/fb/f8e1890428f9f590b4beebd63b068aac1ce32a3331510c847b9f9a78f261/cuda_pathfinder-1.8.3-py3-none-any.whl", size = 62561, hashes = { sha256 = "e29e59829c297a7a5233bd9cc71094fc5bddbd076951482670178f9eade39b1f" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 39
+bytes = 187878
+
+[[packages]]
+name = "cuda-toolkit"
+version = "13.0.3.0"
+wheels = [{ name = "cuda_toolkit-13.0.3.0-py2.py3-none-any.whl", url = "https://files.pythonhosted.org/packages/d1/c7/a79086a62c98befcdb8349656c6f114e2db3b8b2422f6e25c97a7f2a9a3c/cuda_toolkit-13.0.3.0-py2.py3-none-any.whl", size = 2512, hashes = { sha256 = "d693caaa261214ddd7dbb60d68e71cbed884e68c2be7509778f3051da0b91c3f" } }]
+
+[packages.tool.localcut]
+licence = "not stated"
+files = 3
+bytes = 18024
+
+[[packages]]
+name = "einops"
+version = "0.8.2"
+wheels = [{ name = "einops-0.8.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/2a/09/f8d8f8f31e4483c10a906437b4ce31bdf3d6d417b73fe33f1a8b59e34228/einops-0.8.2-py3-none-any.whl", size = 65638, hashes = { sha256 = "54058201ac7087911181bfec4af6091bb59380360f069276601256a76af08193" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 31
+bytes = 232570
+
+[[packages]]
+name = "filelock"
+version = "4.2.4"
+wheels = [{ name = "filelock-4.2.4-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl", size = 162475, hashes = { sha256 = "301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 28
+bytes = 578584
+
+[[packages]]
+name = "frozenlist"
+version = "1.8.0"
+wheels = [{ name = "frozenlist-1.8.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", url = "https://files.pythonhosted.org/packages/d5/4e/e4691508f9477ce67da2015d8c00acd751e6287739123113a9fca6f1604e/frozenlist-1.8.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", size = 234391, hashes = { sha256 = "fb30f9626572a76dfe4293c7194a09fb1fe93ba94c7d4f720dfae3b646b45027" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 10
+bytes = 798550
+
+[[packages]]
+name = "fsspec"
+version = "2026.9.0"
+wheels = [{ name = "fsspec-2026.9.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/6c/c0/a98505f18594f1bce828bb159cec0fcf9860562f1a2c85913409fc8f3d9e/fsspec-2026.9.0-py3-none-any.whl", size = 221738, hashes = { sha256 = "8dd6e646e99ea382bd85f97a45e6b526a442d79423a7dc673f1e2756d05fcb5f" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 62
+bytes = 810582
+
+[[packages]]
+name = "h11"
+version = "0.16.0"
+wheels = [{ name = "h11-0.16.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", size = 37515, hashes = { sha256 = "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 17
+bytes = 103935
+
+[[packages]]
+name = "hf-xet"
+version = "1.7.0"
+wheels = [{ name = "hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/a3/4c/2bf3b66c215d409655f28de1622393dde04c9461280d48c7924bb3b2decd/hf_xet-1.7.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 4212180, hashes = { sha256 = "2814a6e999d13464c4d679b788cc5d784eb5a4edfc638a31f10e9a11ab531ef8" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 7
+bytes = 11573549
+
+[[packages]]
+name = "httpcore2"
+version = "2.14.0"
+wheels = [{ name = "httpcore2-2.14.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/02/06/a8d6a8f90d11b76d9086242b6bb0ee4b503473bfc8be34c2d5b067275c22/httpcore2-2.14.0-py3-none-any.whl", size = 84291, hashes = { sha256 = "4c4f64f4b544afeb778c42c0ffb5941b29e671157e90ed3f6dc787c4bca90cd1" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 36
+bytes = 305025
+
+[[packages]]
+name = "httpx2"
+version = "2.14.0"
+wheels = [{ name = "httpx2-2.14.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/69/5a/469616aa8c2cbb0bb9dd67a3c18d07c01ab604cc0b236ee1c47d260c7f6e/httpx2-2.14.0-py3-none-any.whl", size = 96901, hashes = { sha256 = "9d20c13a10bae1773a0be3b0f1e5beeb4bdd549bc3a2ba18efa32897c65403e4" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 36
+bytes = 410477
+
+[[packages]]
+name = "huggingface-hub"
+version = "2.2.0"
+wheels = [{ name = "huggingface_hub-2.2.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/eb/b0/0f7b430fd100b3a3b037fdbb314878200241082e607b3383c63d91a13a72/huggingface_hub-2.2.0-py3-none-any.whl", size = 839884, hashes = { sha256 = "1667f145dc56dc210d60966069397df9ecfca9607a5d43db88b308c89dae56b3" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 190
+bytes = 3266353
+
+[[packages]]
+name = "idna"
+version = "3.20"
+wheels = [{ name = "idna-3.20-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl", size = 69583, hashes = { sha256 = "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 16
+bytes = 342091
+
+[[packages]]
+name = "jinja2"
+version = "3.1.6"
+wheels = [{ name = "jinja2-3.1.6-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", size = 134899, hashes = { sha256 = "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67" } }]
+
+[packages.tool.localcut]
+licence = "BSD License"
+files = 31
+bytes = 496892
+
+[[packages]]
+name = "kornia"
+version = "0.8.3"
+wheels = [{ name = "kornia-0.8.3-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/85/05/0c1cc486e87d2a5ad6649eb96a8ccaa7c6002d8d73d676c13e2102f286c1/kornia-0.8.3-py3-none-any.whl", size = 1189381, hashes = { sha256 = "0b15f5d359aeafd7ff54ea631ed1943a3eb295c4a6dae3f745ddeada25e33289" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 496
+bytes = 3970641
+
+[[packages]]
+name = "kornia-rs"
+version = "0.2.0"
+wheels = [{ name = "kornia_rs-0.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/eb/4c/b7f9a36a6fe174069c9a6f2f6debea49e7c992dcbb8a768a217303ef1b49/kornia_rs-0.2.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", size = 5340640, hashes = { sha256 = "f8b71a0c0bc54ba7fc76f184d66a8f600c19754495313d245e8b28e847ef902e" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 21
+bytes = 15172662
+
+[[packages]]
+name = "mako"
+version = "1.4.3"
+wheels = [{ name = "mako-1.4.3-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/6d/a0/053d6af3e8f871e0073b4a36732d9e65be77a72e5434c31b94f6af78a6bb/mako-1.4.3-py3-none-any.whl", size = 80164, hashes = { sha256 = "723296007c870bfd6b3f0c3230dba7198096e5269297ebf5e4eff9e7ffa39d4f" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 39
+bytes = 280536
+
+[[packages]]
+name = "markdown-it-py"
+version = "4.2.0"
+wheels = [{ name = "markdown_it_py-4.2.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl", size = 91687, hashes = { sha256 = "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 74
+bytes = 244684
+
+[[packages]]
+name = "markupsafe"
+version = "3.0.4"
+wheels = [{ name = "markupsafe-3.0.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/63/e0/cec6865dfe88cb48fedd4b20aed6af5158e41092adcbf3e028bcc6ec2108/markupsafe-3.0.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 23017, hashes = { sha256 = "434139499bb20b502ed3baa1f169e618f924a97e7a777fea1a49446d80106cf6" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 11
+bytes = 67142
+
+[[packages]]
+name = "mdurl"
+version = "0.1.2"
+wheels = [{ name = "mdurl-0.1.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", size = 9979, hashes = { sha256 = "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 11
+bytes = 23308
+
+[[packages]]
+name = "mpmath"
+version = "1.3.0"
+wheels = [{ name = "mpmath-1.3.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/43/e3/7d92a15f894aa0c9c4b49b8ee9ac9850d6e63b03c9c32c0367a13ae62209/mpmath-1.3.0-py3-none-any.whl", size = 536198, hashes = { sha256 = "a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c" } }]
+
+[packages.tool.localcut]
+licence = "BSD License"
+files = 92
+bytes = 1950197
+
+[[packages]]
+name = "multidict"
+version = "7.1.0"
+wheels = [{ name = "multidict-7.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/4d/2e/7b708a72001323dc6b2930834d63e355870ea5b1ee8d1450e0fe1a24752b/multidict-7.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 481377, hashes = { sha256 = "5129cc1f5fec6888e2db0be936dab67242e32c738811c8769aeea93aab4257a8" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 15
+bytes = 1621386
+
+[[packages]]
+name = "networkx"
+version = "3.7"
+wheels = [{ name = "networkx-3.7-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/7e/cd/fe58041e9011f307c490e3e17dd48cc516448f7c698a3f2d9d9d65d7e6a8/networkx-3.7-py3-none-any.whl", size = 2142205, hashes = { sha256 = "e3fd2c13a7814cee3746340d8d7f8598a67f16a58bf47fb7f8793fab6efca1b0" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 604
+bytes = 7298220
+
+[[packages]]
+name = "numpy"
+version = "2.5.4"
+wheels = [{ name = "numpy-2.5.4-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/da/24/3bd070f3269dc609d8f26b2643f62ef91bb415841c0b294805aaf7fe06da/numpy-2.5.4-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 16718044, hashes = { sha256 = "6ffa07666f8da0eef81d149934a626d0d95fbd6838432a33e66245423a9062c0" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+files = 926
+bytes = 56386428
+
+[[packages]]
+name = "nvidia-cublas"
+version = "13.1.1.3"
+wheels = [{ name = "nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_x86_64.whl", url = "https://files.pythonhosted.org/packages/3b/cd/154ca20c38269e05eff77c1464e6c1da89f50a6390b565e9d82e06bc11e1/nvidia_cublas-13.1.1.3-py3-none-manylinux_2_27_x86_64.whl", size = 423138758, hashes = { sha256 = "37936a16db8fe4ac1f065c2139360608a543a09275cb1a1af612e08cfa065436" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 14
+bytes = 597144857
+
+[[packages]]
+name = "nvidia-cuda-cupti"
+version = "13.0.85"
+wheels = [{ name = "nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl", url = "https://files.pythonhosted.org/packages/33/6d/737d164b4837a9bbd202f5ae3078975f0525a55730fe871d8ed4e3b952b0/nvidia_cuda_cupti-13.0.85-py3-none-manylinux_2_25_x86_64.whl", size = 10715597, hashes = { sha256 = "4eb01c08e859bf924d222250d2e8f8b8ff6d3db4721288cf35d14252a4d933c8" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 47
+bytes = 45233935
+
+[[packages]]
+name = "nvidia-cuda-nvrtc"
+version = "13.0.88"
+wheels = [{ name = "nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", url = "https://files.pythonhosted.org/packages/c3/68/483a78f5e8f31b08fb1bb671559968c0ca3a065ac7acabfc7cee55214fd6/nvidia_cuda_nvrtc-13.0.88-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", size = 90215200, hashes = { sha256 = "ad9b6d2ead2435f11cbb6868809d2adeeee302e9bb94bcf0539c7a40d80e8575" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 10
+bytes = 228019534
+
+[[packages]]
+name = "nvidia-cuda-runtime"
+version = "13.0.96"
+wheels = [{ name = "nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/2e/24/d1558f3b68b1d26e706813b1d10aa1d785e4698c425af8db8edc3dced472/nvidia_cuda_runtime-13.0.96-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 2243632, hashes = { sha256 = "7f82250d7782aa23b6cfe765ecc7db554bd3c2870c43f3d1821f1d18aebf0548" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 99
+bytes = 7251857
+
+[[packages]]
+name = "nvidia-cudnn-cu13"
+version = "9.24.0.43"
+wheels = [{ name = "nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", url = "https://files.pythonhosted.org/packages/5c/ba/791cffd048fe5b044e620df55267e3e95c0e6e07d50b41e377c03dfc910f/nvidia_cudnn_cu13-9.24.0.43-py3-none-manylinux_2_27_x86_64.whl", size = 553099438, hashes = { sha256 = "71f181cd810e90f9b6023b01186fe82d13d65f0ec098581ee201d39fad769e4b" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 31
+bytes = 966381021
+
+[[packages]]
+name = "nvidia-cufft"
+version = "12.0.0.61"
+wheels = [{ name = "nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/a8/2f/7b57e29836ea8714f81e9898409196f47d772d5ddedddf1592eadb8ab743/nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 214085489, hashes = { sha256 = "6c44f692dce8fd5ffd3e3df134b6cdb9c2f72d99cf40b62c32dde45eea9ddad3" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 11
+bytes = 287646258
+
+[[packages]]
+name = "nvidia-cufile"
+version = "1.15.1.6"
+wheels = [{ name = "nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/3f/70/4f193de89a48b71714e74602ee14d04e4019ad36a5a9f20c425776e72cd6/nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 1223672, hashes = { sha256 = "08a3ecefae5a01c7f5117351c64f17c7c62efa5fffdbe24fc7d298da19cd0b44" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 8
+bytes = 3321513
+
+[[packages]]
+name = "nvidia-curand"
+version = "10.4.0.35"
+wheels = [{ name = "nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl", url = "https://files.pythonhosted.org/packages/a5/9f/be0a41ca4a4917abf5cb9ae0daff1a6060cc5de950aec0396de9f3b52bc5/nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl", size = 59544258, hashes = { sha256 = "1aee33a5da6e1db083fe2b90082def8915f30f3248d5896bcec36a579d941bfc" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 23
+bytes = 134866646
+
+[[packages]]
+name = "nvidia-cusolver"
+version = "12.0.4.66"
+wheels = [{ name = "nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl", url = "https://files.pythonhosted.org/packages/5f/67/cba3777620cdacb99102da4042883709c41c709f4b6323c10781a9c3aa34/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl", size = 200941980, hashes = { sha256 = "0a759da5dea5c0ea10fd307de75cdeb59e7ea4fcb8add0924859b944babf1112" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 13
+bytes = 245427965
+
+[[packages]]
+name = "nvidia-cusparse"
+version = "12.6.3.3"
+wheels = [{ name = "nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/fa/18/623c77619c31d62efd55302939756966f3ecc8d724a14dab2b75f1508850/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 145942937, hashes = { sha256 = "2b3c89c88d01ee0e477cb7f82ef60a11a4bcd57b6b87c33f789350b59759360b" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 8
+bytes = 162926567
+
+[[packages]]
+name = "nvidia-cusparselt-cu13"
+version = "0.8.1"
+wheels = [{ name = "nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/34/7d/2661f2fb3ac4302f3a246f5fc030213ac60c1fe0bce84f9783dbd831dbb7/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_x86_64.whl", size = 170148586, hashes = { sha256 = "786ce87568c303fadb5afcc7102d454cd3040d75f6f8626f5db460d1871f4dd0" } }]
+
+[packages.tool.localcut]
+licence = "NVIDIA Proprietary Software"
+files = 7
+bytes = 233961706
+
+[[packages]]
+name = "nvidia-nccl-cu13"
+version = "2.30.7"
+wheels = [{ name = "nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_x86_64.whl", url = "https://files.pythonhosted.org/packages/3f/34/c500f90c7ae641b8e0f98965b36b8a7ac79cc8b296e8d251fe3eb592ee54/nvidia_nccl_cu13-2.30.7-py3-none-manylinux_2_18_x86_64.whl", size = 215965170, hashes = { sha256 = "cefa7fdb9710efd0f39c5f1be1d61ff6fc9a996c451265bd7fbdcf9455ed4b50" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 62
+bytes = 253342412
+
+[[packages]]
+name = "nvidia-nvjitlink"
+version = "13.4.92"
+wheels = [{ name = "nvidia_nvjitlink-13.4.92-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", url = "https://files.pythonhosted.org/packages/1d/6b/eef7a9e32872b8f41e145bf10cddc9af26e153c338852811fe9a9baddf9e/nvidia_nvjitlink-13.4.92-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", size = 42452378, hashes = { sha256 = "e0391f24ed94ec879b84e3da4d4ec320c879aff681f2c7a638462f7199284323" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 7
+bytes = 103685370
+
+[[packages]]
+name = "nvidia-nvshmem-cu13"
+version = "3.4.5"
+wheels = [{ name = "nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", url = "https://files.pythonhosted.org/packages/3c/35/a9bf80a609e74e3b000fef598933235c908fcefcef9026042b8e6dfde2a9/nvidia_nvshmem_cu13-3.4.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", size = 60412546, hashes = { sha256 = "290f0a2ee94c9f3687a02502f3b9299a9f9fe826e6d0287ee18482e78d495b80" } }]
+
+[packages.tool.localcut]
+licence = "LicenseRef-NVIDIA-Proprietary"
+files = 64
+bytes = 80816650
+
+[[packages]]
+name = "nvidia-nvtx"
+version = "13.0.85"
+wheels = [{ name = "nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", url = "https://files.pythonhosted.org/packages/c2/f3/d86c845465a2723ad7e1e5c36dcd75ddb82898b3f53be47ebd429fb2fa5d/nvidia_nvtx-13.0.85-py3-none-manylinux1_x86_64.manylinux_2_5_x86_64.whl", size = 148047, hashes = { sha256 = "4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4" } }]
+
+[packages.tool.localcut]
+licence = "Other/Proprietary License"
+files = 41
+bytes = 590303
+
+[[packages]]
+name = "packaging"
+version = "26.3"
+wheels = [{ name = "packaging-26.3-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl", size = 129956, hashes = { sha256 = "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0 OR BSD-2-Clause"
+files = 29
+bytes = 499179
+
+[[packages]]
+name = "pillow"
+version = "13.0.0"
+wheels = [{ name = "pillow-13.0.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/ef/fe/f5cdaa2d1c4086e757430f368c271a58ee29cfe7378e7ae7b9d964015c25/pillow-13.0.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 7142544, hashes = { sha256 = "5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582" } }]
+
+[packages.tool.localcut]
+licence = "MIT-CMU"
+files = 139
+bytes = 20409373
+
+[[packages]]
+name = "propcache"
+version = "0.5.4"
+wheels = [{ name = "propcache-0.5.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/ed/74/08e6c1faf26ee2732023a3828787ba535557122774f4a386b1f715cbd8e0/propcache-0.5.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 234316, hashes = { sha256 = "f85915e00dcb1cd9f2f890ead064ed40a27df06f0db65be427b29482ae357572" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 13
+bytes = 814535
+
+[[packages]]
+name = "psutil"
+version = "7.2.2"
+wheels = [{ name = "psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/b5/70/5d8df3b09e25bce090399cf48e452d25c935ab72dad19406c77f4e828045/psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl", size = 155560, hashes = { sha256 = "076a2d2f923fd4821644f5ba89f059523da90dc9014e85f8e45a5774ca5bc6f9" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 16
+bytes = 520630
+
+[[packages]]
+name = "pydantic"
+version = "2.14.1"
+wheels = [{ name = "pydantic-2.14.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/35/ea/a56b9fe5066f3537b7882f77e9c5dfb26d8c2eefdaed9b5fc73d57b4dc22/pydantic-2.14.1-py3-none-any.whl", size = 488106, hashes = { sha256 = "9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 111
+bytes = 1964433
+
+[[packages]]
+name = "pydantic-core"
+version = "2.50.1"
+wheels = [{ name = "pydantic_core-2.50.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/1c/bc/d79d000e5203ebef39af839f2ce77a777fcad6e08ad26af9a2fcd114ffc8/pydantic_core-2.50.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", size = 2158402, hashes = { sha256 = "17e722e156d0444ecaefbe640bdb60928752bf2013e2b7a11cdb099aaae19bec" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 11
+bytes = 5203590
+
+[[packages]]
+name = "pydantic-settings"
+version = "2.16.0"
+wheels = [{ name = "pydantic_settings-2.16.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/53/f4/b987bf8c51e5b19a95fa66d1ee596074141e085d9c2ddf97920803c7029b/pydantic_settings-2.16.0-py3-none-any.whl", size = 80364, hashes = { sha256 = "7e73acf7f61936a15e5a3b6eedaea29f133357faf7272f2607ba479b049dd7f2" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 27
+bytes = 301015
+
+[[packages]]
+name = "pygments"
+version = "2.21.0"
+wheels = [{ name = "pygments-2.21.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl", size = 1250147, hashes = { sha256 = "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9" } }]
+
+[packages.tool.localcut]
+licence = "BSD-2-Clause"
+files = 349
+bytes = 4621166
+
+[[packages]]
+name = "pyopengl"
+version = "3.1.10"
+wheels = [{ name = "pyopengl-3.1.10-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/de/e4/1ba6f44e491c4eece978685230dde56b14d51a0365bc1b774ddaa94d14cd/pyopengl-3.1.10-py3-none-any.whl", size = 3194996, hashes = { sha256 = "794a943daced39300879e4e47bd94525280685f42dbb5a998d336cfff151d74f" } }]
+
+[packages.tool.localcut]
+licence = "BSD License"
+files = 2899
+bytes = 7835170
+
+[[packages]]
+name = "python-dotenv"
+version = "1.2.4"
+wheels = [{ name = "python_dotenv-1.2.4-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl", size = 23266, hashes = { sha256 = "42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc" } }]
+
+[packages.tool.localcut]
+licence = "BSD-3-Clause"
+files = 15
+bytes = 65897
+
+[[packages]]
+name = "pyyaml"
+version = "6.0.3"
+wheels = [{ name = "pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/74/27/e5b8f34d02d9995b80abcef563ea1f8b56d20134d8f4e5e81733b1feceb2/pyyaml-6.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 801626, hashes = { sha256 = "0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 24
+bytes = 2877432
+
+[[packages]]
+name = "regex"
+version = "2026.9.29"
+wheels = [{ name = "regex-2026.9.29-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/9a/8e/c1ed81f55f992f6aa0b699a592a50c1ce9e6d44ff1aee2c14c0537dcef9c/regex-2026.9.29-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 807902, hashes = { sha256 = "d49c18f1ea294cf4adde2e5ac256e98c82ea9d708462ce4bf799dffa7cfe8a2c" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0 AND CNRI-Python"
+files = 10
+bytes = 3057309
+
+[[packages]]
+name = "requests"
+version = "2.34.2"
+wheels = [{ name = "requests-2.34.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl", size = 73075, hashes = { sha256 = "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 26
+bytes = 234397
+
+[[packages]]
+name = "rich"
+version = "15.0.0"
+wheels = [{ name = "rich-15.0.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", size = 310654, hashes = { sha256 = "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 105
+bytes = 1245816
+
+[[packages]]
+name = "safetensors"
+version = "0.8.0"
+wheels = [{ name = "safetensors-0.8.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/28/50/f203ff3a3ddfe19308efc83c5a3a29ed02bf786732ec35e68bf9162f3365/safetensors-0.8.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", size = 516040, hashes = { sha256 = "fd6f3f93c9a0a7cc2788ee63fb763353d4bd2e89b0751bc78fcf7dda00bea774" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 15
+bytes = 1337729
+
+[[packages]]
+name = "scipy"
+version = "1.18.1"
+wheels = [{ name = "scipy-1.18.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/41/48/6450ed9243315322bbc19ac57b9b70d66a20bf1d38d124c96bc4bf6af9ea/scipy-1.18.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 35312578, hashes = { sha256 = "fdaf5ea890a6183d0565f51a61799d67081bd5b1cf03c5f4b3fd3732108625c9" } }]
+
+[packages.tool.localcut]
+licence = "BSD License"
+files = 1432
+bytes = 111865355
+
+[[packages]]
+name = "sentencepiece"
+version = "0.2.2"
+wheels = [{ name = "sentencepiece-0.2.2-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/59/b4/a0356fa04d6a14337a6e0e443556785a0422c53ec58baae6b9568120eb0f/sentencepiece-0.2.2-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 1397593, hashes = { sha256 = "64b656f025355cf8c51abe9fbe3848540756c6d7ca5e6791b1afa664bc24c7cb" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 16
+bytes = 2955339
+
+[[packages]]
+name = "setuptools"
+version = "84.0.0"
+wheels = [{ name = "setuptools-84.0.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", size = 818216, hashes = { sha256 = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 343
+bytes = 2773629
+
+[[packages]]
+name = "shellingham"
+version = "1.5.4"
+wheels = [{ name = "shellingham-1.5.4-py2.py3-none-any.whl", url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", size = 9755, hashes = { sha256 = "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686" } }]
+
+[packages.tool.localcut]
+licence = "ISC License (ISCL)"
+files = 13
+bytes = 18479
+
+[[packages]]
+name = "simpleeval"
+version = "1.0.8"
+wheels = [{ name = "simpleeval-1.0.8-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/12/33/d1ecd9f4f5f272b36ad7b268e307ba0a59c109d8ad134a231cda780baac9/simpleeval-1.0.8-py3-none-any.whl", size = 18925, hashes = { sha256 = "c9c4ff42879ebf0c05f6562cb81031869948916be343bcc950b81fcc081fe9ce" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 5
+bytes = 54941
+
+[[packages]]
+name = "spandrel"
+version = "0.4.2"
+wheels = [{ name = "spandrel-0.4.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/74/31/411ea965835534c43d4b98d451968354876e0e867ea1fd42669e4cca0732/spandrel-0.4.2-py3-none-any.whl", size = 320811, hashes = { sha256 = "6c93e3ecbeb0e548fd2df45a605472b34c1614287c56b51bb33cdef7ae5235b5" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 175
+bytes = 1263548
+
+[[packages]]
+name = "sqlalchemy"
+version = "2.1.5"
+wheels = [{ name = "sqlalchemy-2.1.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/f3/6d/04f4ffc5038571e712c4f88f20d7022091bafab082e85ea5b37a7e8270f1/sqlalchemy-2.1.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 4652645, hashes = { sha256 = "1cf433bcb77696cc915552d7f1e8d9117a5dae5aff9fceb06a69d74b3b3c2bd1" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 276
+bytes = 17898075
+
+[[packages]]
+name = "sympy"
+version = "1.14.0"
+wheels = [{ name = "sympy-1.14.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", size = 6299353, hashes = { sha256 = "e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5" } }]
+
+[packages.tool.localcut]
+licence = "BSD License"
+files = 1570
+bytes = 26841861
+
+[[packages]]
+name = "tokenizers"
+version = "0.23.3"
+wheels = [{ name = "tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", url = "https://files.pythonhosted.org/packages/3a/40/6706b82693715581457c6d5423eaa7faae576bb0526c5738a57085eb4449/tokenizers-0.23.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", size = 3396193, hashes = { sha256 = "376851d22bcf9d650a5c3090bb83e6cf9e895fbf0595369fa4cd43c1f69b5f87" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 31
+bytes = 11699337
+
+[[packages]]
+name = "torch"
+version = "2.14.1+cu130"
+wheels = [{ name = "torch-2.14.1+cu130-cp313-cp313-manylinux_2_28_x86_64.whl", url = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl", size = 554620639, hashes = { sha256 = "3a78ea0a4d6605c1e351b33ab8aabe44ddb815239cec00cc6f85555d26c0a5a5" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND MIT"
+files = 12261
+bytes = 1144245642
+
+[[packages]]
+name = "torchsde"
+version = "0.2.6"
+wheels = [{ name = "torchsde-0.2.6-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/dd/1f/b67ebd7e19ffe259f05d3cf4547326725c3113d640c277030be3e9998d6f/torchsde-0.2.6-py3-none-any.whl", size = 61232, hashes = { sha256 = "19bf7ff02eec7e8e46ba1cdb4aa0f9db1c51d492524a16975234b467f7fc463b" } }]
+
+[packages.tool.localcut]
+licence = "Apache Software License"
+files = 37
+bytes = 169527
+
+[[packages]]
+name = "torchvision"
+version = "0.29.1+cu130"
+wheels = [{ name = "torchvision-0.29.1+cu130-cp313-cp313-manylinux_2_28_x86_64.whl", url = "https://download-r2.pytorch.org/whl/cu130/torchvision-0.29.1%2Bcu130-cp313-cp313-manylinux_2_28_x86_64.whl", size = 7430739, hashes = { sha256 = "47f000acb2449b281d43707c90116a30c7fa002c7f7bbf6976bcc2562dd5787b" } }]
+
+[packages.tool.localcut]
+licence = "BSD"
+files = 199
+bytes = 19409623
+
+[[packages]]
+name = "tqdm"
+version = "4.70.1"
+wheels = [{ name = "tqdm-4.70.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl", size = 80199, hashes = { sha256 = "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73" } }]
+
+[packages.tool.localcut]
+licence = "MPL-2.0 AND MIT"
+files = 39
+bytes = 233479
+
+[[packages]]
+name = "trampoline"
+version = "0.1.2"
+wheels = [{ name = "trampoline-0.1.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/73/54/d2805324fb746d8da86d3844bee4f55c0cfd6c136de61b713772d44c5bea/trampoline-0.1.2-py3-none-any.whl", size = 5173, hashes = { sha256 = "36cc9a4ff9811843d177fc0e0740efbd7da39eadfe6e50c9e2937cbc06d899d9" } }]
+
+[packages.tool.localcut]
+licence = "MIT License"
+files = 5
+bytes = 11752
+
+[[packages]]
+name = "transformers"
+version = "5.20.1"
+wheels = [{ name = "transformers-5.20.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/ae/ba/057af605774c3c7a9228ce61d88040749134ef320426403b31bb73755d43/transformers-5.20.1-py3-none-any.whl", size = 12844669, hashes = { sha256 = "5f51ce444193e5d0a751e3fa489ddbc2224ff12f6675a5cfefd4044b09757c19" } }]
+
+[packages.tool.localcut]
+licence = "Apache 2.0 License"
+files = 2771
+bytes = 51319213
+
+[[packages]]
+name = "triton"
+version = "3.8.0"
+wheels = [{ name = "triton-3.8.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://download-r2.pytorch.org/whl/triton-3.8.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 246860044, hashes = { sha256 = "4608ffa1182461eb33cd1d655cf122225fb14d4d055a7e7549a779a6d0e94b04" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 420
+bytes = 932489841
+
+[[packages]]
+name = "truststore"
+version = "0.10.5"
+wheels = [{ name = "truststore-0.10.5-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", size = 19017, hashes = { sha256 = "9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 11
+bytes = 63033
+
+[[packages]]
+name = "typer"
+version = "0.27.3"
+wheels = [{ name = "typer-0.27.3-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/07/ea/2e31b67051e91a133189e9c000c222502ddc6969856416de0d095de4c0b0/typer-0.27.3-py3-none-any.whl", size = 123312, hashes = { sha256 = "e50022f28b82a86313e54501317a1db64bf8f8d036ff8cfe5ca7e47675454aff" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 41
+bytes = 487603
+
+[[packages]]
+name = "typing-extensions"
+version = "4.16.0"
+wheels = [{ name = "typing_extensions-4.16.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl", size = 45571, hashes = { sha256 = "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8" } }]
+
+[packages.tool.localcut]
+licence = "PSF-2.0"
+files = 5
+bytes = 182767
+
+[[packages]]
+name = "typing-inspection"
+version = "0.4.4"
+wheels = [{ name = "typing_inspection-0.4.4-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", size = 14750, hashes = { sha256 = "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 9
+bytes = 54538
+
+[[packages]]
+name = "urllib3"
+version = "2.8.0"
+wheels = [{ name = "urllib3-2.8.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", size = 135717, hashes = { sha256 = "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3" } }]
+
+[packages.tool.localcut]
+licence = "MIT"
+files = 42
+bytes = 450461
+
+[[packages]]
+name = "yarl"
+version = "1.25.1"
+wheels = [{ name = "yarl-1.25.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/0e/b7/a82a49bf88340b837ef6972b508a1604ae377b9e6904b46b10cf5f1cf925/yarl-1.25.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", size = 117012, hashes = { sha256 = "be80550d9bfe83d9b62398a37081a90434e6df2d978ec345c3d2820de6beddab" } }]
+
+[packages.tool.localcut]
+licence = "Apache-2.0"
+files = 17
+bytes = 364888
+
+[tool.localcut]
+torch-backend = "cu130"
+platform = "x86_64-manylinux_2_28"
+uv = "0.13.1"
+
+[tool.localcut.comfyui]
+version = "0.40.0"
+url = "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz"
+sha256 = "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5"
+requirements_sha256 = "daa5c581620080f44c894609b852b5fd82fa102975f5dd31abeef2ca0e5a3fff"
+requirements = [
+    "comfyui-frontend-package==1.55.17",
+    "comfyui-workflow-templates==0.11.82",
+    "comfyui-embedded-docs==0.5.14",
+    "torch",
+    "torchsde",
+    "torchvision",
+    "numpy>=1.25.0",
+    "einops",
+    "transformers>=4.50.3",
+    "tokenizers>=0.13.3",
+    "sentencepiece",
+    "safetensors>=0.4.2",
+    "aiohttp>=3.11.8",
+    "yarl>=1.18.0",
+    "pyyaml",
+    "Pillow",
+    "scipy",
+    "tqdm",
+    "psutil",
+    "alembic",
+    "SQLAlchemy>=2.0.0",
+    "filelock",
+    "av>=17.0.0",
+    "comfy-kitchen==0.2.37",
+    "comfy-aimdo==0.5.6",
+    "requests",
+    "simpleeval>=1.0.0",
+    "blake3",
+    "kornia>=0.7.1",
+    "spandrel",
+    "pydantic~=2.0",
+    "pydantic-settings~=2.0",
+    "PyOpenGL>=3.1.8",
+    "comfy-angle",
+]

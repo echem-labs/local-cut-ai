@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProgramInfo, ProgramsReport, ReadinessRow } from "../api/types";
+import { t } from "../i18n";
 import {
   binDirOf,
   buildPicked,
@@ -445,7 +446,10 @@ describe("a program built per graphics card", () => {
         ...over,
       },
     });
-  const failedOn = (build: "older_drivers" | null, reason: "gpu_not_usable" | "download_failed") =>
+  const failedOn = (
+    build: "older_drivers" | "cpu" | null,
+    reason: "gpu_not_usable" | "download_failed",
+  ) =>
     ({ job: "j", outcome: "failed", reason, error: "x", build }) as const;
 
   it("names the vendor whose build it picks and the build for older drivers", () => {
@@ -455,6 +459,10 @@ describe("a program built per graphics card", () => {
     );
     expect(buildPicked(comfyui({ build: "older_drivers" }))).toBe(
       "LocalCut picks the build for NVIDIA graphics cards on older drivers.",
+    );
+    // The processor's, on a Linux machine with no card a build is for.
+    expect(buildPicked(comfyui({ gpu: null, build: "cpu", builds: [] }))).toBe(
+      t("programs.build.picksCpu"),
     );
     // One build for every card and a vendor this build has no word for.
     expect(buildPicked(program("ffmpeg"))).toBeNull();
@@ -477,6 +485,20 @@ describe("a program built per graphics card", () => {
       last: failedOn("older_drivers", "gpu_not_usable"),
     });
     expect(otherBuildOffer(older)).toBeNull();
+  });
+
+  it("offers the processor's build after the card's builds, never before", () => {
+    const cpu = { build: "cpu" as const, download_bytes: 1000 * MB, install_bytes: 3000 * MB };
+    const linux = (last: ReturnType<typeof failedOn>) =>
+      comfyui({
+        builds: [
+          { build: "older_drivers", download_bytes: 1800 * MB, install_bytes: 5300 * MB },
+          cpu,
+        ],
+        last,
+      });
+    expect(otherBuildOffer(linux(failedOn(null, "gpu_not_usable")))?.build).toBe("older_drivers");
+    expect(otherBuildOffer(linux(failedOn("older_drivers", "gpu_not_usable")))).toEqual(cpu);
   });
 
   it("estimates the time left through the unpack as well as the download", () => {

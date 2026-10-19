@@ -200,10 +200,10 @@ export function setupOffer(program: ProgramInfo): SetupOffer | null {
 }
 
 /** The other build to offer after one whose PyTorch could not use the card:
- * the vendor's build for older drivers, when that is not the build that
- * just failed. Never the usual build, which a machine that was given
- * another one has a driver too old for. Null when there is nothing else to
- * try. */
+ * the vendor's build for older drivers, then the processor's where one is
+ * pinned (Linux), whichever is not the build that just failed. Never the
+ * usual build, which a machine that was given another one has a driver too
+ * old for. Null when there is nothing else to try. */
 export function otherBuildOffer(
   program: ProgramInfo,
 ): (ProgramBuildChoice & { build: ProgramBuild }) | null {
@@ -540,10 +540,12 @@ export function manualSteps(program: ProgramInfo, ctx: ManualContext): ManualSte
 /* ---- what a well says ---- */
 
 /** Which build a setup would fetch, in a sentence, for a program pinned per
- * GPU vendor: "LocalCut picks the build for NVIDIA graphics cards." Null for
- * a program with one build for every card, or a vendor this build has no
- * name for. */
+ * GPU vendor: "LocalCut picks the build for NVIDIA graphics cards.", or that
+ * it picks the processor's for a machine with no card it has a build for.
+ * Null for a program with one build for every card, or a vendor this build
+ * has no name for. */
 export function buildPicked(program: ProgramInfo): string | null {
+  if (program.setup.build === "cpu") return t("programs.build.picksCpu");
   const vendor = program.setup.gpu;
   if (!vendor) return null;
   const vendors = m().programs.diy.vendors as Record<string, string>;
@@ -585,6 +587,10 @@ export function statusOf(
       lines.push({ text: t("programs.sources.default", { name, address }), code: [address] });
     } else {
       lines.push({ text: t(`programs.sources.${program.source}`) });
+    }
+    if (program.source === "managed" && program.managed?.build === "cpu") {
+      // LocalCut's copy is the processor's build: it works, slowly.
+      lines.push({ text: t("programs.build.onCpu") });
     }
     if (program.checks.draws_text === true) lines.push({ text: t("programs.checks.drawsText") });
     if (program.checks.draws_text === false) {

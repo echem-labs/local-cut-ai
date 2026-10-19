@@ -564,6 +564,63 @@ describe("ComfyUI, built for the machine's graphics card", () => {
     expect(screen.getByRole("button", { name: /Try again/ })).toBeInTheDocument();
   });
 
+  it("picks the processor's build on Linux where there is no card it has a build for", () => {
+    mount(comfyui({ gpu: null, build: "cpu", builds: [] }), {
+      context: "wizard",
+      platform: "linux-x64",
+    });
+    expect(well()).toHaveTextContent(t("programs.build.picksCpu"));
+    expect(screen.getByRole("button", { name: /Set up ComfyUI/ })).toHaveTextContent("1.9 GB");
+  });
+
+  it("offers the processor's build once the card's own could not use it", () => {
+    useApp.setState({
+      system: {
+        hardware: {
+          primary_gpu: { vendor: "amd", name: "Radeon RX 7800 XT", vram_gb: 16, backend: "rocm" },
+          gpus: [],
+        },
+      },
+    } as never);
+    mount(
+      comfyui({
+        gpu: "amd",
+        builds: [{ build: "cpu", download_bytes: 1_015_000_000, install_bytes: 3 * GB }],
+        last: notUsable,
+      }),
+      { platform: "linux-x64" },
+    );
+    expect(well()).toHaveTextContent(t("programs.build.cpuAdvice"));
+    // An AMD card's driver is not NVIDIA's.
+    expect(screen.queryByRole("link", { name: /NVIDIA's drivers/ })).toBeNull();
+    const cpu = screen.getByRole("button", { name: /Use the processor instead/ });
+    expect(cpu).toHaveTextContent("968 MB");
+    fireEvent.click(cpu);
+    expect(actions.setupProgram).toHaveBeenCalledWith("comfyui", "cpu");
+  });
+
+  it("says when LocalCut's copy runs on the processor", () => {
+    mount(
+      {
+        ...comfyui({ gpu: null, build: "cpu", builds: [] }),
+        state: "ready",
+        problem: null,
+        source: "managed",
+        version: "0.40.0",
+        managed: {
+          location: "/home/me/.localcut/programs/comfyui",
+          bytes: 3 * GB,
+          version: "0.40.0",
+          build: "cpu",
+          current: true,
+          in_use: true,
+        },
+      },
+      { platform: "linux-x64" },
+    );
+    expect(well()).toHaveTextContent(t("programs.build.onCpu"));
+  });
+
   it("counts the unpack down, which takes minutes of its own", () => {
     mount(
       comfyui({
