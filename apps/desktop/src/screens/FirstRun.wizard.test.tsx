@@ -609,6 +609,75 @@ describe("the programs step", () => {
   });
 });
 
+describe("the models step's script row", () => {
+  // The script model is the one stage whose download LocalCut does not run
+  // from this step: Ollama fetches it, during Ollama's setup or through a
+  // pull. The row says which and how much, rather than that there is
+  // nothing to download.
+  const toModels = () => {
+    toStep2();
+    next();
+    const skip = screen.queryByRole("button", { name: t("programs.wizard.skip") });
+    fireEvent.click(skip ?? screen.getByRole("button", { name: t("common.continue") }));
+  };
+  const scriptMeta = () =>
+    screen.getByText(/^Script writing/).closest(".pipe-row")!.querySelector(".meta")!;
+  const PULL = { model: "qwen3:8b", bytes: 5 * GB };
+
+  it("counts it in Ollama's setup when LocalCut is to set Ollama up", () => {
+    const ollama = program("ollama", {
+      checks: { server: null, model: "qwen3:8b", model_present: null },
+      setup: { ...settableToo("ollama", 1370 * MB).setup, pull: PULL },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toModels();
+    expect(scriptMeta()).toHaveTextContent(t("firstRun.railScriptSetup", { size: "5.0 GB" }));
+    expect(screen.queryByText(/nothing to download/)).toBeNull();
+  });
+
+  it("says it is a download into an Ollama of the user's own that lacks it", () => {
+    const ollama = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:8b", model_present: false },
+      setup: { ...program("ollama").setup, pull: PULL },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toModels();
+    expect(scriptMeta()).toHaveTextContent(t("firstRun.railScriptPull", { size: "5.0 GB" }));
+  });
+
+  it("says there is nothing to download once the user's Ollama has it", () => {
+    const ollama = program("ollama", {
+      state: "ready",
+      problem: null,
+      checks: { server: "ollama", model: "qwen3:8b", model_present: true },
+      setup: { ...program("ollama").setup, pull: PULL },
+    });
+    seedStore(CATALOG(), { programs: report([program("ffmpeg"), ollama, program("comfyui")]) });
+    render(<FirstRun />);
+    toModels();
+    expect(scriptMeta()).toHaveTextContent(t("firstRun.railScriptPresent"));
+  });
+
+  it("names a download Ollama makes once it runs, where LocalCut cannot set it up", () => {
+    // macOS, or an address on another machine: someone else starts Ollama.
+    // The model still has to come down into it.
+    seedStore(CATALOG(), {
+      programs: report([
+        program("ffmpeg"),
+        program("ollama", { setup: { ...program("ollama").setup, pull: PULL } }),
+        program("comfyui"),
+      ]),
+    });
+    render(<FirstRun />);
+    toModels();
+    expect(scriptMeta()).toHaveTextContent(t("firstRun.railScriptLater", { size: "5.0 GB" }));
+  });
+});
+
 describe("the ready step", () => {
   const toReady = () => {
     toStep2();
