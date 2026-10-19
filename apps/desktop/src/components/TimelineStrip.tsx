@@ -2,6 +2,7 @@ import { ChevronFirst, ChevronLast, Pause, Play, SkipBack, SkipForward } from "l
 import { Fragment, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { m, t } from "../i18n";
+import { displaySeconds } from "../lib/formats";
 import { movedOrder, orderedScenes, sceneDurations } from "../lib/order";
 import { formatTime, parseTime, usePlayback } from "../lib/playback";
 import { useOutsideClick } from "../lib/useOutsideClick";
@@ -403,7 +404,7 @@ export function TimelineStrip() {
                   tabIndex={0}
                   aria-label={t("timeline.blockAria", {
                     n: sceneNo,
-                    d: durations[index],
+                    d: displaySeconds(durations[index]),
                     // Through the catalog, like every other status surface:
                     // the raw id is a wire value ("skipped" reads "not
                     // needed" everywhere else) and never translates.
@@ -434,7 +435,9 @@ export function TimelineStrip() {
                   }}
                 >
                   <span className="n">{sceneNo}</span>
-                  <span className="dur">{t("timeline.seconds", { n: durations[index] })}</span>
+                  <span className="dur">
+                    {t("timeline.seconds", { n: displaySeconds(durations[index]) })}
+                  </span>
                   <span className={`tick ${clip.status}`} aria-hidden="true" />
                 </div>
               </Fragment>
