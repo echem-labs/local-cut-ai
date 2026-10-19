@@ -52,7 +52,8 @@ name: CI (engine)
 # disagreement with the code would merge with nothing run -- and prose drifts
 # in the direction that costs a reader most, by staying plausible. The same
 # module checks that every file the README and docs link exists, which is
-# why the root documents above serve it as well as the licence contract.
+# why the root documents above serve it as well as the licence contract, and
+# why branding/logo.svg is here at all: the README's header shows it.
 #
 # deploy/** is the fourth, for test_container_contract.py: it reads the
 # compose file for what it hands the engine (no pinned script model, a GPU
@@ -106,6 +107,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "branding/logo.svg"
       - "docs/**"
       - "deploy/**"
   pull_request:
@@ -143,6 +145,7 @@ on:
       - "AGENTS.md"
       - "CLAUDE.md"
       - "SECURITY.md"
+      - "branding/logo.svg"
       - "docs/**"
       - "deploy/**"
 
