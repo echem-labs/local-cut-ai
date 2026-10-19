@@ -10,7 +10,8 @@ files that start it. Those run
     .\\python_embeded\\python.exe -s ComfyUI\\main.py --windows-standalone-build
 
 and LocalCut runs the same, bound to loopback on the configured port, with
-its model paths file and without the browser the standalone build opens.
+its model paths file, its working folder and without the browser the
+standalone build opens.
 
 The weights stay where the engine downloads them, in its models folder,
 laid out the way ComfyUI lays out its own `models` (checkpoints/,
@@ -18,18 +19,42 @@ diffusion_models/, ...). `extra_model_paths.yaml` tells ComfyUI to look
 there too; it is written beside the copy each time the copy is started, so
 it follows the models folder if that moves. Every node the workflow
 templates use is in ComfyUI's core, so no custom node pack is installed.
+
+What ComfyUI writes while it runs goes in a working folder of LocalCut's,
+<data_dir>/work/comfyui, not in the copy's folder: every file a workflow
+saves (output), every image sent to it (input), its scratch files (temp),
+its settings and asset database (user) and the previews it makes (previews).
+The copy's folder stays the pinned build at the pinned size. An update
+replaces it without throwing anything away and a removal has only the build
+to walk. The engine fetches each result into the project, so what a render
+left in output and input is deleted once the render is done with it
+(backends/comfyui.py). What an earlier engine's renders left there and in
+temp is deleted when the next engine starts (`sweep_working_folder`).
+Only LocalCut's own subfolder of output and input is ever touched there, only
+regular files inside the working folder are deleted and a link is neither
+followed nor removed.
 """
 
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
+import logging
+import os
+import re
+import stat
+import time
+from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
 
+from ..config import EngineConfig
 from ..project.store import _write_atomic
+
+logger = logging.getLogger(__name__)
 
 #: ComfyUI's model folders that the engine's manifest downloads into and
 #: two more a user's own weights commonly go in. The desktop's steps for
@@ -41,6 +66,21 @@ PATHS_FILE = "extra_model_paths.yaml"
 
 #: How long a question to a server waits.
 ASK_TIMEOUT_S = 2.0
+
+#: The subfolder of any ComfyUI's output and input folders that LocalCut's
+#: renders write their results and send their images under, in its own copy
+#: and in a ComfyUI of the user's alike, so they sit apart from anyone
+#: else's work there.
+SUBFOLDER = "localcut"
+
+#: The folders ComfyUI writes a render's files in, as it names them in a
+#: reply (`type`).
+FILE_TYPES = ("output", "input", "temp")
+
+# How long a deletion keeps trying while Windows says the file is open: the
+# server that just sent it can hold it a moment longer.
+_REMOVE_BUDGET_S = 2.0
+_REMOVE_PAUSE_S = 0.1
 
 
 def model_paths_yaml(models_dir: Path) -> str:
@@ -73,9 +113,182 @@ def python_of(folder: Path) -> Path:
     return folder / "python_embeded" / "python.exe"
 
 
+def work_dir(config: EngineConfig) -> Path:
+    """LocalCut's copy's working folder, outside the copy's own folder."""
+    return config.data_dir / "work" / "comfyui"
+
+
+def make_working_folder(config: EngineConfig) -> Path:
+    """Create the working folder with each folder in it and return it,
+    resolved: ComfyUI refuses a --user-directory that is not there yet and
+    lists its input folder before anything can be uploaded to it."""
+    work = work_dir(config).resolve()
+    for name in (*FILE_TYPES, "user", "previews"):
+        (work / name).mkdir(parents=True, exist_ok=True)
+    return work
+
+
+def working_argv(work: Path) -> list[str]:
+    """The flags that put everything ComfyUI writes while it runs in `work`,
+    for every platform's command line. Named as ComfyUI 0.40.0 takes them:
+    `--temp-directory` names the folder its `temp` goes in, not the temp
+    folder itself."""
+    return [
+        "--output-directory",
+        str(work / "output"),
+        "--input-directory",
+        str(work / "input"),
+        "--temp-directory",
+        str(work),
+        "--user-directory",
+        str(work / "user"),
+        "--previews-directory",
+        str(work / "previews"),
+    ]
+
+
+# -- what renders leave in the working folder --------------------------------------
+
+
+def _plain_name(name: object) -> bool:
+    """Whether `name` is one name in a folder: no separator, no `..`, no
+    drive or alternate data stream, nothing a path could climb out with."""
+    return (
+        isinstance(name, str)
+        and name not in ("", ".", "..")
+        and not any(c in name for c in "/\\:\0")
+    )
+
+
+def _inside(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def written_file(work: Path, file_type: str, subfolder: str, filename: str) -> Path | None:
+    """Where a file ComfyUI reports as `filename` in `subfolder` of its
+    `file_type` folder is in the working folder, or None when the report
+    does not name one there. The report is untrusted text: each part has to
+    be a plain name. The folder it ends in has to be inside the `file_type`
+    folder once it is resolved, which follows every link on the way and
+    reads each name as the system does (on Windows `.. ` is `..`). Either
+    separator may divide a subfolder, since ComfyUI on Windows reports
+    `\\`."""
+    if file_type not in FILE_TYPES or not isinstance(subfolder, str):
+        return None
+    parts = [part for part in re.split(r"[\\/]", subfolder) if part not in ("", ".")]
+    if not _plain_name(filename) or not all(_plain_name(part) for part in parts):
+        return None
+    root = work / file_type
+    candidate = root.joinpath(*parts, filename)
+    try:
+        real_root = root.resolve(strict=True)
+        real_folder = candidate.parent.resolve(strict=True)
+    except OSError:
+        return None
+    if not _inside(real_folder, real_root):
+        return None
+    return real_folder / filename
+
+
+def _remove_file(path: Path) -> int:
+    """Delete `path` if it is a regular file and return its size: 0 for a
+    link, a folder or nothing. Windows refuses to delete a file another
+    process has open, so that is tried again for a moment."""
+    deadline = time.monotonic() + _REMOVE_BUDGET_S
+    while True:
+        try:
+            info = os.lstat(path)
+            if not stat.S_ISREG(info.st_mode):
+                return 0
+            os.unlink(path)
+            return info.st_size
+        except FileNotFoundError:
+            return 0
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(_REMOVE_PAUSE_S)
+
+
+def remove_written(work: Path, files: Iterable[dict]) -> int:
+    """Delete the files a render wrote in the working folder, each as
+    ComfyUI reported it: {"filename", "subfolder", "type"}. A report that
+    does not name a regular file inside the working folder deletes nothing.
+    Returns the bytes freed. A file that cannot be deleted now is logged and
+    left for the next engine's sweep."""
+    freed = 0
+    for entry in files:
+        target = written_file(
+            work, entry.get("type", ""), entry.get("subfolder", ""), entry.get("filename", "")
+        )
+        if target is None:
+            logger.warning("not deleting %r: it names no file in %s", entry, work)
+            continue
+        try:
+            freed += _remove_file(target)
+        except OSError as exc:
+            logger.warning("could not delete %s: %s", target, exc)
+    return freed
+
+
+def working_roots(work: Path) -> list[Path]:
+    """The folders of the working folder that hold only what renders
+    wrote: temp and LocalCut's subfolder of output and of input. A root
+    that is a link, or resolves outside the working folder, is none."""
+    roots = []
+    for root in (work / "output" / SUBFOLDER, work / "input" / SUBFOLDER, work / "temp"):
+        try:
+            if root.is_symlink() or not root.is_dir():
+                continue
+            if _inside(root.resolve(strict=True), work.resolve(strict=True)):
+                roots.append(root)
+        except OSError:
+            continue
+    return roots
+
+
+def _sweep(root: Path, before: float | None) -> int:
+    """Delete every regular file under `root` last written before `before`
+    (all of them for None) and the folders that leaves empty below it.
+    Never follows a link and never removes one. Returns the bytes freed."""
+    freed = 0
+    with contextlib.suppress(OSError), os.scandir(root) as entries:
+        for entry in list(entries):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    freed += _sweep(Path(entry.path), before)
+                    with contextlib.suppress(OSError):
+                        os.rmdir(entry.path)
+                elif entry.is_file(follow_symlinks=False):
+                    if before is None or entry.stat(follow_symlinks=False).st_mtime < before:
+                        freed += _remove_file(Path(entry.path))
+            except OSError as exc:
+                logger.warning("could not delete %s: %s", entry.path, exc)
+    return freed
+
+
+def sweep_working_folder(work: Path, before: float) -> int:
+    """At engine start: delete what renders an earlier engine started and
+    never finished left in the working folder (a render cancelled, failed
+    or cut off by that engine stopping), everything there last written
+    before `before`. Returns the bytes freed; never raises."""
+    try:
+        return sum(_sweep(root, before) for root in working_roots(work))
+    except Exception:  # noqa: BLE001 - housekeeping never stops a start
+        logger.exception("could not clear what renders left in %s", work)
+        return 0
+
+
+def clear_working_folder(work: Path) -> int:
+    """Delete everything renders wrote in the working folder, for Settings
+    > Storage. Returns the bytes freed."""
+    return sum(_sweep(root, None) for root in working_roots(work))
+
+
 def server_argv(folder: Path, *, host: str, port: int, cpu: bool = False) -> list[str]:
     """The command line LocalCut starts its copy with: the portable build's
-    own, with the address, the model paths file and no browser."""
+    own, with the address, the model paths file and no browser. The setup's
+    launch adds `working_argv` to it, as to every platform's."""
     argv = [
         str(python_of(folder)),
         "-s",

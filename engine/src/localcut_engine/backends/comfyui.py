@@ -3,6 +3,16 @@ we talk to it exclusively over its HTTP/WebSocket API, never import its
 code. Serves image (keyframe/thumbnail), video (clip) and music (ACE-Step)
 node kinds via workflow-JSON templates; narration runs on the dedicated
 TTS backend.
+
+ComfyUI keeps every file a workflow saves and every image sent to it in its
+own folders. The adapter fetches each result into the project, so what
+ComfyUI kept is a copy LocalCut never reads again. Every render writes under
+`localcut/` in ComfyUI's output and input folders, with its files named by
+a token of its own. Where the server is LocalCut's own copy, whose folders
+are LocalCut's working folder (programs/comfyui.py), the files the render
+wrote are deleted once it is done with them. A ComfyUI of the user's own,
+or one on another machine, is never touched: what LocalCut leaves there is
+under `localcut/` for the user to find.
 """
 
 from __future__ import annotations
@@ -10,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import json
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +31,7 @@ import websockets
 from ..aspects import DEFAULT_ASPECT, IMAGE_RESOLUTIONS, VIDEO_RESOLUTIONS, resolution_for
 from ..graph.compiler import JobSpec
 from ..graph.model import KEYFRAME_PORT, NodeKind
+from ..programs import comfyui as own_copy
 from ..providers.images import mime_type
 from .base import ExecutionBackend, ExecutionContext, GenerationError, OOMError, ServiceProbe
 
@@ -76,6 +88,39 @@ _RECOVERY_THRESHOLD_S = 60.0
 _RECOVERY_POLL_S = 2.0
 
 
+def _render_token() -> str:
+    """The token one render's files are named with."""
+    return uuid.uuid4().hex[:12]
+
+
+def label_outputs(workflow: dict, token: str) -> None:
+    """Have every node that saves a file save it under SUBFOLDER, named with
+    this render's token: `filename_prefix` is the input every ComfyUI save
+    node takes. The token is what makes ComfyUI run the save node again for
+    a workflow it has run before. Its cache otherwise answers with the file
+    the earlier run wrote, which the earlier run has deleted where the
+    server is LocalCut's own copy."""
+    for node in workflow.values():
+        inputs = node.get("inputs") if isinstance(node, dict) else None
+        if not isinstance(inputs, dict) or not isinstance(inputs.get("filename_prefix"), str):
+            continue
+        prefix = inputs["filename_prefix"].removeprefix(f"{own_copy.SUBFOLDER}/") or "render"
+        inputs["filename_prefix"] = f"{own_copy.SUBFOLDER}/{prefix}_{token}"
+
+
+def _written_by(entry: dict, token: str) -> bool:
+    """Whether a file ComfyUI reports for a render is one that render wrote:
+    under SUBFOLDER and named with its token. A save node the labelling did
+    not reach (an imported workflow's own) can report a file an earlier
+    prompt wrote, from ComfyUI's cache, which is left where it is."""
+    subfolder = entry.get("subfolder")
+    filename = entry.get("filename")
+    if not isinstance(subfolder, str) or not isinstance(filename, str):
+        return False
+    first = re.split(r"[\\/]", subfolder, maxsplit=1)[0]
+    return first == own_copy.SUBFOLDER and token in filename
+
+
 class ComfyUIBackend(ExecutionBackend):
     name = "comfyui"
 
@@ -88,8 +133,13 @@ class ComfyUIBackend(ExecutionBackend):
         capability: Callable[[], set[NodeKind]] | None = None,
         installed_models: Callable[[], dict[NodeKind, list[str]]] | None = None,
         probe: ServiceProbe | None = None,
+        own_work: Callable[[], Path | None] | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        # LocalCut's own copy's working folder while that copy is the server
+        # at base_url (None while it is not). Only then does a render delete
+        # what it left in ComfyUI's folders.
+        self.own_work = own_work
         # The liveness probe the capability claim reads, kept so the engine
         # can tell it the server answers the moment LocalCut's own copy does.
         self.probe = probe
@@ -219,9 +269,11 @@ class ComfyUIBackend(ExecutionBackend):
             text = text.replace(f'"{token}"' if quoted else token, values[token])
         return json.loads(text)
 
-    async def _upload_input(self, client: httpx.AsyncClient, path: Path) -> str:
-        """Upload a conditioning image (I2V keyframe); returns the server-side
-        name to reference from a LoadImage node."""
+    async def _upload_input(self, client: httpx.AsyncClient, path: Path, written: list) -> str:
+        """Upload a conditioning image (I2V keyframe) under SUBFOLDER; returns
+        the server-side name to reference from a LoadImage node. The upload
+        joins `written` when ComfyUI says it is where it was sent, which is
+        all the render deletes of it afterwards."""
         payload_bytes = await asyncio.to_thread(path.read_bytes)
         response = await client.post(
             f"{self.base_url}/upload/image",
@@ -230,21 +282,42 @@ class ComfyUIBackend(ExecutionBackend):
             # a literal here mislabels every scene conditioned on their own
             # photo — the mislabel `images.mime_type` exists to prevent.
             files={"image": (path.name, payload_bytes, mime_type(path))},
-            data={"overwrite": "true"},
+            data={"overwrite": "true", "subfolder": own_copy.SUBFOLDER},
         )
         if response.status_code != 200:
             raise GenerationError(f"ComfyUI rejected input upload: {response.text[:300]}")
         payload = response.json()
         subfolder = payload.get("subfolder", "")
+        sent = (payload.get("name"), subfolder, payload.get("type", "input"))
+        if sent == (path.name, own_copy.SUBFOLDER, "input"):
+            written.append({"filename": path.name, "subfolder": subfolder, "type": "input"})
         return f"{subfolder}/{payload['name']}" if subfolder else payload["name"]
 
     async def execute(self, spec: JobSpec, ctx: ExecutionContext) -> Path:
+        # Asked once, before anything is sent: a render's files are in the
+        # folders of the ComfyUI that renders it.
+        work = self.own_work() if self.own_work is not None else None
+        written: list[dict] = []
+        try:
+            return await self._render(spec, ctx, _render_token(), written)
+        finally:
+            # Whether the render got its result or not, nothing reads these
+            # again: a retry is a prompt of its own, with a token of its own.
+            if work is not None and written:
+                await asyncio.to_thread(own_copy.remove_written, work, written)
+
+    async def _render(
+        self, spec: JobSpec, ctx: ExecutionContext, token: str, written: list
+    ) -> Path:
+        """Run the workflow and fetch its result. What it wrote in ComfyUI's
+        folders joins `written` as soon as ComfyUI names it."""
         async with httpx.AsyncClient(timeout=60) as client:
             keyframe_name = None
             keyframe = ctx.input_artifacts.get(KEYFRAME_PORT)
             if keyframe is not None and spec.kind is NodeKind.CLIP:
-                keyframe_name = await self._upload_input(client, keyframe)
+                keyframe_name = await self._upload_input(client, keyframe, written)
             workflow = self._fill_workflow(spec, keyframe_name)
+            label_outputs(workflow, token)
 
             # Subscribe to events *before* submitting: a fast workflow could
             # otherwise finish before we connect and we'd wait forever.
@@ -261,7 +334,12 @@ class ComfyUIBackend(ExecutionBackend):
         # A dropped socket is not a failed render: keep polling history for
         # as long as the inactivity watchdog would have allowed.
         return await self._collect_output(
-            prompt_id, spec, ctx, deadline_s=HISTORY_GRACE_S if finished else INACTIVITY_TIMEOUT_S
+            prompt_id,
+            spec,
+            ctx,
+            deadline_s=HISTORY_GRACE_S if finished else INACTIVITY_TIMEOUT_S,
+            token=token,
+            written=written,
         )
 
     async def _stream_progress(self, ws, prompt_id: str, ctx: ExecutionContext) -> bool:
@@ -332,8 +410,19 @@ class ComfyUIBackend(ExecutionBackend):
             pass
 
     async def _collect_output(
-        self, prompt_id: str, spec: JobSpec, ctx: ExecutionContext, deadline_s: float = 10.0
+        self,
+        prompt_id: str,
+        spec: JobSpec,
+        ctx: ExecutionContext,
+        deadline_s: float = 10.0,
+        *,
+        token: str = "",
+        written: list | None = None,
     ) -> Path:
+        """Fetch the render's result into the project. Every file the
+        history lists that this render wrote (`_written_by` its `token`)
+        joins `written` before anything is fetched, so a fetch that fails
+        still leaves them for the caller to delete."""
         async with httpx.AsyncClient(timeout=30) as client:
             history = None
             deadline = asyncio.get_running_loop().time() + deadline_s
@@ -369,6 +458,19 @@ class ComfyUIBackend(ExecutionBackend):
                     for item in node_output.get(key, []):
                         if item.get("type", "output") == "output":
                             candidates.append((key, item))
+                        if (
+                            written is not None
+                            and token
+                            and item.get("type", "output") in ("output", "temp")
+                            and _written_by(item, token)
+                        ):
+                            written.append(
+                                {
+                                    "filename": item["filename"],
+                                    "subfolder": item["subfolder"],
+                                    "type": item.get("type", "output"),
+                                }
+                            )
             item = next(
                 (entry for key, entry in candidates if key in preference),
                 candidates[0][1] if candidates else None,

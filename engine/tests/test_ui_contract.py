@@ -798,6 +798,26 @@ def test_the_desktop_project_mirrors_the_engines_meta():
     )
 
 
+def test_the_desktop_storage_info_mirrors_the_engines_report(tmp_path):
+    """`StorageInfo` in types.ts is GET /storage retyped by hand. A field the
+    engine renames reaches the Storage pane as `undefined`, which for
+    `comfyui_bytes` is the same as null: the row for LocalCut's ComfyUI
+    disappears, with its files still on disk."""
+    from localcut_engine.config import EngineConfig
+    from localcut_engine.project.store import ProjectStore
+    from localcut_engine.storage import compute_storage
+
+    config = EngineConfig(data_dir=tmp_path)
+    sent = compute_storage(config, ProjectStore(config.projects_dir))
+    text = _ts_source(_TYPES)
+    start = text.index("export interface StorageInfo {")
+    body = text[start : text.index("\n}", start)]
+    declared = set(re.findall(r"^  (\w+)\??:", body, flags=re.M))
+    assert declared == set(sent), (
+        f"engine only: {sorted(set(sent) - declared)}, desktop only: {sorted(declared - set(sent))}"
+    )
+
+
 def test_license_verdicts_match_the_desktop_union():
     """The verdict drives what the model library tells a user they may do
     with a model's output. `ModelLibrary` falls back to "conditions" for an

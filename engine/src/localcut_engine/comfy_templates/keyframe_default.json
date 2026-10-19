@@ -39,6 +39,6 @@
   },
   "save": {
     "class_type": "SaveImage",
-    "inputs": { "filename_prefix": "localcut_keyframe", "images": ["decode", 0] }
+    "inputs": { "filename_prefix": "keyframe", "images": ["decode", 0] }
   }
 }

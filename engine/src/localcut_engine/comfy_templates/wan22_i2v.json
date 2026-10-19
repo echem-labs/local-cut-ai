@@ -109,7 +109,7 @@
     "class_type": "SaveVideo",
     "inputs": {
       "video": ["create_video", 0],
-      "filename_prefix": "localcut_clip_wan",
+      "filename_prefix": "clip_wan",
       "format": "mp4",
       "codec": "h264"
     }

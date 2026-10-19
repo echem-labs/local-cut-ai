@@ -424,7 +424,8 @@ class ComfyUIInstaller:
     def launch(self, config: EngineConfig) -> ServerLaunch | None:
         """The portable build's own command line, bound to the address the
         engine asks, with the file that points it at LocalCut's models
-        written first. None without a copy here, or for an address on
+        written first and everything it writes while it runs in LocalCut's
+        working folder. None without a copy here, or for an address on
         another machine."""
         address = comfyui.local_address(config.comfyui_url)
         folder = config.programs_dir / self.program
@@ -432,8 +433,12 @@ class ComfyUIInstaller:
             return None
         host, port = address
         comfyui.write_model_paths(folder, config.resolved_models_dir)
+        work = comfyui.make_working_folder(config)
         return ServerLaunch(
-            argv=comfyui.server_argv(folder, host=host, port=port),
+            argv=[
+                *comfyui.server_argv(folder, host=host, port=port),
+                *comfyui.working_argv(work),
+            ],
             env={},
             cwd=folder,
             url=f"http://{host if ':' not in host else f'[{host}]'}:{port}",

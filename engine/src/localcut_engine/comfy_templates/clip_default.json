@@ -71,7 +71,7 @@
     "class_type": "SaveVideo",
     "inputs": {
       "video": ["create_video", 0],
-      "filename_prefix": "localcut_clip",
+      "filename_prefix": "clip",
       "format": "mp4",
       "codec": "h264"
     }

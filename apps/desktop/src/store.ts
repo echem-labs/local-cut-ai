@@ -655,6 +655,9 @@ interface AppState {
   duplicateProject: (id: string) => Promise<string | null>;
   refreshStorage: () => Promise<void>;
   cleanupStorage: () => Promise<number | null>;
+  /** Clear what renders left in LocalCut's own ComfyUI's working folder;
+   * null once it is cleared, otherwise the message to show. */
+  clearComfyWork: () => Promise<string | null>;
   addCustomModel: (body: {
     name: string;
     task: string;
@@ -3491,6 +3494,22 @@ export const useApp = create<AppState>((set, get) => {
         console.warn("cache cleanup failed:", err);
         return null;
       }
+    },
+
+    clearComfyWork: async () => {
+      const { client } = get();
+      if (!client) return t("errors.engineUnavailable");
+      try {
+        await client.storageComfyCleanup();
+      } catch (err) {
+        // The one refusal: a render has its image and its result there
+        // until it is done with them.
+        if (err instanceof EngineError && err.status === 409)
+          return t("settings.storage.comfyBusy");
+        return messageOf(err);
+      }
+      await get().refreshStorage();
+      return null;
     },
 
     nodePacks: null,

@@ -41,6 +41,6 @@
   },
   "save": {
     "class_type": "SaveAudio",
-    "inputs": { "audio": ["decode", 0], "filename_prefix": "localcut_music" }
+    "inputs": { "audio": ["decode", 0], "filename_prefix": "music" }
   }
 }

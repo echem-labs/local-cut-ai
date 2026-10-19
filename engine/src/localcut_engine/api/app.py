@@ -15,6 +15,7 @@ import logging
 import re
 import secrets
 import statistics
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path, PurePosixPath
@@ -86,6 +87,7 @@ from ..manifest.defaults import (
 from ..manifest.loader import load_manifest
 from ..manifest.manager import DownloadManager, ManifestError
 from ..manifest.recommend import recommend_slate, script_model
+from ..programs import comfyui as comfyui_program
 from ..programs import ollama as ollama_program
 from ..programs.server import ManagedServers
 from ..programs import BUILDS as PROGRAM_BUILDS
@@ -129,7 +131,7 @@ from ..service import (
     ProjectService,
     cloud_text_refusal,
 )
-from ..storage import clear_caches, compute_storage
+from ..storage import clear_caches, clear_comfyui_work, compute_storage
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +393,17 @@ def _ffmpeg_at_use(config: EngineConfig) -> Callable[[], str]:
     return lambda: config.resolved_ffmpeg_bin
 
 
+def _own_comfyui_work(config: EngineConfig) -> Path | None:
+    """LocalCut's ComfyUI's working folder while that copy is the server the
+    engine renders with. None while it is not: a ComfyUI of the user's own
+    answers at the address, the address is on another machine or there is
+    no copy. Its process holds the address while it serves, so nothing else
+    can be the server then."""
+    if not INSTALLERS["comfyui"].in_use(config):
+        return None
+    return comfyui_program.work_dir(config)
+
+
 def _build_backends(config: EngineConfig) -> BackendRegistry:
     """Build the backend chain from config; first registered wins per node
     kind, so e.g. `comfy,mock` = real images/clips, mock everything else."""
@@ -460,6 +473,7 @@ def _build_backends(config: EngineConfig) -> BackendRegistry:
                         # actually installed, or the kind is claimed on one
                         # model's weights and rendered with another's graph.
                         installed_models=lambda: installed_comfy_models(config),
+                        own_work=functools.partial(_own_comfyui_work, config),
                     )
                 )
             case "chatterbox":
@@ -560,6 +574,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        # Before anything this engine renders can write a file: what is
+        # older than this in LocalCut's ComfyUI's working folder was left by
+        # renders an earlier engine never finished.
+        started = time.time()
         # Reclaim directories a previous delete could not finish (engine
         # exited mid-sweep, or a backend held a file open). Nothing can be
         # writing into them now, and they are invisible to the project list,
@@ -605,6 +623,11 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # otherwise run before LocalCut's Ollama or ComfyUI answers and its
         # script or keyframe go to the stand-in.
         clearing = asyncio.ensure_future(asyncio.to_thread(programs.clear, leftovers))
+        sweeping = asyncio.ensure_future(
+            asyncio.to_thread(
+                comfyui_program.sweep_working_folder, comfyui_program.work_dir(config), started
+            )
+        )
         events.bind_to_running_loop()
         held: asyncio.Task | None = None
         if servers.start_all():
@@ -623,7 +646,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
         # After the setups' stop flag is set, so a deletion of what an
         # interrupted setup left stops between files rather than hold up the
         # engine's exit; the rest goes at the next start.
-        await asyncio.gather(clearing, return_exceptions=True)
+        await asyncio.gather(clearing, sweeping, return_exceptions=True)
         await downloads.shutdown()
         await scheduler.stop()
         # After the scheduler, so a script job winding down still has its
@@ -1599,6 +1622,19 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
     @app.post("/storage/cleanup", dependencies=[Authed])
     async def storage_cleanup() -> dict:
         freed = await asyncio.to_thread(clear_caches, store)
+        app.state.storage_cache = None
+        return {"ok": True, "freed_bytes": freed}
+
+    @app.post("/storage/comfyui/cleanup", dependencies=[Authed])
+    async def storage_comfyui_cleanup() -> dict:
+        # The render running now has its image in the input folder and its
+        # result in the output folder until it has fetched it.
+        if render_uses("comfyui") and INSTALLERS["comfyui"].in_use(config):
+            raise HTTPException(
+                status_code=409,
+                detail="a render is using LocalCut's ComfyUI; clear its files once it is done",
+            )
+        freed = await asyncio.to_thread(clear_comfyui_work, config)
         app.state.storage_cache = None
         return {"ok": True, "freed_bytes": freed}
 
