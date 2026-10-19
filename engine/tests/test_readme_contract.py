@@ -9,18 +9,22 @@ has nothing to catch it with and neither does review.
 Scoped to claims that name a value the code also states. A sentence about what
 "Finalize" is for cannot be pinned to anything and belongs to review; a
 sentence listing the backends `local` expands to is the same tuple written in
-two files.
+two files. Links count as such a claim: a link names a file or a heading, and
+the tree either has it or does not.
 
 The documents live outside `engine/`, so `ci-engine.yml` and
 `.pre-commit-config.yaml` have to name them in their filters or an edit to one
-runs nothing that could check it. `_DOCUMENT_INPUTS` below is the list both
-are describing, and the test at the foot of this file reconciles all three.
+runs nothing that could check it. `_DOCUMENT_INPUTS` below, every page in
+docs/ and every file those pages link are what both are describing, and the
+test at the foot of this file reconciles all three.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +35,7 @@ from conftest import (
     matches_a_path_filter,
 )
 
+from localcut_engine import cli
 from localcut_engine.backends.chatterbox import INSTALL_HINT
 from localcut_engine.config import EngineConfig
 
@@ -39,7 +44,18 @@ _VOICES = REPO_ROOT / "docs" / "voices.md"
 _README = REPO_ROOT / "README.md"
 _PACKAGE_JSON = REPO_ROOT / "apps" / "desktop" / "package.json"
 _ENGINE_TS = REPO_ROOT / "apps" / "desktop" / "electron" / "engine.ts"
+_PYPROJECT = REPO_ROOT / "engine" / "pyproject.toml"
 _WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+
+
+def _entry_points() -> list[Path]:
+    """The documents a reader arrives at: the README and every page in docs/.
+
+    Globbed rather than listed, so a page added to docs/ is read from the
+    commit that adds it. A list here would be one more place to remember it.
+    """
+    return [_README, *sorted((REPO_ROOT / "docs").rglob("*.md"))]
+
 
 #: What a runner label is called in prose. Keyed on the vendor half alone,
 #: because the version half is the part that moves - `ubuntu-latest` becomes
@@ -76,6 +92,58 @@ _DOCUMENT_INPUTS = (
 #: red, and nothing on screen would say a link had been skipped.
 _LINK = re.compile(r"\]\(([^)\s]+)(?:\s+[^)]*)?\)")
 
+#: A URL carried in an HTML attribute. GitHub renders raw HTML in a README,
+#: and a layout built from it (a centred header, a grid of features, light and
+#: dark variants of one picture) carries most of its links this way: `<a
+#: href>`, `<img src>`, `<source srcset>`. The markdown pattern above sees none
+#: of them, so without this one an image path could break and nothing would
+#: go red.
+_HTML_URL = re.compile(r"""\b(href|src|srcset)\s*=\s*(["'])(.*?)\2""", re.I | re.S)
+
+#: A fenced code block, opening fence to the matching closing one. Nothing
+#: inside one is rendered as a link or a heading: a `# comment` in a shell
+#: block gets no anchor, and a `](path)` in an example is not a link.
+_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$", re.M | re.S)
+
+#: A heading, in either of the two forms GitHub gives an anchor: an ATX
+#: heading, with any closing run of `#` dropped the way the renderer drops
+#: it, or an HTML `<h1>` to `<h6>`. The HTML form matters for numbering. A
+#: feature grid built from `<h3>` cells takes its slugs first, so a section
+#: further down that repeats a cell's title is the `-1`.
+_HEADING = re.compile(
+    r"^#{1,6}[ \t]+(?P<atx>.+?)(?:[ \t]+#+)?[ \t]*$|<h([1-6])\b[^>]*>(?P<html>.*?)</h\2\s*>",
+    re.M | re.I | re.S,
+)
+
+#: An explicit anchor, `<a id="...">` or `<a name="...">`.
+_HTML_ANCHOR = re.compile(r"""<a\b[^>]*?\b(?:id|name)\s*=\s*(["'])(.*?)\1""", re.I)
+
+
+def _prose(text: str) -> str:
+    """A document with its fenced code blocks taken out."""
+    return _FENCE.sub("", text)
+
+
+def _targets(text: str) -> list[str]:
+    """Every link target in a document, markdown and HTML alike.
+
+    A `srcset` holds a list, each entry a URL optionally followed by a width or
+    density descriptor (`mark@2x.png 2x`), so each entry contributes its first
+    word.
+    """
+    prose = _prose(text)
+    targets = list(_LINK.findall(prose))
+    for attribute, _quote, value in _HTML_URL.findall(prose):
+        if attribute.lower() == "srcset":
+            targets.extend(entry.split()[0] for entry in value.split(",") if entry.strip())
+        else:
+            targets.append(value.strip())
+    return targets
+
+
+def _is_external(target: str) -> bool:
+    return target.startswith(("http://", "https://", "mailto:"))
+
 
 def _documented_links() -> list[tuple[str, str]]:
     """Every relative link in the entry points, paired with the file it is in.
@@ -91,13 +159,67 @@ def _documented_links() -> list[tuple[str, str]]:
     a place in the current document and has no file to check.
     """
     found: set[tuple[str, str]] = set()
-    for doc in [_README, *sorted((REPO_ROOT / "docs").rglob("*.md"))]:
-        for target in _LINK.findall(doc.read_text(encoding="utf-8")):
-            if target.startswith(("http://", "https://", "mailto:", "#")):
+    for doc in _entry_points():
+        for target in _targets(doc.read_text(encoding="utf-8")):
+            if _is_external(target) or target.startswith("#"):
                 continue
-            path = target.split("#", 1)[0]
+            # A query (`?raw=true` on an image) is not part of the path.
+            path = target.split("#", 1)[0].split("?", 1)[0]
             if path:
                 found.add((doc.relative_to(REPO_ROOT).as_posix(), path))
+    return sorted(found)
+
+
+def _slug(heading: str) -> str:
+    """The anchor GitHub gives a heading.
+
+    GitHub works from the rendered text: a link keeps its text, a code span
+    keeps its content and loses the backticks, emphasis markers disappear.
+    That text is lowercased, everything but letters, digits, `_`, `-` and
+    spaces is dropped, and each space becomes a hyphen, one for one.
+    """
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", heading)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"[`*]", "", text)
+    text = re.sub(r"[^\w\- ]", "", text.strip().lower())
+    return text.replace(" ", "-")
+
+
+def _anchors(text: str) -> set[str]:
+    """Every anchor a document defines, as GitHub numbers them.
+
+    A repeated heading gets `-1`, `-2` and so on after its first use, which is
+    why this counts rather than collecting a set of slugs directly.
+    """
+    prose = _prose(text)
+    seen: dict[str, int] = {}
+    found: set[str] = set()
+    for match in _HEADING.finditer(prose):
+        slug = _slug(match.group("atx") or match.group("html"))
+        count = seen.get(slug, 0)
+        found.add(slug if count == 0 else f"{slug}-{count}")
+        seen[slug] = count + 1
+    found.update(anchor for _quote, anchor in _HTML_ANCHOR.findall(prose))
+    return found
+
+
+def _documented_fragments() -> list[tuple[str, str, str]]:
+    """Every link into a heading: the document it is in, the file it names
+    (itself, for a bare `#anchor`) and the fragment.
+
+    Only fragments into markdown are collected. An anchor into a YAML or
+    Python file names a line GitHub draws, not a heading this module can read.
+    """
+    found: set[tuple[str, str, str]] = set()
+    for doc in _entry_points():
+        here = doc.relative_to(REPO_ROOT).as_posix()
+        for target in _targets(doc.read_text(encoding="utf-8")):
+            if _is_external(target) or "#" not in target:
+                continue
+            path, fragment = target.split("#", 1)
+            named = (doc.parent / path).resolve() if path else doc
+            if fragment and named.suffix == ".md" and named.exists():
+                found.add((here, named.relative_to(REPO_ROOT).as_posix(), fragment))
     return sorted(found)
 
 
@@ -177,6 +299,70 @@ def test_the_readme_states_the_node_floor_the_manifest_declares() -> None:
         f"the README says Node {sorted(set(stated))} while apps/desktop/package.json "
         f"declares {declared!r}, which is the one npm reads"
     )
+
+
+#: A Python requirement stated in prose: "Python 3.13 or 3.14", "Python
+#: ≥3.13", "Python 3.13 or later". The versions are a list a reader can read
+#: off, and the two open-ended spellings say there is no ceiling.
+_PYTHON_STATED = re.compile(
+    r"Python\s*(?P<at_least>(?:>=|≥)\s*)?"
+    r"(?P<versions>\d+\.\d+(?:(?:,\s*|\s+or\s+|\s+and\s+)\d+\.\d+)*)"
+    r"(?P<later>\s+or\s+(?:later|newer))?"
+)
+
+
+def _declared_python() -> tuple[list[str], bool]:
+    """The 3.x releases engine/pyproject.toml admits, and whether it caps them.
+
+    Read as `>=X.Y` with an optional `<X.Z`, the two clauses a floor and a
+    ceiling take. Any other clause fails here rather than being skipped: an
+    exclusion like `!=3.14.1` changes what a reader can install, and a reader
+    that dropped it would pass a README that never mentions it.
+    """
+    project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
+    declared = project.get("requires-python")
+    assert declared, "engine/pyproject.toml declares no requires-python"
+
+    bounds: dict[str, tuple[int, int]] = {}
+    for clause in (c.strip() for c in declared.split(",")):
+        parsed = re.fullmatch(r"(>=|<)\s*(\d+)\.(\d+)", clause)
+        assert parsed, f"requires-python is {declared!r}; this test reads `>=X.Y` and `<X.Y`"
+        bounds[parsed.group(1)] = (int(parsed.group(2)), int(parsed.group(3)))
+    assert ">=" in bounds, f"requires-python is {declared!r}, which sets no floor"
+
+    major, floor = bounds[">="]
+    if "<" not in bounds:
+        return [f"{major}.{floor}"], False
+    ceiling_major, ceiling = bounds["<"]
+    assert ceiling_major == major, f"requires-python is {declared!r}, across a major version"
+    return [f"{major}.{minor}" for minor in range(floor, ceiling)], True
+
+
+def test_the_readme_states_the_python_versions_the_engine_declares() -> None:
+    """The other version a reader installs against, pinned like the Node one.
+
+    `requires-python` is what uv enforces when it builds the engine's
+    environment, so a README naming another range sends a reader to an
+    install uv then refuses. The ceiling counts as much as the floor: a
+    ceiling is there because a dependency publishes no wheels for the next
+    release, and "or later" would read as an invitation to the version that
+    fails.
+    """
+    admitted, capped = _declared_python()
+    stated = list(_PYTHON_STATED.finditer(_README.read_text(encoding="utf-8")))
+    assert stated, "the README states no Python version - update this test with what replaced it"
+
+    *rest, last = admitted
+    expected = f"{', '.join(rest)} or {last}" if rest else last
+    if not capped:
+        expected += " or later"
+    for claim in stated:
+        listed = re.findall(r"\d+\.\d+", claim.group("versions"))
+        open_ended = bool(claim.group("at_least") or claim.group("later"))
+        assert (listed, open_ended) == (admitted, not capped), (
+            f"the README says {claim.group(0)!r}, but engine/pyproject.toml admits "
+            f"Python {expected}, which is what uv reads"
+        )
 
 
 def _matrix_platforms(workflow: str) -> list[str]:
@@ -305,6 +491,146 @@ def test_every_relative_link_in_the_docs_resolves(doc: str, link: str) -> None:
     assert resolved.exists(), f"{doc} links {link!r}, which resolves to nothing"
 
 
+def test_the_link_reader_sees_html_as_well_as_markdown() -> None:
+    """The reader under the link checks, against a layout built from HTML.
+
+    One of each shape a centred header, a feature grid and a theme-aware
+    picture use, beside a markdown link, so a reader that handles only one
+    kind cannot pass by finding the other. The fenced block holds a link that
+    is not one: GitHub draws it as text.
+    """
+    sample = (
+        '<img src="docs/media/storyboard.webp" alt="The storyboard">\n'
+        "<a href='docs/voices.md#cloning'>voices</a>\n"
+        '<source media="(prefers-color-scheme: dark)" srcset="dl-dark.svg, dl-dark@2x.svg 2x">\n'
+        "[editing](docs/editing.md)\n"
+        "```markdown\n[an example](not/a/link.md)\n```\n"
+    )
+    assert sorted(_targets(sample)) == sorted(
+        [
+            "docs/media/storyboard.webp",
+            "docs/voices.md#cloning",
+            "dl-dark.svg",
+            "dl-dark@2x.svg",
+            "docs/editing.md",
+        ]
+    )
+
+
+def test_the_anchor_reader_names_headings_the_way_github_does() -> None:
+    """Slugs for the heading shapes these documents use, checked by hand
+    against the anchors GitHub renders for them."""
+    text = (
+        "# LocalCut AI\n"
+        "## What is LocalCut AI?\n"
+        "```bash\n# not a heading\n```\n"
+        "## Scripts and agents\n"
+        "### `localcut` from a script\n"
+        "## Windows 10, version 1903 or later ##\n"
+        "## LocalCut's own Ollama\n"
+        "## [Programs](docs/programs.md) it needs\n"
+        "## What is LocalCut AI?\n"
+        '<a id="hero"></a>\n'
+        '<td><h3 align="center">One-off <b>tools</b></h3></td>\n'
+        "## One-off tools\n"
+    )
+    assert _anchors(text) == {
+        "localcut-ai",
+        "what-is-localcut-ai",
+        "scripts-and-agents",
+        "localcut-from-a-script",
+        "windows-10-version-1903-or-later",
+        "localcuts-own-ollama",
+        "programs-it-needs",
+        "what-is-localcut-ai-1",
+        "hero",
+        "one-off-tools",
+        "one-off-tools-1",
+    }
+
+
+def test_every_link_into_a_heading_finds_it() -> None:
+    """A link row at the top of the README points into the page by heading.
+
+    Renaming the heading moves its anchor, and the link then opens the top of
+    the page with nothing on screen to say it missed. The relative-link check
+    above cannot see it, because the file half still resolves. The same holds
+    for a docs page linking a heading in another page.
+
+    One test over the whole list rather than a parametrized one: a document
+    with no links into headings is a normal state, and an empty parameter set
+    reports as a skip.
+    """
+    missed = [
+        f"{doc} links {named}#{fragment}"
+        for doc, named, fragment in _documented_fragments()
+        if fragment not in _anchors((REPO_ROOT / named).read_text(encoding="utf-8"))
+    ]
+    assert not missed, "no heading has these anchors:\n  " + "\n  ".join(missed)
+
+
+#: A command named in prose or a code block: `localcut <command>`, and for a
+#: command that takes an action, the action or an `a|b|c` list of them. An
+#: action only counts when a separator follows it, so the model id in
+#: `localcut download kokoro-82m` is not read as an action cut short.
+_COMMAND = re.compile(
+    r"\blocalcut ([a-z][a-z-]*)(?: ([a-z][a-z-]*(?:\|[a-z][a-z-]*)*)(?=[\s`'\")\].,]|$))?"
+)
+
+
+def _documented_commands() -> dict[str, set[str]]:
+    """Each `localcut` command the entry points name, with any actions named for it."""
+    found: dict[str, set[str]] = {}
+    for doc in _entry_points():
+        for command, actions in _COMMAND.findall(doc.read_text(encoding="utf-8")):
+            found.setdefault(command, set()).update(a for a in actions.split("|") if a)
+    return found
+
+
+def test_every_documented_command_is_one_the_cli_has(capsys: pytest.CaptureFixture[str]) -> None:
+    """A command a reader copies out of the docs has to exist.
+
+    The CLI and the pages that introduce it are the same list written twice,
+    and a renamed subcommand leaves the old name in prose that still reads
+    right. Asked through `--help` rather than read out of the parser's
+    internals: argparse exits 0 for a command it has and 2 for one it does
+    not, which is what a reader meets.
+    """
+    documented = _documented_commands()
+    assert documented, "README.md and docs/ name no `localcut <command>` at all"
+
+    missing = []
+    for command, actions in sorted(documented.items()):
+        with pytest.raises(SystemExit) as exited:
+            cli.main([command, "--help"])
+        usage = capsys.readouterr().out
+        if exited.value.code != 0:
+            missing.append(command)
+            continue
+        # A command with actions shows them as `{a,b,c} ...` in its usage.
+        offered = re.search(r"\{([a-z,-]+)\} \.\.\.", usage)
+        if offered:
+            known = set(offered.group(1).split(","))
+            missing.extend(f"{command} {action}" for action in sorted(actions - known))
+    assert not missing, "the docs name commands the CLI does not have: " + ", ".join(missing)
+
+
+def _linked_files() -> list[str]:
+    """Every file or directory the entry points link, repository-relative.
+
+    A directory keeps its trailing slash, which is what lets `deploy/` match
+    a `deploy/**` path filter. A target that resolves to nothing is left to
+    the link check, which names it.
+    """
+    found: set[str] = set()
+    for doc, link in _documented_links():
+        resolved = ((REPO_ROOT / doc).parent / link).resolve()
+        if resolved.exists() and resolved.is_relative_to(REPO_ROOT):
+            path = resolved.relative_to(REPO_ROOT).as_posix()
+            found.add(f"{path}/" if resolved.is_dir() else path)
+    return sorted(found)
+
+
 def test_ci_and_the_hook_run_this_module_for_the_documents_it_reads() -> None:
     """A contract test that cannot fire is not a contract.
 
@@ -313,10 +639,17 @@ def test_ci_and_the_hook_run_this_module_for_the_documents_it_reads() -> None:
     matches no filter that can run pytest unless these name it. package.json
     alone runs the desktop suite, which cannot import EngineConfig.
 
+    The link checks read two more sets: every page in docs/, and every file
+    those pages and the README link, since whether a link resolves is a
+    property of its target as much as of the page. Renaming a linked file
+    breaks a link in a commit that touches no document at all.
+
     Both sides are checked, because they fail at different moments: the hook
     is what catches it before the push, and the workflow is what catches a PR
     opened from a machine with no hooks installed. And both of the workflow's
-    triggers separately, since ci-engine.yml carries the list twice.
+    triggers separately, since ci-engine.yml carries the list twice. A path
+    under `engine/` needs nothing from the hook: `engine-tests` runs the whole
+    suite, this module included, on any change there.
     """
     filters = ci_engine_paths_by_trigger()
     for trigger in ("push", "pull_request"):
@@ -326,13 +659,18 @@ def test_ci_and_the_hook_run_this_module_for_the_documents_it_reads() -> None:
 
     hook = hook_files_pattern("readme-contract")
 
-    for path in _DOCUMENT_INPUTS:
+    read = {
+        *_DOCUMENT_INPUTS,
+        *(doc.relative_to(REPO_ROOT).as_posix() for doc in _entry_points()),
+        *_linked_files(),
+    }
+    for path in sorted(read):
         for trigger, globs in filters.items():
             assert matches_a_path_filter(path, globs), (
                 f"ci-engine.yml's {trigger} path filter does not name {path}, which this "
                 "module reads - a change to it would run no suite that can check these claims"
             )
-        assert hook.match(path), (
+        assert path.startswith("engine/") or hook.match(path), (
             f"the readme-contract pre-push hook does not name {path}, so a commit "
             "touching it alone is pushed with nothing run"
         )
