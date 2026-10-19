@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -554,6 +555,101 @@ def test_an_orphan_of_localcuts_copy_is_stopped_not_taken_for_the_users(
     finally:
         if orphan.poll() is None:
             orphan.kill()
+
+
+# `localcut serve` itself, its Ollama the fake planted where a setup puts the
+# binary and run with this Python.
+_ENGINE_WITH_THE_FAKE = """
+import sys
+
+from localcut_engine.cli import main
+from localcut_engine.programs.setup import OllamaInstaller
+
+OllamaInstaller.command = lambda self, binary: [sys.executable, str(binary), "serve"]
+sys.exit(main(sys.argv[1:]))
+"""
+
+
+def test_a_killed_engine_leaves_its_port_to_the_next_one(tmp_path):
+    """An engine killed outright (SIGKILL, TerminateProcess) leaves its Ollama
+    running, for the next engine to stop once it has bound its own port. So
+    the copy must hold nothing of the engine's socket: one that does keeps
+    the port in LISTEN with the engine gone. The next engine then exits on
+    the bind with the copy still running."""
+    data = tmp_path / "engine"
+    binary = data / "programs" / "ollama" / _BINARY
+    binary.parent.mkdir(parents=True)
+    shutil.copyfile(_FAKE, binary)
+    port = free_port()
+    # Nothing from the developer's own shell. The LLM address is one of its
+    # own, never 11434, where the machine's own Ollama may be.
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("LOCALCUT_", "FAKE_OLLAMA"))
+    }
+    environment.update(
+        LOCALCUT_TOKEN=TOKEN,
+        LOCALCUT_LLM_URL=f"http://127.0.0.1:{free_port()}/v1",
+        LOCALCUT_COMFYUI_URL="http://127.0.0.1:9",
+    )
+    command = [sys.executable, "-c", _ENGINE_WITH_THE_FAKE, "serve", "--port", str(port)]
+    command += ["--data-dir", str(data), "--backend", "mock"]
+    engines: list[subprocess.Popen] = []
+
+    def start(log: Path) -> subprocess.Popen:
+        with log.open("wb") as out:
+            engine = subprocess.Popen(
+                command, env=environment, stdout=out, stderr=subprocess.STDOUT
+            )
+        engines.append(engine)
+        return engine
+
+    def polled(engine: subprocess.Popen, log: Path, ask, what: str):
+        """What `ask(http)` returns once it is anything but None. The client
+        closes its connection first, so the engine's end of it never waits in
+        TIME_WAIT on the port the next engine binds."""
+        deadline = time.monotonic() + 90
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port}", headers={"Authorization": f"Bearer {TOKEN}"}
+        ) as http:
+            while time.monotonic() < deadline:
+                assert engine.poll() is None, f"the engine exited:\n{log.read_text()}"
+                with contextlib.suppress(httpx.HTTPError):
+                    found = ask(http)
+                    if found is not None:
+                        return found
+                time.sleep(0.1)
+        raise AssertionError(f"gave up waiting for {what}:\n{log.read_text()}")
+
+    def running_copy(http: httpx.Client) -> int | None:
+        server = (_ollama(http).get("managed") or {}).get("server") or {}
+        return server["pid"] if server.get("state") == "running" else None
+
+    def answers(http: httpx.Client) -> bool | None:
+        return True if http.get("/health").status_code == 200 else None
+
+    try:
+        first = start(tmp_path / "first.log")
+        orphan = polled(first, tmp_path / "first.log", running_copy, "its Ollama to run")
+        first.kill()
+        first.wait(timeout=30)
+        assert not _gone(orphan), "the killed engine's Ollama is left running"
+
+        second = start(tmp_path / "second.log")
+        assert polled(second, tmp_path / "second.log", answers, "the next engine to answer")
+    finally:
+        for engine in engines:
+            if engine.poll() is None:
+                engine.kill()
+            engine.wait(timeout=30)
+        # Every copy started from the planted binary: the orphan and any copy
+        # the next engine started in its place.
+        planted = {str(binary), str(binary.resolve())}
+        for process in psutil.process_iter(["cmdline"]):
+            with contextlib.suppress(psutil.Error):
+                if planted & set(process.info["cmdline"] or []):
+                    process.kill()
 
 
 def test_a_copy_that_keeps_stopping_is_restarted_then_left_crashed(tmp_path, monkeypatch, archives):
