@@ -93,6 +93,7 @@ jobs:
             engine_bin: dist/localcut/localcut
             artifact: localcut-linux-x64
             speech_check: true
+            glibc_floor: "2.35"
             glob: |
               apps/desktop/release/*.AppImage
               apps/desktop/release/*.deb
@@ -152,6 +153,59 @@ jobs:
         # installs the app. `--version` is the cheapest proof of life.
         working-directory: engine
         run: ./${{ matrix.engine_bin }} --version
+
+      - name: Nothing in the freeze needs a newer glibc than the floor
+        # The dynamic loader checks every glibc version a library asks for
+        # before the engine runs a line, and stops at the first one the
+        # machine's glibc lacks: ``version `GLIBC_2.38' not found``. The
+        # wheels ask for little, manylinux_2_28 at most. The libraries
+        # PyInstaller copies from the build machine ask for that machine's
+        # glibc, libstdc++ and libgcc_s among them, so the oldest system the
+        # installers run on is whatever built them. This holds it to the
+        # floor the README states.
+        #
+        # Every ELF file in the freeze and every glibc version it requires,
+        # read from its version references. A version a library defines is
+        # not a requirement and is not read. A version without a number is
+        # one too: GLIBC_PRIVATE is only satisfied by the glibc the library
+        # came from, and the GLIBC_ABI_ markers all postdate 2.35.
+        if: matrix.glibc_floor
+        working-directory: engine
+        env:
+          GLIBC_FLOOR: ${{ matrix.glibc_floor }}
+        run: |
+          set -euo pipefail
+          checked=0
+          highest=0
+          failed=0
+          while IFS= read -r -d '' file; do
+            # The freeze also carries Python archives, voice data and text.
+            [ "$(od -An -tx1 -N4 "$file" | tr -d ' \n')" = "7f454c46" ] || continue
+            checked=$((checked + 1))
+            needs=$(objdump -p "$file" \
+              | awk '/^Version References:/ { r = 1; next } /^$/ { r = 0 } r && $NF ~ /^GLIBC_/ { print $NF }' \
+              | sort -u)
+            name=${file#dist/localcut/}
+            for need in $needs; do
+              version=${need#GLIBC_}
+              if [ "$need" = GLIBC_PRIVATE ]; then
+                echo "::error::$name requires GLIBC_PRIVATE, which only the glibc it was built with provides"
+              elif ! [[ $version =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+                echo "::error::$name requires $need, which glibc $GLIBC_FLOOR does not provide"
+              else
+                highest=$(printf '%s\n%s\n' "$highest" "$version" | sort -V | tail -n 1)
+                [ "$(printf '%s\n%s\n' "$GLIBC_FLOOR" "$version" | sort -V | tail -n 1)" != "$GLIBC_FLOOR" ] || continue
+                echo "::error::$name requires $need, newer than the glibc $GLIBC_FLOOR floor"
+              fi
+              failed=$((failed + 1))
+            done
+          done < <(find dist/localcut -type f -print0)
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::found no ELF file under engine/dist/localcut, so this read nothing"
+            exit 1
+          fi
+          echo "  $checked ELF files; the newest glibc any of them requires is $highest (floor $GLIBC_FLOOR)"
+          [ "$failed" -eq 0 ]
 
       # The same pinned action ci-engine.yml uses, for the reason it gives
       # there: one ffmpeg build on every runner. The check below needs it at
