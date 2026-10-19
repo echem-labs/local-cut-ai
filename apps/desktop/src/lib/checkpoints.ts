@@ -1,4 +1,4 @@
-import type { Board, Checkpoint, Project } from "../api/types";
+import type { Board, Checkpoint, NodeState, Project, SceneCardModel } from "../api/types";
 import { isSettled } from "./status";
 
 /**
@@ -35,4 +35,19 @@ export function pendingCheckpoint(
     board.scenes.length > 0 &&
     board.scenes.every((scene) => !scene.keyframe || isSettled(scene.keyframe.status));
   return keyframesReady ? "storyboard" : null;
+}
+
+/**
+ * What a scene's new take re-rolls: its clip, except while the clip is held
+ * behind the storyboard checkpoint. There the generated keyframe is the
+ * picture under review, and the clip has no job until the storyboard is
+ * approved, so a new take of the clip changes a seed nothing has rendered
+ * and nothing on screen moves. A scene built from the user's own picture has
+ * no keyframe to re-roll, and at the script checkpoint the keyframe is held
+ * too, so both keep the clip.
+ */
+export function newTakeNode(scene: SceneCardModel): NodeState {
+  const keyframe = scene.keyframe;
+  if (scene.clip.status !== "held" || scene.still || !keyframe) return scene.clip;
+  return keyframe.status === "held" ? scene.clip : keyframe;
 }

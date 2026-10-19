@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EngineError } from "../api/client";
 import type { EditProposal, EditResult } from "../api/types";
 import { plural, t } from "../i18n";
-import { pendingCheckpoint } from "../lib/checkpoints";
+import { newTakeNode, pendingCheckpoint } from "../lib/checkpoints";
 import { type LogEntry, MAX_LOG_ENTRIES, loadLog, saveLog } from "../lib/editlog";
 import { orderedScenes } from "../lib/order";
 import { usePlayback } from "../lib/playback";
@@ -217,7 +217,7 @@ export function Composer() {
         list.push({
           label: t("composer.cmdRegen", { n: sceneNo }),
           hint: t("composer.cmdRegenHint"),
-          run: () => void regenerate(scene.clip.node_id).then(reportActionError),
+          run: () => void regenerate(newTakeNode(scene).node_id).then(reportActionError),
         });
         list.push({
           label: scene.clip.pinned
