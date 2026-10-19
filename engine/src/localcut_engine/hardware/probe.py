@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 from enum import StrEnum
+from pathlib import Path
 
 import psutil
 from pydantic import BaseModel
@@ -278,6 +279,54 @@ def _windows_adapter(winreg, adapter) -> GPU | None:  # noqa: ANN001 - the winre
     return GPU(vendor=vendor, name=name, vram_gb=vram_gb, backend=backend)
 
 
+# Linux's display adapters: one card<N> per adapter, with its PCI device
+# under it, as the kernel's DRM drivers expose them.
+_DRM = Path("/sys/class/drm")
+# A Radeon with less memory of its own than this is integrated with the
+# processor and shares the system's memory; ROCm's PyTorch is for discrete
+# cards and the large-memory parts that report tens of gigabytes here.
+_MIN_RADEON_VRAM = 4 << 30
+
+
+def _detect_linux_radeons(root: Path = _DRM) -> list[GPU]:
+    """AMD cards from sysfs, for the Linux machines without rocm-smi. Those
+    are most of them: ROCm's PyTorch wheels carry the ROCm libraries they
+    load, so the kernel's amdgpu driver is all a Radeon needs to run them.
+    Without this every Radeon on a stock Ubuntu read as no GPU. amdgpu
+    writes the card's own memory in `mem_info_vram_total`."""
+    if platform.system() != "Linux":
+        return []
+    gpus = []
+    try:
+        cards = sorted(root.glob("card[0-9]*"))
+    except OSError:
+        return []
+    for card in cards:
+        # card0-DP-1 and the like are the card's connectors, not cards.
+        if "-" in card.name:
+            continue
+        device = card / "device"
+        try:
+            if (device / "vendor").read_text().strip().lower() != "0x1002":
+                continue
+            vram = int((device / "mem_info_vram_total").read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if vram < _MIN_RADEON_VRAM:
+            continue
+        try:
+            name = (device / "product_name").read_text().strip()
+        except OSError:
+            name = ""
+        if not name:
+            try:
+                name = f"AMD Radeon ({(device / 'device').read_text().strip()})"
+            except OSError:
+                name = "AMD Radeon"
+        gpus.append(GPU(vendor="amd", name=name, vram_gb=round(vram / 2**30, 1), backend="rocm"))
+    return gpus
+
+
 def _tier_for(vram_gb: float) -> Tier:
     if vram_gb >= 24:
         return Tier.C
@@ -291,7 +340,7 @@ def _tier_for(vram_gb: float) -> Tier:
 def probe_hardware(disk_path: str = "/") -> HardwareProfile:
     # Vendor precedence, first hit wins: NVIDIA (the best-supported path),
     # then Apple, then AMD, then Intel, then on Windows whatever display
-    # adapters the registry lists. Deliberately NOT a union — each probe
+    # adapters the registry lists and on Linux the Radeons sysfs lists. Deliberately NOT a union — each probe
     # shells out to a vendor tool, and a machine with a discrete NVIDIA card
     # alongside an integrated Intel one would otherwise pay for both on every
     # call while the integrated part could never be the primary anyway (the
@@ -302,6 +351,7 @@ def probe_hardware(disk_path: str = "/") -> HardwareProfile:
         or _detect_amd()
         or _detect_intel()
         or _detect_windows_adapters()
+        or _detect_linux_radeons()
     )
     primary = max(gpus, key=lambda g: g.vram_gb) if gpus else None
     return HardwareProfile(

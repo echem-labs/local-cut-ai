@@ -113,3 +113,35 @@ def test_windows_cards_with_no_vendor_tool_are_read_from_the_registry(monkeypatc
     ]
     monkeypatch.setattr(platform, "system", lambda: "Linux")
     assert probe._detect_windows_adapters() == []
+
+
+def test_linux_radeons_with_no_rocm_smi_are_read_from_sysfs(monkeypatch, tmp_path):
+    """ROCm's PyTorch needs only the kernel's amdgpu driver, so a Radeon on a
+    Linux machine with no ROCm installed is still a card a setup has a build
+    for. sysfs has each adapter's PCI vendor and amdgpu its memory; an
+    integrated Radeon's small share of system memory, a connector and
+    another vendor's adapter are not cards for that build."""
+
+    def card(name: str, vendor: str, vram: int | None = None, product: str | None = None):
+        device = tmp_path / name / "device"
+        device.mkdir(parents=True)
+        (device / "vendor").write_text(vendor + "\n")
+        (device / "device").write_text("0x744c\n")
+        if vram is not None:
+            (device / "mem_info_vram_total").write_text(f"{vram}\n")
+        if product is not None:
+            (device / "product_name").write_text(product + "\n")
+
+    card("card0", "0x1002", 16 * 2**30, "AMD Radeon RX 7800 XT")
+    (tmp_path / "card0-DP-1").mkdir()
+    card("card1", "0x8086")
+    card("card2", "0x1002", 512 * 2**20)
+    card("card3", "0x1002", 8 * 2**30)
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    cards = probe._detect_linux_radeons(tmp_path)
+    assert [(c.vendor, c.name, c.vram_gb, c.backend) for c in cards] == [
+        ("amd", "AMD Radeon RX 7800 XT", 16.0, "rocm"),
+        ("amd", "AMD Radeon (0x744c)", 8.0, "rocm"),
+    ]
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    assert probe._detect_linux_radeons(tmp_path) == []
