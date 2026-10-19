@@ -59,6 +59,7 @@
   "statusSettingUp": "Setting up, {pct}%",
   "statusNotFound": "Not found",
   "statusNeedsOllama": "Needs Ollama",
+  "statusNeedsComfyUI": "Needs ComfyUI",
   "statusNotPulled": "Not in Ollama yet",
   "runners": {
     "ollama": "in Ollama",
