@@ -57,6 +57,18 @@ mac:
 dmg:
   writeUpdateInfo: false
 
+# The AppImage's runtime, the small program at the front of the file that
+# mounts the rest. electron-builder's default (0.0.0) is the legacy runtime,
+# which dlopens libfuse.so.2 - and Ubuntu has not installed libfuse2 since
+# 22.04. There it prints "dlopen(): error loading libfuse.so.2" to a terminal
+# nobody has open and exits, so a double-clicked AppImage does nothing at
+# all. 1.0.3 is the static type2 runtime, which carries its own FUSE and
+# mounts through the fusermount3 every current desktop has.
+# electron/appImageRuntime.test.ts holds this, and package.yml checks the
+# runtime of the AppImage it builds.
+toolsets:
+  appimage: "1.0.3"
+
 linux:
   icon: build/icon.png
   category: AudioVideo
