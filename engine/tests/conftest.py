@@ -206,9 +206,18 @@ def serve_engine(tmp_path, token: str, backend: str = "mock", **overrides):
         assert not thread.is_alive(), "the test engine did not shut down"
 
 
-def pin_hardware(monkeypatch, vram_gb: float | None) -> None:
-    """Answer the hardware probe with one NVIDIA card of `vram_gb`, or with
-    no GPU at all for None, instead of whatever this machine has.
+def pin_hardware(
+    monkeypatch,
+    vram_gb: float | None,
+    *,
+    vendor: str = "nvidia",
+    driver: str | None = None,
+    compute: str | None = None,
+) -> None:
+    """Answer the hardware probe with one card of `vram_gb`, NVIDIA unless
+    `vendor` says otherwise, or with no GPU at all for None, instead of
+    whatever this machine has. `driver` and `compute` are what nvidia-smi
+    would report for an NVIDIA card.
 
     What Auto means for the script model follows the hardware (it is the
     model the recommendation fits to the card), so a test that reads it
@@ -216,11 +225,17 @@ def pin_hardware(monkeypatch, vram_gb: float | None) -> None:
     """
     from localcut_engine.hardware import probe
 
+    backend = {"nvidia": "cuda", "amd": "rocm", "intel": "xpu", "apple": "mps"}[vendor]
     gpu = (
         None
         if vram_gb is None
         else probe.GPU(
-            vendor="nvidia", name=f"test {vram_gb:g} GB card", vram_gb=vram_gb, backend="cuda"
+            vendor=vendor,
+            name=f"test {vram_gb:g} GB card",
+            vram_gb=vram_gb,
+            backend=backend,
+            driver_version=driver,
+            compute_capability=compute,
         )
     )
     profile = probe.HardwareProfile(

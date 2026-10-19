@@ -66,6 +66,18 @@ ROCm add-on archives are not pinned, so an AMD card that Vulkan does not
 cover runs on the CPU. There is no managed Ollama on macOS or on Linux for
 ARM.
 
+Ollama looks for GPUs through Vulkan at every start, beside CUDA, before it
+answers anything. Where CUDA runs the NVIDIA card, that pass only finds the
+same card again and any integrated graphics. Ollama drops both. So
+LocalCut starts its copy with `OLLAMA_VULKAN=0` when the hardware probe
+finds an NVIDIA card whose driver and compute capability Ollama 0.40.4's
+CUDA libraries take: a driver of 550 or newer for compute 7.0 and up, or 570
+or newer for compute 5.0 and up. Everywhere else Vulkan stays on, since it
+is how an AMD or Intel card gets the GPU. It stays on too for an NVIDIA card
+whose driver or compute capability nvidia-smi did not report. The engine
+probes the hardware before it first starts its copy. The `ollama serve` a
+setup runs to check a new build looks for every GPU it can, Vulkan included.
+
 The engine starts its copy as `ollama serve` when the engine starts, if the
 copy is there and nothing answers at `LOCALCUT_LLM_URL`. It stops the copy
 and every process the copy started when it shuts down, however the stop was

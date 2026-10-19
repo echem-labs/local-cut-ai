@@ -308,6 +308,8 @@ class OllamaInstaller:
         models = ollama.model_store(config)
         models.mkdir(parents=True, exist_ok=True)
         environment = self._environment(config, host, port, models)
+        profile = known_profile(str(config.data_dir))
+        environment.update(ollama.gpu_environment(profile.gpus if profile is not None else []))
         Path(environment["HOME"]).mkdir(parents=True, exist_ok=True)
         return ServerLaunch(
             argv=self.command(binary),
@@ -324,6 +326,16 @@ class OllamaInstaller:
     def url(self, config: EngineConfig) -> str:
         """The address the engine asks for it."""
         return config.llm_url
+
+    async def prepare(self, config: EngineConfig) -> None:
+        """Probe the hardware, once per engine, before the copy's first
+        start: which cards the machine has decides how it is started. A
+        probe that fails leaves the copy to start as Ollama would by
+        itself."""
+        try:
+            await asyncio.to_thread(machine_profile, str(config.data_dir))
+        except Exception:  # noqa: BLE001 - the copy starts either way
+            logger.warning("could not probe the hardware before starting Ollama", exc_info=True)
 
     async def check(self, folder: Path, asset: ProgramAsset | None = None) -> dict:
         """Serve from where it was unpacked, on a free loopback port with an
