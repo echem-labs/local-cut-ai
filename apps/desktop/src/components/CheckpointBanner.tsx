@@ -2,15 +2,20 @@ import { useState } from "react";
 import type { Checkpoint } from "../api/types";
 import { t } from "../i18n";
 import { useApp } from "../store";
-import { pendingCheckpoint } from "../lib/checkpoints";
+import { KINDS_RELEASED_BY, pendingCheckpoint } from "../lib/checkpoints";
+import { useReadinessGuard } from "./Readiness";
 import { ScriptTable, useScreenplay } from "./ToolSession";
 
 /** Beginner-mode gate above the scene board: one message + one accent
- * approve button per checkpoint, gone once both are passed. */
+ * approve button per checkpoint, gone once both are passed.
+ *
+ * Approving is what releases the work the checkpoint held, so the approve
+ * click goes through the "Before you render" gate for that work alone. */
 export function CheckpointBanner() {
   const { board, client, currentProject, approve, actionError } = useApp();
   const [showScript, setShowScript] = useState(false);
   const [busy, setBusy] = useState(false);
+  const { guard, dialog } = useReadinessGuard(currentProject?.id ?? "home");
 
   const script = board?.aux.script;
   // Shared with the stalled-project notice, which has to know that a gate —
@@ -26,19 +31,24 @@ export function CheckpointBanner() {
     stage === "script" && showScript ? scriptUrl : null,
   );
 
-  if (!stage) return null;
+  // The dialog outlives the banner: a board refresh can move the stage while
+  // it is open, and unmounting it would drop the held approval unsaid.
+  if (!stage) return <>{dialog}</>;
 
   const run = async (checkpoint: Checkpoint) => {
     if (busy) return;
-    setBusy(true);
-    try {
-      await approve(checkpoint);
-    } finally {
-      setBusy(false);
-    }
+    await guard(async () => {
+      setBusy(true);
+      try {
+        await approve(checkpoint);
+      } finally {
+        setBusy(false);
+      }
+    }, [...KINDS_RELEASED_BY[checkpoint]]);
   };
 
   return (
+    <>
     <div className="banner checkpoint">
       <div className="row">
         <span>
@@ -73,5 +83,7 @@ export function CheckpointBanner() {
           <div className="hint">{screenplayError ?? t("checkpoint.loadingScript")}</div>
         ))}
     </div>
+    {dialog}
+    </>
   );
 }

@@ -44,6 +44,7 @@ _TOOLS_TS = _desktop("src", "lib", "tools.ts")
 _ETA = _desktop("src", "lib", "eta.ts")
 _OOM = _desktop("src", "lib", "oom.ts")
 _PROGRAMS_TS = _desktop("src", "lib", "programs.ts")
+_CHECKPOINTS_TS = _desktop("src", "lib", "checkpoints.ts")
 _CLIENT = _desktop("src", "api", "client.ts")
 _TYPES = _desktop("src", "api", "types.ts")
 _HOME = _desktop("src", "screens", "Home.tsx")
@@ -466,6 +467,40 @@ def test_the_video_kinds_home_warns_about_match_the_pipeline():
     assert match, "Home.tsx no longer declares VIDEO_KINDS"
     declared = set(re.findall(r'"([^"]+)"', match.group(1)))
     assert declared == {kind.value for kind in PIPELINE_KINDS}
+
+
+def test_the_gate_asks_about_what_each_checkpoint_releases():
+    """In Review steps the engine holds work behind two approvals, and the
+    "Before you render" gate asks about one stretch at a time: Generate about
+    the script alone, each approval about what it releases. The desktop
+    writes those stretches down in checkpoints.ts. If `_checkpoint_open`
+    moves a kind to another stretch, the gate would warn about work a click
+    does not start, or let one start unwarned."""
+    from types import SimpleNamespace
+
+    from localcut_engine.readiness import PIPELINE_KINDS
+    from localcut_engine.service import ProjectService
+
+    def opened_by(approvals: list[str]) -> set[str]:
+        project = SimpleNamespace(mode="beginner", approvals=approvals)
+        return {
+            kind.value for kind in PIPELINE_KINDS if ProjectService._checkpoint_open(project, kind)
+        }
+
+    before = opened_by([])
+    after_script = opened_by(["script"]) - before
+    after_storyboard = opened_by(["script", "storyboard"]) - before - after_script
+
+    text = _ts_source(_CHECKPOINTS_TS)
+    first = re.search(r"const KINDS_BEFORE_APPROVAL[^=]*= \[(.*?)\];", text, re.S)
+    released = re.search(r"const KINDS_RELEASED_BY[^=]*= \{(.*?)\};", text, re.S)
+    assert first and released, "checkpoints.ts no longer declares the gate's stretches"
+    stretches = {
+        name: set(re.findall(r'"([^"]+)"', kinds))
+        for name, kinds in re.findall(r"(\w+):\s*\[([^\]]*)\]", released.group(1))
+    }
+    assert set(re.findall(r'"([^"]+)"', first.group(1))) == before
+    assert stretches == {"script": after_script, "storyboard": after_storyboard}
 
 
 def test_each_quick_tools_engine_kinds_match_its_graph():

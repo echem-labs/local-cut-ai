@@ -6,10 +6,11 @@
  * as settled does not merely look wrong — it removes the approve button, and
  * beginner mode has no other way forward.
  */
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Board, NodeState, NodeStatus } from "../api/types";
+import type { Board, NodeState, NodeStatus, ReadinessRow } from "../api/types";
+import { t } from "../i18n";
 import { CheckpointBanner } from "./CheckpointBanner";
 import { useApp } from "../store";
 
@@ -77,5 +78,93 @@ describe("the storyboard checkpoint", () => {
   it("appears for a scene with no keyframe node at all", () => {
     mount(null);
     expect(approveButton()).not.toBeNull();
+  });
+});
+
+/**
+ * Approving a checkpoint is what releases the work held behind it, so it is
+ * where the "Before you render" gate asks about that work: the keyframes,
+ * narration and music behind the script, and the clips and the final video
+ * behind the storyboard. A gap in a stage that has already run, or one still
+ * held behind a later checkpoint, is not part of the answer.
+ */
+describe("approving a checkpoint with stages that are not ready", () => {
+  const gap = (
+    kind: string,
+    reason: string,
+    verdict: ReadinessRow["verdict"],
+    task?: string,
+  ): ReadinessRow => ({
+    kind,
+    model: null,
+    backend: null,
+    verdict,
+    reason: reason as ReadinessRow["reason"],
+    data: task ? { task } : {},
+    fix: null,
+  });
+  const comfyuiDown = [
+    gap("keyframe", "comfyui_down", "placeholder", "image.gen"),
+    gap("music", "comfyui_down", "placeholder", "music.gen"),
+  ];
+  const noFfmpeg = [gap("export", "no_ffmpeg", "will_fail")];
+
+  let approve: ReturnType<typeof vi.fn>;
+
+  function atCheckpoint(approvals: string[], rows: ReadinessRow[], keyframe: NodeStatus | null) {
+    approve = vi.fn(async () => {});
+    useApp.setState({
+      board: approvals.length === 0 ? { ...board(null), scenes: [] } : board(keyframe),
+      currentProject: {
+        id: `p-${approvals.length}-${rows.length}`,
+        title: "t",
+        mode: "beginner",
+        approvals,
+      },
+      client: {
+        projectReadiness: vi.fn(async () => ({ rows })),
+        artifactUrl: () => "http://engine/artifact",
+      },
+      models: [],
+      warnMissingModels: true,
+      approve,
+      actionError: null,
+    } as never);
+    return render(<CheckpointBanner />);
+  }
+
+  const click = async (name: string) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
+  const gate = () => screen.queryByRole("alertdialog", { name: t("readiness.dialog.title") });
+
+  it("holds the script's approval while the stages it releases would be stand-ins", async () => {
+    atCheckpoint([], comfyuiDown, null);
+    await click(t("checkpoint.approveScript"));
+    expect(gate()).not.toBeNull();
+    expect(gate()).toHaveTextContent("Keyframes");
+    expect(gate()).toHaveTextContent("Music");
+    expect(approve).not.toHaveBeenCalled();
+    await click(t("readiness.dialog.renderAnyway"));
+    expect(approve).toHaveBeenCalledWith("script");
+  });
+
+  it("approves the script straight away when only later stages have gaps", async () => {
+    atCheckpoint([], noFfmpeg, null);
+    await click(t("checkpoint.approveScript"));
+    expect(gate()).toBeNull();
+    expect(approve).toHaveBeenCalledWith("script");
+  });
+
+  it("holds the storyboard's approval while the final video would fail", async () => {
+    atCheckpoint(["script"], [...comfyuiDown, ...noFfmpeg], "draft");
+    await click(t("checkpoint.approveStoryboard"));
+    expect(gate()).not.toBeNull();
+    expect(gate()).toHaveTextContent("Final video");
+    // The keyframes and the music have already run.
+    expect(gate()).not.toHaveTextContent("Keyframes");
+    expect(approve).not.toHaveBeenCalled();
   });
 });
