@@ -28,7 +28,7 @@ from pathlib import Path
 import httpx
 import psutil
 import pytest
-from conftest import free_port
+from conftest import free_port, pin_hardware
 from test_programs import TOKEN, _Archives, _program_events, _row, _ws_url
 
 from localcut_engine.api.app import WS_TOKEN_SUBPROTOCOL, EngineServer, create_app
@@ -616,6 +616,81 @@ def test_remove_stops_the_copy_and_keeps_its_models(tmp_path, monkeypatch, archi
         assert not (data / "programs" / "ollama").exists()
         assert (data / "models/ollama/manifests/registry.ollama.ai/library/tiny/1b").is_file()
         assert _ollama(http)["managed"] is None
+
+
+# -- the GPU it looks for ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("vendor", "driver", "compute", "runs"),
+    [
+        ("nvidia", "595.99.02", "8.6", True),
+        ("nvidia", "581.57", "8.6", True),
+        ("nvidia", "550.54.14", "7.5", True),
+        ("nvidia", "550.54.14", "6.1", False),
+        ("nvidia", "570.86.10", "6.1", True),
+        ("nvidia", "570.86.10", "5.0", True),
+        ("nvidia", "570.86.10", "3.7", False),
+        ("nvidia", "545.29.06", "8.9", False),
+        ("nvidia", None, "8.6", False),
+        ("nvidia", "595.99.02", None, False),
+        ("nvidia", "[N/A]", "garbage", False),
+        ("amd", None, None, False),
+        ("intel", None, None, False),
+    ],
+)
+def test_cuda_is_counted_on_only_for_a_card_ollamas_cuda_libraries_run(
+    vendor, driver, compute, runs
+):
+    """Ollama 0.40.4 ships CUDA 12.8 and CUDA 13 libraries. Its own check
+    drops every CUDA device under a driver older than 550. Under one older
+    than 570 it drops the cards older than compute 7.0 too. CUDA 12.8 is
+    built for compute 5.0 and up. A figure the
+    probe could not read counts as not met: wrongly counting on CUDA would
+    leave the card unused, where wrongly not counting on it costs seconds."""
+    from localcut_engine.hardware.probe import GPU
+    from localcut_engine.programs import ollama
+
+    backend = {"nvidia": "cuda", "amd": "rocm", "intel": "xpu"}[vendor]
+    card = GPU(
+        vendor=vendor,
+        name="test card",
+        vram_gb=8.0,
+        backend=backend,
+        driver_version=driver,
+        compute_capability=compute,
+    )
+    assert ollama.cuda_runs(card) is runs
+
+
+@pytest.mark.parametrize(
+    ("vendor", "driver", "compute", "vulkan"),
+    [
+        ("nvidia", "595.99.02", "8.6", "0"),
+        ("nvidia", "545.29.06", "8.6", None),
+        ("amd", None, None, None),
+        ("intel", None, None, None),
+    ],
+)
+def test_the_copy_skips_vulkan_only_where_cuda_runs_the_card(
+    tmp_path, monkeypatch, archives, vendor, driver, compute, vulkan
+):
+    """On a laptop whose NVIDIA card Ollama runs on CUDA, its Vulkan pass at
+    every start finds that card again and the Intel graphics beside it, and
+    drops both. Where the hardware probe finds an NVIDIA card CUDA runs,
+    LocalCut's copy starts with Vulkan off, from the engine's first start
+    on, before anything else has asked about the hardware. Everywhere else
+    Vulkan is left as Ollama has it, since it is how an AMD or Intel card,
+    or an NVIDIA card CUDA does not run, gets the GPU."""
+    _pin_ollama(monkeypatch, archives)
+    monkeypatch.delenv("OLLAMA_VULKAN", raising=False)
+    pin_hardware(monkeypatch, 8.0, vendor=vendor, driver=driver, compute=compute)
+    data = tmp_path / "engine"
+    _install_from(archives.root, data)
+    with _live(_config(data, free_port())) as (_, http):
+        row = _wait_for(http, lambda row: _server_state(row)[0] == "running")
+        environment = psutil.Process(row["managed"]["server"]["pid"]).environ()
+    assert environment.get("OLLAMA_VULKAN") == vulkan
 
 
 # -- when it goes wrong --------------------------------------------------------------

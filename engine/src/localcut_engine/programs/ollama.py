@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from ..config import EngineConfig
+from ..hardware.probe import GPU
 from ..manifest.loader import load_manifest
 from ..manifest.recommend import server_tag
 from .server import Identity
@@ -94,6 +95,52 @@ def local_address(llm_url: str) -> tuple[str, int] | None:
 def model_store(config: EngineConfig) -> Path:
     """Where LocalCut's copy keeps the models it pulls (OLLAMA_MODELS)."""
     return config.resolved_models_dir / "ollama"
+
+
+# Which NVIDIA cards the CUDA libraries in Ollama 0.40.4's builds run, from
+# its discover/cuda_compat.go and the architectures llama/server's presets
+# compile for. cuda_v12 is CUDA 12.8, built for compute 5.0 and up; cuda_v13
+# needs a newer driver than either floor here and a newer card, so it adds
+# none. Ollama drops every CUDA device under a driver older than 550. Under
+# one older than 570 it drops the cards older than compute 7.0 as well. A
+# new pin has to be read for these again.
+_CUDA_DRIVER = 550
+_CUDA_DRIVER_OLD_CARDS = 570
+_CUDA_OLDEST_CARD = (5, 0)
+_CUDA_OLD_CARDS_BELOW = (7, 0)
+
+
+def cuda_runs(gpu: GPU) -> bool:
+    """Whether Ollama's CUDA libraries run `gpu`, by the driver and compute
+    capability nvidia-smi reported. A figure the probe could not read is not
+    taken as met: counting on CUDA for a card it does not run leaves that
+    card unused, where not counting on it costs a few seconds of start."""
+    if gpu.vendor != "nvidia":
+        return False
+    try:
+        driver = int((gpu.driver_version or "").split(".")[0])
+        major, _, minor = (gpu.compute_capability or "").partition(".")
+        compute = (int(major), int(minor or 0))
+    except ValueError:
+        return False
+    if compute < _CUDA_OLDEST_CARD or driver < _CUDA_DRIVER:
+        return False
+    return compute >= _CUDA_OLD_CARDS_BELOW or driver >= _CUDA_DRIVER_OLD_CARDS
+
+
+def gpu_environment(gpus: list[GPU]) -> dict[str, str]:
+    """What LocalCut's copy is started with for this machine's cards.
+
+    Ollama looks for GPUs through Vulkan at every start, beside CUDA, before
+    it serves anything. Where CUDA runs the NVIDIA card, that pass finds the
+    same card again, which Ollama drops as a duplicate. It also finds any
+    integrated graphics, which Ollama drops too. So there Vulkan is turned
+    off. Anywhere else it is left as Ollama has it: Vulkan
+    is how Ollama's standard build gets the GPU of an AMD or Intel card, or
+    of an NVIDIA card CUDA does not run."""
+    if any(cuda_runs(gpu) for gpu in gpus):
+        return {"OLLAMA_VULKAN": "0"}
+    return {}
 
 
 async def identify(url: str) -> Identity:

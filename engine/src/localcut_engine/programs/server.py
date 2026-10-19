@@ -109,7 +109,10 @@ class ServerLaunch:
 class ServerProgram(Protocol):
     """What the supervisor needs to know about one program. A program that
     takes longer than START_TIMEOUT_S to answer after a start says how long
-    in a `start_timeout_s` attribute of its own."""
+    in a `start_timeout_s` attribute of its own. One whose launch depends on
+    something slow to find out, such as the hardware probe, finds it out in
+    an `async prepare(config)` of its own, which the supervisor awaits before
+    each launch."""
 
     program: str
 
@@ -267,6 +270,9 @@ class ManagedServer:
 
     async def _keep_running(self) -> None:
         while not self._stopping:
+            prepare = getattr(self.program, "prepare", None)
+            if prepare is not None:
+                await prepare(self.config)
             launch = self.program.launch(self.config)
             if launch is None:
                 self._set("stopped")
