@@ -488,9 +488,9 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
 #: What each platform's frozen engine ships, normalised. This is the artifact
 #: the installers carry, and it is not the installed closure: PyInstaller
 #: resolves some of it from the build machine rather than from any wheel, so
-#: no scan of site-packages can reach it. On the Linux runner that is five
-#: libraries, three of which carry copyleft terms — libstdc++ and libgcc_s
-#: under the GCC runtime exception, and glibc's libmvec.
+#: no scan of site-packages can reach it. On the Linux runner that is four
+#: libraries, two of which carry copyleft terms: libstdc++ and libgcc_s, under
+#: the GCC runtime exception.
 #:
 #: Recorded from a real `package.yml` run, not from a developer machine. That
 #: distinction is the whole point and it is easy to get wrong: transcribed from
@@ -500,7 +500,7 @@ def test_the_strongest_copyleft_is_still_named_with_what_it_obliges() -> None:
 #: A record taken from the wrong machine reports a licence change on every
 #: build.
 #:
-#: Keyed by platform because the answer differs sharply: 13 libraries on Linux,
+#: Keyed by platform because the answer differs sharply: 12 libraries on Linux,
 #: 11 on macOS, 57 on Windows — most of the Windows set being UCRT and MSVC
 #: runtime pieces the other two take from the system.
 #:
@@ -523,7 +523,6 @@ _FROZEN_LIBRARIES = {
             "libgcc_s",
             "libgfortran",
             "libgomp",
-            "libmvec",
             "libonnxruntime_providers_shared",
             "libpython3",
             "libquadmath",
@@ -623,7 +622,6 @@ _FROZEN_COPYLEFT = {
             "libgcc_s",
             "libgfortran",
             "libgomp",
-            "libmvec",
             "libquadmath",
             "libsndfile",
             "libstdc++",
@@ -772,7 +770,7 @@ def test_no_unrecorded_library_ships_in_the_frozen_engine() -> None:
     assert not unrecorded, (
         "the frozen engine ships a native library nobody has licensed. Unlike the "
         "closure tests, this covers what PyInstaller pulls from the build machine "
-        "- libstdc++, libgcc_s and libmvec reach the installers this way today. "
+        "- libstdc++ and libgcc_s reach the installers this way today. "
         "Establish each one's licence, then record it here and, if it is "
         "copyleft, in third_party_notices' terms table so the shipped NOTICE "
         f"names what it obliges: {sorted(unrecorded)}"
@@ -803,8 +801,7 @@ def test_every_copyleft_library_in_the_freeze_is_named_in_the_notices() -> None:
     change to what ships.
 
     Per-platform, because which libraries these are is a per-platform fact:
-    six of the eight Linux entries — the GCC runtime set and glibc's libmvec,
-    which PyInstaller resolves from the build machine — are in neither of the
+    five of the seven Linux entries, the GCC runtime set, are in neither of the
     others, where the toolchain runtime comes from the system instead. A single
     POSIX-spelled list asserted everywhere fails on the two platforms that
     simply do not ship them. Membership is tested on the key `copyleft_note`

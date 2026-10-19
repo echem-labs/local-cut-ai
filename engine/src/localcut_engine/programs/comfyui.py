@@ -47,7 +47,6 @@ import logging
 import os
 import re
 import stat
-import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
@@ -313,17 +312,6 @@ def python_flags(folder: Path) -> list[str]:
     project's packages in front of ComfyUI's, or point the interpreter at
     another Python's library."""
     return ["-s"] if is_portable(folder) else ["-s", "-E"]
-
-
-def child_environment() -> dict[str, str]:
-    """What the copy's Python is given on top of the engine's environment.
-    A frozen engine on Linux runs with LD_LIBRARY_PATH pointing at its own
-    bundled libraries, which a child would load in place of the system's
-    and PyTorch's; PyInstaller keeps what it was before in
-    LD_LIBRARY_PATH_ORIG. The child gets that back."""
-    if os.name == "nt" or not getattr(sys, "frozen", False):
-        return {}
-    return {"LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH_ORIG", "")}
 
 
 def server_argv(folder: Path, *, host: str, port: int, cpu: bool = False) -> list[str]:

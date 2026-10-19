@@ -95,13 +95,26 @@ a = Analysis(
     # directory instead. Spelled relative, the hook is found only when
     # pyinstaller is run from `engine/` — and a same-named file under some
     # other working directory would be taken in its place.
-    runtime_hooks=[str(Path(SPECPATH) / "packaging" / "rthook_av.py")],
+    runtime_hooks=[
+        str(Path(SPECPATH) / "packaging" / hook)
+        for hook in ("rthook_av.py", "rthook_library_path.py")
+    ],
     # Read from third_party_notices so the notices document and the freeze
     # cannot disagree about what is in the installer. See FREEZE_EXCLUDES for
     # what each one is and why it is out.
     excludes=list(FREEZE_EXCLUDES),
     noarchive=False,
 )
+
+# glibc's vector maths library, which libsndfile in the soundfile wheel links.
+# PyInstaller leaves the rest of glibc to the machine it runs on (libc, libm and
+# the dynamic loader are on its exclude list) but not this one. It cannot
+# travel either: it reads the loader's private data (`_rtld_global_ro`, under
+# GLIBC_PRIVATE), whose layout belongs to one glibc release. A copy from the
+# build machine is right only on that release. x86-64 glibc has shipped its
+# own since 2.22. package.yml fails a Linux freeze that requires
+# GLIBC_PRIVATE.
+a.binaries = [entry for entry in a.binaries if not entry[0].startswith("libmvec.so")]
 
 # Written after Analysis rather than before it, because the native libraries
 # the installers carry are the ones PyInstaller collected — and most of those

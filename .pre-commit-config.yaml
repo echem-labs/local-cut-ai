@@ -184,7 +184,7 @@ repos:
             |branding/logo\.svg
             |apps/desktop/package\.json
             |apps/desktop/electron/engine\.ts
-            |\.github/workflows/ci-(engine|desktop)\.yml
+            |\.github/workflows/(ci-engine|ci-desktop|package)\.yml
           )$
         pass_filenames: false
         stages: [pre-push]

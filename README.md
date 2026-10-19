@@ -117,7 +117,7 @@ The macOS build is a different story. It is unsigned and not notarized, so Gatek
 | | |
 | --- | --- |
 | Windows | Windows 10 version 1903 or later, or Windows 11, on x64 |
-| Linux | Ubuntu 24.04 or later, or another x64 distribution with glibc 2.39 or newer |
+| Linux | Ubuntu 22.04 or later, or another x64 distribution with glibc 2.35 or newer |
 | macOS | Apple silicon. Untested, see above |
 | Graphics card | An NVIDIA card with 8 GB is the setup it is tested on. AMD and Intel cards get their own ComfyUI build, untested so far |
 | Memory | 16 GB of RAM for the full set of recommended models |
@@ -125,7 +125,7 @@ The macOS build is a different story. It is unsigned and not notarized, so Gatek
 
 The Windows floor comes from narration. The engine declares UTF-8 as its ANSI code page, which Windows honours from version 1903. On an older build, every narration fails for someone whose profile folder name isn't plain ASCII.
 
-On Linux, the packaged engine carries libraries from the Ubuntu 24.04 machine that built it. They need glibc 2.39, so on Ubuntu 22.04 the engine stops at its first start with ``version `GLIBC_2.38' not found``.
+The Linux floor comes from the build. The packaged engine carries a few libraries from the Ubuntu 22.04 system it is built on, which need glibc 2.35. The packaging workflow fails any build in which a file in the app or its engine needs a newer one. It also makes a short video with the engine on Ubuntu 22.04 before it builds the installers. The same engine serves on Ubuntu 24.04 and 26.04.
 
 The 40 GB is measured from what LocalCut pins and recommends. Model weights for keyframes, clips, music, narration and captions take about 27 GB and the script model in Ollama about 5 GB. The three programs take 7 GB on Windows or 10 GB on Linux. A 16 GB card with 32 GB of RAM is offered Wan 2.2 and a larger script model, which come to about 28 GB more. A machine with no graphics card can still make a video. On Linux, ComfyUI has a build for the processor, where a keyframe takes minutes rather than seconds. Windows has no such build, so keyframes, clips and music come out as stand-ins there.
 

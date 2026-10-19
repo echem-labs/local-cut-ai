@@ -61,10 +61,19 @@ jobs:
     # One installer per platform, each frozen on the platform it targets.
     # PyInstaller does not cross-compile, so the engine and the installer
     # around it are a single decision — which is also why macOS names an
-    # arch: macos-latest is arm64, and an Intel dmg needs this same job on an
-    # Intel runner with `package:mac:x64`.
+    # arch: macos-26 is arm64. An Intel dmg needs this same job on an Intel
+    # runner with `package:mac:x64`.
+    #
+    # Every row names a runner image, never a `-latest` label. GitHub moves
+    # those labels to new OS releases on its own schedule. The image is part
+    # of what users install: PyInstaller copies libraries out of it into the
+    # freeze, the Windows UCRT and MSVC runtime among them. Moving a row to a
+    # newer image is a change to the installers and goes through a PR.
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    # Linux only. An empty value, which every other row has, runs the job on
+    # the runner itself.
+    container: ${{ matrix.container }}
     timeout-minutes: 45
     strategy:
       # One platform failing must not hide the state of the other two — the
@@ -72,14 +81,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-26
             label: macOS dmg (arm64)
             script: package:mac
             engine_bin: dist/localcut/localcut
             artifact: localcut-macos-arm64
             glob: |
               apps/desktop/release/*.dmg
-          - os: windows-latest
+          - os: windows-2025-vs2026
             label: Windows installer (x64)
             script: package
             engine_bin: dist/localcut/localcut.exe
@@ -87,7 +96,20 @@ jobs:
             speech_check: true
             glob: |
               apps/desktop/release/*.exe
-          - os: ubuntu-latest
+          # Built in an Ubuntu 22.04 container. The freeze carries libstdc++
+          # and libgcc_s from the system that builds it. Those ask for its
+          # glibc, which makes the image here the oldest Linux the installers
+          # run on: the floor README.md states. `glibc_floor` is that image's
+          # glibc, which a step below holds the freeze to.
+          #
+          # A container, not the ubuntu-22.04 runner image. GitHub began
+          # retiring that image on 2026-09-17 and removes it on 2027-04-17
+          # (actions/runner-images#14254). The floor should move when this
+          # repository decides it does, not when an image goes away. The
+          # host's own release changes nothing in the freeze.
+          - os: ubuntu-24.04
+            container: ubuntu:22.04
+            glibc_floor: "2.35"
             label: Linux AppImage + deb (x64)
             script: package:linux
             engine_bin: dist/localcut/localcut
@@ -102,6 +124,19 @@ jobs:
       run:
         shell: bash
     steps:
+      - name: Prepare the build container
+        # A bare ubuntu:22.04 has none of what a runner image carries. git
+        # is for the checkout and zstd for the actions' caches. binutils is
+        # for the glibc check and the deb. setup-ffmpeg's download needs gh,
+        # jq, wget and xz-utils. curl and ca-certificates cover the rest.
+        # LANG=C.UTF-8 stands in for the locale a desktop session sets.
+        if: matrix.container
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            binutils ca-certificates curl gh git jq wget xz-utils zstd
+          echo "LANG=C.UTF-8" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v9.0.0
@@ -126,10 +161,9 @@ jobs:
         # The one place this can be asked. Every other licence guard scans
         # site-packages, and about half of what the freeze carries is resolved
         # from the build machine by PyInstaller's dependency walk rather than
-        # from any wheel, so no scan of the closure can reach them: libstdc++,
-        # libgcc_s and glibc's libmvec ship this way today, all three carrying
-        # copyleft terms. The artifact only exists here, and this job is what
-        # redistributes it.
+        # from any wheel, so no scan of the closure can reach them: libstdc++
+        # and libgcc_s ship this way today, both carrying copyleft terms. The
+        # artifact only exists here. This job is what redistributes it.
         #
         # `-m freeze`, not the whole module: the rest of it is the closure
         # guard, whose inventories are POSIX-spelled and were only ever
@@ -235,6 +269,79 @@ jobs:
           # `vite build` fails when that happens - this is the check that does.
           npm run notices:check
           npm run ${{ matrix.script }}
+
+      - name: Nothing in the Linux packages needs a newer glibc than the floor
+        # The dynamic loader checks every glibc version a library asks for
+        # before a program runs a line. It stops at the first one the
+        # machine's glibc lacks: ``version `GLIBC_2.38' not found``. The
+        # wheels and Electron's own binaries ask for old versions. The
+        # libraries PyInstaller copies from the build machine ask for that
+        # machine's glibc, libstdc++ and libgcc_s among them, so the oldest
+        # system the packages run on is whatever built them. This holds them
+        # to the floor the README states.
+        #
+        # release/linux-unpacked is what the AppImage and the deb are both
+        # made from: Electron, the app and the frozen engine under
+        # resources/engine. Every ELF file in it and every glibc version it
+        # requires, read from its version references. A version a library
+        # defines is not a requirement and is not read. A version without a
+        # number is one too. GLIBC_PRIVATE is only satisfied by the glibc the
+        # library came from. The GLIBC_ABI_ markers all postdate 2.35.
+        if: matrix.glibc_floor
+        working-directory: apps/desktop
+        env:
+          GLIBC_FLOOR: ${{ matrix.glibc_floor }}
+        run: |
+          set -euo pipefail
+          # The floor is this image's glibc. A row moved to another image with
+          # the old number left beside it would check against a promise the
+          # build no longer makes.
+          # awk rather than head, which stops reading and lets pipefail turn
+          # ldd's SIGPIPE into a failure.
+          built_with=$(ldd --version | awk 'NR == 1 { print $NF }')
+          if [ "$built_with" != "$GLIBC_FLOOR" ]; then
+            echo "::error::glibc_floor is $GLIBC_FLOOR, but these packages were built with glibc $built_with"
+            exit 1
+          fi
+          root=release/linux-unpacked
+          checked=0
+          highest=0
+          failed=0
+          while IFS= read -r -d '' file; do
+            # The app also carries Python archives, voice data, pak files and text.
+            [ "$(od -An -tx1 -N4 "$file" | tr -d ' \n')" = "7f454c46" ] || continue
+            checked=$((checked + 1))
+            name=${file#"$root"/}
+            # Quiet, because objdump warns about every piece of split debug
+            # info a library names and nothing ships. A file it cannot read
+            # fails on its exit status instead.
+            if ! dump=$(objdump -p "$file" 2>/dev/null); then
+              echo "::error::objdump cannot read $name, so what it requires is unknown"
+              failed=$((failed + 1))
+              continue
+            fi
+            needs=$(awk '/^Version References:/ { r = 1; next } /^$/ { r = 0 } r && $NF ~ /^GLIBC_/ { print $NF }' <<< "$dump" \
+              | sort -u)
+            for need in $needs; do
+              version=${need#GLIBC_}
+              if [ "$need" = GLIBC_PRIVATE ]; then
+                echo "::error::$name requires GLIBC_PRIVATE, which only the glibc it was built with provides"
+              elif ! [[ $version =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+                echo "::error::$name requires $need, which glibc $GLIBC_FLOOR does not provide"
+              else
+                highest=$(printf '%s\n%s\n' "$highest" "$version" | sort -V | tail -n 1)
+                [ "$(printf '%s\n%s\n' "$GLIBC_FLOOR" "$version" | sort -V | tail -n 1)" != "$GLIBC_FLOOR" ] || continue
+                echo "::error::$name requires $need, newer than the glibc $GLIBC_FLOOR floor"
+              fi
+              failed=$((failed + 1))
+            done
+          done < <(find "$root" -type f -print0)
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::found no ELF file under apps/desktop/$root, so this read nothing"
+            exit 1
+          fi
+          echo "  $checked ELF files; the newest glibc any of them requires is $highest (floor $GLIBC_FLOOR)"
+          [ "$failed" -eq 0 ]
 
       - name: Show what was produced
         working-directory: apps/desktop

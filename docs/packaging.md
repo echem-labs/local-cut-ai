@@ -38,6 +38,16 @@ describes; [running-real-models.md](running-real-models.md) covers installing
 either yourself. Or set `LOCALCUT_BACKEND` to pin the chain
 yourself.
 
+**The Linux packages are built on Ubuntu 22.04.** The engine carries
+libstdc++ and libgcc_s from the system that freezes it. They need that
+system's glibc, so the build system is the oldest Linux the packages run on.
+`package.yml` builds them in an `ubuntu:22.04` container and fails the build
+if any file in the app, the engine included, needs a glibc newer than 2.35. A
+freeze made with `npm run package:linux` on a newer distribution runs only
+there and on later releases. Every program the engine starts gets the library
+path the user had (`packaging/rthook_library_path.py`), so a distribution's
+ffmpeg loads its own libstdc++ rather than the freeze's older copy.
+
 **Windows builds are unsigned for now.** SmartScreen warns on the installer:
 More info, then Run anyway.
 
