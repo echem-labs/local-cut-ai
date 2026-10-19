@@ -2,6 +2,23 @@ import type { Board, Checkpoint, NodeState, Project, SceneCardModel } from "../a
 import { isSettled } from "./status";
 
 /**
+ * What a beginner-mode video renders in each stretch between its
+ * checkpoints, as the engine's `_checkpoint_open` releases the work: the
+ * script before anything is approved, the keyframes, narration and music once
+ * the script is, then the clips and the final video once the storyboard is.
+ * The "Before you render" gate asks about one stretch at a time, so a click
+ * is warned about the work it is about to start and not about work a later
+ * approval will start. Thumbnails are left out, as they are from every video
+ * gate: only the publish kit and the thumbnail tool make one.
+ * test_ui_contract holds both lists to the engine.
+ */
+export const KINDS_BEFORE_APPROVAL: readonly string[] = ["script"];
+export const KINDS_RELEASED_BY: Readonly<Record<Checkpoint, readonly string[]>> = {
+  script: ["keyframe", "narration", "music"],
+  storyboard: ["clip", "captions", "timeline", "export"],
+};
+
+/**
  * The beginner-mode gate this project is sitting at, or null.
  *
  * A checkpoint is the one state where the engine is deliberately holding

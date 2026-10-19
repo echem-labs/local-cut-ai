@@ -37,6 +37,7 @@ import {
 } from "../lib/tools";
 import { displayModelName, formatSize } from "../components/ModelLibrary";
 import { describeGap, useReadinessGuard } from "../components/Readiness";
+import { KINDS_BEFORE_APPROVAL } from "../lib/checkpoints";
 import { blockingGaps, distinctGaps } from "../lib/readiness";
 import { useReadinessRefresh } from "../lib/useReadinessRefresh";
 
@@ -262,8 +263,10 @@ export function Home() {
     if (!prompt.trim() || busy) return;
     // The gate holds the click when a needed model is missing — warned,
     // suppressible, never blocking ("Render anyway" always proceeds).
-    // Scoped to what a video renders: a thumbnail model it will never
-    // touch is not a reason to interrupt.
+    // Scoped to what this click renders: a thumbnail model a video never
+    // touches is not a reason to interrupt, and in Review steps only the
+    // script runs before its approval, which gates the rest itself.
+    const kinds = mode === "beginner" ? [...KINDS_BEFORE_APPROVAL] : VIDEO_KINDS;
     await guard(async () => {
       setBusy(true);
       try {
@@ -276,7 +279,7 @@ export function Home() {
       } finally {
         setBusy(false);
       }
-    }, VIDEO_KINDS);
+    }, kinds);
   };
 
   const runTool = async () => {
