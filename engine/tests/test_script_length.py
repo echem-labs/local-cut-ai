@@ -203,10 +203,15 @@ async def test_a_short_screenplay_is_re_asked_with_the_shortfall():
     assert "99" in asked[1]  # words it actually wrote
     assert "too short" in asked[1]
     assert str(narration_word_budget(60)) in asked[1]
+    # A model that writes short lines makes up the length in scenes, not by
+    # stretching each line past what one take can speak.
+    assert "or more scenes" in asked[1]
 
 
-def _draft_lasting(seconds: float, scenes: int = 2) -> Screenplay:
-    """A screenplay whose estimate is `seconds`, in five-letter words."""
+def _draft_lasting(seconds: float, scenes: int | None = None) -> Screenplay:
+    """A screenplay whose estimate is `seconds`, in five-letter words, told
+    in scenes of about six seconds unless `scenes` says how many."""
+    scenes = scenes or max(2, round(seconds / 6))
     letters = round((seconds - NARRATION_PAD_S * scenes) * SPEECH_LETTERS_PER_S)
     words = max(1, letters // (5 * scenes))
     return _scenes_saying([" ".join(["abcde"] * words)] * scenes)
@@ -491,3 +496,143 @@ def test_feedback_without_a_base_changes_nothing():
     (hand-edited graph, partial patch) must not emit a dangling instruction."""
     plain = script_prompt({"prompt": "p", "target_duration_s": 60})
     assert script_prompt({"prompt": "p", "target_duration_s": 60, "feedback": "x"}) == plain
+
+
+# -- scene lengths: what one take can fill ------------------------------------
+
+# The raindrop run's first draft for a 60s target (qwen3:8b): four scenes of
+# 15s, whose narration the estimate puts at 12.5, 12.1, 13.3 and 13.3s.
+_FOUR_LONG_SCENES = [
+    "From the heart of a storm cloud, a single raindrop begins its journey. It falls, carried "
+    "by the wind, until it reaches the edge of the sky. Gravity pulls it downward, and it joins "
+    "the flow of a mountain stream.",
+    "The raindrop glides through the stream, surrounded by stones and plants. It moves with the "
+    "current, reflecting the golden light of the sun. It dances with other drops, creating a "
+    "shimmering path.",
+    "As the stream reaches a waterfall, the raindrop plunges over the edge, defying gravity. It "
+    "falls through the air, catching the light, and joins the ocean below. The water merges "
+    "with the sea, blending into the vast blue.",
+    "In the ocean, the raindrop is part of a greater whole. It is carried by the tides, drifting "
+    "toward the shore. Eventually, it evaporates into the air, and once again, it rises into "
+    "the clouds, ready to begin its journey anew.",
+]
+
+
+def test_the_ask_aims_every_scene_at_one_take():
+    """A scene is one shot, animated in takes of at most MAX_CLIP_S. Past a
+    take its still is reused for a second take or looped, so the ask sizes
+    scenes to a take and the scene count to the target."""
+    from localcut_engine.graph.templates import MAX_CLIP_S
+
+    prompt = script_prompt({"prompt": "p", "target_duration_s": 60})
+    assert "Scenes: about 9, never fewer than 8." in prompt  # 60s in takes of 8s
+    assert f"single take of at most {MAX_CLIP_S:.0f} seconds" in prompt
+    cap = narration_word_budget(MAX_CLIP_S - NARRATION_PAD_S)
+    assert f"about 17 words of narration, never more than {cap}" in prompt
+    assert "Scenes: at least 4." in script_prompt({"prompt": "p", "target_duration_s": 30})
+    assert "a longer video has more scenes, never longer ones" in _SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("target_s", [5, 20, 30, 60, 120, 300])
+def test_the_scene_ask_multiplies_out_to_the_length_ask(target_s):
+    """A draft that writes the scenes and the words a scene it is asked for
+    lands inside the length window, so following one ask never breaks the
+    other."""
+    from localcut_engine.backends.llm import _scene_plan
+
+    scenes, words = _scene_plan(target_s)
+    draft = _scenes_saying([" ".join(["abcde"] * words)] * scenes)
+    assert target_s * LENGTH_FLOOR <= estimated_runtime_s(draft) <= target_s * LENGTH_CEILING
+
+
+async def test_a_draft_of_four_long_scenes_is_re_asked_for_shorter_ones():
+    """The raindrop run's first draft is 51.2s against 60, inside the length
+    window, so only its scenes call for another ask: kept, four stills would
+    carry a minute of film."""
+    long_draft = _scenes_saying(_FOUR_LONG_SCENES)
+    assert 60 * LENGTH_FLOOR <= estimated_runtime_s(long_draft) <= 60 * LENGTH_CEILING
+    replies = [long_draft.model_dump_json(), _draft_lasting(60).model_dump_json()]
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    out = await screenplay_within_target({"target_duration_s": 60}, ask)
+    assert len(asked) == 2
+    assert "Its 4 scenes run about 13s each" in asked[1]
+    assert "about 9 scenes of about 17 words" in asked[1]
+    # On target, so the length is not what it is told to change.
+    assert "That screenplay is too" not in asked[1]
+    assert "Keep the narration's total length" in asked[1]
+    assert len(out.scenes) == 10
+
+
+async def test_a_draft_with_both_misses_is_told_both():
+    replies = [
+        _draft_lasting(30, scenes=2).model_dump_json(),  # 15s scenes, on target
+        _draft_lasting(45, scenes=2).model_dump_json(),  # 22s scenes, half again too long
+        _draft_lasting(30).model_dump_json(),
+    ]
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    await screenplay_within_target({"target_duration_s": 30}, ask)
+    assert len(asked) == 3
+    assert "That screenplay is too long" in asked[2]
+    assert "Its 2 scenes run about 22s each" in asked[2]
+
+
+async def test_an_on_target_draft_is_not_traded_for_shorter_scenes_that_miss(caplog):
+    """The length the user asked for comes first. A re-ask for shorter
+    scenes that comes back far short loses to the on-target draft it was
+    meant to improve, which is rendered with its long scenes and a log line."""
+    on_target = _draft_lasting(60, scenes=4)  # 15s scenes
+    replies = [on_target.model_dump_json(), _draft_lasting(30).model_dump_json()] * 2
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return replies[len(asked) - 1]
+
+    with caplog.at_level("WARNING"):
+        out = await screenplay_within_target({"target_duration_s": 60}, ask)
+    assert len(asked) == 3
+    assert out.model_dump() == on_target.model_dump()
+    assert "longer than one 8s take" in caplog.text
+
+
+async def test_scenes_a_little_past_a_take_are_not_re_asked():
+    """Asked for 4 to 8 seconds a scene, models overshoot a little; nine
+    seconds a scene is retimed or looped briefly and is not the draft being
+    caught."""
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return _draft_lasting(54, scenes=6).model_dump_json()
+
+    await screenplay_within_target({"target_duration_s": 60}, ask)
+    assert len(asked) == 1
+
+
+async def test_a_revision_the_user_asked_for_keeps_its_own_scene_lengths():
+    """A note can ask for fewer, longer scenes. Only the length is held to
+    the target there; re-asking it into take-length scenes would undo it."""
+    asked = []
+
+    async def ask(prompt: str) -> str:
+        asked.append(prompt)
+        return _draft_lasting(60, scenes=3).model_dump_json()  # 20s scenes
+
+    params = {
+        "target_duration_s": 60,
+        "feedback": "three long, slow scenes",
+        "base_screenplay": _draft_lasting(60).model_dump_json(),
+    }
+    out = await screenplay_within_target(params, ask)
+    assert len(asked) == 1
+    assert len(out.scenes) == 3
