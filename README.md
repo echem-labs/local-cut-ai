@@ -9,6 +9,7 @@
 One prompt becomes a script, keyframes, clips, narration, music and captions, all made on your machine and cut into one video.<br>
 No account, no subscription. Your prompts and footage stay with you unless you pick a cloud model.
 
+[![Latest release](https://img.shields.io/github/v/release/echem-labs/local-cut-ai?style=flat-square&color=5F4FD8&label=release)](https://github.com/echem-labs/local-cut-ai/releases/latest)
 [![Engine CI](https://img.shields.io/github/actions/workflow/status/echem-labs/local-cut-ai/ci-engine.yml?branch=main&style=flat-square&label=engine)](https://github.com/echem-labs/local-cut-ai/actions/workflows/ci-engine.yml)
 [![Desktop CI](https://img.shields.io/github/actions/workflow/status/echem-labs/local-cut-ai/ci-desktop.yml?branch=main&style=flat-square&label=desktop)](https://github.com/echem-labs/local-cut-ai/actions/workflows/ci-desktop.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-5F4FD8?style=flat-square)](LICENSE)
@@ -20,6 +21,16 @@ No account, no subscription. Your prompts and footage stay with you unless you p
 **[Run it on a GPU box](docs/remote-and-cloud.md)** ·
 **[Contributing](#contributing)**
 
+<br>
+
+<a href="https://github.com/echem-labs/local-cut-ai/releases/download/v0.1.0/one-raindrops-journey.mp4">
+  <img src="docs/media/one-raindrops-journey-hero-loop.webp" alt="Ten seconds of One raindrop's journey: a storm cloud billows, then a single raindrop forms inside it, with the film's own captions burned in" width="100%">
+</a>
+
+<sub><b>One raindrop's journey</b>, from one prompt in LocalCut AI: "A 60-second nature film that follows one raindrop from a storm cloud, down a mountain stream and a waterfall, out to the sea, and back up into the clouds. Macro close-ups, golden light, calm narration."<br>
+Made in Review steps with the packaged app on a laptop's 8 GB RTX 3080. The script was re-asked once with a note, five of its eight narration lines were trimmed by hand and three keyframes were re-rolled. Nothing else was edited. From Generate to the finished cut took 1 h 46 min.<br>
+<a href="https://github.com/echem-labs/local-cut-ai/releases/download/v0.1.0/one-raindrops-journey.mp4">Watch the full video</a> (58 seconds, with sound).</sub>
+
 </div>
 
 ---
@@ -30,7 +41,44 @@ LocalCut AI is a desktop app that makes a short video from a prompt, or from a s
 
 It aims for CapCut's ease of use with [ComfyUI](https://github.com/Comfy-Org/ComfyUI)'s power underneath. You type one line and get a finished cut, the way you would in CapCut. The pictures, clips and music come from open models that ComfyUI runs on your graphics card, so a video costs nothing per render and your footage never has to leave your computer. When the first cut isn't right, you can open the same project as a flowchart and change any step of it.
 
-It is early. One prompt renders a watchable 60-second video, unattended, on an 8 GB laptop GPU. There is no release yet. Until 0.1.0 is out, you can build the app from source.
+It is early: 0.1.0 is the first release. One prompt renders a watchable 60-second video, unattended, on an 8 GB laptop GPU. The film at the top is that plus the few hand edits its caption lists.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/screenshots/home-dark.webp">
+        <img src="docs/media/screenshots/home-light.webp" alt="The home screen with the raindrop prompt typed in and 16:9, 60 seconds, the Cinematic style and Review steps picked, above the one-off tools">
+      </picture>
+      <p align="center">Type an idea and press Generate</p>
+    </td>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/screenshots/programs-step-all-ready-dark.webp">
+        <img src="docs/media/screenshots/programs-step-all-ready-light.webp" alt="The first run's Programs step: FFmpeg 8.1.3, Ollama 0.40.4 and ComfyUI 0.40.0 set up by LocalCut with every stage of the pipeline ready">
+      </picture>
+      <p align="center">The first run sets up FFmpeg, Ollama and ComfyUI for you</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/screenshots/storyboard-review-steps-dark.webp">
+        <img src="docs/media/screenshots/storyboard-review-steps-light.webp" alt="The storyboard checkpoint: eight keyframes waiting for approval, with the narration and the music already on the timeline below">
+      </picture>
+      <p align="center">Review steps stops at the storyboard, before any video renders</p>
+    </td>
+    <td width="50%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/media/screenshots/player-final-dark.webp">
+        <img src="docs/media/screenshots/player-final-light.webp" alt="The Player: the finished film in the monitor, the storyboard beside it and scene 6's camera movement open in the Details panel">
+      </picture>
+      <p align="center">The finished film, with any scene's settings a click away</p>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
@@ -98,15 +146,15 @@ It is early. One prompt renders a watchable 60-second video, unattended, on an 8
 
 ## Download
 
-There is no release yet. When 0.1.0 is out, it will be on the [Releases page](https://github.com/echem-labs/local-cut-ai/releases) and a download button will go here. Pick the file for your system:
+Download LocalCut AI from the [latest release](https://github.com/echem-labs/local-cut-ai/releases/latest). Pick the file for your system:
 
-| System | File |
+| System | Download |
 | --- | --- |
-| Windows, x64 | `LocalCut AI Setup <version>.exe` |
-| Linux, x64 | `LocalCut AI-<version>.AppImage`, or `localcut-desktop_<version>_amd64.deb` for Debian and Ubuntu |
-| macOS, Apple silicon | `LocalCut AI-<version>-arm64.dmg` |
+| Windows, x64 | [`LocalCut.AI.Setup.<version>.exe`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
+| Linux, x64 | [`LocalCut.AI-<version>.AppImage`](https://github.com/echem-labs/local-cut-ai/releases/latest), or [`localcut-desktop_<version>_amd64.deb`](https://github.com/echem-labs/local-cut-ai/releases/latest) for Debian and Ubuntu |
+| macOS, Apple silicon | [`LocalCut.AI-<version>-arm64.dmg`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
 
-The installers aren't signed yet. Signing comes after the first release. Until then, Windows SmartScreen stops the installer the first time you run it: choose **More info**, then **Run anyway**. The Windows installer is per user and asks for no admin rights.
+The installers aren't signed yet. Signing comes in a later release. Until then, Windows SmartScreen stops the installer the first time you run it: choose **More info**, then **Run anyway**. The Windows installer is per user and asks for no admin rights.
 
 On Linux, make the AppImage executable (`chmod +x`) and run it, or install the `.deb` with `sudo apt install ./localcut-desktop_<version>_amd64.deb`. The AppImage doesn't need libfuse2.
 
