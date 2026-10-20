@@ -138,7 +138,7 @@ servers.
 
 On Windows x64, LocalCut's ComfyUI is the official portable build from
 [Comfy-Org/ComfyUI's releases](https://github.com/Comfy-Org/ComfyUI/releases),
-version 0.40.0, pinned by URL, size and SHA-256. There is one per GPU vendor
+version 0.42.1, pinned by URL, size and SHA-256. There is one per GPU vendor
 (NVIDIA, AMD and Intel) and for NVIDIA a second build for older drivers. The
 hardware probe picks the build. An NVIDIA card gets the usual build, on CUDA
 13, when its driver is 580 or newer and the card is a Turing or newer and the
@@ -169,8 +169,8 @@ PyTorch and sums a few numbers on the card. A build that cannot use the card
 fails the setup with `gpu_not_usable` and keeps nothing; on NVIDIA the build
 for older drivers can then be asked for by name.
 
-The copy is the whole portable folder: 61,925 files and about 4.1 GiB for
-NVIDIA's usual build, 4.96 to 5.75 GiB for the others. LocalCut starts it the
+The copy is the whole portable folder: 61,957 files and about 4.1 GiB for
+NVIDIA's usual build, 4.98 to 5.77 GiB for the others. LocalCut starts it the
 way the build's own `run_nvidia_gpu.bat` does, with the address the engine
 asks for, no browser, the model paths file it writes beside the copy and
 every folder ComfyUI writes to while it runs in a working folder of
@@ -187,7 +187,7 @@ python_embeded\python.exe -s ComfyUI\main.py --windows-standalone-build
     --previews-directory <data_dir>\work\comfyui\previews
 ```
 
-Those are ComfyUI 0.40.0's own flags. `--temp-directory` names the folder
+Those are ComfyUI 0.42.1's own flags. `--temp-directory` names the folder
 ComfyUI puts its `temp` folder in, so the scratch files land in
 `<data_dir>\work\comfyui\temp`. `user` holds ComfyUI's settings and its asset
 database and `previews` the previews that database makes. With all of them
@@ -206,8 +206,8 @@ everything else here:
   [python-build-standalone](https://github.com/astral-sh/python-build-standalone)
   (its `install_only_stripped` build, 35,099,487 bytes), pinned in the manifest's
   `runtimes`;
-- ComfyUI's source at the v0.40.0 tag, as GitHub's archive of the tag
-  (12,722,767 bytes), the same release the Windows builds are;
+- ComfyUI's source at the v0.42.1 tag, as GitHub's archive of the tag
+  (12,744,607 bytes), the same release the Windows builds are;
 - every wheel that ComfyUI's `requirements.txt` at that tag needs with the
   PyTorch for the card, from PyPI and PyTorch's own index. They are a lock
   per build, `engine/src/localcut_engine/programs/locks/pylock.comfyui-<build>.toml`,
@@ -219,11 +219,11 @@ Every build has PyTorch 2.14.1:
 
 | Lock (`build`) | PyTorch for | Wheels | Download | Unpacked | Files |
 |---|---|---|---|---|---|
-| `cu130` | NVIDIA, CUDA 13.0 | 103 | 3,832,985,505 | 7,035,024,767 | 50,633 |
-| `cu126` (`older_drivers`) | NVIDIA, CUDA 12.6 | 103 | 4,479,183,693 | 8,093,388,773 | 50,684 |
-| `rocm72` | AMD, ROCm 7.2 | 85 | 7,417,020,765 | 17,189,252,421 | 55,517 |
-| `xpu` | Intel, XPU | 108 | 3,258,233,446 | 8,670,502,369 | 52,129 |
-| `cpu` (`cpu`) | the processor | 84 | 1,024,764,154 | 2,282,132,615 | 49,770 |
+| `cu130` | NVIDIA, CUDA 13.0 | 103 | 3,840,477,193 | 7,051,890,003 | 50,668 |
+| `cu126` (`older_drivers`) | NVIDIA, CUDA 12.6 | 103 | 4,486,675,381 | 8,110,254,009 | 50,719 |
+| `rocm72` | AMD, ROCm 7.2 | 85 | 7,424,512,453 | 17,206,117,657 | 55,552 |
+| `xpu` | Intel, XPU | 108 | 3,265,725,134 | 8,687,367,605 | 52,164 |
+| `cpu` (`cpu`) | the processor | 84 | 1,032,255,842 | 2,298,997,851 | 49,805 |
 
 The download counts the Python and the source; the unpacked size is the
 whole copy. Both are what the setup screen shows and what a setup checks. The
@@ -316,7 +316,7 @@ When ComfyUI's pin moves, the locks move with it:
 
 ```bash
 cd engine
-uv run python scripts/lock-comfyui-linux.py --comfyui 0.40.0 \
+uv run python scripts/lock-comfyui-linux.py --comfyui 0.42.1 \
     --python 3.13.16 --python-release 20261013 --torch 2.14.1
 ```
 
@@ -505,15 +505,15 @@ answered after the end.
         "available": true,
         "unavailable_reason": null,
         "takes_effect": true,
-        "version": "0.40.0",
-        "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-        "download_bytes": 3832985505,
-        "install_bytes": 7035024767,
+        "version": "0.42.1",
+        "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+        "download_bytes": 3840477193,
+        "install_bytes": 7051890003,
         "gpu": "nvidia",
         "build": null,
         "builds": [
-          { "build": "older_drivers", "download_bytes": 4479183693, "install_bytes": 8093388773 },
-          { "build": "cpu", "download_bytes": 1024764154, "install_bytes": 2282132615 }
+          { "build": "older_drivers", "download_bytes": 4486675381, "install_bytes": 8110254009 },
+          { "build": "cpu", "download_bytes": 1032255842, "install_bytes": 2298997851 }
         ],
         "job": null,
         "last": null
@@ -603,14 +603,14 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
     "available": true,
     "unavailable_reason": null,
     "takes_effect": true,
-    "version": "0.40.0",
-    "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia.7z",
-    "download_bytes": 2010504119,
-    "install_bytes": 4421748361,
+    "version": "0.42.1",
+    "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia.7z",
+    "download_bytes": 2019046738,
+    "install_bytes": 4444541117,
     "gpu": "nvidia",
     "build": null,
     "builds": [
-      { "build": "older_drivers", "download_bytes": 1902221251, "install_bytes": 5596292364 }
+      { "build": "older_drivers", "download_bytes": 1910755830, "install_bytes": 5619088436 }
     ],
     "job": null,
     "last": null

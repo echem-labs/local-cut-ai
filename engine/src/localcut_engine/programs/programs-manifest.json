@@ -811,7 +811,7 @@
     },
     {
       "id": "comfyui",
-      "version": "0.40.0",
+      "version": "0.42.1",
       "license": "GPL-3.0-only",
       "assets": [
         {
@@ -821,14 +821,14 @@
             "nvidia_driver": "580",
             "compute_capability": "7.5"
           },
-          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia.7z",
-          "size": 2009901495,
-          "sha256": "bc4dd972b7134347128579a34b1910f19a59d8a4c9fea7d8e4bae586bad68b0c",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia.7z",
+          "size": 2018444114,
+          "sha256": "496afd18790ec685d99ebba2edf200d7371a29fbdd3a992bb0f4f52f244a6874",
           "format": "7z",
           "tree": {
             "root": "ComfyUI_windows_portable",
-            "files": 61925,
-            "bytes": 4421748361
+            "files": 61957,
+            "bytes": 4444541117
           }
         },
         {
@@ -838,40 +838,40 @@
           "requires": {
             "nvidia_driver": "525"
           },
-          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia_cu126.7z",
-          "size": 1901618627,
-          "sha256": "23d789979f523d90daae27da94a78769c17093cff1684e1e2d166b5148334c59",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia_cu126.7z",
+          "size": 1910153206,
+          "sha256": "0506abc6563ea5928a052fe0bc0b32c2a063098558bd593fe39345a27f1e47fc",
           "format": "7z",
           "tree": {
             "root": "ComfyUI_windows_portable",
-            "files": 61925,
-            "bytes": 5596292364
+            "files": 61957,
+            "bytes": 5619088436
           }
         },
         {
           "platform": "windows-x64",
           "gpu": "amd",
-          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_amd.7z",
-          "size": 1627644722,
-          "sha256": "f3a58381de51872815f38dbd092ad2c829e3c8d528e03600e760514ae44d45fb",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_amd.7z",
+          "size": 1636139353,
+          "sha256": "8af051e342de65e5ca2d9f43a5f0b11a6377da10bd96159dc41e8722cc5841fc",
           "format": "7z",
           "tree": {
             "root": "ComfyUI_windows_portable",
-            "files": 67121,
-            "bytes": 6168889156
+            "files": 67153,
+            "bytes": 6191685727
           }
         },
         {
           "platform": "windows-x64",
           "gpu": "intel",
-          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_intel.7z",
-          "size": 1442756969,
-          "sha256": "50ba3114a7b2119c35a1755c5749e2aad3d5da618278670555f80c392de0cc58",
+          "url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_intel.7z",
+          "size": 1451207360,
+          "sha256": "a1e03d31ea364af2f80820461cd0c5ae5bbba4b562c023c1f43b2cf65541d4ab",
           "format": "7z",
           "tree": {
             "root": "ComfyUI_windows_portable",
-            "files": 64388,
-            "bytes": 5328789984
+            "files": 64420,
+            "bytes": 5351586975
           }
         },
         {
@@ -881,24 +881,24 @@
             "nvidia_driver": "580",
             "compute_capability": "7.5"
           },
-          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-          "size": 12722767,
-          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+          "size": 12744607,
+          "sha256": "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b",
           "format": "tar.gz",
           "tree": {
-            "root": "ComfyUI-0.40.0",
-            "files": 1296,
-            "bytes": 48963698,
+            "root": "ComfyUI-0.42.1",
+            "files": 1302,
+            "bytes": 49046770,
             "links": 0
           },
           "environment": {
             "runtime": "cpython",
             "lock": "pylock.comfyui-cu130.toml",
-            "lock_sha256": "a9c461165fa263ab439807fffc0e777d37056d5d385a65cc8b0286e760206c18",
+            "lock_sha256": "73822b370d54b09b47d5ee4d216c5ac97cf5c11679a06e824fbfc79e821a3124",
             "wheels": 103,
-            "wheel_bytes": 3785163251,
-            "files": 50633,
-            "bytes": 7035024767,
+            "wheel_bytes": 3792633099,
+            "files": 50668,
+            "bytes": 7051890003,
             "links": 1048
           }
         },
@@ -909,96 +909,96 @@
           "requires": {
             "nvidia_driver": "525"
           },
-          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-          "size": 12722767,
-          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+          "size": 12744607,
+          "sha256": "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b",
           "format": "tar.gz",
           "tree": {
-            "root": "ComfyUI-0.40.0",
-            "files": 1296,
-            "bytes": 48963698,
+            "root": "ComfyUI-0.42.1",
+            "files": 1302,
+            "bytes": 49046770,
             "links": 0
           },
           "environment": {
             "runtime": "cpython",
             "lock": "pylock.comfyui-cu126.toml",
-            "lock_sha256": "acf508c490e608b5c8288e7131cbfba803bf6672eacbfd44c5d37f7348ac4c1b",
+            "lock_sha256": "54a0c302ea0b90468209c660166fafdc47a848c7e9572d15f89b1d12850f537f",
             "wheels": 103,
-            "wheel_bytes": 4431361439,
-            "files": 50684,
-            "bytes": 8093388773,
+            "wheel_bytes": 4438831287,
+            "files": 50719,
+            "bytes": 8110254009,
             "links": 1048
           }
         },
         {
           "platform": "linux-x64",
           "gpu": "amd",
-          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-          "size": 12722767,
-          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+          "size": 12744607,
+          "sha256": "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b",
           "format": "tar.gz",
           "tree": {
-            "root": "ComfyUI-0.40.0",
-            "files": 1296,
-            "bytes": 48963698,
+            "root": "ComfyUI-0.42.1",
+            "files": 1302,
+            "bytes": 49046770,
             "links": 0
           },
           "environment": {
             "runtime": "cpython",
             "lock": "pylock.comfyui-rocm72.toml",
-            "lock_sha256": "3d6f2c7a4b540dc07eca3c6312fb8437c593ca5d78312651c343193db95ca7f8",
+            "lock_sha256": "2f1b69f75e1afa556d2ba3876b7af1fbea88343fa1ee5aa3eb4ddb58c3a71ec3",
             "wheels": 85,
-            "wheel_bytes": 7369198511,
-            "files": 55517,
-            "bytes": 17189252421,
+            "wheel_bytes": 7376668359,
+            "files": 55552,
+            "bytes": 17206117657,
             "links": 1048
           }
         },
         {
           "platform": "linux-x64",
           "gpu": "intel",
-          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-          "size": 12722767,
-          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+          "size": 12744607,
+          "sha256": "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b",
           "format": "tar.gz",
           "tree": {
-            "root": "ComfyUI-0.40.0",
-            "files": 1296,
-            "bytes": 48963698,
+            "root": "ComfyUI-0.42.1",
+            "files": 1302,
+            "bytes": 49046770,
             "links": 0
           },
           "environment": {
             "runtime": "cpython",
             "lock": "pylock.comfyui-xpu.toml",
-            "lock_sha256": "895de0b8b9679aaf8329a3595ce7517438fce883baf33c5f7c6064f4f18e68ff",
+            "lock_sha256": "ce66fd6f52fb198884c3021247cd30695a84deb8ea74b80dcf251b6ecbaefe2c",
             "wheels": 108,
-            "wheel_bytes": 3210411192,
-            "files": 52129,
-            "bytes": 8670502369,
+            "wheel_bytes": 3217881040,
+            "files": 52164,
+            "bytes": 8687367605,
             "links": 1048
           }
         },
         {
           "platform": "linux-x64",
           "build": "cpu",
-          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz",
-          "size": 12722767,
-          "sha256": "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5",
+          "url": "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz",
+          "size": 12744607,
+          "sha256": "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b",
           "format": "tar.gz",
           "tree": {
-            "root": "ComfyUI-0.40.0",
-            "files": 1296,
-            "bytes": 48963698,
+            "root": "ComfyUI-0.42.1",
+            "files": 1302,
+            "bytes": 49046770,
             "links": 0
           },
           "environment": {
             "runtime": "cpython",
             "lock": "pylock.comfyui-cpu.toml",
-            "lock_sha256": "4bdb31ce20b984c5475db51eb0913df198008426ea5e1b94014b8160ebcffaa5",
+            "lock_sha256": "8096245b40fd24344320d6f0be5791612626daa60cadcfe7f0dee3a084a4cc23",
             "wheels": 84,
-            "wheel_bytes": 976941900,
-            "files": 49770,
-            "bytes": 2282132615,
+            "wheel_bytes": 984411748,
+            "files": 49805,
+            "bytes": 2298997851,
             "links": 1048
           }
         }

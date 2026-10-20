@@ -1,7 +1,7 @@
 """Lock ComfyUI's Linux environment, for the pinned ComfyUI or a new one.
 
     cd engine
-    uv run python scripts/lock-comfyui-linux.py --comfyui 0.40.0 \\
+    uv run python scripts/lock-comfyui-linux.py --comfyui 0.42.1 \\
         --python 3.13.16 --python-release 20261013 --torch 2.14.1
 
 Run it whenever ComfyUI's pin moves (the Windows portable builds move with
