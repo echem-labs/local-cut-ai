@@ -2,12 +2,15 @@
 name = "localcut-engine"
 version = "0.1.0"
 description = "LocalCut AI engine — Python orchestrator: story graph, job queue, model manager, provider adapters"
+# 3.14 at least: setting up LocalCut's own Ollama on Linux unpacks a
+# .tar.zst, which tarfile reads only from 3.14 on (compression.zstd), and
+# 3.14 is what CI tests and the packaged engine runs.
 # Capped below 3.15 because ctranslate2 (under faster-whisper) publishes no
-# cp315 wheels and no sdist. Without the cap, uv on a machine with no 3.13 or
-# 3.14 downloads the newest CPython and then cannot install it, which is how
+# cp315 wheels and no sdist. Without the cap, uv on a machine with no 3.14
+# downloads the newest CPython and then cannot install it, which is how
 # every Linux CI job broke when 3.15.0 came out. Lift it and re-run `uv lock`
 # once ctranslate2 ships 3.15 wheels.
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.14,<3.15"
 license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.139.2",

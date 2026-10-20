@@ -157,7 +157,7 @@ Until Ollama or ComfyUI is set up, the stages that need it come out as stand-ins
 
 ## Build from source
 
-You need Python 3.13 or 3.14 with [uv](https://docs.astral.sh/uv/), Node ≥22.13 and git. A GPU, models and ComfyUI are optional.
+You need Python 3.14 with [uv](https://docs.astral.sh/uv/), Node ≥22.13 and git. A GPU, models and ComfyUI are optional.
 
 ```bash
 git clone https://github.com/echem-labs/local-cut-ai.git
