@@ -1254,6 +1254,64 @@ async def test_edit_dry_run_previews_without_committing(client, monkeypatch):
     assert stale.status_code == 409
 
 
+async def test_the_edit_a_user_approves_is_described_by_its_ops(client, monkeypatch):
+    """The dry run's `summary` is what the plan card shows and Apply lands
+    under, so it comes from the compiled ops. A model that says "160 words"
+    for a cut to a handful has its sentence quoted in `mismatch` instead,
+    and the undo entry is recorded under what the ops did."""
+    from localcut_engine.backends.llm import LLMScriptBackend
+
+    created = await client.post("/projects", json={"prompt": "city of glass"})
+    pid = created.json()["id"]
+
+    async def scenes() -> list:
+        return (await client.get(f"/projects/{pid}")).json()["board"]["scenes"]
+
+    async with asyncio.timeout(15):
+        while not await scenes():
+            await asyncio.sleep(0.05)
+    ids = [scene["scene_id"] for scene in await scenes()]
+
+    async def fake_complete(self, prompt, system, max_tokens=None):
+        return json.dumps(
+            {
+                "summary": "Trimmed narration to 160 words",
+                "edits": [
+                    {
+                        "action": "update",
+                        "node_id": f"{sid}.narration",
+                        "params": {"text": "Glass."},
+                    }
+                    for sid in ids
+                ],
+            }
+        )
+
+    monkeypatch.setattr(LLMScriptBackend, "complete", fake_complete)
+    preview = await client.post(
+        f"/projects/{pid}/edit", json={"instruction": "trim it", "dry_run": True}
+    )
+    assert preview.status_code == 200
+    body = preview.json()
+    count = len(ids)
+    headline = f"Narration in {count} scenes: " if count > 1 else "Scene 1 narration: "
+    assert body["summary"].startswith(headline)
+    assert len(body["changes"]) == count
+    assert body["mismatch"].startswith('The model described this as "Trimmed narration to 160')
+    assert f"comes to {count} words" in body["mismatch"]
+    assert body["plan"]["summary"] == "Trimmed narration to 160 words"
+
+    applied = await client.post(
+        f"/projects/{pid}/edit/apply",
+        json={"plan": body["plan"], "revision": body["revision"]},
+    )
+    assert applied.status_code == 200
+    assert applied.json()["summary"] == body["summary"]
+    assert applied.json()["mismatch"] == body["mismatch"]
+    history = (await client.get(f"/projects/{pid}/history")).json()
+    assert history["undo_top"]["summary"] == body["summary"]
+
+
 async def test_edit_refuses_a_plan_built_against_a_stale_graph(client, monkeypatch):
     """If the graph is re-expanded (scene renumbering) while the LLM is
     thinking, the stale plan must 409, not land on content it never saw."""

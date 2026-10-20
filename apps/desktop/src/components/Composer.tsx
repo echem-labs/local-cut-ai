@@ -279,9 +279,15 @@ export function Composer() {
       if (proposed.ops === 0) {
         // Nothing to preview and nothing to apply. Reported as a reply
         // rather than an empty card offering an Apply that would do nothing.
+        // A model that proposed edits the engine refused has its own
+        // sentence quoted as a claim, not echoed as though it happened.
         setFeedback(
           t("composer.noChanges") +
-            (proposed.summary ? t("composer.summarySuffix", { summary: proposed.summary }) : ""),
+            (proposed.mismatch
+              ? t("composer.mismatchSuffix", { mismatch: proposed.mismatch })
+              : proposed.summary
+                ? t("composer.summarySuffix", { summary: proposed.summary })
+                : ""),
         );
         pushLog({
           at: Date.now(),
@@ -432,6 +438,18 @@ export function Composer() {
       {proposal && (
         <div className="edit-plan" role="group" aria-label={t("composer.planAria")}>
           <p className="plan-summary">{proposal.summary || t("composer.editApplied")}</p>
+          {/* The headline is the model's sentence only when the ops bear it
+              out. When they do not, the engine's headline stands and the
+              model's sentence is quoted here, with what the ops do instead. */}
+          {proposal.mismatch && <p className="plan-mismatch">{proposal.mismatch}</p>}
+          {proposal.changes.length > 0 &&
+            !(proposal.changes.length === 1 && proposal.changes[0] === proposal.summary) && (
+            <ul className="plan-changes" aria-label={t("composer.planChangesAria")}>
+              {proposal.changes.map((change) => (
+                <li key={change}>{change}</li>
+              ))}
+            </ul>
+          )}
           <p className="plan-counts">
             {plural("composer.planOps", proposal.ops)}
             {proposal.dirty.length > 0 && plural("composer.planDirty", proposal.dirty.length)}

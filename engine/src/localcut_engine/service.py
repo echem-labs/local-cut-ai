@@ -30,6 +30,7 @@ from .graph.compiler import (
 from .graph.editor import (
     EditPlan,
     compile_edits,
+    describe_edit,
     graph_revision,
     graph_view,
     scrub_removed,
@@ -1022,7 +1023,9 @@ class ProjectService:
             ops, warnings = compile_edits(graph, plan, scope)
             scratch = graph.model_copy(deep=True)
             dirty = apply_patch(scratch, ops) if ops else set()
+            described = describe_edit(graph, scratch, ops, plan)
         return {
+            **described,
             "ops": len(ops),
             "planned": [op.model_dump(exclude_none=True) for op in ops],
             "dirty": sorted(dirty),
@@ -1048,7 +1051,12 @@ class ProjectService:
             before = graph.model_dump(mode="json")
             before_cloud = self._cloud_models(graph)
             ops, warnings = compile_edits(graph, plan, scope)
+            # Described against the graph the ops were compiled on, before
+            # they move it: what is recorded for undo, published and returned
+            # is what the preview said, not the model's own sentence.
+            compiled_on = graph.model_copy(deep=True)
             dirty = apply_patch(graph, ops) if ops else set()
+            described = describe_edit(compiled_on, graph, ops, plan)
             # Same ground-truth sync as patch(): an NL edit rewrites narration
             # text, so the captions must follow the new words, not the old.
             dirty |= self._sync_caption_texts(graph)
@@ -1066,15 +1074,17 @@ class ProjectService:
                 self._refuse_cloud_spend(project_id, graph, before=before_cloud)
             if ops or dirty:
                 self.store.save_graph(project_id, graph)
-                self._record_history(project_id, before, graph, kind="edit", summary=plan.summary)
+                self._record_history(
+                    project_id, before, graph, kind="edit", summary=described["summary"] or None
+                )
             if dirty:
                 self._enqueue_dirty(project_id, graph)
             if ops or dirty:
                 self._refresh_meta_locked(project_id, graph)
         self.events.publish(
-            "project.edited", project_id=project_id, ops=len(ops), summary=plan.summary
+            "project.edited", project_id=project_id, ops=len(ops), summary=described["summary"]
         )
-        return {"ops": len(ops), "dirty": sorted(dirty), "warnings": warnings}
+        return {**described, "ops": len(ops), "dirty": sorted(dirty), "warnings": warnings}
 
     def regenerate(self, project_id: str, node_id: str, seed: int | None = None) -> None:
         with self._lock:

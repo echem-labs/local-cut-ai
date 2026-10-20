@@ -4853,6 +4853,24 @@ button.link:hover {
   font-size: var(--text-xs);
 }
 
+/* What the ops do, one line each. The headline above can be the model's
+   own sentence; these never are. */
+.plan-changes {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* The model's sentence when the ops say otherwise. Quoted, so it reads as a
+   claim set beside the headline rather than as the headline itself. */
+.plan-mismatch {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
 .plan-actions {
   display: flex;
   gap: var(--space-2);

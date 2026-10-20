@@ -641,9 +641,21 @@ export interface Provider {
   configured: boolean;
 }
 
-/** POST /projects/:id/edit — what the LLM's plan actually did. */
-export interface EditResult {
+/**
+ * What an edit says about itself, built by the engine from the compiled ops
+ * rather than taken from the model. `summary` is the headline: the model's
+ * own sentence only when nothing in it is wrong against the ops. `changes`
+ * is one plain line per change the ops make. `mismatch` quotes a model
+ * sentence that was set aside and says what the ops do instead.
+ */
+interface EditDescription {
   summary: string;
+  changes: string[];
+  mismatch: string | null;
+}
+
+/** POST /projects/:id/edit — what the LLM's plan actually did. */
+export interface EditResult extends EditDescription {
   ops: number;
   dirty: string[];
   warnings: string[];
@@ -663,8 +675,7 @@ export interface EditResult {
  * back is what makes a stale plan refuse with a 409 rather than land on a
  * project that has moved on.
  */
-export interface EditProposal {
-  summary: string;
+export interface EditProposal extends EditDescription {
   plan: unknown;
   revision: string | null;
   ops: number;

@@ -2194,8 +2194,10 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
                 result = await asyncio.to_thread(
                     service.preview_edit_plan, project_id, plan, body.scope, view.get("revision")
                 )
+                # `summary` is the service's, built from the compiled ops;
+                # the model's own sentence stays inside `plan`, which the
+                # client hands back to /edit/apply verbatim.
                 return {
-                    "summary": plan.summary,
                     "plan": plan.model_dump(),
                     "revision": view.get("revision"),
                     **result,
@@ -2205,7 +2207,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             )
         except ConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"summary": plan.summary, **result}
+        return result
 
     class EditApplyBody(BaseModel):
         plan: EditPlan
@@ -2227,7 +2229,7 @@ def create_app(config: EngineConfig | None = None) -> FastAPI:
             )
         except ConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return {"summary": body.plan.summary, **result}
+        return result
 
     class EnhanceBody(BaseModel):
         notes: str = Field(min_length=1, max_length=2000)
