@@ -39,8 +39,8 @@ FROM python:3.14.1-slim
 # off take that path, so the verification that has to hold is the one in
 # a RUN, which every builder executes. Both read the same ARG, so they
 # cannot drift apart.
-ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-8.1.tar.xz
-ARG FFMPEG_SHA256=dfa863a00ca81f1bdf58a372b18cff4820f0017e55de32778de8ecd8ed92a02e
+ARG FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-lgpl-9.0.tar.xz
+ARG FFMPEG_SHA256=2d41cbea0ca1a15029b638330740f78d6f5aeb062355bf425433fc938705350a
 ADD --checksum=sha256:${FFMPEG_SHA256} ${FFMPEG_URL} /tmp/ffmpeg.tar.xz
 RUN echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
     && apt-get update \

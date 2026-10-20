@@ -414,7 +414,7 @@ answered after the end.
 {
   "platform": "linux-x64",
   "programs_dir": "/home/me/.localcut/programs",
-  "programs_bytes": 283956127,
+  "programs_bytes": 284840101,
   "disk_free_bytes": 15032385536,
   "bin_dir": "/home/me/.localcut/bin",
   "models_dir": "/home/me/.localcut/models",
@@ -426,12 +426,12 @@ answered after the end.
       "source": "managed",
       "location": "/home/me/.localcut/programs/ffmpeg/ffmpeg",
       "setting": "LOCALCUT_FFMPEG_BIN",
-      "version": "8.1.3",
+      "version": "9.0.2",
       "checks": { "draws_text": true },
       "managed": {
         "location": "/home/me/.localcut/programs/ffmpeg",
-        "bytes": 283956127,
-        "version": "8.1.3",
+        "bytes": 284840101,
+        "version": "9.0.2",
         "current": true,
         "in_use": true
       },
@@ -439,10 +439,10 @@ answered after the end.
         "available": true,
         "unavailable_reason": null,
         "takes_effect": true,
-        "version": "8.1.3",
+        "version": "9.0.2",
         "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/...",
-        "download_bytes": 137034436,
-        "install_bytes": 283955728,
+        "download_bytes": 137863452,
+        "install_bytes": 284839696,
         "gpu": null,
         "build": null,
         "builds": [],
@@ -545,8 +545,8 @@ Per program, always in the order `ffmpeg`, `ollama`, `comfyui`:
   (`<data_dir>/bin`), `path` (found on `PATH`, or the bare name when it is
   not), or `default` (a server at its usual address). `location` is a path
   for FFmpeg and a URL for the servers.
-- `version` is the release number the program reports: `8.1.3` for FFmpeg's
-  `n8.1.3-9-g29e619e767`, the server's own version for Ollama and ComfyUI.
+- `version` is the release number the program reports: `9.0.2` for FFmpeg's
+  `n9.0.2-17-g2a571b6068`, the server's own version for Ollama and ComfyUI.
   Null when it reported none, which is the usual answer from an LLM server
   that is not Ollama.
 - `checks` for FFmpeg is `draws_text`: whether it drew a title and a caption
@@ -753,11 +753,11 @@ holds one of its files open (Windows will not move the folder then).
 ### Events on /ws
 
 ```json
-{"type": "program.setup.progress", "program": "ffmpeg", "phase": "downloading", "done": 68157440, "total": 137034436, "bytes_per_s": 3407872}
-{"type": "program.setup.done", "program": "ffmpeg", "version": "8.1.3", "location": "/home/me/.localcut/programs/ffmpeg/ffmpeg", "in_use": true, "draws_text": true}
+{"type": "program.setup.progress", "program": "ffmpeg", "phase": "downloading", "done": 68157440, "total": 137863452, "bytes_per_s": 3407872}
+{"type": "program.setup.done", "program": "ffmpeg", "version": "9.0.2", "location": "/home/me/.localcut/programs/ffmpeg/ffmpeg", "in_use": true, "draws_text": true}
 {"type": "program.setup.failed", "program": "ffmpeg", "reason": "checksum_mismatch", "error": "the download's SHA-256 is ..."}
 {"type": "program.setup.cancelled", "program": "ffmpeg"}
-{"type": "program.removed", "program": "ffmpeg", "freed_bytes": 283956127}
+{"type": "program.removed", "program": "ffmpeg", "freed_bytes": 284840101}
 {"type": "program.setup.done", "program": "ollama", "version": "0.40.4", "location": "/home/me/.localcut/programs/ollama/bin/ollama", "in_use": true, "draws_text": null, "model": "qwen3:8b"}
 {"type": "program.server", "program": "ollama", "state": "running", "reason": null}
 ```

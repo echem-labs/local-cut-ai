@@ -616,7 +616,7 @@ async def test_a_bare_machine_reports_every_program_missing_and_what_setup_takes
             "available": True,
             "unavailable_reason": None,
             "takes_effect": True,
-            "version": "8.1.3",
+            "version": program_manifest.load_programs_manifest().program("ffmpeg").version,
             "url": pinned.url,
             "download_bytes": pinned.size,
             "install_bytes": pinned.install_bytes,
