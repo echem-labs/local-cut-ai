@@ -48,6 +48,13 @@ class Job(BaseModel):
     # Non-fatal signals from a job that finished — `error` means it did not.
     # Stored with the payload (no migration) and surfaced on the scene board.
     notices: list[Notice] = []
+    # The optional input ports (graph.model.OPTIONAL_PORTS) whose artifact
+    # did not exist when this job rendered, so its output was built without
+    # them: a cut with no music bed, an export with no burned captions. The
+    # input finishing later heals exactly these consumers. Set when the job
+    # renders. None on a row that does not say, which the heal reads as
+    # built without.
+    absent_inputs: list[str] | None = None
     # Path of the produced artifact, RELATIVE to the project's generated/
     # dir. Never absolute: the data dir moves, apps get reinstalled under
     # another account, and backups get restored onto other machines — an

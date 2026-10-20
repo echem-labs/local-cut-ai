@@ -1920,22 +1920,43 @@ class ProjectService:
             return
         if job.spec.node_id not in graph.nodes:
             return
-        optional_dsts = [
-            e.dst
+        optional_edges = [
+            e
             for e in graph.edges
             if e.src == job.spec.node_id and e.port in OPTIONAL_PORTS and e.dst in graph.nodes
         ]
-        if not optional_dsts:
+        if not optional_edges:
             return
         history = self.queue.list(job.project_id, 1000)
         cached = self._trusted_cache(job.project_id, history)
         frozen = self._frozen_pins(graph, history, cached)
         memo = dict(frozen)
+        # Newest first, so the first DONE job seen for an address is the one
+        # whose render is in the cache.
+        built_by: dict[str, Job] = {}
+        for other in history:
+            if other.status is JobStatus.DONE:
+                built_by.setdefault(other.spec.output_hash, other)
         stale: set[str] = set()
-        for dst in optional_dsts:
-            if graph.output_hash(dst, memo) in cached:
-                stale.add(dst)
-                stale |= graph.downstream_of(dst)
+        for edge in optional_edges:
+            dst_hash = graph.output_hash(edge.dst, memo)
+            if dst_hash not in cached:
+                continue
+            # A consumer built WITH this input is not stale. That is every
+            # consumer when a final re-renders an input the draft already
+            # had: the final music lands where the draft music was. Dropping
+            # the draft cut for it would also drop the captions, which then
+            # queue behind the final export, so the export would go out once
+            # without captions and again with them.
+            builder = built_by.get(dst_hash)
+            if (
+                builder is not None
+                and builder.absent_inputs is not None
+                and edge.port not in builder.absent_inputs
+            ):
+                continue
+            stale.add(edge.dst)
+            stale |= graph.downstream_of(edge.dst)
         # A pin is the user's explicit "leave this alone". The memo above
         # resolves a pinned node to its FROZEN hash, so deleting it here
         # would destroy the very artifact the pin protects — and, with the
