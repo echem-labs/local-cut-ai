@@ -150,9 +150,9 @@ Download LocalCut AI from the [latest release](https://github.com/echem-labs/loc
 
 | System | Download |
 | --- | --- |
-| Windows, x64 | [`LocalCut AI Setup <version>.exe`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
-| Linux, x64 | [`LocalCut AI-<version>.AppImage`](https://github.com/echem-labs/local-cut-ai/releases/latest), or [`localcut-desktop_<version>_amd64.deb`](https://github.com/echem-labs/local-cut-ai/releases/latest) for Debian and Ubuntu |
-| macOS, Apple silicon | [`LocalCut AI-<version>-arm64.dmg`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
+| Windows, x64 | [`LocalCut.AI.Setup.<version>.exe`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
+| Linux, x64 | [`LocalCut.AI-<version>.AppImage`](https://github.com/echem-labs/local-cut-ai/releases/latest), or [`localcut-desktop_<version>_amd64.deb`](https://github.com/echem-labs/local-cut-ai/releases/latest) for Debian and Ubuntu |
+| macOS, Apple silicon | [`LocalCut.AI-<version>-arm64.dmg`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
 
 The installers aren't signed yet. Signing comes in a later release. Until then, Windows SmartScreen stops the installer the first time you run it: choose **More info**, then **Run anyway**. The Windows installer is per user and asks for no admin rights.
 
