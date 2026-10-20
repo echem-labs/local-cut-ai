@@ -16,6 +16,7 @@ import httpx
 
 from ..graph.compiler import JobSpec
 from ..graph.model import NodeKind
+from ..graph.templates import MAX_CLIP_S
 from ..notices import SCRIPT_SHORT_OF_TARGET
 from ..providers.images import data_url
 from ..schema import Screenplay
@@ -33,8 +34,8 @@ screenplay with this exact shape (no markdown fences, JSON only):
  "style": {"visual": str, "voice": str, "music": str},
  "scenes": [{"id": "s1", "duration_s": float, "narration": str, "visual": str,
              "motion": str, "onscreen_text": str|null}]}
-Scenes are 3-8 seconds each for short videos; longer targets may use longer scenes, but never \
-exceed 60 seconds per scene. "narration" is the words spoken aloud. "visual" describes what is \
+Every scene is 4-8 seconds long, however long the video: a longer video has more scenes, never \
+longer ones. "narration" is the words spoken aloud. "visual" describes what is \
 on screen, as a plain description of the picture — never a label, never the words "prompt" or \
 "image", just the scene itself. "motion" is a short camera direction. The first scene must hook \
 the viewer instantly.
@@ -120,6 +121,21 @@ _ASK_BAND = 0.1
 # VRAM load on the local path), so this buys two corrections, not a loop.
 _LENGTH_ATTEMPTS = 3
 
+# A scene is one shot, and the clip stage animates a shot in takes of at most
+# MAX_CLIP_S (graph/templates.py). Its narration sets how long it stays on
+# screen. A scene planned longer than a take splits into takes that all
+# animate the same still, and a line that outruns its takes is slowed by up to
+# RETIME_MAX and then looped across a crossfaded seam (backends/ffmpeg.py).
+# Either way one picture carries the whole line, and four scenes of 15s put
+# four stills under a minute of film. So the ask aims every scene at what one
+# take covers: about SCENE_AIM_S on screen, a second under the take...
+SCENE_AIM_S = 7.0
+# ...and a draft whose scenes average more than this is re-asked for more,
+# shorter ones, within the same attempts as the length. A quarter past a take
+# rather than at it: a scene a second or two over is retimed or briefly
+# looped, and that is not the draft being caught.
+LONG_SCENE_S = 1.25 * MAX_CLIP_S
+
 
 def _target_duration_s(params: dict) -> int:
     """The node's target duration, coerced the way script_max_tokens already
@@ -167,14 +183,46 @@ def _word_range(target_s: float) -> tuple[int, int]:
     )
 
 
+def _scene_floor(target_s: float) -> int:
+    """The fewest scenes a target fills in takes: one take a scene."""
+    return max(2, math.ceil(target_s / MAX_CLIP_S))
+
+
+def _scene_word_cap() -> int:
+    """The most words one take can speak, with the pad after its line."""
+    return narration_word_budget(MAX_CLIP_S - NARRATION_PAD_S)
+
+
+def _scene_plan(target_s: float) -> tuple[int, int]:
+    """How many scenes a target is asked for, and about how many words each.
+
+    Scenes of SCENE_AIM_S, never fewer than the floor, each given its share
+    of the target less the pad after its line. Asked for a range of words a
+    scene and a floor on the count, qwen3.5:9b wrote the floor's eight scenes
+    at the middle of the range and came in 10 to 20 percent short of a
+    minute. Numbers that multiply out to the target give a draft that
+    follows them its length.
+    """
+    scenes = max(_scene_floor(target_s), round(target_s / SCENE_AIM_S))
+    words = narration_word_budget(target_s / scenes - NARRATION_PAD_S)
+    return scenes, min(_scene_word_cap(), words)
+
+
+def mean_scene_s(screenplay: Screenplay) -> float:
+    """How long a scene of this draft stays on screen, on average."""
+    if not screenplay.scenes:
+        return 0.0
+    return estimated_runtime_s(screenplay) / len(screenplay.scenes)
+
+
 def script_prompt(params: dict) -> str:
     """The user-turn prompt for a screenplay, shared by the local and cloud
     script backends — they also share _SYSTEM_PROMPT and _parse_screenplay,
     so a rule stated in only one of them is a bug on the other provider.
 
-    A scene may not exceed 60s (screenplay schema), so a long target needs a
-    floor on the scene count: models otherwise return a handful of over-long
-    scenes that fail validation outright, on every retry.
+    Every scene is asked to fit one clip take (see SCENE_AIM_S), so the scene
+    count grows with the target: told only the target, a model wrote four
+    15s scenes for a minute, and four stills carried the whole video.
 
     The narration budget is stated with its mechanism. A model told only
     "60s" writes short couplets and pads `duration_s` to reach the number,
@@ -183,10 +231,16 @@ def script_prompt(params: dict) -> str:
     N words" reads as a floor: qwen3:8b asked for about 70 wrote 108."""
     target_s = _target_duration_s(params)
     low, high = _word_range(target_s)
+    scenes, words = _scene_plan(target_s)
+    floor = _scene_floor(target_s)
+    count = f"about {scenes}, never fewer than {floor}" if scenes > floor else f"at least {floor}"
     ask = (
         f"Topic: {params.get('prompt', '')}\n"
-        f"Target duration: {target_s}s (use at least {max(2, -(-target_s // 30))} scenes; "
-        "no scene may exceed 60 seconds)\n"
+        f"Target duration: {target_s}s\n"
+        f"Scenes: {count}. Each scene is one shot that the video model animates in a single "
+        f"take of at most {MAX_CLIP_S:.0f} seconds, so give each scene about {words} words of "
+        f"narration, never more than {_scene_word_cap()}, and set its duration_s to how long "
+        "its narration takes to say. A longer video has more scenes, not longer ones.\n"
         f"Narration: about {narration_word_budget(target_s)} words in total, across all "
         f"scenes: between {low} and {high} words, no fewer and no more. The video's length "
         "is how long its narration takes to speak aloud, NOT the duration_s you write. Too "
@@ -230,10 +284,10 @@ def _length_note(screenplay: Screenplay, target_s: int) -> str:
     if runtime < target_s:
         return (
             f"That screenplay is too short. {measured}\n"
-            f"Rewrite it with the same story and scenes, with between {low} and {high} words "
-            "of narration in total, giving every scene enough to fill its time. Do not "
-            "shorten the narration and raise duration_s instead: duration_s does not lengthen "
-            "the video, only the spoken words do."
+            f"Rewrite it with the same story, with between {low} and {high} words of narration "
+            f"in total. Fuller lines, up to {_scene_word_cap()} words a scene, or more scenes "
+            "both work. Do not shorten the narration and raise duration_s instead: duration_s "
+            "does not lengthen the video, only the spoken words do."
         )
     return (
         f"That screenplay is too long. {measured}\n"
@@ -241,6 +295,36 @@ def _length_note(screenplay: Screenplay, target_s: int) -> str:
         "words in total. Shorter lines or fewer scenes both work. Lowering duration_s does "
         "not, because only the spoken words set the video's length."
     )
+
+
+def _scene_note(screenplay: Screenplay, target_s: int) -> str:
+    """The re-ask for scenes that run past a take, carrying what they
+    measured, as `_length_note` does for the length."""
+    scenes, words = _scene_plan(target_s)
+    return (
+        f"Its {len(screenplay.scenes)} scenes run about {mean_scene_s(screenplay):.0f}s each, "
+        f"but each scene is one shot that the video model animates in a single take of at most "
+        f"{MAX_CLIP_S:.0f}s, so a longer scene holds one picture for its whole line. Tell the "
+        f"same story in about {scenes} scenes of about {words} words of narration each, never "
+        f"more than {_scene_word_cap()}."
+    )
+
+
+def _scenes_fit(screenplay: Screenplay) -> bool:
+    return mean_scene_s(screenplay) <= LONG_SCENE_S
+
+
+def _reask_note(screenplay: Screenplay, target_s: int, on_target: bool, scenes_fit: bool) -> str:
+    """What a draft that is not kept is told: its length when that missed,
+    its scenes when they run past a take, or both."""
+    notes = [] if on_target else [_length_note(screenplay, target_s)]
+    if not scenes_fit:
+        if on_target:
+            notes.append(
+                "That screenplay's scenes are too long. Keep the narration's total length."
+            )
+        notes.append(_scene_note(screenplay, target_s))
+    return "\n".join(notes)
 
 
 def _miss_s(screenplay: Screenplay, target_s: int) -> float:
@@ -268,6 +352,11 @@ async def screenplay_within_target(
     long draft is re-asked as well, and when none lands in the window the one
     kept is the one nearest the target rather than the longest.
 
+    A draft on target whose scenes average past LONG_SCENE_S is re-asked too,
+    for more scenes a take can fill, within the same attempts. The length
+    still comes first: a re-ask that fixes the scenes and misses the target
+    loses to the on-target draft it was meant to improve.
+
     A model that still misses degrades rather than fails. That is the same
     call `supports()` makes about a missing Ollama: a limited environment
     should render what it can, not refuse the project. 148 words is
@@ -278,6 +367,28 @@ async def screenplay_within_target(
     """
     target_s = _target_duration_s(params)
     floor, ceiling = target_s * LENGTH_FLOOR, target_s * LENGTH_CEILING
+    # A revision the user asked for may set its own scene lengths ("three
+    # long, slow scenes"), and re-asking it into eight short ones would undo
+    # the note. Only the length still holds there, as script_prompt says.
+    revising = bool(
+        str(params.get("feedback") or "").strip()
+        and str(params.get("base_screenplay") or "").strip()
+    )
+
+    def on_target(draft: Screenplay) -> bool:
+        return bool(draft.scenes) and floor <= estimated_runtime_s(draft) <= ceiling
+
+    def fits(draft: Screenplay) -> bool:
+        return revising or _scenes_fit(draft)
+
+    def rank(draft: Screenplay) -> tuple:
+        """Lower is better. The length the user asked for comes first: any
+        draft in the window beats every draft outside it, and outside it the
+        nearest wins. Inside it, scenes a take can fill beat longer ones."""
+        miss = _miss_s(draft, target_s)
+        inside = on_target(draft)
+        return (not inside, 0.0 if inside else miss, not fits(draft), miss)
+
     prompt = script_prompt(params)
     # Unguarded, unlike the re-asks below: a model that cannot produce a
     # valid screenplay at all has nothing to degrade to, and that parse
@@ -302,20 +413,23 @@ async def screenplay_within_target(
                     exc,
                 )
                 continue
-            if _miss_s(candidate, target_s) < _miss_s(best, target_s):
+            if rank(candidate) < rank(best):
                 best = candidate
-        if candidate.scenes and floor <= estimated_runtime_s(candidate) <= ceiling:
+        if on_target(candidate) and fits(candidate):
             return candidate
         logger.warning(
-            "screenplay attempt %d/%d: %d words, ~%.0fs against a %ds target",
+            "screenplay attempt %d/%d: %d words, ~%.0fs against a %ds target, %d scenes of ~%.0fs",
             attempt,
             _LENGTH_ATTEMPTS,
             _words(candidate),
             estimated_runtime_s(candidate),
             target_s,
+            len(candidate.scenes),
+            mean_scene_s(candidate),
         )
         if attempt < _LENGTH_ATTEMPTS:
-            prompt = f"{script_prompt(params)}\n\n{_length_note(candidate, target_s)}"
+            note = _reask_note(candidate, target_s, on_target(candidate), fits(candidate))
+            prompt = f"{script_prompt(params)}\n\n{note}"
     if not best.scenes:
         # Nothing to render, and no amount of padding invents a scene.
         raise GenerationError(
@@ -324,6 +438,18 @@ async def screenplay_within_target(
         )
     words = _words(best)
     runtime = estimated_runtime_s(best)
+    if on_target(best):
+        # On target with scenes past a take: rendered, since the length is
+        # what the user asked for, and each scene's takes or loop fill it.
+        logger.warning(
+            "screenplay keeps %d scenes of ~%.0fs, longer than one %.0fs take, after %d "
+            "attempts. Rendering it: those scenes reuse their picture across takes or loops.",
+            len(best.scenes),
+            mean_scene_s(best),
+            MAX_CLIP_S,
+            _LENGTH_ATTEMPTS,
+        )
+        return best
     if runtime > ceiling:
         # Logged and rendered, with no notice: SCRIPT_SHORT_OF_TARGET says
         # the opposite, and a cut that runs long shows its own length on

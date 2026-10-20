@@ -28,15 +28,23 @@ from localcut_engine.graph.model import NodeKind
 from localcut_engine.schema import Scene, Screenplay
 
 
-def _screenplay(words: int) -> str:
+def _screenplay(words: int, scenes: int = 1) -> str:
     return Screenplay(
         title="t",
-        scenes=[Scene(id="s1", duration_s=6.0, narration=" ".join(["bloom"] * words), visual="v")],
+        scenes=[
+            Scene(
+                id=f"s{i}",
+                duration_s=6.0,
+                narration=" ".join(["bloom"] * (words // scenes)),
+                visual="v",
+            )
+            for i in range(1, scenes + 1)
+        ],
     ).model_dump_json()
 
 
 SHORT = _screenplay(20)  # a few seconds against 60
-ON_TARGET = _screenplay(150)  # inside the window for 60
+ON_TARGET = _screenplay(150, scenes=10)  # inside the window for 60, a take a scene
 
 
 class FakeServer:
