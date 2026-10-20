@@ -370,6 +370,61 @@ jobs:
             echo "  $image: runtime of $offset bytes, no libfuse.so.2"
           done
 
+      - name: The deb installs and starts on a bare Ubuntu 22.04
+        # deb.depends in electron-builder.yml replaces electron-builder's
+        # default list, and a library left out of it fails nothing at
+        # install: the app then stops in the dynamic loader before main.ts
+        # runs, with "error while loading shared libraries: libgbm.so.1" on
+        # a stderr nobody sees from a launcher. This container is the bare
+        # image plus what "Prepare the build container" adds, none of it a
+        # desktop library, so apt installs exactly what the deb names, and
+        # no recommends. Electron's own binaries are then read for any
+        # library still unresolved, and the app is started headless, which
+        # gets as far as the engine answering only if Electron loaded and
+        # main.ts spawned resources/engine/localcut.
+        #
+        # --no-sandbox because this runs as root, which Chromium's sandbox
+        # refuses.
+        if: matrix.container
+        working-directory: apps/desktop
+        env:
+          # The app reads it too, so the probe and the engine agree.
+          LOCALCUT_ENGINE_PORT: "7861"
+        run: |
+          set -euo pipefail
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./release/*.deb
+          app="/opt/LocalCut AI"
+          unresolved=0
+          for file in "$app"/localcut-desktop "$app"/chrome_crashpad_handler "$app"/chrome-sandbox "$app"/lib*.so*; do
+            if missing=$(ldd "$file" | grep 'not found'); then
+              echo "::error::${file#"$app"/} needs a library the deb's dependencies do not install: $(echo $missing)"
+              unresolved=$((unresolved + 1))
+            fi
+          done
+          [ "$unresolved" -eq 0 ]
+          log="$RUNNER_TEMP/desktop.log"
+          "$app/localcut-desktop" --no-sandbox --ozone-platform=headless > "$log" 2>&1 &
+          desktop=$!
+          health=""
+          for _ in $(seq 1 90); do
+            if health=$(curl -fsS "http://127.0.0.1:$LOCALCUT_ENGINE_PORT/health" 2>/dev/null); then
+              break
+            fi
+            # Gone already: the loader refused it, or main.ts gave up.
+            if ! kill -0 "$desktop" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$desktop" 2>/dev/null || true
+          wait "$desktop" 2>/dev/null || true
+          if [ -z "$health" ]; then
+            echo "::error::the installed app did not start far enough for its engine to answer"
+            tail -n 40 "$log"
+            exit 1
+          fi
+          echo "  the engine answered: $health"
+
       # The check that the upload below USED to be, kept here because the
       # upload no longer runs on every trigger.
       #
