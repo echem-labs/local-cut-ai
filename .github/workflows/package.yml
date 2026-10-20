@@ -502,6 +502,10 @@ jobs:
       - name: Attach the installers to the release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job checks nothing out, so there is no git remote for gh to
+          # read the repository from. Without this, every gh call below stops
+          # at "not a git repository".
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           ls -lh installers/
