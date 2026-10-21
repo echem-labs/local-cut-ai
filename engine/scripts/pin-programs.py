@@ -1715,7 +1715,13 @@ def command_pin(args: argparse.Namespace) -> int:
         if changed:
             updated["updated"] = now.date().isoformat()
         text = json.dumps(updated, indent=2) + "\n"
-        parse_programs_manifest(text)
+        try:
+            parse_programs_manifest(text)
+        except ValueError as exc:
+            raise Unmeasurable(
+                f"{NAMES[program]} {target.version} was measured, and the manifest refuses it "
+                f"as measured. Nothing was written. {exc}"
+            ) from exc
         # Everything is worked out before anything is written, so a refusal
         # leaves the checkout as it was.
         docs = rewrite_docs(

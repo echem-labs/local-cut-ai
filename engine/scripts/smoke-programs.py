@@ -467,7 +467,7 @@ def smoke_comfyui_windows(work: Path, card: str, build: str | None) -> None:
     engine = Engine(work, "mock", {}, stand_in(work, card))
     try:
         system = engine.get("/system")
-        say(f"the probe found: {system.get('primary_gpu') or system.get('gpus')}")
+        say(f"the probe found: {(system.get('hardware') or {}).get('primary_gpu')}")
         setup = engine.row("comfyui")["setup"]
         expect(
             (setup.get("gpu"), setup.get("url")) == (card, usual["url"]),
