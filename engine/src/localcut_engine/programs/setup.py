@@ -95,7 +95,7 @@ from ..project.store import _write_atomic
 from . import PROGRAM_IDS, builds, comfyui, environment, ollama, sevenzip
 from . import manifest as program_manifest
 from . import server as managed_server
-from .manifest import ExtractorPin, KeptFile, ProgramAsset, ProgramPin, RuntimePin
+from .manifest import ExtractorPin, KeptFile, ProgramAsset, ProgramPin, RuntimePin, link_target
 from .server import ManagedServers, ServerLaunch
 
 logger = logging.getLogger(__name__)
@@ -1630,7 +1630,7 @@ def _unpack_files(
     def link(member: tarfile.TarInfo, kept: KeptFile) -> None:
         # Made from the pin, never from the archive: the member has to be a
         # link saying the same, and the pin only names a file kept beside it.
-        if not member.issym() or member.linkname != kept.link:
+        if not member.issym() or link_target(member.linkname) != kept.link:
             raise SetupFailed("unpack_failed", f"{member.name} is not the link the pin names")
         target = folder.joinpath(*kept.path.split("/"))
         target.parent.mkdir(parents=True, exist_ok=True)

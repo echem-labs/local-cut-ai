@@ -322,6 +322,55 @@ def test_a_link_only_points_at_a_file_kept_beside_it(fmt, link, target):
         parse_programs_manifest(json.dumps(document))
 
 
+@pytest.mark.skipif(
+    _WINDOWS, reason="a link is kept only from a tarball, and Windows' build is a zip"
+)
+def test_a_link_written_with_a_leading_dot_slash_names_the_file_beside_it(tmp_path):
+    """Ollama's Linux tarball can write a soname as `./libcublas.so.13.1.1.3`.
+    That is the file beside the link, the one the pin names bare, so the
+    setup takes the member and makes the link from the pin."""
+    library = "lib/ollama/cuda_v13/libcublas.so.13.1.1.3"
+    archive = tmp_path / "ollama.tar.zst"
+    _write_archive(
+        archive,
+        "tar.zst",
+        {"bin/ollama": b"binary", library: b"\x7fELF" * 10},
+        {"lib/ollama/cuda_v13/libcublas.so.13": "./libcublas.so.13.1.1.3"},
+    )
+    document = {
+        "schema_version": 1,
+        "programs": [
+            {
+                "id": "ollama",
+                "version": "1",
+                "assets": [
+                    {
+                        "platform": "linux-x64",
+                        "url": "https://example.com/ollama.tar.zst",
+                        "size": archive.stat().st_size,
+                        "sha256": "0" * 64,
+                        "format": "tar.zst",
+                        "files": [
+                            {"member": "bin/ollama", "path": "bin/ollama", "size": 6},
+                            {"member": library, "path": library, "size": 40},
+                            {
+                                "member": "lib/ollama/cuda_v13/libcublas.so.13",
+                                "path": "lib/ollama/cuda_v13/libcublas.so.13",
+                                "size": 0,
+                                "link": "libcublas.so.13.1.1.3",
+                            },
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    asset = parse_programs_manifest(json.dumps(document)).program("ollama").assets[0]
+    folder = tmp_path / "ollama"
+    program_setup._unpack_files(archive, asset, folder, lambda done: None, threading.Event())
+    assert os.readlink(folder / "lib/ollama/cuda_v13/libcublas.so.13") == "libcublas.so.13.1.1.3"
+
+
 # -- setting it up -----------------------------------------------------------------
 
 

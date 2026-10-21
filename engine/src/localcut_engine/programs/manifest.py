@@ -68,6 +68,14 @@ _BARE_NAME = re.compile(r"[A-Za-z0-9._+-]+")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"\d+(\.\d+)*")
 
+
+def link_target(linkname: str) -> str:
+    """A tar member's link target as a pin names it. `./name` is the file
+    beside the link, the same one as `name`, and some archives write it
+    that way. Anything else is returned as it is, for the pin to refuse."""
+    return linkname[2:] if linkname.startswith("./") else linkname
+
+
 #: The GPU vendors a build can be for, as the hardware probe names them.
 GPU_VENDORS = ("nvidia", "amd", "intel")
 
