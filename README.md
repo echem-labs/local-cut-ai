@@ -154,7 +154,7 @@ Download LocalCut AI from the [latest release](https://github.com/echem-labs/loc
 | Linux, x64 | [`LocalCut.AI-<version>.AppImage`](https://github.com/echem-labs/local-cut-ai/releases/latest), or [`localcut-desktop_<version>_amd64.deb`](https://github.com/echem-labs/local-cut-ai/releases/latest) for Debian and Ubuntu |
 | macOS, Apple silicon | [`LocalCut.AI-<version>-arm64.dmg`](https://github.com/echem-labs/local-cut-ai/releases/latest) |
 
-The installers aren't signed yet. Windows signing will come from SignPath Foundation, which LocalCut AI has applied to. The [code signing policy](docs/code-signing.md) says how it will work. Until then, Windows SmartScreen stops the installer the first time you run it: choose **More info**, then **Run anyway**. The Windows installer is per user and asks for no admin rights.
+The installers aren't signed yet. Until they are, Windows SmartScreen stops the installer the first time you run it: choose **More info**, then **Run anyway**. The Windows installer is per user and asks for no admin rights.
 
 On Linux, make the AppImage executable (`chmod +x`) and run it, or install the `.deb` with `sudo apt install ./localcut-desktop_<version>_amd64.deb`. The AppImage doesn't need libfuse2.
 
@@ -330,7 +330,6 @@ Settings > About says the same.
 | [Remote engine and cloud](docs/remote-and-cloud.md) | Headless on a GPU box, TLS pairing, BYOK providers |
 | [Agents and automation](docs/agents-and-automation.md) | The automation CLI and the MCP server |
 | [Packaging](docs/packaging.md) | Freezing the engine and building installers |
-| [Code signing policy](docs/code-signing.md) | Who builds, reviews and approves a signed Windows release |
 
 ## Contributing
 
