@@ -108,13 +108,13 @@ bytes = 1034901
 
 [[packages]]
 name = "certifi"
-version = "2026.10.18"
-wheels = [{ name = "certifi-2026.10.18-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/08/ba/95dd616042484f7c83a06974388b37b837732740ee70bc5dc715b5fcd55a/certifi-2026.10.18-py3-none-any.whl", size = 134093, hashes = { sha256 = "73191c47aaa79da394e8fee2dbc2ec827432cab56311122c9e47abf79e390f62" } }]
+version = "2026.10.19"
+wheels = [{ name = "certifi-2026.10.19-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl", size = 136464, hashes = { sha256 = "42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b" } }]
 
 [packages.tool.localcut]
 licence = "Mozilla Public License 2.0 (MPL 2.0)"
 files = 12
-bytes = 242834
+bytes = 247618
 
 [[packages]]
 name = "charset-normalizer"
@@ -158,13 +158,13 @@ bytes = 28286981
 
 [[packages]]
 name = "comfy-kitchen"
-version = "0.2.37"
-wheels = [{ name = "comfy_kitchen-0.2.37-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/19/04/d24939d30b077679bfc8bf4a53c7392f9d8650df7ce69164238a673753a1/comfy_kitchen-0.2.37-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 59238324, hashes = { sha256 = "03cca0d10c314aaa13bff8f9422d03974221a344162b23d4f10d27eb2a35d0e8" } }]
+version = "0.2.39"
+wheels = [{ name = "comfy_kitchen-0.2.39-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", url = "https://files.pythonhosted.org/packages/1e/17/26fd6ff4bf81c89f9c8aa944ed8b0570df72134b71f0c9e94a4110bc20be/comfy_kitchen-0.2.39-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", size = 65836259, hashes = { sha256 = "36a97072e27d30df04563548dc7344abc364777f2262aab44a250c1fd1594d58" } }]
 
 [packages.tool.localcut]
 licence = "Apache Software License"
-files = 61
-bytes = 171378542
+files = 63
+bytes = 186425885
 
 [[packages]]
 name = "comfyui-embedded-docs"
@@ -178,18 +178,18 @@ bytes = 46459646
 
 [[packages]]
 name = "comfyui-frontend-package"
-version = "1.55.17"
-wheels = [{ name = "comfyui_frontend_package-1.55.17-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/30/82/bc354e027b8a31714c9870999bd67f95e2079d7c5c768f4e4346baea8aae/comfyui_frontend_package-1.55.17-py3-none-any.whl", size = 25543653, hashes = { sha256 = "d90c35f470e7570cf35552a0cd160347beee06c73805f16e18f92a8650edb008" } }]
+version = "1.55.18"
+wheels = [{ name = "comfyui_frontend_package-1.55.18-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/d5/5b/309ba9d70dc2984e7fa821151fd8c9f66a6067fb9e0257423120539818ed/comfyui_frontend_package-1.55.18-py3-none-any.whl", size = 25588366, hashes = { sha256 = "34c388cdf5236b8bae57fd4d8bde54991e65f13f8247213325a6d7852b252053" } }]
 
 [packages.tool.localcut]
 licence = "not stated"
 files = 1043
-bytes = 101182386
+bytes = 101386441
 
 [[packages]]
 name = "comfyui-workflow-templates"
-version = "0.11.82"
-wheels = [{ name = "comfyui_workflow_templates-0.11.82-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/39/0d/ad05fdf3c742e507840217943b9a9e0e08ac1ffd956f341a470a66c9caf3/comfyui_workflow_templates-0.11.82-py3-none-any.whl", size = 10877, hashes = { sha256 = "0c4cb56f3e47191cbd9d497a080dd35abee08f75372d3da86a2f9d6765a57096" } }]
+version = "0.11.89"
+wheels = [{ name = "comfyui_workflow_templates-0.11.89-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/dc/4f/4b9b97d3d8a13c32ee868a12419a24677f8e9c5c547bc569b187678f733f/comfyui_workflow_templates-0.11.89-py3-none-any.whl", size = 10876, hashes = { sha256 = "d58d2abd658aa2a599736ab0d366f2d9bb932ec8c7766b680689093b4a79b2e2" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
@@ -198,23 +198,23 @@ bytes = 27599
 
 [[packages]]
 name = "comfyui-workflow-templates-core"
-version = "0.3.373"
-wheels = [{ name = "comfyui_workflow_templates_core-0.3.373-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/cc/ab/1299a0a5ce6e93a38169417cf1f1779325bfbaaf8204247c0428aa4e5eaf/comfyui_workflow_templates_core-0.3.373-py3-none-any.whl", size = 81211, hashes = { sha256 = "28e84d3a68b018ee64fadb49779b3776be9ce3f04fe192d0e1c5600d45407736" } }]
+version = "0.3.380"
+wheels = [{ name = "comfyui_workflow_templates_core-0.3.380-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/31/2c/47991449189f055e128c88a0cd1a2a75069caad5fdb4208d2cb2dd2d33b7/comfyui_workflow_templates_core-0.3.380-py3-none-any.whl", size = 82364, hashes = { sha256 = "3e9a502980ea5a3b867c815e8b8d9c15dc899adc0cc4bf538322327aad95cecc" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
 files = 7
-bytes = 387747
+bytes = 393665
 
 [[packages]]
 name = "comfyui-workflow-templates-json"
-version = "0.1.108"
-wheels = [{ name = "comfyui_workflow_templates_json-0.1.108-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/6d/87/28459ec38d482d4b0338dba10b2ad9e98b9ddba72b67f44f447a2f7432ea/comfyui_workflow_templates_json-0.1.108-py3-none-any.whl", size = 3887908, hashes = { sha256 = "5b899a7c79dc0064ef5282e391d128c13963aa2726b7572168d5f17fe68efab2" } }]
+version = "0.1.115"
+wheels = [{ name = "comfyui_workflow_templates_json-0.1.115-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/1b/78/b496053c60c9f3b9bfca29e1a5d2bcfdf9c6e3905ad2f4c0ba042f0b07ac/comfyui_workflow_templates_json-0.1.115-py3-none-any.whl", size = 3977771, hashes = { sha256 = "4e6e607a1a060b32d3a28da5185808796470633609e27dbecc64122391ac23c5" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
-files = 623
-bytes = 28345651
+files = 633
+bytes = 28960174
 
 [[packages]]
 name = "comfyui-workflow-templates-media-api"
@@ -238,13 +238,13 @@ bytes = 94140756
 
 [[packages]]
 name = "comfyui-workflow-templates-media-assets-02"
-version = "0.1.14"
-wheels = [{ name = "comfyui_workflow_templates_media_assets_02-0.1.14-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/0a/19/8115931916651ebb3dfcc43ed56244959e72b0aaacec439815f50a398888/comfyui_workflow_templates_media_assets_02-0.1.14-py3-none-any.whl", size = 29033974, hashes = { sha256 = "de9288c5af7d4be5ee3d3db8544e31489f108c8ad9eac92178ebaf6e124dc64f" } }]
+version = "0.1.17"
+wheels = [{ name = "comfyui_workflow_templates_media_assets_02-0.1.17-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/ae/c4/d55eb32e7a2503aa0694bcbeb270bc1af907b6edc7b2fc8ecb5cf95de292/comfyui_workflow_templates_media_assets_02-0.1.17-py3-none-any.whl", size = 29709255, hashes = { sha256 = "5051468c92a463016d56a90ecc03e67e52299facb46e7246908c45018cdd5fed" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
-files = 76
-bytes = 29026458
+files = 88
+bytes = 29701498
 
 [[packages]]
 name = "comfyui-workflow-templates-media-image"
@@ -368,23 +368,23 @@ bytes = 11573549
 
 [[packages]]
 name = "httpcore2"
-version = "2.14.0"
-wheels = [{ name = "httpcore2-2.14.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/02/06/a8d6a8f90d11b76d9086242b6bb0ee4b503473bfc8be34c2d5b067275c22/httpcore2-2.14.0-py3-none-any.whl", size = 84291, hashes = { sha256 = "4c4f64f4b544afeb778c42c0ffb5941b29e671157e90ed3f6dc787c4bca90cd1" } }]
+version = "2.15.1"
+wheels = [{ name = "httpcore2-2.15.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/0d/9b/e2b556e26fbc67716ab1dfc18832eb6fe196d88363f7094cb1da3d7c0d3e/httpcore2-2.15.1-py3-none-any.whl", size = 85055, hashes = { sha256 = "730f603058c260a3288378217b464713350c23e3b8fe8bba753701054032d98a" } }]
 
 [packages.tool.localcut]
 licence = "BSD-3-Clause"
 files = 36
-bytes = 305025
+bytes = 306918
 
 [[packages]]
 name = "httpx2"
-version = "2.14.0"
-wheels = [{ name = "httpx2-2.14.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/69/5a/469616aa8c2cbb0bb9dd67a3c18d07c01ab604cc0b236ee1c47d260c7f6e/httpx2-2.14.0-py3-none-any.whl", size = 96901, hashes = { sha256 = "9d20c13a10bae1773a0be3b0f1e5beeb4bdd549bc3a2ba18efa32897c65403e4" } }]
+version = "2.15.1"
+wheels = [{ name = "httpx2-2.15.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/7a/bf/56068f774620330c8330e4b4915fae889a5b2d4b52667b3b7c8f66c4a9ad/httpx2-2.15.1-py3-none-any.whl", size = 96411, hashes = { sha256 = "75841cd83d16b417f7d6da8f2089ce8120806efdbf96af37d46c5129c49015be" } }]
 
 [packages.tool.localcut]
 licence = "BSD-3-Clause"
 files = 36
-bytes = 410477
+bytes = 408941
 
 [[packages]]
 name = "huggingface-hub"
@@ -728,13 +728,13 @@ bytes = 5203590
 
 [[packages]]
 name = "pydantic-settings"
-version = "2.16.0"
-wheels = [{ name = "pydantic_settings-2.16.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/53/f4/b987bf8c51e5b19a95fa66d1ee596074141e085d9c2ddf97920803c7029b/pydantic_settings-2.16.0-py3-none-any.whl", size = 80364, hashes = { sha256 = "7e73acf7f61936a15e5a3b6eedaea29f133357faf7272f2607ba479b049dd7f2" } }]
+version = "2.16.1"
+wheels = [{ name = "pydantic_settings-2.16.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/3c/74/fdf926afe145d8629c4b2ff57f4ea1d64ed7abc4d84d97463b2517a2547e/pydantic_settings-2.16.1-py3-none-any.whl", size = 80771, hashes = { sha256 = "30f5313340da4e8f1b440d1910b92a5bc3ccbb6b4ba70ec2b8395bc921f418f5" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
 files = 27
-bytes = 301015
+bytes = 302276
 
 [[packages]]
 name = "pygments"
@@ -838,13 +838,13 @@ bytes = 2955339
 
 [[packages]]
 name = "setuptools"
-version = "84.0.0"
-wheels = [{ name = "setuptools-84.0.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/95/9c/c510029fc6ef33a6275cd2c5d3cecd6613dfd6aa401d57c54f1c18852ccf/setuptools-84.0.0-py3-none-any.whl", size = 818216, hashes = { sha256 = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670" } }]
+version = "84.2.0"
+wheels = [{ name = "setuptools-84.2.0-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/dd/a2/2e1af99d56c8145aa69496026c7e5fd7b6ec759b500c3ad697e2062832dc/setuptools-84.2.0-py3-none-any.whl", size = 875816, hashes = { sha256 = "8cc107ac7a403105dc8d6477664171f36135fab26adf8b5e0edaebc313f39b21" } }]
 
 [packages.tool.localcut]
 licence = "MIT"
-files = 343
-bytes = 2773629
+files = 348
+bytes = 3001142
 
 [[packages]]
 name = "shellingham"
@@ -958,13 +958,13 @@ bytes = 11752
 
 [[packages]]
 name = "transformers"
-version = "5.20.1"
-wheels = [{ name = "transformers-5.20.1-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/ae/ba/057af605774c3c7a9228ce61d88040749134ef320426403b31bb73755d43/transformers-5.20.1-py3-none-any.whl", size = 12844669, hashes = { sha256 = "5f51ce444193e5d0a751e3fa489ddbc2224ff12f6675a5cfefd4044b09757c19" } }]
+version = "5.20.2"
+wheels = [{ name = "transformers-5.20.2-py3-none-any.whl", url = "https://files.pythonhosted.org/packages/96/b6/724faefed06913dd3e42e0476fe2c42448675c42f687a12bf810aa098005/transformers-5.20.2-py3-none-any.whl", size = 12844921, hashes = { sha256 = "7ae75dbc1fb3922aff1b6c97b9e5479d6cf26fd86a8866bfb71324190479f807" } }]
 
 [packages.tool.localcut]
 licence = "Apache 2.0 License"
 files = 2771
-bytes = 51319213
+bytes = 51320583
 
 [[packages]]
 name = "triton"
@@ -1039,16 +1039,16 @@ bytes = 364888
 [tool.localcut]
 torch-backend = "cu130"
 platform = "x86_64-manylinux_2_28"
-uv = "0.13.1"
+uv = "0.13.4"
 
 [tool.localcut.comfyui]
-version = "0.40.0"
-url = "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.40.0.tar.gz"
-sha256 = "d82636cc721b8060099cf31b8d9ed40807c2147db438f88321a0396b7894e8e5"
-requirements_sha256 = "daa5c581620080f44c894609b852b5fd82fa102975f5dd31abeef2ca0e5a3fff"
+version = "0.42.1"
+url = "https://github.com/Comfy-Org/ComfyUI/archive/refs/tags/v0.42.1.tar.gz"
+sha256 = "8fb71e51c10c6261fe8dcfdbebe550a1d4ec6b74b6c57515e1b7313dbe4a215b"
+requirements_sha256 = "be1b15fd2f8ea459609c2e62d573ab862f53443023316ba494b4190af50bc028"
 requirements = [
-    "comfyui-frontend-package==1.55.17",
-    "comfyui-workflow-templates==0.11.82",
+    "comfyui-frontend-package==1.55.18",
+    "comfyui-workflow-templates==0.11.89",
     "comfyui-embedded-docs==0.5.14",
     "torch",
     "torchsde",
@@ -1070,7 +1070,7 @@ requirements = [
     "SQLAlchemy>=2.0.0",
     "filelock",
     "av>=17.0.0",
-    "comfy-kitchen==0.2.37",
+    "comfy-kitchen==0.2.39",
     "comfy-aimdo==0.5.6",
     "requests",
     "simpleeval>=1.0.0",
