@@ -185,6 +185,8 @@ Setup and downloads keep going in the background while the last step shows where
 
 On the home screen, type a prompt and choose the aspect ratio, the length and **Auto** or **Review steps**. **Generate** (or Ctrl+Enter) starts it.
 
+For a whole first video with screenshots, from install to the finished film at the top of this page, read [Generate AI videos locally for free](https://medium.com/@hanzlamateen/generate-ai-videos-locally-for-free-a58bd6da3c3a) on Medium.
+
 ### What runs where
 
 The app is two parts: the window you see and the engine it starts, which holds your projects and runs the work. Both come in the installer. Narration and caption timing run inside the engine, with weights the Models step downloads. The rest of the work happens in three free programs that LocalCut doesn't ship:
