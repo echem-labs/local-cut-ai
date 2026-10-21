@@ -875,13 +875,20 @@ class EngineProcess:
             self._log.close()
         if problems:
             return check("shutdown", False, "; ".join(problems), started=started)
+        if not self.answered:
+            detail = "the engine never answered and nothing it started is running"
+        elif others:
+            plural = "es" if len(others) != 1 else ""
+            detail = (
+                f"the engine and the {len(others)} process{plural} it started exited "
+                "after POST /shutdown"
+            )
+        else:
+            detail = "the engine exited after POST /shutdown and had started nothing else"
         return check(
             "shutdown",
             True,
-            f"the engine and the {len(others)} process{'es' if len(others) != 1 else ''} "
-            "it started exited after POST /shutdown"
-            if self.answered
-            else "the engine never answered and nothing it started is running",
+            detail,
             started=started,
         )
 
@@ -1125,7 +1132,10 @@ class Run:
             )
             return
         say("Downloads before the render:")
-        needed = 0
+        # `fetched` is what comes over the network. `needed` is the most
+        # disk the downloads hold at once: a setup keeps its archive until
+        # the copy is unpacked beside it.
+        fetched = needed = 0
         for row in to_set_up:
             setup = row["setup"]
             pull = setup.get("pull") or {}
@@ -1136,6 +1146,7 @@ class Run:
                     f"  {row['id']}: start it"
                     + (f", pull {_size(pull.get('bytes'))}" if pull else "")
                 )
+                fetched += pull.get("bytes") or 0
                 needed += pull.get("bytes") or 0
                 continue
             line = (
@@ -1145,14 +1156,19 @@ class Run:
             if pull:
                 line += f", then {pull.get('model')}, {_size(pull.get('bytes'))}"
             say(line)
+            fetched += (setup.get("download_bytes") or 0) + (pull.get("bytes") or 0)
             needed += (setup.get("download_bytes") or 0) + (setup.get("install_bytes") or 0)
             needed += pull.get("bytes") or 0
         for row in to_download:
             partial = row.get("partial_bytes") or 0
             resumed = f", {_size(partial)} of it on disk already" if partial else ""
             say(f"  model {row['id']}: {_size(row['size_bytes'])}{resumed}")
+            fetched += row["size_bytes"] - partial
             needed += row["size_bytes"] - partial
-        say(f"  about {_size(needed)} in all, of the {_size(free)} free in {self.data_dir}")
+        say(
+            f"  {_size(fetched)} to download, needing up to {_size(needed)} of the "
+            f"{_size(free)} free in {self.data_dir} while the setups unpack"
+        )
         if free and needed > free:
             raise self.fail(
                 "setup",
@@ -1535,7 +1551,9 @@ class Run:
         its log the engine serves, which also holds earlier runs'."""
         assert self.client is not None and self.engine is not None
         path = self.report_dir / "comfyui.log"
-        self.client.download("/programs/comfyui/log", path)
+        if not self.client.download("/programs/comfyui/log", path):
+            path.unlink()  # LocalCut's ComfyUI never ran in this data dir
+            return
         text = path.read_text(encoding="utf-8", errors="replace")
         path.write_text(this_runs_log(text, self.engine.comfyui_url), encoding="utf-8")
 
