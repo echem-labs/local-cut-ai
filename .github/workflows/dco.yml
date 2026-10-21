@@ -7,9 +7,18 @@ name: DCO
 # contribution needs its provenance established after the fact.
 #
 # Pull requests only: this checks the commits a PR proposes, and there is
-# nothing to gate on a push to main that has already merged.
+# nothing to gate on a push to main that has already merged. The dispatch is
+# for program-pins.yml, which starts this on the branch of each pin bump it
+# opens, naming the branch it goes to: a pull request opened with
+# GITHUB_TOKEN starts no workflow by itself.
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "The branch the commits are proposed to"
+        type: string
+        default: main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,7 +45,7 @@ jobs:
         # script body: `${{ }}` is substituted before bash parses the line, and
         # git permits `$`, a backtick and a quote in a ref name.
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.base_ref || inputs.base }}
         run: |
           set -euo pipefail
           base="origin/$BASE_REF"

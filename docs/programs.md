@@ -312,23 +312,26 @@ brings Intel's oneAPI runtime under the Intel Simplified Software License and
 the ROCm build's PyTorch carries AMD's ROCm libraries, mostly MIT. Each lock
 names each wheel's licence.
 
-When ComfyUI's pin moves, the locks move with it:
+`engine/scripts/lock-comfyui-linux.py` makes the locks. It resolves the
+tag's `requirements.txt` with `uv pip compile --torch-backend <backend>
+--generate-hashes --only-binary :all:` for each build, keeps the wheel the
+pinned Python prefers on x86_64 Linux for each package, reads what each
+wheel unpacks to from its zip directory with Range requests and writes the
+locks and the linux-x64 assets in `programs-manifest.json`. When ComfyUI's
+pin moves, the bump runs it ([below](#how-the-pins-move)) with the Python,
+the PyTorch and the uv the locks have. Moving any of those three is a run
+by hand, with the uv on `PATH` (or `--uv`) that the locks are to name:
 
 ```bash
 cd engine
-uv run python scripts/lock-comfyui-linux.py --comfyui 0.42.1 \
-    --python 3.13.16 --python-release 20261013 --torch 2.14.1
+uv run python scripts/lock-comfyui-linux.py --python <version> \
+    --python-release <python-build-standalone tag> --torch <version>
 ```
 
-It needs `uv` on `PATH`. It resolves the new tag's `requirements.txt` with
-`uv pip compile --torch-backend <backend> --generate-hashes --only-binary
-:all:` for each build, keeps the wheel CPython 3.13.16 on x86_64 Linux
-prefers for each package, reads what each wheel unpacks to from its zip
-directory with Range requests and writes the locks and the linux-x64 assets
-in `programs-manifest.json`. `test_programs_comfyui_linux.py` fails until it
-has run: every lock has to be the lock for the ComfyUI version and source
-archive pinned, meet every requirement of that source's `requirements.txt`
-and hold only wheels that install on the target.
+`test_programs_comfyui_linux.py` fails until it has run: every lock has to
+be the lock for the ComfyUI version and source archive pinned, meet every
+requirement of that source's `requirements.txt` and hold only wheels that
+install on the target.
 
 ### Running it
 
@@ -396,6 +399,79 @@ folder and the keyframes it sent under `localcut/` in its `input` folder.
 Every result is already in its project, so you can delete both whenever you
 like.
 
+## How the pins move
+
+Every Monday and whenever someone runs it from the Actions tab,
+`.github/workflows/program-pins.yml` runs `engine/scripts/pin-programs.py
+check`. It compares each pin with what upstream has, by the rule that pin
+follows:
+
+- FFmpeg: the LGPL build of FFmpeg's newest release branch in the newest
+  month-end build of BtbN/FFmpeg-Builds whose month has ended.
+- Ollama: the newest release that is not marked as a prerelease.
+- ComfyUI: the newest release with all four portable builds, once it is
+  three days old. 0.42.0 had a fix release three hours after it shipped.
+  While the newest is younger than that, no older release is taken in its
+  place.
+
+For each program with a newer build the workflow runs `pin-programs.py pin`
+and opens one pull request with what it wrote, on `pins/<program>-<version>`
+(for FFmpeg the version and the date of BtbN's build, such as
+`pins/ffmpeg-9.0.2-2026-09-30`). A program is left alone while that branch
+or a pull request from it exists, open or closed, so closing a bump without
+merging it turns that version down.
+
+`pin` measures before it writes. Each archive's size and SHA-256 are the
+digest GitHub publishes for it. What a pin keeps from it is read from the
+archive itself, without downloading what can be read in place: a zip's
+central directory and a 7z's headers over Range requests, a tar.xz or a
+tar.zst streamed once and hashed. 7-Zip's `7zz` for Linux, from the same
+release as `7zr.exe`, lists a portable ComfyUI build from its headers. The
+engine's own listing check counts what it lists. The Linux locks come
+from `lock-comfyui-linux.py`. Before any of that, `pin` measures the release
+pinned now the same way and stops unless it comes out as the pin, byte for
+byte, locks included. Then it writes `programs-manifest.json`, the locks,
+the FFmpeg in `engine/Dockerfile` and the figures this page states, or
+nothing when any of it could not be measured. `test_programs_docs.py` holds
+every version and size this page states to the manifest, so a pin moved
+without the page fails CI. A pull request that changes either script runs
+`pin --again` for each program, which measures the pin from scratch and has
+to write nothing new.
+
+A pull request opened with the workflow's own token starts no workflow, so
+the workflow starts them on the branch itself: the engine suite, the three
+checks `main` requires and `programs-smoke.yml`. The smoke sets each program
+up for real on Linux and Windows runners, through an engine started from the
+branch:
+
+- FFmpeg has to draw text and export a placeholder project to an MP4 that
+  its own ffmpeg decodes to the end.
+- Ollama's setup pulls `qwen3:0.6b` and the copy has to answer a chat
+  completion on the processor.
+- On Linux, ComfyUI's build for the processor is set up and started. Its
+  `/object_info` has to list every node and input the workflow templates
+  use.
+- On Windows there is one run per portable build. A runner has no graphics
+  card, so the run puts a stand-in for the vendor's tool (nvidia-smi,
+  rocm-smi or xpu-smi) on the PATH of the engine it starts, so the hardware
+  probe finds a card. The setup downloads the build, checks its digest,
+  lists it against the pin, unpacks it and walks it, then stops at the
+  device check, where the build's PyTorch finds no card
+  (`gpu_not_usable`). That is the stop the run expects. Nothing in the
+  engine knows of the stand-in.
+
+What a person still checks before merging one:
+
+- For Ollama, the CUDA driver and compute capability floors and the calls
+  Ollama makes to ollama.com with its cloud features on. Both were read
+  from one version's source. The comments in `programs/ollama.py` and two
+  sentences [above](#localcuts-own-ollama) name that version. The pull
+  request asks for both to be read again.
+- For ComfyUI, the PyTorch each portable build carries, which the pull
+  request lists beside the one before. A new CUDA can change what a build
+  `requires` of the card.
+- A real render on a machine with a GPU, which no runner has.
+
 ## The API
 
 Every route needs the engine token, like the rest of the API.
@@ -414,7 +490,7 @@ answered after the end.
 {
   "platform": "linux-x64",
   "programs_dir": "/home/me/.localcut/programs",
-  "programs_bytes": 284840101,
+  "programs_bytes": 2539916732,
   "disk_free_bytes": 15032385536,
   "bin_dir": "/home/me/.localcut/bin",
   "models_dir": "/home/me/.localcut/models",

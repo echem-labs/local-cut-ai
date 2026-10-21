@@ -189,6 +189,20 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
+      # docs/programs.md states every pinned program's version and sizes,
+      # which test_programs_docs.py holds to programs-manifest.json. The
+      # manifest side is under engine/, which `engine-tests` carries.
+      - id: programs-docs-contract
+        name: programs docs contract (pytest)
+        entry: bash -c 'cd engine && uv run pytest -q tests/test_programs_docs.py'
+        language: system
+        files: |
+          (?x)^(
+            docs/programs\.md
+          )$
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: desktop-typecheck
         name: desktop typecheck (tsc)
         entry: bash -c 'cd apps/desktop && npm run typecheck'

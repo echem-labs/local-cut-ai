@@ -1,0 +1,422 @@
+[
+ {
+  "tag_name": "v0.42.1",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-18T22:58:57Z",
+  "published_at": "2026-10-19T01:33:54Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1636139353,
+    "digest": "sha256:8af051e342de65e5ca2d9f43a5f0b11a6377da10bd96159dc41e8722cc5841fc",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1451207360,
+    "digest": "sha256:a1e03d31ea364af2f80820461cd0c5ae5bbba4b562c023c1f43b2cf65541d4ab",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2018444114,
+    "digest": "sha256:496afd18790ec685d99ebba2edf200d7371a29fbdd3a992bb0f4f52f244a6874",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_arm64.7z",
+    "size": 1854462229,
+    "digest": "sha256:e7175ce8e5c02fca4039f6d648c87a8938ef86b3f2a572179c5cc317b7c2d7ff",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia_arm64.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1910153206,
+    "digest": "sha256:0506abc6563ea5928a052fe0bc0b32c2a063098558bd593fe39345a27f1e47fc",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.1/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.42.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-18T21:13:09Z",
+  "published_at": "2026-10-18T22:10:38Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1636136802,
+    "digest": "sha256:00dd376b9a9c608fc0ecc07eacb31d6c58a00b9679bdd348e7f2515275d6a2cf",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1451372064,
+    "digest": "sha256:481091b667d161134c77e75ce7e9261842e263cb99f3dda7bc29c1140e71cf76",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2018436691,
+    "digest": "sha256:6152424017702a573e3e452cf66720837fed19af9f0688980c4fc1ae783699c8",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_arm64.7z",
+    "size": 1854445362,
+    "digest": "sha256:096b2cd960a12033bbe1ddb1fce3928f1cf4e7007dca7bf7fb2f6e3649057721",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.0/ComfyUI_windows_portable_nvidia_arm64.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1910165509,
+    "digest": "sha256:f88d3c8511e2bf3508855e8aca4dacc82c0cac39bcbf674e737ca45c2f01371f",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.42.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.41.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-15T15:56:50Z",
+  "published_at": "2026-10-15T22:57:45Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1627801471,
+    "digest": "sha256:7dd91dec08f4bf6d76adeb9aae0920f2d7ac6101f60be72063b76f86fc67dfb1",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.41.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1442748194,
+    "digest": "sha256:5f2107e2e2cf86ce9eff3f769507028fd55cebc5972930756fb5dc3558f058b3",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.41.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2010075321,
+    "digest": "sha256:7ff446d6904a9eecdfa07870a06238cc33a6204dcd31726edc6783efd080ac34",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.41.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_arm64.7z",
+    "size": 1853240417,
+    "digest": "sha256:b06891cbd7d0d0af4b73852386b23ebd4a98f0f695f1d1c4cceb3d60ddfc410e",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.41.0/ComfyUI_windows_portable_nvidia_arm64.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1901799620,
+    "digest": "sha256:a6160054bf1f17367bdfa4cac33f176fc275771c0edbcc20ec58c75c39de19af",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.41.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.40.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-13T19:18:03Z",
+  "published_at": "2026-10-13T21:29:16Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1627644722,
+    "digest": "sha256:f3a58381de51872815f38dbd092ad2c829e3c8d528e03600e760514ae44d45fb",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1442756969,
+    "digest": "sha256:50ba3114a7b2119c35a1755c5749e2aad3d5da618278670555f80c392de0cc58",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2009901495,
+    "digest": "sha256:bc4dd972b7134347128579a34b1910f19a59d8a4c9fea7d8e4bae586bad68b0c",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_arm64.7z",
+    "size": 1853065489,
+    "digest": "sha256:2a5f20d26f7e95fcc1d8d58e3459009cbf88d73a75ea8a7db1189bff8f9cc915",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia_arm64.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1901618627,
+    "digest": "sha256:23d789979f523d90daae27da94a78769c17093cff1684e1e2d166b5148334c59",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.40.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.39.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-10-05T22:08:37Z",
+  "published_at": "2026-10-05T22:49:43Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1621312076,
+    "digest": "sha256:19be1e3c8690c4f9eeefb0f2ee8f835a98e2fbf33cd9b80d0ca309f4c86d37c1",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.39.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1436509991,
+    "digest": "sha256:50f629c3743b1fb64509d8e582ae30b06105d9614587a514e79ac9f3c3f62939",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.39.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2003629308,
+    "digest": "sha256:3dca347842ed1c6c833105fafb1669284685a3e54df41578d5f94bcc898ae039",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.39.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1895335518,
+    "digest": "sha256:c42e7d5f6a5e931f6551dcf102d739a55c5f4a4df921f748e1de9de9f648d6a2",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.39.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.38.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-09-29T18:46:44Z",
+  "published_at": "2026-09-29T21:46:45Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1612070856,
+    "digest": "sha256:f346e5c187b4e1647f0ea01d9978f53de1f259878656128c3296f61a5948fd1f",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.38.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1427214780,
+    "digest": "sha256:4df593042aced1fb0b8dfdf033918c9e5d093f01c6fbb9c79fe2504350107de0",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.38.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 1994326521,
+    "digest": "sha256:8f137eac345707fd7e42bcf8e29377415243011ca15522a86aed6c77331fbd56",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.38.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1886111296,
+    "digest": "sha256:bd3bd7e3ce0068d8bc58fe46c912c360dd510f9bcfd0c5029d4906e6e6fbc677",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.38.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.37.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-09-20T15:27:36Z",
+  "published_at": "2026-09-21T07:35:01Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1595844037,
+    "digest": "sha256:563da2462a866f8fdf8ccd091a8c0e185e785394408735f8e99647593a67dd79",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.37.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1512836652,
+    "digest": "sha256:1041af3a25ca2c7b3615db3027ca0fd40df37c1758c4e9955e762672193ac4cc",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.37.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 1925204508,
+    "digest": "sha256:7805f634fab51f63a238aaf0cfe2a9833bb7c86ddfc8400a60919f44460d7d65",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.37.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1867201814,
+    "digest": "sha256:4f8c587c8319a3595dcdc6b8fbfc7234d2d02fa6b1a328c1ab3e819c97d95fb8",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.37.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.36.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-09-15T21:05:37Z",
+  "published_at": "2026-09-15T22:26:17Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1588139493,
+    "digest": "sha256:770f5f2cb73e5589ba485ecf3311221eb95be26012e3c7d93718877ecd587bde",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.36.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1504957342,
+    "digest": "sha256:3d3e385b51520113060124d61e56831a29fb0da059ea43343b789ca0e692b76a",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.36.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 1917442353,
+    "digest": "sha256:c3c60192840f8b68c9a47cf3e8161ecb108e5ffdf5ea236c1c72a402e442695d",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.36.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1859361599,
+    "digest": "sha256:0665ae866a1f3e24a9a582d90cc70f8292569e05bd790fe1cd07afab23a4e47b",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.36.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.35.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-09-09T05:02:46Z",
+  "published_at": "2026-09-09T19:55:08Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1580620142,
+    "digest": "sha256:2fa7d6538d9d0cfa1cdc64debda8c49886e4745043f7806ea45e87f6bd1daa87",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.35.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1497484009,
+    "digest": "sha256:2b120e05d0c933c934bcaf66b540c4750d91a296dc250670ef6432096e1f8d55",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.35.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 1910039517,
+    "digest": "sha256:6fb005a8269c6f5972a8fb76d7a4fc251578ccc7906671a801b382591c791dd2",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.35.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 1851932752,
+    "digest": "sha256:ca35feb8292e0091f6b7cb4ca3abcc8e0e330a138cd1735e2836c044691e70f2",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.35.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.34.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-08-25T21:58:26Z",
+  "published_at": "2026-08-26T02:09:08Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1817392344,
+    "digest": "sha256:da9317b62eab26865563b0529012799fd1f63e604d4ce81432c4e98eb6008b3f",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.34.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1734410473,
+    "digest": "sha256:7dd41db69b53b4db120ce617d310c785e9fe9c0c9d634a3ea57cd877cab89e9e",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.34.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2146721943,
+    "digest": "sha256:ed57cc6b19ae3d83add1ecebfdd56b25e04e0008cf0fe9af43a4ad8797e2a24c",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.34.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 2088683799,
+    "digest": "sha256:e65b6c693e2ca428a722b6fb512218813f43dfdd3f43fdaaa7c44df8f90d36ad",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.34.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.33.1",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-08-13T20:09:36Z",
+  "published_at": "2026-08-13T22:18:34Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1803834302,
+    "digest": "sha256:18a595e4898cce4cf23b9a1299e5bba05ba856772588d25619bc398eb921de45",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.33.1/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1720754824,
+    "digest": "sha256:c29e5c19a9d29a8aea5d4ae7811048a409a0748dbde3dde639ce52cc29cf228c",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.33.1/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2133107036,
+    "digest": "sha256:4a221588979b96b8244e0e50b2edca03af732acae1deba69d60aa3b4d60b9dba",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.33.1/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 2075064363,
+    "digest": "sha256:83d0fc16ecf85b552423204a6142728a252bafbf8797f2eeb2f6a680a4d50fd1",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.33.1/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ },
+ {
+  "tag_name": "v0.32.0",
+  "draft": false,
+  "prerelease": false,
+  "created_at": "2026-08-11T20:46:59Z",
+  "published_at": "2026-08-11T21:56:20Z",
+  "assets": [
+   {
+    "name": "ComfyUI_windows_portable_amd.7z",
+    "size": 1802964985,
+    "digest": "sha256:ad2346d0f683fbe566061a247a8461e845e7dace4ea45859a2525f73fee4a816",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.32.0/ComfyUI_windows_portable_amd.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_intel.7z",
+    "size": 1719789666,
+    "digest": "sha256:f9635f142cc5d714eee39b65b9a8c50f2548e172ec6fbd723cd447cdd3292479",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.32.0/ComfyUI_windows_portable_intel.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia.7z",
+    "size": 2132254184,
+    "digest": "sha256:642ba5e91c5f6310b11797acf79484d2248df5e09c6bb27696a25c99e68bdb72",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.32.0/ComfyUI_windows_portable_nvidia.7z"
+   },
+   {
+    "name": "ComfyUI_windows_portable_nvidia_cu126.7z",
+    "size": 2074294748,
+    "digest": "sha256:792c77ff4cf09b92b4b013cb73405949bfed4551c4ca1774689efc442b722b2b",
+    "browser_download_url": "https://github.com/Comfy-Org/ComfyUI/releases/download/v0.32.0/ComfyUI_windows_portable_nvidia_cu126.7z"
+   }
+  ]
+ }
+]

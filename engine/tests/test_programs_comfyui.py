@@ -337,7 +337,9 @@ def test_comfyui_is_pinned_per_gpu_vendor_from_one_release():
     newer; the build for older drivers is CUDA 12.6, from 525."""
     pins = program_manifest.load_programs_manifest()
     pin = pins.program("comfyui")
-    assert pin is not None and pin.version == "0.42.1"
+    # Any release: the version is whichever scripts/pin-programs.py took.
+    # Every URL below has to name it.
+    assert pin is not None and re.fullmatch(r"\d+\.\d+\.\d+", pin.version)
     assert pin.license == "GPL-3.0-only"
     release = f"https://github.com/Comfy-Org/ComfyUI/releases/download/v{pin.version}/"
     # Linux's builds are made of pinned pieces (test_programs_comfyui_linux.py).

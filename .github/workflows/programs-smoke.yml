@@ -1,0 +1,87 @@
+name: Programs smoke
+
+# Sets up each program LocalCut pins (programs-manifest.json) for real, on
+# Linux and Windows runners, through an engine started from the pull
+# request's tree. Then it checks the copy works. engine/scripts/smoke-programs.py
+# says what each run checks and how it gets a portable ComfyUI build as far
+# as a runner without a graphics card allows.
+#
+# The engine suite never downloads a pin: its setups run against archives
+# it makes itself. So a pin that is wrong on the network (an asset gone, a
+# digest or a size that no longer holds, a build that does not start, a
+# ComfyUI that dropped a node the templates use) is caught here or by a
+# user. Hence the trigger: a change to the manifest, the locks or the code
+# that sets programs up. program-pins.yml dispatches this on every bump it
+# opens, since a pull request opened with GITHUB_TOKEN starts no workflow.
+#
+# Each run takes one program on one OS and its own runner, so no run holds
+# more than one program's download and copy on disk. The biggest is AMD's
+# portable ComfyUI, 7.8 GB at once. The script prints the free space as it
+# goes.
+on:
+  pull_request:
+    paths:
+      - "engine/src/localcut_engine/programs/**"
+      - "engine/scripts/smoke-programs.py"
+      - ".github/workflows/programs-smoke.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.program }}${{ matrix.card && format(' {0}', matrix.card) || '' }}${{ matrix.build && format(' {0}', matrix.build) || '' }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A ComfyUI build on Windows downloads 1.5 to 2 GB and unpacks 60,000
+    # files past a virus scanner. Ollama pulls a model after its own setup.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, program: ffmpeg }
+          - { os: windows-2025, program: ffmpeg }
+          - { os: ubuntu-24.04, program: ollama }
+          - { os: windows-2025, program: ollama }
+          # Linux pins a build for the processor, which a runner can start.
+          - { os: ubuntu-24.04, program: comfyui }
+          # Windows pins none: one run per portable build, each up to the
+          # check that needs the card.
+          - { os: windows-2025, program: comfyui, card: nvidia }
+          - { os: windows-2025, program: comfyui, card: nvidia, build: older_drivers }
+          - { os: windows-2025, program: comfyui, card: amd }
+          - { os: windows-2025, program: comfyui, card: intel }
+    defaults:
+      run:
+        working-directory: engine
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        # Pinned exactly, for the reason ci-engine.yml gives: no floating
+        # major tag is published for this action.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      # Not --all-groups: nothing here builds a freeze or runs the suite.
+      - run: uv sync --no-dev
+
+      - name: Set ${{ matrix.program }} up and use it
+        env:
+          PROGRAM: ${{ matrix.program }}
+          CARD: ${{ matrix.card }}
+          BUILD: ${{ matrix.build }}
+        run: |
+          set -euo pipefail
+          args=("$PROGRAM" --work "$RUNNER_TEMP/smoke")
+          if [ -n "$CARD" ]; then args+=(--card "$CARD"); fi
+          if [ -n "$BUILD" ]; then args+=(--build "$BUILD"); fi
+          uv run --no-sync python scripts/smoke-programs.py "${args[@]}"
