@@ -1,0 +1,224 @@
+name: Program pins
+
+# Keeps the programs LocalCut sets up (FFmpeg, Ollama, ComfyUI) pinned to
+# current upstream builds. Every Monday before Renovate's window opens and
+# on demand from the Actions tab, engine/scripts/pin-programs.py checks
+# upstream by the rule each pin follows and, for each program with a newer
+# build, measures it, writes the pin and opens one pull request on
+# `pins/<program>-<version>`. A program whose branch or pull request exists
+# already, open or closed, is left alone. docs/programs.md says what the
+# pull requests change and what a person still checks before merging one.
+#
+# A pull request opened with GITHUB_TOKEN starts no workflow. Neither does
+# the push that made its branch. Those events would come from this
+# workflow's own token, which GitHub ignores so a workflow cannot set off
+# another. workflow_dispatch is the exception, so after opening the pull
+# request this dispatches on its branch the workflows a pull request runs:
+# the engine suite, the programs smoke and the three checks the main
+# branch ruleset requires (DCO, the secret scan and the repository
+# contracts). Each of those has a workflow_dispatch trigger for this. Their
+# results land on the branch's head commit, which is where the pull request
+# reads its checks from. No personal token is involved.
+#
+# On a pull request that changes the pin script or the lock script, the
+# `again` job measures every pinned program from scratch with the changed
+# scripts and fails unless that writes nothing new.
+on:
+  schedule:
+    # Monday 03:17 UTC. Off the hour, as codeql.yml explains.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      program:
+        description: "The program to look at"
+        type: choice
+        options: [all, ffmpeg, ollama, comfyui]
+        default: all
+      version:
+        description: "Pin this release of it (a version, or for FFmpeg a BtbN autobuild tag), whatever the rules would take"
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - "engine/scripts/pin-programs.py"
+      - "engine/scripts/lock-comfyui-linux.py"
+      - ".github/workflows/program-pins.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: what upstream has
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      newer: ${{ steps.check.outputs.newer }}
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - run: uv sync --no-dev
+
+      - name: Check upstream
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROGRAM: ${{ inputs.program }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          args=(check --skip-existing "$GITHUB_REPOSITORY")
+          if [ -n "$PROGRAM" ] && [ "$PROGRAM" != all ]; then args+=(--program "$PROGRAM"); fi
+          if [ -n "$VERSION" ]; then args+=(--version "$VERSION"); fi
+          uv run --no-sync python scripts/pin-programs.py "${args[@]}" > "$RUNNER_TEMP/check.json"
+          cat "$RUNNER_TEMP/check.json"
+          {
+            echo '```json'
+            cat "$RUNNER_TEMP/check.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "newer=$(jq -c '[.newer[] | {program, version, release, branch}]' "$RUNNER_TEMP/check.json")" >> "$GITHUB_OUTPUT"
+
+  bump:
+    name: pin ${{ matrix.pin.program }} ${{ matrix.pin.version }}
+    needs: check
+    if: needs.check.outputs.newer != '[]'
+    runs-on: ubuntu-24.04
+    # Ollama's two archives are measured twice each (the pin and the new
+    # build) and the Linux one is 1.4 GB streamed. ComfyUI's Linux locks are
+    # made twice too, reading the zip directory of every wheel.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        pin: ${{ fromJSON(needs.check.outputs.newer) }}
+    env:
+      PROGRAM: ${{ matrix.pin.program }}
+      RELEASE: ${{ matrix.pin.release }}
+      BRANCH: ${{ matrix.pin.branch }}
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the uv the locks were made with
+        id: locks
+        run: echo "uv=$(sed -n 's/^uv = "\(.*\)"$/\1/p' src/localcut_engine/programs/locks/pylock.comfyui-cpu.toml)" >> "$GITHUB_OUTPUT"
+
+      # The locks name the uv that made them. Making them again with another
+      # one would not give the same files, so the pin script refuses.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ steps.locks.outputs.uv }}
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - run: uv sync
+
+      - name: Measure ${{ matrix.pin.program }} ${{ matrix.pin.version }} and write its pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run --no-sync python scripts/pin-programs.py pin "$PROGRAM" --version "$RELEASE" \
+            --summary "$RUNNER_TEMP/summary.json" --work "$RUNNER_TEMP/pin"
+
+      - name: Hold the pin to the suite's contracts
+        run: |
+          uv run --no-sync pytest -q -rs tests/test_programs_docs.py tests/test_container_contract.py \
+            tests/test_programs_comfyui_linux.py tests/test_pin_programs.py
+
+      - name: Commit, open the pull request and start its checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$BRANCH" > /dev/null; then
+            echo "::notice::$BRANCH appeared while this ran, so it is left as it is"
+            exit 0
+          fi
+          # Only the files a pin writes.
+          unexpected=$(git status --porcelain | grep -vE '^ M (engine/src/localcut_engine/programs/(programs-manifest\.json|locks/pylock\.comfyui-[a-z0-9]+\.toml)|engine/Dockerfile|docs/programs\.md)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::the pin changed files it does not write: $unexpected"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add -A ..
+          jq -r .commit "$RUNNER_TEMP/summary.json" > "$RUNNER_TEMP/commit.txt"
+          # The sign-off names the bot, which is the commit's author, so
+          # dco.yml takes it.
+          git commit -s -F "$RUNNER_TEMP/commit.txt"
+          git push origin "$BRANCH"
+          {
+            jq -r .body "$RUNNER_TEMP/summary.json"
+            echo
+            echo "Opened by program-pins.yml (run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). A pull request opened with GITHUB_TOKEN starts no workflow, so that run dispatched CI (engine), Programs smoke, DCO, Repo hygiene and Secret scan on this branch. Their results show here as checks."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+            --title "$(jq -r .title "$RUNNER_TEMP/summary.json")" --body-file "$RUNNER_TEMP/body.md"
+          for workflow in ci-engine.yml programs-smoke.yml repo-hygiene.yml secret-scan.yml; do
+            gh workflow run "$workflow" --ref "$BRANCH"
+          done
+          gh workflow run dco.yml --ref "$BRANCH" -f base="${{ github.event.repository.default_branch }}"
+
+  again:
+    name: measure the ${{ matrix.program }} pin again
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [ffmpeg, ollama, comfyui]
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read the uv the locks were made with
+        id: locks
+        run: echo "uv=$(sed -n 's/^uv = "\(.*\)"$/\1/p' src/localcut_engine/programs/locks/pylock.comfyui-cpu.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ steps.locks.outputs.uv }}
+          enable-cache: true
+          cache-dependency-glob: engine/uv.lock
+
+      - run: uv sync --no-dev
+
+      - name: Measure the pinned ${{ matrix.program }} from scratch and write it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROGRAM: ${{ matrix.program }}
+        run: uv run --no-sync python scripts/pin-programs.py pin "$PROGRAM" --again --work "$RUNNER_TEMP/pin"
+
+      - name: Nothing moved
+        run: |
+          git status --short
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
