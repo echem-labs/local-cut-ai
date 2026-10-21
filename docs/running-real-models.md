@@ -162,3 +162,68 @@ adapters) or FCPXML (`GET /projects/{id}/export/fcpxml` — Final Cut Pro).
 
 Both are serialized from the same timing authority as the render, so their
 length always matches the rendered MP4.
+
+## Checking a real render
+
+`engine/scripts/real-render-check.py` renders one short project on real
+models from start to finish and checks what comes out. Run it from `engine/`
+on a machine with an NVIDIA card:
+
+```bash
+cd engine
+uv run python scripts/real-render-check.py
+```
+
+It starts an engine from the checkout it sits in, on ports it picks and with
+a token of its own, so a ComfyUI or Ollama of yours on the usual ports keeps
+running untouched. It keeps everything in its own data dir,
+`~/localcut-test/real-render` unless `--data-dir` names another (it refuses
+`~/.localcut`). Then, through the engine's own routes:
+
+1. It sets up LocalCut's FFmpeg and ComfyUI where the copy in the data dir is
+   missing or is not the build pinned now (`POST /programs/{id}/setup`).
+2. It downloads the models `GET /system` recommends for the machine that are
+   not on disk yet, after printing every size and the free space.
+3. It checks that ComfyUI's `/object_info` has every node class and input
+   name the packaged workflow templates use.
+4. It renders "A red fox trotting through a snowy pine forest at sunrise",
+   16 s at 9:16 (`--prompt`, `--duration` and `--aspect` change it). The
+   script comes from the mock and every other stage has to run on its real
+   backend.
+5. It checks the export: H.264 at the aspect's canvas and AAC at 48 kHz
+   stereo with tracks as long as each other, every clip moving (FFmpeg's
+   `freezedetect` and the PSNR between the clip's first and last frames),
+   music that is not silent and a mix that has sound.
+6. It stops the engine with `POST /shutdown` and checks that nothing it
+   started is left running.
+
+The thresholds are constants at the top of the script, each with a comment
+on what it catches. `--script-model qwen3:8b` also sets up LocalCut's own
+Ollama in the data dir and pulls that model into it, so a real model writes
+the script too. `--keep-running` leaves the engine up afterwards and prints
+its address and token.
+
+Each run writes `report.json` and `summary.md` to
+`<data dir>/reports/<timestamp>/`, beside the MP4, the clips, the music, a
+few frames and the engine's and ComfyUI's logs. The summary has the versions
+(engine commit, FFmpeg, ComfyUI with its Python and PyTorch, Ollama, the GPU
+and its driver), each stage's backend and time from `GET /jobs` and each
+check's verdict, ready to paste into a pull request. The exit status is the
+CLI's: 0 when every check passed, 1 when a check or the render failed and 2
+when the engine could not be started or reached.
+
+The first run on an 8 GB NVIDIA card downloads about 29 GiB and keeps about
+32 GiB. The five models recommended for that card (SDXL, LTX-Video,
+ACE-Step, Kokoro and faster-whisper base.en) are 25 GiB of it. The rest is
+ComfyUI's build for the card and FFmpeg, whose sizes
+[programs.md](programs.md#localcuts-own-comfyui) gives. A card with 16 GB or
+more is recommended Wan 2.2 for clips instead, 33 GiB on its own. A model
+download that stops partway resumes on the next run, but a program setup
+starts over. Later runs download nothing. On an RTX 3080 Laptop GPU (8 GB) a
+run with everything in place takes about 6 minutes. Nearly all of that is
+the render, where each of the two LTX-Video clips takes about 2 minutes.
+
+Run it before merging a change to the ComfyUI, Ollama or FFmpeg pin (with
+`--script-model` for Ollama's, since the mock script leaves Ollama out). Run
+it too before merging an engine change that touches rendering: a backend, a
+workflow template, the timeline, captions or the export.
