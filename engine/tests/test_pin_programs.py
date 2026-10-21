@@ -303,3 +303,59 @@ def test_the_report_skips_a_bump_already_proposed_and_shows_one_held():
         ("ollama", "pull request #166 (closed) is from pins/ollama-0.40.7")
     ]
     assert [(e["program"], e["version"]) for e in report["held"]] == [("comfyui", "0.42.1")]
+
+
+# -- measuring ---------------------------------------------------------------------------
+
+
+def test_a_link_written_with_a_leading_dot_slash_is_pinned_bare(monkeypatch):
+    """Ollama 0.40.7's tarball writes two CUDA 13 sonames as
+    `./libcublas.so.13.1.1.3`. The pin keeps the bare name, which the
+    manifest takes and which names the same file."""
+    import zipfile
+
+    from localcut_engine.programs.manifest import parse_programs_manifest
+
+    def published(name: str) -> dict:
+        return {
+            "name": name,
+            "browser_download_url": f"https://example.com/{name}",
+            "size": 10,
+            "digest": "sha256:" + "a" * 64,
+        }
+
+    release = pins.Release(
+        program="ollama",
+        version="0.40.7",
+        tag="v0.40.7",
+        published="2026-10-18T00:28:57Z",
+        label="0.40.7",
+        assets={
+            "windows-x64": published("ollama-windows-amd64.zip"),
+            "linux-x64": published("ollama-linux-amd64.tar.zst"),
+        },
+    )
+    executable = zipfile.ZipInfo("ollama.exe")
+    executable.file_size = 6
+    monkeypatch.setattr(pins, "_checksums", lambda client, release, name: None)
+    monkeypatch.setattr(pins, "zip_listing", lambda client, asset: [executable])
+    monkeypatch.setattr(
+        pins,
+        "tar_stream",
+        lambda client, asset: (
+            10,
+            "a" * 64,
+            [
+                pins.TarEntry("bin/ollama", "file", 6),
+                pins.TarEntry("lib/ollama/cuda_v13/libcublas.so.13.1.1.3", "file", 40),
+                pins.TarEntry(
+                    "lib/ollama/cuda_v13/libcublas.so.13", "link", 0, "./libcublas.so.13.1.1.3"
+                ),
+            ],
+        ),
+    )
+    entry = pins.measure_ollama(None, release, _pin("ollama")).entry
+    linux = next(asset for asset in entry["assets"] if asset["platform"] == "linux-x64")
+    soname = next(kept for kept in linux["files"] if kept["path"].endswith("libcublas.so.13"))
+    assert soname["link"] == "libcublas.so.13.1.1.3"
+    parse_programs_manifest(json.dumps({"schema_version": 1, "programs": [entry]}))

@@ -80,6 +80,7 @@ sys.path.insert(0, str(ENGINE / "src"))
 from localcut_engine.programs import sevenzip  # noqa: E402
 from localcut_engine.programs.manifest import (  # noqa: E402
     KeptTree,
+    link_target,
     parse_programs_manifest,
 )
 
@@ -797,7 +798,8 @@ def measure_ollama(client: httpx.Client, release: Release, pinned: dict) -> Meas
                 if item.kind == "other":
                     raise Unmeasurable(f"{published['name']}: {item.name} is not a file or a link")
                 if item.kind == "link":
-                    files.append({"member": item.name, "path": path, "size": 0, "link": item.link})
+                    link = link_target(item.link or "")
+                    files.append({"member": item.name, "path": path, "size": 0, "link": link})
                 else:
                     files.append({"member": item.name, "path": path, "size": item.size})
         empty = [kept["member"] for kept in files if kept["size"] == 0 and "link" not in kept]
