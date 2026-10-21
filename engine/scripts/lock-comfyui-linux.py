@@ -1,12 +1,13 @@
 """Lock ComfyUI's Linux environment, for the pinned ComfyUI or a new one.
 
     cd engine
-    uv run python scripts/lock-comfyui-linux.py --comfyui 0.42.1 \\
-        --python 3.13.16 --python-release 20261013 --torch 2.14.1
+    uv run python scripts/lock-comfyui-linux.py --comfyui <version> \\
+        --python <version> --python-release <tag> --torch <version>
 
-Run it whenever ComfyUI's pin moves (the Windows portable builds move with
-it) or PyTorch, the standalone Python or a ComfyUI dependency needs to. It
-needs `uv` on PATH and the network. It downloads ComfyUI's source and the
+scripts/pin-programs.py runs it when ComfyUI's pin moves, with the Python
+and the PyTorch the locks have already. Run it by hand to move PyTorch, the
+standalone Python or a ComfyUI dependency. It needs `uv` (`--uv`, else the
+one on PATH) and the network. It downloads ComfyUI's source and the
 standalone Python (about 50 MB). Wheels are read without being downloaded:
 their sizes come from the index and what each unpacks to from its zip
 directory, fetched with Range requests. Both of those are what a setup
@@ -26,7 +27,13 @@ for older drivers, AMD's ROCm, Intel's XPU and the processor's) it
    (`environment.wheel_target`);
 4. writes `src/localcut_engine/programs/locks/pylock.comfyui-<build>.toml`
    (PEP 751, with each wheel's licence from its own metadata) and the
-   linux-x64 ComfyUI assets and the runtime pin in programs-manifest.json.
+   linux-x64 ComfyUI assets and the runtime pin in programs-manifest.json,
+   or into the files `--locks` and `--manifest` name.
+
+`--versions-from <folder of locks>` holds every package to the version that
+build's lock has there. Given the locks a ComfyUI was pinned with, it makes
+them again, byte for byte, which is how pin-programs.py shows its method
+still reproduces the pin before it writes a new one.
 
 test_programs_comfyui_linux.py then holds the locks to the manifest and to
 the pinned source's requirements.
@@ -35,6 +42,7 @@ the pinned source's requirements.
 from __future__ import annotations
 
 import argparse
+import atexit
 import datetime
 import email.parser
 import hashlib
@@ -47,6 +55,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 import zipfile
 from pathlib import Path
@@ -149,14 +158,22 @@ def sha256_of(path: Path) -> str:
 
 class RemoteFile(io.RawIOBase):
     """A file on a server that answers Range requests, read in blocks, for
-    zipfile to find a wheel's directory in without downloading it."""
+    zipfile to find a wheel's directory in without downloading it.
+
+    PyTorch's index serves wheels from a CDN that now and then answers a
+    Range request with the whole file, gigabytes of it for a ROCm or CUDA
+    PyTorch. Such an answer is closed unread and the range asked for again
+    after a wait. When the CDN keeps doing it, the wheel is downloaded once
+    into the temp folder and read from there."""
 
     _BLOCK = 1 << 20
+    _TRIES = 5
 
     def __init__(self, client: httpx.Client, url: str, size: int) -> None:
         self.client, self.url, self.size = client, url, size
         self.position = 0
         self.blocks: dict[int, bytes] = {}
+        self.whole: Path | None = None
 
     def readable(self) -> bool:
         return True
@@ -176,15 +193,44 @@ class RemoteFile(io.RawIOBase):
         if index not in self.blocks:
             start = index * self._BLOCK
             end = min(self.size, start + self._BLOCK) - 1
-            response = self.client.get(
-                self.url, headers={"Range": f"bytes={start}-{end}"}, follow_redirects=True
-            )
-            if response.status_code != 206:
-                raise RuntimeError(
-                    f"{self.url} answered a Range request with {response.status_code}"
-                )
-            self.blocks[index] = response.content
+            self.blocks[index] = self._range(start, end)
         return self.blocks[index]
+
+    def _range(self, start: int, end: int) -> bytes:
+        if self.whole is None:
+            for attempt in range(self._TRIES):
+                with self.client.stream(
+                    "GET",
+                    self.url,
+                    headers={"Range": f"bytes={start}-{end}"},
+                    follow_redirects=True,
+                ) as response:
+                    if response.status_code == 206:
+                        return response.read()
+                    if response.status_code != 200:
+                        raise RuntimeError(
+                            f"{self.url} answered a Range request with {response.status_code}"
+                        )
+                time.sleep(2**attempt)
+            print(f"  {self.url} ignores Range requests; downloading it whole", flush=True)
+            self.whole = self._download()
+        with self.whole.open("rb") as local:
+            local.seek(start)
+            return local.read(end - start + 1)
+
+    def _download(self) -> Path:
+        handle, name = tempfile.mkstemp(prefix="wheel-", suffix=".whl")
+        os.close(handle)
+        path = Path(name)
+        atexit.register(path.unlink, missing_ok=True)
+        with self.client.stream("GET", self.url, follow_redirects=True) as response:
+            response.raise_for_status()
+            with path.open("wb") as sink:
+                for chunk in response.iter_bytes(1 << 20):
+                    sink.write(chunk)
+        if path.stat().st_size != self.size:
+            raise RuntimeError(f"{self.url} is {path.stat().st_size} bytes, not {self.size}")
+        return path
 
     def read(self, count: int = -1) -> bytes:
         if count < 0:
@@ -274,10 +320,20 @@ def tree_of(root: str, entries: dict[str, tuple[str, int]]) -> dict:
 # -- one build ----------------------------------------------------------------------
 
 
-def resolve(requirements: Path, backend: str, python: str, torch: str | None, out: Path) -> dict:
-    """uv's resolution of `requirements` for the target, as a pylock."""
+def resolve(
+    uv: str,
+    requirements: Path,
+    backend: str,
+    python: str,
+    torch: str | None,
+    out: Path,
+    held: list[str] | None = None,
+) -> dict:
+    """uv's resolution of `requirements` for the target, as a pylock. `held`
+    is more `name==version` constraints: every package of a lock, when the
+    lock is being made again."""
     command = [
-        "uv",
+        uv,
         "pip",
         "compile",
         str(requirements),
@@ -298,9 +354,10 @@ def resolve(requirements: Path, backend: str, python: str, torch: str | None, ou
         "-o",
         str(out),
     ]
-    if torch:
+    lines = ([f"torch=={torch}"] if torch else []) + list(held or [])
+    if lines:
         constraints = out.with_suffix(".constraints.txt")
-        constraints.write_text(f"torch=={torch}\n", encoding="utf-8")
+        constraints.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         command += ["--constraints", str(constraints)]
     subprocess.run(command, check=True)
     return tomllib.loads(out.read_text(encoding="utf-8"))
@@ -453,12 +510,17 @@ def requirement_lines(text: str) -> list[str]:
     return lines
 
 
+def held_versions(locks: Path, name: str) -> list[str]:
+    """Every package of the lock for build `name` in `locks`, as a
+    `name==version` constraint, so a resolve for the same ComfyUI makes that
+    lock again rather than taking what the indexes publish today."""
+    document = tomllib.loads((locks / f"pylock.comfyui-{name}.toml").read_text(encoding="utf-8"))
+    return [f"{package['name']}=={package['version']}" for package in document["packages"]]
+
+
 def main() -> int:
-    manifest_text = MANIFEST.read_text(encoding="utf-8")
-    current = json.loads(manifest_text)
-    comfy = next(pin for pin in current["programs"] if pin["id"] == "comfyui")
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--comfyui", default=comfy["version"])
+    parser.add_argument("--comfyui", help="the ComfyUI version (default: the one pinned)")
     parser.add_argument("--python", required=True, help="the CPython version, e.g. 3.13.16")
     parser.add_argument("--python-release", required=True, help="python-build-standalone's tag")
     parser.add_argument("--torch", help="the PyTorch version every build gets")
@@ -468,10 +530,33 @@ def main() -> int:
         help="a folder to keep the source and the runtime in between runs; the runtime is "
         "still held to its published digest",
     )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=MANIFEST,
+        help="the programs manifest to read and write (default: the package's own)",
+    )
+    parser.add_argument(
+        "--locks",
+        type=Path,
+        default=LOCKS,
+        help="the folder to write the locks into (default: the package's own)",
+    )
+    parser.add_argument(
+        "--versions-from",
+        type=Path,
+        help="a folder of locks whose package versions each build is held to, which makes "
+        "those locks again for the ComfyUI they were made for",
+    )
+    parser.add_argument("--uv", default="uv", help="the uv to resolve with (default: uv on PATH)")
     args = parser.parse_args()
-    if shutil.which("uv") is None:
-        raise SystemExit("uv is not on PATH")
-    uv = subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True)
+    current = json.loads(args.manifest.read_text(encoding="utf-8"))
+    comfy = next(pin for pin in current["programs"] if pin["id"] == "comfyui")
+    if args.comfyui is None:
+        args.comfyui = comfy["version"]
+    if shutil.which(args.uv) is None:
+        raise SystemExit(f"{args.uv} is not on PATH")
+    uv = subprocess.run([args.uv, "--version"], capture_output=True, text=True, check=True)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     api_headers = {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -541,13 +626,19 @@ def main() -> int:
             for name, gpu, build, backend, requires in BUILDS:
                 print(f"{name}: resolving with uv ({backend})", flush=True)
                 resolved = resolve(
-                    requirements, backend, args.python, args.torch, scratch / f"pylock.{name}.toml"
+                    args.uv,
+                    requirements,
+                    backend,
+                    args.python,
+                    args.torch,
+                    scratch / f"pylock.{name}.toml",
+                    held_versions(args.versions_from, name) if args.versions_from else None,
                 )
                 text, figures = lock_build(
                     client, name, backend, resolved, args.python, copy, runtime, header
                 )
-                LOCKS.mkdir(exist_ok=True)
-                (LOCKS / figures["lock"]).write_text(text, encoding="utf-8", newline="\n")
+                args.locks.mkdir(parents=True, exist_ok=True)
+                (args.locks / figures["lock"]).write_text(text, encoding="utf-8", newline="\n")
                 assets.append(
                     {
                         "platform": "linux-x64",
@@ -578,8 +669,8 @@ def main() -> int:
     current["updated"] = datetime.date.today().isoformat()
     text = json.dumps(current, indent=2) + "\n"
     parse_programs_manifest(text)
-    MANIFEST.write_text(text, encoding="utf-8", newline="\n")
-    print(f"wrote {MANIFEST.relative_to(ENGINE)} and {len(assets)} locks", flush=True)
+    args.manifest.write_text(text, encoding="utf-8", newline="\n")
+    print(f"wrote {args.manifest} and {len(assets)} locks in {args.locks}", flush=True)
     return 0
 
 
