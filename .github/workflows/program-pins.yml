@@ -176,8 +176,14 @@ jobs:
             echo
             echo "Opened by program-pins.yml (run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). A pull request opened with GITHUB_TOKEN starts no workflow, so that run dispatched CI (engine), Programs smoke, DCO, Repo hygiene and Secret scan on this branch. Their results show here as checks."
           } > "$RUNNER_TEMP/body.md"
-          gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
-            --title "$(jq -r .title "$RUNNER_TEMP/summary.json")" --body-file "$RUNNER_TEMP/body.md"
+          # A branch is how the next run knows a bump was proposed, so one
+          # left without its pull request would hold that bump back for good.
+          if ! gh pr create --base "${{ github.event.repository.default_branch }}" --head "$BRANCH" \
+            --title "$(jq -r .title "$RUNNER_TEMP/summary.json")" --body-file "$RUNNER_TEMP/body.md"; then
+            git push origin --delete "$BRANCH"
+            echo "::error::the pull request for $BRANCH could not be opened, so the branch was removed for the next run to try again"
+            exit 1
+          fi
           for workflow in ci-engine.yml programs-smoke.yml repo-hygiene.yml secret-scan.yml; do
             gh workflow run "$workflow" --ref "$BRANCH"
           done
