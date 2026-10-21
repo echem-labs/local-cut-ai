@@ -1,0 +1,14 @@
+[
+ {
+  "number": 166,
+  "state": "closed",
+  "html_url": "https://github.com/echem-labs/local-cut-ai/pull/166",
+  "merged_at": "2026-10-21T05:19:50Z",
+  "head": {
+   "ref": "chore/ollama-0.40.6",
+   "repo": {
+    "full_name": "echem-labs/local-cut-ai"
+   }
+  }
+ }
+]

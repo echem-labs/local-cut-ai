@@ -414,7 +414,7 @@ answered after the end.
 {
   "platform": "linux-x64",
   "programs_dir": "/home/me/.localcut/programs",
-  "programs_bytes": 284840101,
+  "programs_bytes": 2539916732,
   "disk_free_bytes": 15032385536,
   "bin_dir": "/home/me/.localcut/bin",
   "models_dir": "/home/me/.localcut/models",
