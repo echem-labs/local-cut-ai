@@ -38,7 +38,7 @@ _PULL_MARGIN = 256 << 20
 
 #: Set for every `ollama serve` LocalCut starts, over whatever the engine's
 #: own environment says, so that it calls nothing on the network by itself.
-#: With its cloud features on, Ollama 0.40.4 asks ollama.com for model
+#: With its cloud features on, Ollama 0.40.6 asks ollama.com for model
 #: recommendations as it starts and again every few hours. As it starts it
 #: also asks for the list of Ollama's cloud models and their details.
 #: OLLAMA_NO_CLOUD turns all of that off, along with running a model on
@@ -97,7 +97,7 @@ def model_store(config: EngineConfig) -> Path:
     return config.resolved_models_dir / "ollama"
 
 
-# Which NVIDIA cards the CUDA libraries in Ollama 0.40.4's builds run, from
+# Which NVIDIA cards the CUDA libraries in Ollama 0.40.6's builds run, from
 # its discover/cuda_compat.go and the architectures llama/server's presets
 # compile for. cuda_v12 is CUDA 12.8, built for compute 5.0 and up; cuda_v13
 # needs a newer driver than either floor here and a newer card, so it adds

@@ -779,7 +779,7 @@ def test_remove_stops_the_copy_and_keeps_its_models(tmp_path, monkeypatch, archi
 def test_cuda_is_counted_on_only_for_a_card_ollamas_cuda_libraries_run(
     vendor, driver, compute, runs
 ):
-    """Ollama 0.40.4 ships CUDA 12.8 and CUDA 13 libraries. Its own check
+    """Ollama 0.40.6 ships CUDA 12.8 and CUDA 13 libraries. Its own check
     drops every CUDA device under a driver older than 550. Under one older
     than 570 it drops the cards older than compute 7.0 too. CUDA 12.8 is
     built for compute 5.0 and up. A figure the

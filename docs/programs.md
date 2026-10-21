@@ -51,7 +51,7 @@ draw.
 
 Ollama's copy is the standalone build from
 [Ollama's own releases](https://github.com/ollama/ollama/releases), version
-0.40.4. It is downloaded only when someone presses Set up. It is pinned the
+0.40.6. It is downloaded only when someone presses Set up. It is pinned the
 same way as FFmpeg's: `ollama-windows-amd64.zip` on Windows (1.37 GiB,
 1.81 GiB unpacked) and `ollama-linux-amd64.tar.zst` on Linux (1.34 GiB,
 2.10 GiB unpacked). Ollama is MIT-licensed. Its licence and those of the
@@ -70,7 +70,7 @@ Ollama looks for GPUs through Vulkan at every start, beside CUDA, before it
 answers anything. Where CUDA runs the NVIDIA card, that pass only finds the
 same card again and any integrated graphics. Ollama drops both. So
 LocalCut starts its copy with `OLLAMA_VULKAN=0` when the hardware probe
-finds an NVIDIA card whose driver and compute capability Ollama 0.40.4's
+finds an NVIDIA card whose driver and compute capability Ollama 0.40.6's
 CUDA libraries take: a driver of 550 or newer for compute 7.0 and up, or 570
 or newer for compute 5.0 and up. Everywhere else Vulkan stays on, since it
 is how an AMD or Intel card gets the GPU. It stays on too for an NVIDIA card
@@ -122,7 +122,7 @@ the data dir.
 
 LocalCut's copy runs with Ollama's cloud features off (`OLLAMA_NO_CLOUD=1`),
 whatever the engine's own environment says. So does the `ollama serve` a
-setup starts to check the build. With them on, Ollama 0.40.4 calls
+setup starts to check the build. With them on, Ollama 0.40.6 calls
 ollama.com by itself. It fetches model recommendations as it starts and
 again every few hours. It also lists Ollama's cloud models and their details
 as it starts. LocalCut uses none of it and tells people it goes online only
@@ -457,12 +457,12 @@ answered after the end.
       "source": "managed",
       "location": "http://127.0.0.1:11434/v1",
       "setting": "LOCALCUT_LLM_URL",
-      "version": "0.40.4",
+      "version": "0.40.6",
       "checks": { "server": "ollama", "model": "qwen3:8b", "model_present": true },
       "managed": {
         "location": "/home/me/.localcut/programs/ollama",
-        "bytes": 2255368362,
-        "version": "0.40.4",
+        "bytes": 2255076631,
+        "version": "0.40.6",
         "current": true,
         "in_use": true,
         "server": {
@@ -479,10 +479,10 @@ answered after the end.
         "available": true,
         "unavailable_reason": null,
         "takes_effect": true,
-        "version": "0.40.4",
-        "url": "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-linux-amd64.tar.zst",
-        "download_bytes": 1436408810,
-        "install_bytes": 2255368362,
+        "version": "0.40.6",
+        "url": "https://github.com/ollama/ollama/releases/download/v0.40.6/ollama-linux-amd64.tar.zst",
+        "download_bytes": 1438364593,
+        "install_bytes": 2255073730,
         "gpu": null,
         "build": null,
         "builds": [],
@@ -758,7 +758,7 @@ holds one of its files open (Windows will not move the folder then).
 {"type": "program.setup.failed", "program": "ffmpeg", "reason": "checksum_mismatch", "error": "the download's SHA-256 is ..."}
 {"type": "program.setup.cancelled", "program": "ffmpeg"}
 {"type": "program.removed", "program": "ffmpeg", "freed_bytes": 284840101}
-{"type": "program.setup.done", "program": "ollama", "version": "0.40.4", "location": "/home/me/.localcut/programs/ollama/bin/ollama", "in_use": true, "draws_text": null, "model": "qwen3:8b"}
+{"type": "program.setup.done", "program": "ollama", "version": "0.40.6", "location": "/home/me/.localcut/programs/ollama/bin/ollama", "in_use": true, "draws_text": null, "model": "qwen3:8b"}
 {"type": "program.server", "program": "ollama", "state": "running", "reason": null}
 ```
 
