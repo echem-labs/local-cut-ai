@@ -14,12 +14,14 @@ No account, no subscription. Your prompts and footage stay with you unless you p
 [![Desktop CI](https://img.shields.io/github/actions/workflow/status/echem-labs/local-cut-ai/ci-desktop.yml?branch=main&style=flat-square&label=desktop)](https://github.com/echem-labs/local-cut-ai/actions/workflows/ci-desktop.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-5F4FD8?style=flat-square)](LICENSE)
 [![Platforms: Windows, Linux and macOS](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-5F4FD8?style=flat-square)](#requirements)
+[![Discord](https://img.shields.io/badge/discord-join-5F4FD8?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/S9D622xMqr)
 
 **[Download](#download)** ·
 **[First run](#first-run)** ·
 **[Documentation](#documentation)** ·
 **[Run it on a GPU box](docs/remote-and-cloud.md)** ·
-**[Contributing](#contributing)**
+**[Contributing](#contributing)** ·
+**[Discord](https://discord.gg/S9D622xMqr)**
 
 <br>
 
@@ -187,6 +189,8 @@ On the home screen, type a prompt and choose the aspect ratio, the length and **
 
 For a whole first video with screenshots, from install to the finished film at the top of this page, read [Generate AI videos locally for free](https://medium.com/@hanzlamateen/generate-ai-videos-locally-for-free-a58bd6da3c3a) on Medium.
 
+Stuck on setup, or want to show what you made? Come to the [LocalCut AI Discord](https://discord.gg/S9D622xMqr).
+
 ### What runs where
 
 The app is two parts: the window you see and the engine it starts, which holds your projects and runs the work. Both come in the installer. Narration and caption timing run inside the engine, with weights the Models step downloads. The rest of the work happens in three free programs that LocalCut doesn't ship:
@@ -332,6 +336,8 @@ Settings > About says the same.
 | [Packaging](docs/packaging.md) | Freezing the engine and building installers |
 
 ## Contributing
+
+Questions and chat go to the [Discord](https://discord.gg/S9D622xMqr). Bugs and feature requests go to [issues](https://github.com/echem-labs/local-cut-ai/issues), where they can be tracked and linked from the fix.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers how to submit a change and the sign-off it needs. [CLAUDE.md](CLAUDE.md) holds the conventions a test will fail you on. [AGENTS.md](AGENTS.md) points a coding agent at them.
 

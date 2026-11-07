@@ -7,6 +7,9 @@ on. Everything below applies either way.
 The name and logo are not covered by the code licence — see
 [TRADEMARK.md](TRADEMARK.md), which is short and mostly says yes.
 
+Want to talk a change through before you write it? Ask on the
+[Discord](https://discord.gg/S9D622xMqr). Bugs and feature requests still go to issues.
+
 Found a security problem? Do not open an issue — an issue is the disclosure.
 [SECURITY.md](SECURITY.md) gives two private ways to reach the maintainer.
 
